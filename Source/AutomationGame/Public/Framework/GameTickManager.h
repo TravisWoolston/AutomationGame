@@ -1,76 +1,54 @@
 #pragma once
+
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Framework/FixedStepListener.h"
 #include "GameTickManager.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFixedTickSignature, float, StepSeconds);
+/** Broadcasts a fixed-step "simulation tick" in seconds. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFixedStepEvent, float, StepSeconds);
 
-/** Central fixed-timestep driver. Place one in the level. */
+/**
+ * Centralized fixed-step tick manager.
+ * - Call Play/Pause/Stop/StepTicks from code or Blueprints.
+ * - Bind to OnFixedTick to advance gameplay/sim in lock-step.
+ */
 UCLASS(BlueprintType)
 class AUTOMATIONGAME_API AGameTickManager : public AActor
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 public:
-    AGameTickManager();
+	AGameTickManager();
 
-    /** Static accessor: find the first manager in the world. */
-    UFUNCTION(BlueprintCallable, Category="FixedStep", meta=(WorldContext="WorldContextObject"))
-    static AGameTickManager* Get(UObject* WorldContextObject);
+	// -- Controls --
+	UFUNCTION(BlueprintCallable, Category = "Tick") void Play();
+	UFUNCTION(BlueprintCallable, Category = "Tick") void Pause();
+	UFUNCTION(BlueprintCallable, Category = "Tick") void Stop();
+	UFUNCTION(BlueprintCallable, Category = "Tick") void StepTicks(int32 NumTicks = 1);
+	UFUNCTION(BlueprintCallable, Category = "Tick") bool IsPlaying() const { return bPlaying; }
 
-    /** Steps per second for the simulation (when playing). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="FixedStep")
-    float StepsPerSecond = 10.f;
+	/** Helper to find a manager in the current world. */
+	UFUNCTION(BlueprintCallable, Category = "Tick", meta = (WorldContext = "WorldContextObject"))
+	static AGameTickManager* Get(const UObject* WorldContextObject);
 
-    /** If true, accumulate World Delta Seconds; otherwise use StepCountPerFrame when playing. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="FixedStep")
-    bool bUseWorldDelta = true;
+	/** Fired every fixed step while playing (or when StepTicks is called). */
+	UPROPERTY(BlueprintAssignable, Category = "Tick")
+	FFixedStepEvent OnFixedTick;
 
-    /** If !bUseWorldDelta, execute this many steps per frame while playing. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="FixedStep", meta=(EditCondition="!bUseWorldDelta"))
-    int32 StepCountPerFrame = 1;
+	/** Steps per real-time second when playing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tick", meta = (ClampMin = "0.01", ClampMax = "240.0"))
+	float TicksPerSecond = 2.0f;
 
-    /** Auto-discover listeners at BeginPlay (actors implementing UFixedStepListener). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="FixedStep")
-    bool bAutoDiscoverListeners = true;
-
-    /** Optional explicit listeners (actors that implement UFixedStepListener). */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="FixedStep")
-    TArray<TObjectPtr<AActor>> ExplicitListeners;
-
-    /** Begin ticking the fixed-step loop. */
-    UFUNCTION(BlueprintCallable, Category="FixedStep")
-    void Play();
-
-    /** Pause the fixed-step loop. */
-    UFUNCTION(BlueprintCallable, Category="FixedStep")
-    void Pause();
-
-    /** Stop (pause + reset accumulator). */
-    UFUNCTION(BlueprintCallable, Category="FixedStep")
-    void Stop();
-
-    /** Execute exactly N steps immediately (even if paused). */
-    UFUNCTION(BlueprintCallable, Category="FixedStep")
-    void StepTicks(int32 NumSteps);
-
-    /** Broadcast every fixed step. */
-    UPROPERTY(BlueprintAssignable, Category="FixedStep")
-    FFixedTickSignature OnFixedTick;
+	/** Auto-start playback on BeginPlay. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tick")
+	bool bAutoPlay = false;
 
 protected:
-    virtual void BeginPlay() override;
-    virtual void Tick(float DeltaSeconds) override;
+	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 
 private:
-    bool bPlaying = true;
-    float Accum = 0.f;
-    float StepSeconds = 0.1f;
+	bool bPlaying = false;
+	double Accum = 0.0;
 
-    /** Cached discovered listeners (actors implementing the interface). */
-    UPROPERTY() TArray<TWeakObjectPtr<AActor>> Listeners;
-
-    void DoOneStep();
-    void DiscoverListeners();
-    static bool ImplementsFixedStep(AActor* A);
+	FORCEINLINE float GetStepSeconds() const { return 1.0f / FMath::Max(0.01f, TicksPerSecond); }
 };

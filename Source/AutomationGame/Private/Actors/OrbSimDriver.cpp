@@ -2,21 +2,25 @@
 #include "Sim/SimWorldHex.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Framework/GameTickManager.h"
 
 AOrbSimDriver::AOrbSimDriver()
 {
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
+	UE_LOG(LogTemp, Verbose, TEXT("OrbSimDriver ctor: %s"), *GetNameSafe(this));
 }
 
 void AOrbSimDriver::BeginPlay()
 {
 	Super::BeginPlay();
+	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver::BeginPlay on %s"), *GetName());
 	if (!Sim)
 	{
 		Sim = NewObject<USimWorldHex>(this);
 		Sim->Initialize(20);
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Created Sim object %s"), *GetNameSafe(Sim));
 	}
-	// Optionally copy initial grid params from GameManager
+	// Align sim spacing to our knob
 	if (GM == nullptr)
 	{
 		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
@@ -24,43 +28,60 @@ void AOrbSimDriver::BeginPlay()
 			GM = *It;
 			break;
 		}
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Resolved GM=%s"), *GetNameSafe(GM));
 	}
-	if (Sim && GM != nullptr)
-	{
+	if (Sim && GM != nullptr) {
 		Sim->TileSizeUU = GM->TileSizeUU;
 		TileSizeUU = Sim->TileSizeUU;
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: TileSize set to %.2f from GM"), TileSizeUU);
+	}
+
+	// Try to bind to the global GameTickManager
+	if (AGameTickManager* M = AGameTickManager::Get(this))
+	{
+		M->OnFixedTick.AddDynamic(this, &AOrbSimDriver::HandleFixedTickSeconds);
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Bound to GameTickManager %s"), *GetNameSafe(M));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: No GameTickManager found. Sim will only advance via Tick()."));
 	}
 }
 
-void AOrbSimDriver::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-	if (!Sim) return;
-
-	// Keep sim spacing in sync if user tweaks TileSizeUU in editor during PIE
-	if (!FMath::IsNearlyEqual(Sim->TileSizeUU, TileSizeUU))
-	{
-		Sim->TileSizeUU = TileSizeUU;
-		Sim->TileRevision++; // force a visual rebuild
-	}
-
-	// Interpolation only; fixed steps should come from GameTickManager calling HandleFixedTickSeconds
-	Accum += DeltaSeconds;
-	const float Step = Sim->FixedStepSec;
-	while (Accum >= Step)
-	{
-		Accum -= Step;
-		Sim->StepSim();
-		StepAlpha = 0.f;
-	}
-	StepAlpha = Accum / Step;
-}
+//void AOrbSimDriver::Tick(float DeltaSeconds)
+//{
+//	Super::Tick(DeltaSeconds);
+//	if (!Sim) return;
+//
+//	// Keep sim spacing in sync if user tweaks TileSizeUU in editor during PIE
+//	if (!FMath::IsNearlyEqual(Sim->TileSizeUU, TileSizeUU))
+//	{
+//		Sim->TileSizeUU = TileSizeUU;
+//		Sim->TileRevision++; // force a visual rebuild
+//	}
+//
+//	Accum += DeltaSeconds;
+//	const float Step = Sim->FixedStepSec;
+//	while (Accum >= Step)
+//	{
+//		Accum -= Step;
+//		Sim->StepSim();
+//		StepAlpha = 0.f;
+//	}
+//	StepAlpha = Accum / Step;
+//}
 
 void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 {
-	if (!Sim) return;
-	// Advance your simulation by StepSeconds here
-	// e.g. Sim->AccumulateAndStep(StepSeconds); or fixed-step loops depending on your SimWorldHex implementation.
+	if (!Sim)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver::HandleFixedTickSeconds called but Sim is null."));
+		return;
+	}
+	// Advance simulation by fixed step
+	Sim->StepSim();
+	StepAlpha = 0.f;
+	UE_LOG(LogTemp, Verbose, TEXT("OrbSimDriver: FixedStep %.3fs applied."), StepSeconds);
 }
 
 FVector2D AOrbSimDriver::GetGridOriginXY() const

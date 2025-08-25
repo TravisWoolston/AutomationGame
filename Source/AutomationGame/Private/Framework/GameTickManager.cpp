@@ -1,124 +1,75 @@
 #include "Framework/GameTickManager.h"
-#include "Framework/FixedStepListener.h"
-#include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Engine/Engine.h"
 
 AGameTickManager::AGameTickManager()
 {
     PrimaryActorTick.bCanEverTick = true;
-}
-
-AGameTickManager* AGameTickManager::Get(UObject* WorldContextObject)
-{
-    if (!WorldContextObject) return nullptr;
-    UWorld* W = WorldContextObject->GetWorld();
-    if (!W) return nullptr;
-    for (TActorIterator<AGameTickManager> It(W); It; ++It)
-    {
-        return *It;
-    }
-    return nullptr;
+    PrimaryActorTick.bStartWithTickEnabled = true;
 }
 
 void AGameTickManager::BeginPlay()
 {
     Super::BeginPlay();
-    StepSeconds = (StepsPerSecond > 0.f) ? (1.f / StepsPerSecond) : 0.1f;
-    if (bAutoDiscoverListeners) DiscoverListeners();
-    // Merge explicit listeners (Blueprint-friendly AActor array)
-    for (AActor* A : ExplicitListeners)
-    {
-        if (A && ImplementsFixedStep(A)) Listeners.AddUnique(A);
-    }
+    if (bAutoPlay) Play();
 }
 
 void AGameTickManager::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
-    if (!bPlaying || StepsPerSecond <= 0.f) return;
 
-    if (bUseWorldDelta)
+    //UE_LOG(LogTemp, VeryVerbose, TEXT("GameTickManager::Tick: bPlaying=%d Accum=%.3f"), bPlaying ? 1 : 0, Accum);
+    if (!bPlaying) return;
+
+    Accum += double(DeltaSeconds);
+    const float Step = GetStepSeconds();
+    while (Accum >= Step)
     {
-        Accum += DeltaSeconds;
-        while (Accum >= StepSeconds)
-        {
-            Accum -= StepSeconds;
-            DoOneStep();
-        }
-    }
-    else
-    {
-        for (int32 i=0; i<StepCountPerFrame; ++i)
-        {
-            DoOneStep();
-        }
+        Accum -= Step;
+        OnFixedTick.Broadcast(Step);
+        //UE_LOG(LogTemp, VeryVerbose, TEXT("GameTickManager: Broadcast OnFixedTick step=%.3f"), Step);
     }
 }
 
 void AGameTickManager::Play()
 {
     bPlaying = true;
+    UE_LOG(LogTemp, Log, TEXT("GameTickManager: Play()"));
 }
 
 void AGameTickManager::Pause()
 {
     bPlaying = false;
+    UE_LOG(LogTemp, Log, TEXT("GameTickManager: Pause()"));
 }
 
 void AGameTickManager::Stop()
 {
     bPlaying = false;
-    Accum = 0.f;
+    Accum = 0.0;
+    UE_LOG(LogTemp, Log, TEXT("GameTickManager: Stop()"));
 }
 
-void AGameTickManager::StepTicks(int32 NumSteps)
+void AGameTickManager::StepTicks(int32 NumTicks)
 {
-    if (NumSteps <= 0) return;
-    for (int32 i=0; i<NumSteps; ++i) DoOneStep();
-}
-
-void AGameTickManager::DoOneStep()
-{
-    // Cull dead
-    for (int32 i=Listeners.Num()-1; i>=0; --i)
+    const float Step = GetStepSeconds();
+    for (int32 i = 0; i < FMath::Max(1, NumTicks); ++i)
     {
-        if (!Listeners[i].IsValid())
+        OnFixedTick.Broadcast(Step);
+        UE_LOG(LogTemp, Verbose, TEXT("GameTickManager: StepTicks broadcast %d/%d step=%.3f"), i+1, FMath::Max(1, NumTicks), Step);
+    }
+}
+
+AGameTickManager* AGameTickManager::Get(const UObject* WorldContextObject)
+{
+    if (!WorldContextObject) return nullptr;
+    if (const UWorld* W = WorldContextObject->GetWorld())
+    {
+        for (TActorIterator<AGameTickManager> It(W); It; ++It)
         {
-            Listeners.RemoveAtSwap(i);
+            return *It;
         }
     }
-
-    // Call interface on each live listener
-    for (int32 i=0; i<Listeners.Num(); ++i)
-    {
-        if (AActor* A = Listeners[i].Get())
-        {
-            if (ImplementsFixedStep(A))
-            {
-                IFixedStepListener::Execute_OnFixedStep(A, StepSeconds);
-            }
-        }
-    }
-
-    // Editor/Blueprint hook
-    OnFixedTick.Broadcast(StepSeconds);
-}
-
-bool AGameTickManager::ImplementsFixedStep(AActor* A)
-{
-    return A && A->GetClass()->ImplementsInterface(UFixedStepListener::StaticClass());
-}
-
-void AGameTickManager::DiscoverListeners()
-{
-    UWorld* World = GetWorld();
-    if (!World) return;
-    for (TActorIterator<AActor> It(World); It; ++It)
-    {
-        AActor* A = *It;
-        if (ImplementsFixedStep(A))
-        {
-            Listeners.AddUnique(A);
-        }
-    }
+    return nullptr;
 }

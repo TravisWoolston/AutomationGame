@@ -3,23 +3,11 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "DrawDebugHelpers.h"
 
 AGameManager::AGameManager()
 {
-	PrimaryActorTick.bCanEverTick = true;
-
-	// Create the ISM as root so it's easy to see in editor
-	GridISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("GridISM"));
-	SetRootComponent(GridISM);
-	GridISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	GridISM->SetCollisionResponseToAllChannels(ECR_Block);
-}
-
-void AGameManager::OnConstruction(const FTransform&)
-{
-	// Keep Terrain consistent with exposed radius in the editor
-	GenerateFilledRadius(GridRadius);
-	BuildGridFromTerrain();
+	PrimaryActorTick.bCanEverTick = true; // needed for auto-recenter
 }
 
 void AGameManager::BeginPlay()
@@ -27,47 +15,82 @@ void AGameManager::BeginPlay()
 	Super::BeginPlay();
 	AutoFindRefs();
 	TryLoadInitial();
-	LastGridCenter = GetGridOrigin();
+	EnsureISM();
+	Rebuild();
 
-	// Ensure grid is visible at runtime
-	GenerateFilledRadius(GridRadius);
-	BuildGridFromTerrain();
+	const FVector AnchorLoc = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
+	LastGridCenter = AnchorLoc;
+
+	UE_LOG(LogTemp, Log, TEXT("GameManager::BeginPlay - TickManager=%s, OrbSimDriver=%s, Anchor=(%.1f,%.1f,%.1f), TileSize=%.1f, Radius=%d"),
+		TickManager ? *TickManager->GetName() : TEXT("null"),
+		OrbSimDriver ? *OrbSimDriver->GetName() : TEXT("null"),
+		AnchorLoc.X, AnchorLoc.Y, AnchorLoc.Z, TileSizeUU, Radius);
 }
 
 void AGameManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-
 	if (!bAutoExpandAtRuntime) return;
 
-	const float Dist = FVector::Dist2D(LastGridCenter, GetGridOrigin());
+	const FVector AnchorLoc = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
+	const float Dist = FVector::Dist2D(LastGridCenter, AnchorLoc);
 	if (Dist > RecenterThresholdUU)
 	{
-		// Re-center & rebuild in-place (same radius for now)
-		LastGridCenter = GetGridOrigin();
-		BuildGridFromTerrain();
+		UE_LOG(LogTemp, Verbose, TEXT("GameManager::Tick - recentering grid (%.1f uu)"), Dist);
+		Rebuild();
+		LastGridCenter = AnchorLoc;
 	}
 }
+
+#if WITH_EDITOR
+void AGameManager::OnConstruction(const FTransform&)
+{
+	EnsureISM();
+	Rebuild();
+}
+#endif
 
 void AGameManager::AutoFindRefs()
 {
 	UWorld* W = GetWorld(); if (!W) return;
 
 	if (!TickManager)
+	{
 		for (TActorIterator<AGameTickManager> It(W); It; ++It) { TickManager = *It; break; }
+		if (!TickManager) UE_LOG(LogTemp, Warning, TEXT("GameManager::AutoFindRefs - No GameTickManager found."));
+	}
 
 	if (!OrbSimDriver)
+	{
 		for (TActorIterator<AActor> It(W); It; ++It)
 		{
 			AActor* A = *It; if (!A) continue;
 			if (A->GetClass()->GetName().Contains(TEXT("OrbSimDriver"))) { OrbSimDriver = A; break; }
 		}
-
-	if (!OrbSimDriver && OrbSimDriverClass)
-	{
-		FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		OrbSimDriver = W->SpawnActor<AActor>(OrbSimDriverClass, GetActorTransform(), S);
+		if (!OrbSimDriver && OrbSimDriverClass)
+		{
+			FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			OrbSimDriver = W->SpawnActor<AActor>(OrbSimDriverClass, GetActorTransform(), S);
+			UE_LOG(LogTemp, Log, TEXT("GameManager::AutoFindRefs - Spawned OrbSimDriver: %s"), OrbSimDriver ? *OrbSimDriver->GetName() : TEXT("FAILED"));
+		}
 	}
+}
+
+void AGameManager::SetGridRadius(int32 NewRadius)
+{
+	Radius = FMath::Max(1, NewRadius);
+	UE_LOG(LogTemp, Log, TEXT("GameManager::SetGridRadius - Radius=%d"), Radius);
+	Rebuild();
+}
+
+void AGameManager::SetTileMeshAndMaterial(UStaticMesh* Mesh, UMaterialInterface* Mat)
+{
+	TileMesh = Mesh;
+	TileMaterial = Mat;
+	UE_LOG(LogTemp, Log, TEXT("GameManager::SetTileMeshAndMaterial - Mesh=%s, Mat=%s"),
+		TileMesh ? *TileMesh->GetName() : TEXT("null"),
+		TileMaterial ? *TileMaterial->GetName() : TEXT("null"));
+	Rebuild();
 }
 
 void AGameManager::TryLoadInitial()
@@ -78,100 +101,59 @@ void AGameManager::TryLoadInitial()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("GameManager: OrbSimDriver didn't accept Exec 'LoadMap'."));
 	}
-}
-
-void AGameManager::EnsureGridComponents()
-{
-	if (!GridISM)
+	else
 	{
-		GridISM = NewObject<UInstancedStaticMeshComponent>(this, TEXT("GridISM_Runtime"));
-		GridISM->SetupAttachment(GetRootComponent());
-		GridISM->RegisterComponent();
+		UE_LOG(LogTemp, Log, TEXT("GameManager::TryLoadInitial - Requested map '%s'"), *InitialMapToLoad);
 	}
 }
 
-FVector AGameManager::GetGridOrigin() const
+void AGameManager::EnsureISM()
 {
-	if (GridAnchor)
+	if (!ISM)
 	{
-		return GridAnchor->GetComponentLocation();
-	}
-	return GetActorLocation();
-}
-
-void AGameManager::GenerateFilledRadius(int32 Radius)
-{
-	Terrain.Reset();
-	const int32 R = FMath::Max(0, Radius);
-	for (int q = -R; q <= R; ++q)
-	{
-		for (int r = -R; r <= R; ++r)
+		ISM = FindComponentByClass<UInstancedStaticMeshComponent>();
+		if (!ISM)
 		{
-			const int s = -q - r;
-			if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) <= R)
-			{
-				Terrain.Add(FHex(q, r));
-			}
+			ISM = NewObject<UInstancedStaticMeshComponent>(this, TEXT("GridISM"));
+			ISM->SetupAttachment(GetRootComponent());
+			ISM->RegisterComponent();
 		}
+		ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
 }
 
-void AGameManager::BuildGridFromTerrain()
+void AGameManager::BuildGridInstances()
 {
-	EnsureGridComponents();
-
-	GridISM->ClearInstances();
-	if (TileMesh) GridISM->SetStaticMesh(TileMesh);
-	if (TileMaterial) GridISM->SetMaterial(0, TileMaterial);
+	if (!ISM) return;
+	ISM->ClearInstances();
+	if (TileMesh) ISM->SetStaticMesh(TileMesh);
+	if (TileMaterial) ISM->SetMaterial(0, TileMaterial);
 
 	const float S = FMath::Max(1.f, TileSizeUU);
-	const FVector Origin = GetGridOrigin();
+	const FVector Origin = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
 
-	auto HexToWorld = [S, Origin](const FHex& H)->FVector
+	const auto ToWorld = [S, Origin](int32 Q, int32 R)->FVector
 	{
-		// Pointy-top axial to world (no yaw for now)
-		const float x = S * (1.5f * H.Q);
-		const float y = S * ((FMath::Sqrt(3.f)/2.f) * (2*H.R + H.Q));
-		return Origin + FVector(x, y, 0.f);
+		// pointy-top axial spacing
+		const float X = S * (1.5f * Q);
+		const float Y = S * ((FMath::Sqrt(3.f) / 2.f) * (2 * R + Q));
+		return Origin + FVector(X, Y, 0.f);
 	};
 
-	for (const FHex& H : Terrain)
+	for (int r = -Radius; r <= Radius; ++r)
 	{
-		const FVector P = HexToWorld(H);
-		GridISM->AddInstance(FTransform(FRotator::ZeroRotator, P, FVector::OneVector));
+		for (int q = -Radius; q <= Radius; ++q)
+		{
+			const int s = -q - r;
+			if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue;
+			const FVector P = ToWorld(q, r);
+			ISM->AddInstance(FTransform(FRotator::ZeroRotator, P, FVector(1)));
+		}
 	}
-
-	LastGridCenter = Origin;
 }
 
 void AGameManager::Rebuild()
 {
-	GenerateFilledRadius(GridRadius);
-	BuildGridFromTerrain();
-}
-
-void AGameManager::SetGridRadius(int32 Radius)
-{
-	GridRadius = FMath::Max(0, Radius);
-	Rebuild();
-}
-
-void AGameManager::SetTileMeshAndMaterial(UStaticMesh* Mesh, UMaterialInterface* Mat)
-{
-	TileMesh = Mesh;
-	TileMaterial = Mat;
-	BuildGridFromTerrain();
-}
-
-AGameManager* AGameManager::FindInWorld(const UObject* WorldContextObject)
-{
-	if (!WorldContextObject) return nullptr;
-	if (const UWorld* World = WorldContextObject->GetWorld())
-	{
-		for (TActorIterator<AGameManager> It(World); It; ++It)
-		{
-			return *It;
-		}
-	}
-	return nullptr;
+	EnsureISM();
+	BuildGridInstances();
 }
