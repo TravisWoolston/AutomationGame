@@ -1,97 +1,77 @@
 #include "Actors/OrbSimDriver.h"
+#include "Framework/GameTickManager.h"
+#include "Framework/GameManager.h"
 #include "Sim/SimWorldHex.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
-#include "Framework/GameTickManager.h"
 
 AOrbSimDriver::AOrbSimDriver()
 {
-	PrimaryActorTick.bCanEverTick = false;
-	UE_LOG(LogTemp, Verbose, TEXT("OrbSimDriver ctor: %s"), *GetNameSafe(this));
+	// We still Tick() for StepAlpha interpolation, but we DO NOT advance the sim here.
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = true;
 }
 
 void AOrbSimDriver::BeginPlay()
 {
 	Super::BeginPlay();
-	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver::BeginPlay on %s"), *GetName());
+
+	// Ensure we have a sim object
 	if (!Sim)
 	{
 		Sim = NewObject<USimWorldHex>(this);
-		Sim->Initialize(20);
-		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Created Sim object %s"), *GetNameSafe(Sim));
-	}
-	// Align sim spacing to our knob
-	if (GM == nullptr)
-	{
-		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
+		if (Sim)
 		{
-			GM = *It;
-			break;
+			// Default init radius; change to whatever your game needs.
+			Sim->Initialize(20);
+			// Keep sim's spacing aligned with our knob at start.
+			Sim->TileSizeUU = TileSizeUU;
 		}
-		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Resolved GM=%s"), *GetNameSafe(GM));
-	}
-	if (Sim && GM != nullptr) {
-		Sim->TileSizeUU = GM->TileSizeUU;
-		TileSizeUU = Sim->TileSizeUU;
-		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: TileSize set to %.2f from GM"), TileSizeUU);
 	}
 
-	// Try to bind to the global GameTickManager
+	// Try to auto-find a GameManager if you want to sync knobs (optional)
+	if (!GM)
+	{
+		if (UWorld* W = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(W); It; ++It) { GM = *It; break; }
+		}
+	}
+
+	// Subscribe to fixed tick
 	if (AGameTickManager* M = AGameTickManager::Get(this))
 	{
-		M->OnFixedTick.AddDynamic(this, &AOrbSimDriver::HandleFixedTickSeconds);
-		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Bound to GameTickManager %s"), *GetNameSafe(M));
+		if (!bSubscribed)
+		{
+			M->OnFixedTick.AddDynamic(this, &AOrbSimDriver::HandleFixedTickSeconds);
+			bSubscribed = true;
+			UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Bound to GameTickManager::OnFixedTick."));
+		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: No GameTickManager found. Sim will only advance via Tick()."));
+		UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: No GameTickManager found. Simulation will not advance."));
 	}
 }
 
-//void AOrbSimDriver::Tick(float DeltaSeconds)
-//{
-//	Super::Tick(DeltaSeconds);
-//	if (!Sim) return;
-//
-//	// Keep sim spacing in sync if user tweaks TileSizeUU in editor during PIE
-//	if (!FMath::IsNearlyEqual(Sim->TileSizeUU, TileSizeUU))
-//	{
-//		Sim->TileSizeUU = TileSizeUU;
-//		Sim->TileRevision++; // force a visual rebuild
-//	}
-//
-//	Accum += DeltaSeconds;
-//	const float Step = Sim->FixedStepSec;
-//	while (Accum >= Step)
-//	{
-//		Accum -= Step;
-//		Sim->StepSim();
-//		StepAlpha = 0.f;
-//	}
-//	StepAlpha = Accum / Step;
-//}
-
-void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
+void AOrbSimDriver::Tick(float DeltaSeconds)
 {
-	if (!Sim)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver::HandleFixedTickSeconds called but Sim is null."));
-		return;
-	}
-	// Advance simulation by fixed step
+	Super::Tick(DeltaSeconds);
+	if (!Sim) return;
+
+	// DO NOT call Sim->StepSim() here. Only interpolate for rendering.
+	const float Fixed = FMath::Max(KINDA_SMALL_NUMBER, Sim->FixedStepSec);
+	StepAlpha += DeltaSeconds / Fixed;
+	if (StepAlpha > 1.f) StepAlpha = 1.f; // clamp; reset to 0 in HandleFixedTickSeconds
+}
+
+void AOrbSimDriver::HandleFixedTickSeconds(float /*StepSeconds*/)
+{
+	if (!Sim) return;
+
+	// Advance exactly one fixed step, then reset alpha so visuals can lerp from fresh state.
 	Sim->StepSim();
 	StepAlpha = 0.f;
-	UE_LOG(LogTemp, Verbose, TEXT("OrbSimDriver: FixedStep %.3fs applied."), StepSeconds);
-}
-
-FVector2D AOrbSimDriver::GetGridOriginXY() const
-{
-	if (GridAnchor)
-	{
-		const FVector L = GridAnchor->GetActorLocation();
-		return FVector2D(L.X, L.Y);
-	}
-	return FVector2D::ZeroVector;
 }
 
 float AOrbSimDriver::GetGridPlaneZ(const AActor* FallbackOwner) const
