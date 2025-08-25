@@ -19,7 +19,8 @@ enum class EArmCmd : uint8
 	Drop      UMETA(DisplayName = "Drop"),
 	RotateCW  UMETA(DisplayName = "Rotate CW (60° * Arg)"),
 	RotateCCW UMETA(DisplayName = "Rotate CCW (60° * Arg)"),
-	Wait      UMETA(DisplayName = "Wait (ticks = Arg)")
+	Wait      UMETA(DisplayName = "Wait (ticks = Arg)"),
+	Reset     UMETA(DisplayName = "Reset to Start (macro)") // <— added
 };
 
 /** One instruction + small integer argument (dir steps, wait ticks, etc.) */
@@ -127,9 +128,12 @@ private:
 
 	// Smooth yaw animation across fixed steps
 	float StepSecondsCur = 0.f;
-	float StepAlpha = 0.f;      // 0..1 inside current fixed step (local)
-	float LastYawDeg = 0.f;      // snapshot at step start
-	float CurrYawDeg = 0.f;      // target yaw derived from FacingDir
+	float StepAlpha = 0.f;        // 0..1 inside current fixed step (local)
+	float LastYawDeg = 0.f;       // snapshot at step start
+	float CurrYawDeg = 0.f;       // target yaw derived from FacingDir
+
+	// Remember where Reset should point us
+	uint8 StartFacingDir = 0;     // captured at BeginPlay
 
 	// Helpers
 	void EnsureComps();
@@ -140,4 +144,5 @@ private:
 
 	void StepProgram();                               // advance one instruction (or wait)
 	void ApplyRotateSteps(int32 StepsSigned);         // +CW, -CCW
+	void ExpandResetAtPC();                           // turn Reset into Drop(if holding)+Rotate
 };
