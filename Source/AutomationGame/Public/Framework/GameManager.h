@@ -2,13 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Actors/BasicArm.h"
 #include "GameManager.generated.h"
 
 class AGameTickManager;
 class UInstancedStaticMeshComponent;
 class UStaticMesh;
 class UMaterialInterface;
-
+class AOrbSimDriver;
 /** Lightweight coordinator that also renders a simple hex grid via ISM. */
 UCLASS(BlueprintType)
 class AUTOMATIONGAME_API AGameManager : public AActor
@@ -17,15 +18,24 @@ class AUTOMATIONGAME_API AGameManager : public AActor
 public:
 	AGameManager();
 
-	// ------------ References ------------
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Factory|Arms")
+	TSubclassOf<ABasicArm> BasicArmClass;
+
+	/** Optional default program to use when placing from input. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Factory|Arms")
+	TArray<FArmInstr> DefaultArmProgram;
+
+	UFUNCTION(BlueprintCallable, Category = "Factory|Arms")
+	ABasicArm* SpawnBasicArmAt(const FHex& Hex, uint8 FacingDir, const TArray<FArmInstr>& Program, bool bLoop = true);
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Refs")
 	AGameTickManager* TickManager = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Refs")
-	AActor* OrbSimDriver = nullptr;
+	AOrbSimDriver* OrbSimDriver = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Refs")
-	TSubclassOf<AActor> OrbSimDriverClass;
+	TSubclassOf<AOrbSimDriver> OrbSimDriverClass;
 
 	// ------------ Startup ------------
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Startup")
@@ -33,11 +43,11 @@ public:
 
 	// ------------ Grid Visual ------------
 	/** Center-to-center spacing in uu. */
-	UPROPERTY(EditAnywhere, Category = "Grid", meta=(ClampMin="1.0"))
+	UPROPERTY(EditAnywhere, Category = "Grid", meta = (ClampMin = "1.0"))
 	float TileSizeUU = 120.f;
 
 	/** Radius in hexes (axial distance). */
-	UPROPERTY(EditAnywhere, Category = "Grid", meta=(ClampMin="1", UIMin="1"))
+	UPROPERTY(EditAnywhere, Category = "Grid", meta = (ClampMin = "1", UIMin = "1"))
 	int32 Radius = 12;
 
 	/** Optional anchor actor for the grid; if null uses this actor. */

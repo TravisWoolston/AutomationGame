@@ -3,6 +3,9 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Actors/BasicArm.h"
+#include "Actors/OrbSimDriver.h"
+#include "Sim/HexCoord.h"
 #include "DrawDebugHelpers.h"
 
 AGameManager::AGameManager()
@@ -55,24 +58,15 @@ void AGameManager::AutoFindRefs()
 	UWorld* W = GetWorld(); if (!W) return;
 
 	if (!TickManager)
-	{
 		for (TActorIterator<AGameTickManager> It(W); It; ++It) { TickManager = *It; break; }
-		if (!TickManager) UE_LOG(LogTemp, Warning, TEXT("GameManager::AutoFindRefs - No GameTickManager found."));
-	}
 
 	if (!OrbSimDriver)
+		for (TActorIterator<AOrbSimDriver> It(W); It; ++It) { OrbSimDriver = *It; break; }  // <-- typed
+
+	if (!OrbSimDriver && OrbSimDriverClass)
 	{
-		for (TActorIterator<AActor> It(W); It; ++It)
-		{
-			AActor* A = *It; if (!A) continue;
-			if (A->GetClass()->GetName().Contains(TEXT("OrbSimDriver"))) { OrbSimDriver = A; break; }
-		}
-		if (!OrbSimDriver && OrbSimDriverClass)
-		{
-			FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-			OrbSimDriver = W->SpawnActor<AActor>(OrbSimDriverClass, GetActorTransform(), S);
-			UE_LOG(LogTemp, Log, TEXT("GameManager::AutoFindRefs - Spawned OrbSimDriver: %s"), OrbSimDriver ? *OrbSimDriver->GetName() : TEXT("FAILED"));
-		}
+		FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		OrbSimDriver = W->SpawnActor<AOrbSimDriver>(OrbSimDriverClass, GetActorTransform(), S); // <-- typed
 	}
 }
 
@@ -133,12 +127,12 @@ void AGameManager::BuildGridInstances()
 	const FVector Origin = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
 
 	const auto ToWorld = [S, Origin](int32 Q, int32 R)->FVector
-	{
-		// pointy-top axial spacing
-		const float X = S * (1.5f * Q);
-		const float Y = S * ((FMath::Sqrt(3.f) / 2.f) * (2 * R + Q));
-		return Origin + FVector(X, Y, 0.f);
-	};
+		{
+			// pointy-top axial spacing
+			const float X = S * (1.5f * Q);
+			const float Y = S * ((FMath::Sqrt(3.f) / 2.f) * (2 * R + Q));
+			return Origin + FVector(X, Y, 0.f);
+		};
 
 	for (int r = -Radius; r <= Radius; ++r)
 	{
@@ -156,4 +150,41 @@ void AGameManager::Rebuild()
 {
 	EnsureISM();
 	BuildGridInstances();
+}
+ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop)
+{
+	if (!BasicArmClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: BasicArmClass not set; cannot spawn."));
+		return nullptr;
+	}
+	if (!OrbSimDriver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: OrbSimDriver not set; cannot compute grid transform for arm."));
+		return nullptr;
+	}
+
+	// Compute world from grid
+	const float Tile = OrbSimDriver->GetTileSize();
+	const float GridYaw = OrbSimDriver->GetGridYaw();
+	const EHexOrientation Ori = OrbSimDriver->GetGridOrientation();
+	const AActor* Anchor = OrbSimDriver->GetGridAnchor();
+	const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
+	const FVector2D XY = HexCoord::AxialToXY(FHexAxial(Hex.Q, Hex.R), Tile, Ori);
+	const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYaw);
+	const FVector   Loc = AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
+	const float     Yaw = GridYaw + 60.f * float(Facing % 6);
+
+	FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ABasicArm* Arm = GetWorld()->SpawnActor<ABasicArm>(BasicArmClass, FTransform(FRotator(0, Yaw, 0), Loc), S);
+	if (!Arm) return nullptr;
+
+	Arm->Driver = OrbSimDriver;
+	Arm->Q = Hex.Q;
+	Arm->R = Hex.R;
+	Arm->FacingDir = Facing;
+	Arm->SetProgram(Program, bLoop);
+
+	return Arm;
 }

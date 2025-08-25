@@ -7,6 +7,8 @@
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Framework/GameManager.h"    // for SpawnBasicArmAt (below)
+#include "Actors/BasicArm.h"          // only for types / logs (optional)
 #include "DrawDebugHelpers.h"
 
 UHexPlacementComponent::UHexPlacementComponent()
@@ -80,12 +82,12 @@ bool UHexPlacementComponent::HitPlane(FVector& OutWorld) const
 	}
 	return true;
 }
-
 void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 {
 	UWorld* W = GetWorld();
 	if ((!Driver || !Sim) && W) ReacquireSimIfNeeded(W, Driver, Sim);
-	if (!Sim) {
+	if (!Sim)
+	{
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, TEXT("No Sim/Driver found; cannot place."));
 		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: missing Sim/Driver; cannot place."));
 		return;
@@ -97,32 +99,56 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		? FVector2D(Anchor->GetActorLocation().X, Anchor->GetActorLocation().Y)
 		: FVector2D::ZeroVector;
 
-	FVector2D P(World.X - OriginXY.X, World.Y - OriginXY.Y);
-
 	const float Yaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 
+	FVector2D P(World.X - OriginXY.X, World.Y - OriginXY.Y);
 	const FVector2D Local = HexCoord::Rotate2D(P, -Yaw);
 	const FHexAxial A = HexCoord::XYToAxialRound(Local, Tile, Ori);
 
-	FTile T;
+	FTile T{};
 	switch (PlaceKind)
 	{
 	case EPlaceKind::Input:  T = FTile{ ETileKind::Input,  0 }; break;
 	case EPlaceKind::Output: T = FTile{ ETileKind::Output, 0 }; break;
 	case EPlaceKind::Belt:   T = FTile{ ETileKind::Belt,   (uint8)BeltDir }; break;
-	default: return;
+	case EPlaceKind::Arm:
+	{
+		// spawn a BasicArm via the GameManager helper (if available)
+		AActor* GMActor = nullptr;
+		for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+		{
+			if (It->IsA<AGameManager>()) { GMActor = *It; break; }
+		}
+		AGameManager* GM = Cast<AGameManager>(GMActor);
+		if (GM)
+		{
+			GM->SpawnBasicArmAt(FHex{ A.Q, A.R }, BeltDir % 6, TArray<FArmInstr>(), true);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn Arm; no GameManager found."));
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red,
+					TEXT("Cannot spawn Arm; no GameManager found."));
+			}
+		}
+		return; // skip the Sim placement below
 	}
+	default:
+		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: PlaceKind not set; skipping."));
+		return;
+	} // <-- important: closes the switch
+
 	Sim->PlaceTile(FHex{ A.Q, A.R }, T);
 
-	// Logging without referencing internal fields that may not exist on FTile
 	if (bDebug)
 	{
 		if (T.Kind == ETileKind::Belt)
 		{
 			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Placed Belt at Hex(%d,%d) Dir=%d"),
 				A.Q, A.R, (int32)BeltDir);
-
 			if (GEngine)
 			{
 				GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Cyan,
@@ -134,7 +160,6 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			const FString KindName = StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind);
 			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Placed %s at Hex(%d,%d)"),
 				*KindName, A.Q, A.R);
-
 			if (GEngine)
 			{
 				GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Cyan,
@@ -172,7 +197,6 @@ void UHexPlacementComponent::DoRemoveAt(const FVector& World)
 			FString::Printf(TEXT("Removed tile at Hex(%d,%d)"), A.Q, A.R));
 	}
 }
-
 void UHexPlacementComponent::HandlePlace(bool bPressed)
 {
 	if (!bPressed) return;
