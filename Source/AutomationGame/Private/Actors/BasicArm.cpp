@@ -4,6 +4,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 
+// Top of file (after includes)
+static inline float NormDeg(float D) { return FMath::UnwindDegrees(D); }
 namespace { inline int32 Mod6(int32 V) { return (V % 6 + 6) % 6; } }
 
 ABasicArm::ABasicArm()
@@ -27,11 +29,11 @@ void ABasicArm::OnConstruction(const FTransform& Transform)
 	EnsureComps();
 	RefreshMeshes();
 
-	// Keep CurrYaw in sync with FacingDir if edited in details
 	CurrYawDeg = DirToYaw(FacingDir);
-	LastYawDeg = CurrYawDeg;
+	LastYawDeg = CurrYawDeg;                 // lock start == target
 	RefreshPose(1.f);
 }
+
 
 void ABasicArm::BeginPlay()
 {
@@ -40,23 +42,30 @@ void ABasicArm::BeginPlay()
 	EnsureComps();
 	RefreshMeshes();
 
-	// Capture the starting direction for Reset
 	StartFacingDir = FacingDir;
+
 	CurrYawDeg = DirToYaw(FacingDir);
 	LastYawDeg = CurrYawDeg;
 
-	// Hook shared fixed tick
+	Sim = (Driver ? Driver->GetSim() : nullptr);                        // <- new
+	if (!Sim)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BasicArm '%s': No Sim found; Grab/Drop will be stubbed."), *GetName()); // <- new
+	}
 	if (AGameTickManager* M = AGameTickManager::Get(this))
 	{
+		// guard against double-binding
+		M->OnFixedTick.RemoveDynamic(this, &ABasicArm::HandleFixedTickSeconds);
 		M->OnFixedTick.AddDynamic(this, &ABasicArm::HandleFixedTickSeconds);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("BasicArm '%s': No GameTickManager found; will not step."), *GetName());
+		UE_LOG(LogTemp, Warning, TEXT("BasicArm '%s': No GameTickManager; will not step."), *GetName());
 	}
 
 	RefreshPose(1.f);
 }
+
 
 void ABasicArm::Tick(float DeltaSeconds)
 {
@@ -119,15 +128,18 @@ FVector ABasicArm::HexToWorld(const FHex& H) const
 float ABasicArm::DirToYaw(uint8 Dir) const
 {
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
-	return GridYaw + 60.f * float(Dir % 6);
+	return NormDeg(GridYaw + 60.f * float(Dir % 6));
 }
+
 
 void ABasicArm::RefreshPose(float InAlpha)
 {
 	const FVector BaseWorld = HexToWorld(FHex(Q, R)) + FVector(0, 0, BaseZ);
 
-	// Yaw interpolation
-	const float Yaw = FMath::Lerp(LastYawDeg, CurrYawDeg, InAlpha);
+	const float StartYaw = NormDeg(LastYawDeg);
+	const float TargetYaw = NormDeg(CurrYawDeg);
+	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
+	const float Yaw = NormDeg(StartYaw + Delta * InAlpha);
 	const FRotator BaseRot(0.f, Yaw, 0.f);
 
 	if (BaseComp)
@@ -136,7 +148,6 @@ void ABasicArm::RefreshPose(float InAlpha)
 		BaseComp->SetWorldRotation(BaseRot);
 	}
 
-	// Hand sits forward along the facing direction
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 	const FVector Forward = FRotator(0.f, Yaw, 0.f).RotateVector(FVector(1, 0, 0));
 	const FVector HandWorld = BaseWorld + Forward * (Tile * HandReachUU);
@@ -146,6 +157,37 @@ void ABasicArm::RefreshPose(float InAlpha)
 		HandComp->SetWorldLocation(HandWorld);
 		HandComp->SetWorldRotation(BaseRot);
 	}
+}
+void ABasicArm::TryGrabAtTarget()
+{
+	const FHex H = ComputeTargetHex();
+	if (!Sim)
+	{
+		// Stub: pretend success so you can test arm logic
+		bHolding = true;
+		UE_LOG(LogTemp, Log, TEXT("BasicArm '%s': [STUB] Grab at (%d,%d) -> holding=1"), *GetName(), H.Q, H.R);
+		return;
+	}
+
+	// TODO: replace with real Sim call when available, e.g. Sim->TryArmPick(H, OutPayload)
+	// For now: optimistic toggle with log
+	bHolding = true;
+	UE_LOG(LogTemp, Log, TEXT("BasicArm '%s': Grab at (%d,%d) -> holding=1"), *GetName(), H.Q, H.R);
+}
+
+void ABasicArm::TryDropAtTarget()
+{
+	const FHex H = ComputeTargetHex();
+	if (!Sim)
+	{
+		bHolding = false;
+		UE_LOG(LogTemp, Log, TEXT("BasicArm '%s': [STUB] Drop at (%d,%d) -> holding=0"), *GetName(), H.Q, H.R);
+		return;
+	}
+
+	// TODO: replace with real Sim call when available, e.g. Sim->TryArmPlace(H, Payload)
+	bHolding = false;
+	UE_LOG(LogTemp, Log, TEXT("BasicArm '%s': Drop at (%d,%d) -> holding=0"), *GetName(), H.Q, H.R);
 }
 
 void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= true*/)
@@ -186,23 +228,58 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 {
 	if (!bRunning) { StepAlpha = 1.f; return; }
 
-	// Begin a new step interpolation window
 	StepSecondsCur = StepSeconds;
+
+	// Lock the rendered yaw as the new "start" of the step (wrap-safe)
+	const float RenderedNow = NormDeg(
+		LastYawDeg + FMath::FindDeltaAngleDegrees(LastYawDeg, CurrYawDeg) * StepAlpha
+	);
+	LastYawDeg = RenderedNow;
 	StepAlpha = 0.f;
-	LastYawDeg = CurrYawDeg;
 
-	StepProgram();
-
-	// Recompute current yaw from Facing
-	CurrYawDeg = DirToYaw(FacingDir);
+	StepProgram();   // may update CurrYawDeg
 }
+
 
 void ABasicArm::ApplyRotateSteps(int32 StepsSigned)
 {
 	if (StepsSigned == 0) return;
 	FacingDir = uint8(Mod6(int32(FacingDir) + StepsSigned));
+	CurrYawDeg = NormDeg(DirToYaw(FacingDir));
 }
 
+FHex ABasicArm::DirStep(uint8 Dir) const  // returns axial step for the given dir
+{
+	const uint8 D = Dir % 6;
+	// Our Dir->Yaw uses 0=+X (east), +60° CW each step. For axial:
+	// Pointy-top neighbors (q,r): E(1,0), NE(1,-1), NW(0,-1), W(-1,0), SW(-1,1), SE(0,1)
+	static const FHex Pointy[6] = {
+		FHex(1,  0), FHex(1, -1), FHex(0, -1),
+		FHex(-1,  0), FHex(-1,  1), FHex(0,  1)
+	};
+	// Flat-top neighbors if you ever switch orientation:
+	// E(1,-1), ESE(1,0), WSE(0,1), W(-1,1), WNW(-1,0), ENW(0,-1)
+	static const FHex Flat[6] = {
+		FHex(1, -1), FHex(1,  0), FHex(0,  1),
+		FHex(-1,  1), FHex(-1,  0), FHex(0, -1)
+	};
+
+	const bool bPointy = !Driver || Driver->GetGridOrientation() == EHexOrientation::PointyTop;
+	return bPointy ? Pointy[D] : Flat[D];
+}
+
+FHex ABasicArm::ComputeTargetHex() const
+{
+	FHex T(Q, R);
+	const FHex Step = DirStep(FacingDir);
+	const int32 N = FMath::Max(1, ReachTiles);
+	for (int32 i = 0; i < N; ++i)
+	{
+		T.Q += Step.Q;
+		T.R += Step.R;
+	}
+	return T;
+}
 void ABasicArm::ExpandResetAtPC()
 {
 	// Drop first if holding
@@ -271,20 +348,12 @@ void ABasicArm::StepProgram()
 		break;
 
 	case EArmCmd::Grab:
-		if (!bHolding)
-		{
-			// TODO: interact with Sim to actually pick up
-			bHolding = true;
-		}
+		if (!bHolding) { TryGrabAtTarget(); }  // <- new
 		++PC;
 		break;
 
 	case EArmCmd::Drop:
-		if (bHolding)
-		{
-			// TODO: interact with Sim to actually place
-			bHolding = false;
-		}
+		if (bHolding) { TryDropAtTarget(); }   // <- new
 		++PC;
 		break;
 

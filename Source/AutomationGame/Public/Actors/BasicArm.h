@@ -9,7 +9,7 @@
 class AOrbSimDriver;
 class AGameTickManager;
 class UStaticMeshComponent;
-
+class USimWorldHex;
 /** Discrete arm instructions (Opus Magnum–style, kept simple to start) */
 UENUM(BlueprintType)
 enum class EArmCmd : uint8
@@ -75,8 +75,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	float BaseZ = 10.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
-	float HandReachUU = 0.6f; // reach as a fraction of tile size
+	/** Tile-based reach: 1 = adjacent target tile center. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", meta = (ClampMin = 1)) // <- new
+		int32 ReachTiles = 1;                                                               // <- new
+
+	/** (Legacy) scalar reach fraction — now ignored by default. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", AdvancedDisplay)   // <- new
+		float HandReachUU = 0.6f; // kept for backward compat; not used when ReachTiles>=1 // <- new
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector BaseScale = FVector(1.f);
@@ -141,6 +146,14 @@ private:
 	void RefreshPose(float InAlpha);                 // update transforms
 	FVector HexToWorld(const FHex& H) const;         // grid → world
 	float   DirToYaw(uint8 Dir) const;               // grid yaw + 60° steps
+
+	FHex    ComputeTargetHex() const;                 // <- new
+	FHex    DirStep(uint8 Dir) const;                 // <- new
+	void    TryGrabAtTarget();                        // <- new
+	void    TryDropAtTarget();
+	// Cached references
+	UPROPERTY(Transient) USimWorldHex* Sim = nullptr; // <- new
+
 
 	void StepProgram();                               // advance one instruction (or wait)
 	void ApplyRotateSteps(int32 StepsSigned);         // +CW, -CCW
