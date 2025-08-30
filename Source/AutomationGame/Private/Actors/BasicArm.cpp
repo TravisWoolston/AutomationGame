@@ -3,14 +3,32 @@
 #include "Framework/GameTickManager.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "AGLogChannels.h"
+#include "Sim/SimWorldHex.h"
+#include "DrawDebugHelpers.h"
 
-// Top of file (after includes)
 static inline float NormDeg(float D) { return FMath::UnwindDegrees(D); }
 namespace { inline int32 Mod6(int32 V) { return (V % 6 + 6) % 6; } }
+
+static const TCHAR* CmdName(EArmCmd C)
+{
+	switch (C)
+	{
+	case EArmCmd::NoOp:      return TEXT("NoOp");
+	case EArmCmd::Grab:      return TEXT("Grab");
+	case EArmCmd::Drop:      return TEXT("Drop");
+	case EArmCmd::RotateCW:  return TEXT("RotateCW");
+	case EArmCmd::RotateCCW: return TEXT("RotateCCW");
+	case EArmCmd::Wait:      return TEXT("Wait");
+	case EArmCmd::Reset:     return TEXT("Reset");
+	default:                 return TEXT("<?>");
+	}
+}
 
 ABasicArm::ABasicArm()
 {
 	PrimaryActorTick.bCanEverTick = true;   // we interpolate visuals in Tick
+
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("ArmRoot"));
 	SetRootComponent(Root);
 
@@ -21,6 +39,11 @@ ABasicArm::ABasicArm()
 	HandComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ArmHand"));
 	HandComp->SetupAttachment(BaseComp);
 	HandComp->SetMobility(EComponentMobility::Movable);
+
+	HeldOrbComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HeldOrbPreview"));
+	HeldOrbComp->SetupAttachment(HandComp);
+	HeldOrbComp->SetMobility(EComponentMobility::Movable);
+	HeldOrbComp->SetVisibility(false, true);
 }
 
 void ABasicArm::OnConstruction(const FTransform& Transform)
@@ -34,7 +57,6 @@ void ABasicArm::OnConstruction(const FTransform& Transform)
 	RefreshPose(1.f);
 }
 
-
 void ABasicArm::BeginPlay()
 {
 	Super::BeginPlay();
@@ -44,28 +66,40 @@ void ABasicArm::BeginPlay()
 
 	StartFacingDir = FacingDir;
 
-	CurrYawDeg = DirToYaw(FacingDir);
-	LastYawDeg = CurrYawDeg;
-
-	Sim = (Driver ? Driver->GetSim() : nullptr);                        // <- new
+	// auto-find driver if not set
+	if (!Driver)
+	{
+		if (UWorld* W = GetWorld())
+		{
+			Driver = AOrbSimDriver::Find(W);
+		}
+	}
+	Sim = (Driver ? Driver->GetSim() : nullptr);
 	if (!Sim)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("BasicArm '%s': No Sim found; Grab/Drop will be stubbed."), *GetName()); // <- new
+		UE_LOG(LogAGArm, Warning, TEXT("BasicArm '%s': No Sim found; Grab/Drop will be visual only."), *GetName());
 	}
+
+	// hook shared fixed tick
 	if (AGameTickManager* M = AGameTickManager::Get(this))
 	{
-		// guard against double-binding
 		M->OnFixedTick.RemoveDynamic(this, &ABasicArm::HandleFixedTickSeconds);
 		M->OnFixedTick.AddDynamic(this, &ABasicArm::HandleFixedTickSeconds);
+		UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Bound to GameTickManager '%s'"),
+			*GetName(), *M->GetName()); // <— add this line
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("BasicArm '%s': No GameTickManager; will not step."), *GetName());
+		UE_LOG(LogAGArm, Warning, TEXT("BasicArm '%s': No GameTickManager; will not step."), *GetName());
 	}
 
+	UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s' BeginPlay: Q=%d R=%d Facing=%d Driver=%s"),
+		*GetName(), Q, R, (int32)FacingDir, Driver ? *Driver->GetName() : TEXT("null"));
+
+	CurrYawDeg = DirToYaw(FacingDir);
+	LastYawDeg = CurrYawDeg;
 	RefreshPose(1.f);
 }
-
 
 void ABasicArm::Tick(float DeltaSeconds)
 {
@@ -74,7 +108,8 @@ void ABasicArm::Tick(float DeltaSeconds)
 	// Smooth between last and current yaw each fixed step
 	if (StepSecondsCur > 0.f)
 	{
-		StepAlpha = FMath::Clamp(StepAlpha + DeltaSeconds / StepSecondsCur, 0.f, 1.f);
+		StepAlpha += DeltaSeconds / StepSecondsCur;
+		StepAlpha = FMath::Clamp(StepAlpha, 0.f, 1.f);
 	}
 	else
 	{
@@ -82,6 +117,44 @@ void ABasicArm::Tick(float DeltaSeconds)
 	}
 
 	RefreshPose(StepAlpha);
+
+	// --- Debug: Draw line to targeted tile ---
+	if (Driver)
+	{
+		FVector BaseWorld = HexToWorld(FHex(Q, R));
+		FHex TargetHex = ComputeTargetHex();
+		FVector TargetWorld = HexToWorld(TargetHex);
+
+		// Determine line color based on orb presence
+		FColor LineColor = FColor::Red;
+		if (Sim && Sim->HasOrbAt(TargetHex))
+		{
+			LineColor = FColor::Green;
+		}
+
+		DrawDebugLine(
+			GetWorld(),
+			BaseWorld,
+			TargetWorld,
+			LineColor,
+			false,      // persistent lines
+			-1.0f,      // lifetime (single frame)
+			0,          // depth priority
+			4.0f        // thickness
+		);
+
+		DrawDebugSphere(
+			GetWorld(),
+			TargetWorld,
+			10.0f,      // radius
+			12,         // segments
+			FColor::Yellow,
+			false,
+			-1.0f,
+			0,
+			2.0f
+		);
+	}
 }
 
 void ABasicArm::EnsureComps()
@@ -95,7 +168,7 @@ void ABasicArm::EnsureComps()
 	if (!BaseComp)
 	{
 		BaseComp = NewObject<UStaticMeshComponent>(this, TEXT("ArmBase"));
-		BaseComp->SetupAttachment(GetRootComponent() ? GetRootComponent() : (USceneComponent*)CreateDefaultSubobject<USceneComponent>(TEXT("Root")));
+		BaseComp->SetupAttachment(GetRootComponent());
 		BaseComp->RegisterComponent();
 	}
 	if (!HandComp)
@@ -104,12 +177,26 @@ void ABasicArm::EnsureComps()
 		HandComp->SetupAttachment(BaseComp);
 		HandComp->RegisterComponent();
 	}
+	if (!HeldOrbComp)
+	{
+		HeldOrbComp = NewObject<UStaticMeshComponent>(this, TEXT("HeldOrbPreview"));
+		HeldOrbComp->SetupAttachment(HandComp);
+		HeldOrbComp->RegisterComponent();
+		HeldOrbComp->SetVisibility(false, true);
+	}
 }
 
 void ABasicArm::RefreshMeshes()
 {
 	if (BaseComp) { BaseComp->SetStaticMesh(BaseMesh); BaseComp->SetRelativeScale3D(BaseScale); }
 	if (HandComp) { HandComp->SetStaticMesh(HandMesh); HandComp->SetRelativeScale3D(HandScale); }
+
+	if (HeldOrbComp)
+	{
+		HeldOrbComp->SetStaticMesh(HeldOrbMesh);
+		HeldOrbComp->SetRelativeScale3D(HeldOrbScale);
+		HeldOrbComp->SetVisibility(bHolding && HeldOrbMesh != nullptr, true);
+	}
 }
 
 FVector ABasicArm::HexToWorld(const FHex& H) const
@@ -131,7 +218,6 @@ float ABasicArm::DirToYaw(uint8 Dir) const
 	return NormDeg(GridYaw + 60.f * float(Dir % 6));
 }
 
-
 void ABasicArm::RefreshPose(float InAlpha)
 {
 	const FVector BaseWorld = HexToWorld(FHex(Q, R)) + FVector(0, 0, BaseZ);
@@ -140,7 +226,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 	const float TargetYaw = NormDeg(CurrYawDeg);
 	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
 	const float Yaw = NormDeg(StartYaw + Delta * InAlpha);
-	const FRotator BaseRot(0.f, Yaw, 0.f);
+	const FRotator BaseRot(0.f, Yaw + BaseYawOffsetDeg, 0.f);
 
 	if (BaseComp)
 	{
@@ -148,46 +234,16 @@ void ABasicArm::RefreshPose(float InAlpha)
 		BaseComp->SetWorldRotation(BaseRot);
 	}
 
+	// Hand position (purely cosmetic)
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
-	const FVector Forward = FRotator(0.f, Yaw, 0.f).RotateVector(FVector(1, 0, 0));
+	const FRotator HandRot(0.f, Yaw, 0.f);
+	const FVector Forward = HandRot.RotateVector(FVector(1, 0, 0));
 	const FVector HandWorld = BaseWorld + Forward * (Tile * HandReachUU);
-
 	if (HandComp)
 	{
 		HandComp->SetWorldLocation(HandWorld);
 		HandComp->SetWorldRotation(BaseRot);
 	}
-}
-void ABasicArm::TryGrabAtTarget()
-{
-	const FHex H = ComputeTargetHex();
-	if (!Sim)
-	{
-		// Stub: pretend success so you can test arm logic
-		bHolding = true;
-		UE_LOG(LogTemp, Log, TEXT("BasicArm '%s': [STUB] Grab at (%d,%d) -> holding=1"), *GetName(), H.Q, H.R);
-		return;
-	}
-
-	// TODO: replace with real Sim call when available, e.g. Sim->TryArmPick(H, OutPayload)
-	// For now: optimistic toggle with log
-	bHolding = true;
-	UE_LOG(LogTemp, Log, TEXT("BasicArm '%s': Grab at (%d,%d) -> holding=1"), *GetName(), H.Q, H.R);
-}
-
-void ABasicArm::TryDropAtTarget()
-{
-	const FHex H = ComputeTargetHex();
-	if (!Sim)
-	{
-		bHolding = false;
-		UE_LOG(LogTemp, Log, TEXT("BasicArm '%s': [STUB] Drop at (%d,%d) -> holding=0"), *GetName(), H.Q, H.R);
-		return;
-	}
-
-	// TODO: replace with real Sim call when available, e.g. Sim->TryArmPlace(H, Payload)
-	bHolding = false;
-	UE_LOG(LogTemp, Log, TEXT("BasicArm '%s': Drop at (%d,%d) -> holding=0"), *GetName(), H.Q, H.R);
 }
 
 void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= true*/)
@@ -212,12 +268,10 @@ void ABasicArm::ResetProgram()
 {
 	PC = 0;
 	WaitLeft = 0;
-	// Do not change FacingDir or bHolding here; Reset is a program cmd for that.
 }
 
 void ABasicArm::ExecuteCurrent()
 {
-	// One immediate step ignoring Wait
 	const int32 SavedWait = WaitLeft;
 	WaitLeft = 0;
 	StepProgram();
@@ -235,30 +289,30 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 		LastYawDeg + FMath::FindDeltaAngleDegrees(LastYawDeg, CurrYawDeg) * StepAlpha
 	);
 	LastYawDeg = RenderedNow;
-	StepAlpha = 0.f;
+	StepAlpha = 0.f; // Reset only when simulation advances
 
 	StepProgram();   // may update CurrYawDeg
 }
 
-
 void ABasicArm::ApplyRotateSteps(int32 StepsSigned)
 {
 	if (StepsSigned == 0) return;
+	const uint8 Old = FacingDir;
 	FacingDir = uint8(Mod6(int32(FacingDir) + StepsSigned));
-	CurrYawDeg = NormDeg(DirToYaw(FacingDir));
+	CurrYawDeg = DirToYaw(FacingDir);
+	/*UE_LOG(LogAGArm, Verbose, TEXT("Rotate steps=%d : %d -> %d (CurrYaw=%.1f)"),
+		StepsSigned, (int32)Old, (int32)FacingDir, CurrYawDeg);*/
 }
 
-FHex ABasicArm::DirStep(uint8 Dir) const  // returns axial step for the given dir
+FHex ABasicArm::DirStep(uint8 Dir) const
 {
 	const uint8 D = Dir % 6;
-	// Our Dir->Yaw uses 0=+X (east), +60° CW each step. For axial:
 	// Pointy-top neighbors (q,r): E(1,0), NE(1,-1), NW(0,-1), W(-1,0), SW(-1,1), SE(0,1)
 	static const FHex Pointy[6] = {
 		FHex(1,  0), FHex(1, -1), FHex(0, -1),
 		FHex(-1,  0), FHex(-1,  1), FHex(0,  1)
 	};
-	// Flat-top neighbors if you ever switch orientation:
-	// E(1,-1), ESE(1,0), WSE(0,1), W(-1,1), WNW(-1,0), ENW(0,-1)
+	// Flat-top (only used if you switch orientation)
 	static const FHex Flat[6] = {
 		FHex(1, -1), FHex(1,  0), FHex(0,  1),
 		FHex(-1,  1), FHex(-1,  0), FHex(0, -1)
@@ -280,41 +334,35 @@ FHex ABasicArm::ComputeTargetHex() const
 	}
 	return T;
 }
+
 void ABasicArm::ExpandResetAtPC()
 {
-	// Drop first if holding
+	// Expand “Reset” into: (Drop if holding) + the shortest sequence of Rotate steps back to StartFacingDir.
 	TArray<FArmInstr> Expansion;
 	if (bHolding)
 	{
 		Expansion.Add({ EArmCmd::Drop, 0 });
 	}
 
-	// Compute minimal rotation to StartFacingDir
 	const int32 DiffCW = Mod6(int32(StartFacingDir) - int32(FacingDir)); // 0..5 steps CW
 	const int32 DiffCCW = Mod6(int32(FacingDir) - int32(StartFacingDir)); // 0..5 steps CCW
-
 	const bool bUseCW = (DiffCW <= DiffCCW);
 	const int32 Steps = bUseCW ? DiffCW : DiffCCW;
 
-	// Expand into single-step rotates so the program shows/executes exactly what happens
 	for (int32 i = 0; i < Steps; ++i)
 	{
 		Expansion.Add({ bUseCW ? EArmCmd::RotateCW : EArmCmd::RotateCCW, 1 });
 	}
 
-	// Replace Reset at PC with the expansion
 	Program.RemoveAt(PC);
 	if (Expansion.Num() > 0)
 	{
 		Program.Insert(Expansion, PC);
 	}
-
-	// (Intentionally do not ++PC; next fixed tick will execute the first inserted op)
-	UE_LOG(LogTemp, Verbose, TEXT("BasicArm '%s' Reset expanded: Holding=%d, From=%d To=%d, Dir=%s, Steps=%d"),
-		*GetName(), bHolding ? 1 : 0, int32(FacingDir), int32(StartFacingDir),
-		bUseCW ? TEXT("CW") : TEXT("CCW"), Steps);
+	// next fixed tick will execute the first inserted op
+	UE_LOG(LogAGArm, Verbose, TEXT("BasicArm '%s' Reset expanded: From=%d To=%d Dir=%s Steps=%d Holding=%d"),
+		*GetName(), int32(FacingDir), int32(StartFacingDir), bUseCW ? TEXT("CW") : TEXT("CCW"), Steps, bHolding ? 1 : 0);
 }
-
 
 void ABasicArm::StepProgram()
 {
@@ -335,6 +383,8 @@ void ABasicArm::StepProgram()
 	}
 
 	const FArmInstr I = Program[PC];
+	UE_LOG(LogAGArm, Log, TEXT("Arm '%s' Exec %s Arg=%d  (PC=%d/%d)"),
+		*GetName(), CmdName(I.Cmd), I.Arg, PC, Program.Num()); // <— add
 
 	switch (I.Cmd)
 	{
@@ -348,14 +398,71 @@ void ABasicArm::StepProgram()
 		break;
 
 	case EArmCmd::Grab:
-		if (!bHolding) { TryGrabAtTarget(); }  // <- new
+	{
+		if (!bHolding)
+		{
+			const FHex Target = ComputeTargetHex();
+			bool bOk = false;
+
+			if (Sim)
+			{
+				/*UE_LOG(LogAGArm, Log, TEXT("Arm %s: Grab OK at (%d,%d) kind=%d"),
+					*GetName(), Target.Q, Target.R, (int32)HeldKind);*/
+				uint8 Picked = 0;
+				bOk = Sim->TryPickupOrbAt(Target, Picked);
+				if (bOk) { HeldKind = Picked; }
+			}
+			else
+			{
+				// visual-only fallback
+				bOk = true; HeldKind = 0;
+			}
+
+			if (bOk)
+			{
+				bHolding = true;
+				ShowHeldOrb(true);
+				/*UE_LOG(LogAGArm, Log, TEXT("Arm %s: Grab OK at (%d,%d) kind=%d"),
+					*GetName(), Target.Q, Target.R, (int32)HeldKind);*/
+			}
+			else
+			{
+				UE_LOG(LogAGArm, Verbose, TEXT("Arm %s: Grab failed at (%d,%d)"), *GetName(), Target.Q, Target.R);
+			}
+		}
 		++PC;
 		break;
+	}
 
 	case EArmCmd::Drop:
-		if (bHolding) { TryDropAtTarget(); }   // <- new
+	{
+		if (bHolding)
+		{
+			const FHex Target = ComputeTargetHex();
+			bool bOk = false;
+
+			if (Sim)
+			{
+				bOk = Sim->TryPlaceOrbAt(Target, HeldKind);
+			}
+			else
+			{
+				// visual-only fallback
+				bOk = true;
+			}
+
+			/*UE_LOG(LogAGArm, Log, TEXT("Arm %s: Drop %s at (%d,%d) kind=%d"),
+				*GetName(), bOk ? TEXT("OK") : TEXT("FAILED"), Target.Q, Target.R, (int32)HeldKind);*/
+
+			if (bOk)
+			{
+				bHolding = false;
+				ShowHeldOrb(false);
+			}
+		}
 		++PC;
 		break;
+	}
 
 	case EArmCmd::RotateCW:
 		ApplyRotateSteps(FMath::Max(1, I.Arg));
@@ -369,11 +476,35 @@ void ABasicArm::StepProgram()
 
 	case EArmCmd::Reset:
 		ExpandResetAtPC();
-		// no PC++ here; we just rewrote the stream at PC
 		break;
 
 	default:
 		++PC;
 		break;
 	}
+}
+
+void ABasicArm::ShowHeldOrb(bool bShow)
+{
+	if (HeldOrbComp)
+	{
+		const bool bVisible = bShow && HeldOrbMesh != nullptr;
+		HeldOrbComp->SetVisibility(bVisible, true);
+	}
+}
+
+void ABasicArm::InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, uint8 InFacing)
+{
+	Driver = InDriver;
+	Q = InQ;
+	R = InR;
+	FacingDir = InFacing % 6;
+	StartFacingDir = FacingDir;
+
+	Sim = (Driver ? Driver->GetSim() : nullptr);
+
+	// refresh visuals immediately
+	CurrYawDeg = DirToYaw(FacingDir);
+	LastYawDeg = CurrYawDeg;
+	RefreshPose(1.f);
 }

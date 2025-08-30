@@ -79,9 +79,9 @@ public:
 	// Optional auto-spawn if missing
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AGameTickManager> TickManagerClass;
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AOrbSimDriver>   DriverClass;
-	UPROPERTY(EditAnywhere, Category = "Arms") TSubclassOf<ABasicArm> ArmBlueprint;               // <- new
-	UPROPERTY(EditAnywhere, Category = "Arms") TArray<FArmInstr> DefaultProgram;                  // <- new
-	UPROPERTY(EditAnywhere, Category = "Run")  bool bAutoBuildOnBeginPlay = true;
+
+	// Arm blueprint/class to spawn
+	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<ABasicArm> ArmClass;
 
 	// Scenarios
 	UPROPERTY(EditAnywhere, Category = "Scenarios") TArray<FScenarioSpec> Scenarios;
@@ -98,9 +98,4 @@ public:
 private:
 	void AutoFindOrSpawn();
 	void ApplyScenario(const FScenarioSpec& S);
-	AOrbSimDriver* FindDriver() const;                                                     // <- new
-	FVector HexToWorld(const FHex& H, const AOrbSimDriver* Driver) const;                  // <- new
-
-	// Track spawned arms so ClearArms() can reliably destroy them:
-	UPROPERTY(Transient) TArray<TWeakObjectPtr<ABasicArm>> SpawnedArms;                     // <- new
 };

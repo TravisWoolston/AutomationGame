@@ -59,20 +59,32 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	if (!Sim) return;
 
-	// DO NOT call Sim->StepSim() here. Only interpolate for rendering.
+	// Accumulate StepAlpha for smooth interpolation
 	const float Fixed = FMath::Max(KINDA_SMALL_NUMBER, Sim->FixedStepSec);
 	StepAlpha += DeltaSeconds / Fixed;
-	if (StepAlpha > 1.f) StepAlpha = 1.f; // clamp; reset to 0 in HandleFixedTickSeconds
+	StepAlpha = FMath::Clamp(StepAlpha, 0.f, 1.f); // Clamp to [0,1]
 }
 
-void AOrbSimDriver::HandleFixedTickSeconds(float /*StepSeconds*/)
+// OrbSimDriver.cpp
+
+void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 {
 	if (!Sim) return;
 
-	// Advance exactly one fixed step, then reset alpha so visuals can lerp from fresh state.
+	// Run the world sim for this frame
+	UE_LOG(LogTemp, VeryVerbose, TEXT("OrbSimDriver: StepSim dt=%.3f"), StepSeconds);
 	Sim->StepSim();
-	StepAlpha = 0.f;
+	StepAlpha = 0.f; // Reset only when simulation advances
+	// Optional quick visibility: do we have items at inputs?
+#if !(UE_BUILD_SHIPPING)
+	FItem Tmp;
+	const bool L = Sim->PeekItemAt(FHex(-1, 0), Tmp);
+	const bool R = Sim->PeekItemAt(FHex(1, 0), Tmp);
+	UE_LOG(LogTemp, VeryVerbose, TEXT("OrbSimDriver: Inputs present? L=%d R=%d  (ItemMap=%d)"),
+		L ? 1 : 0, R ? 1 : 0, Sim->ItemMap.Num());
+#endif
 }
+
 
 float AOrbSimDriver::GetGridPlaneZ(const AActor* FallbackOwner) const
 {
@@ -92,3 +104,8 @@ AOrbSimDriver* AOrbSimDriver::Find(UWorld* World)
 	}
 	return nullptr;
 }
+
+
+
+
+

@@ -14,41 +14,43 @@ class UMaterialInterface;
  * - Reacquires the driver/sim automatically if missing.
  * - Creates ISM in OnRegister so it works when the component is already placed in the level.
  */
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class AUTOMATIONGAME_API UOrbRenderer : public UActorComponent
 {
-    GENERATED_BODY()
+	GENERATED_BODY()
 
 public:
-    UOrbRenderer();
+	UOrbRenderer();
 
-    /** Create the ISM as soon as the component registers */
-    virtual void OnRegister() override;
-    virtual void BeginPlay() override;
-    virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+	/** Create the ISM as soon as the component registers */
+	virtual void OnRegister() override;
+	virtual void BeginPlay() override;
+	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-    /** Optional override; otherwise we read anchor from the driver */
-    UPROPERTY(EditAnywhere, Category="Grid") bool bOverrideAnchor = false;
-    UPROPERTY(EditAnywhere, Category="Grid", meta=(EditCondition="bOverrideAnchor")) AActor* AnchorOverride = nullptr;
+	/** Optional override; otherwise we read anchor from the driver */
+	UPROPERTY(EditAnywhere, Category = "Grid") bool bOverrideAnchor = false;
+	UPROPERTY(EditAnywhere, Category = "Grid", meta = (EditCondition = "bOverrideAnchor")) AActor* AnchorOverride = nullptr;
 
-    /** Auto repair references if driver/sim is not found at BeginPlay (eg. spawned later) */
-    UPROPERTY(EditAnywhere, Category="Debug") bool bAutoReacquire = true;
+	/** Auto repair references if driver/sim is not found at BeginPlay (eg. spawned later) */
+	UPROPERTY(EditAnywhere, Category = "Debug") bool bAutoReacquire = true;
 
-    /** Basic visuals */
-    UPROPERTY(EditAnywhere, Category="Visual") UStaticMesh* OrbMesh = nullptr;
-    UPROPERTY(EditAnywhere, Category="Visual") UMaterialInterface* OrbMaterial = nullptr;
-    UPROPERTY(EditAnywhere, Category="Visual") float OrbScale = 0.30f;
+	/** Basic visuals */
+	UPROPERTY(EditAnywhere, Category = "Visual") UStaticMesh* OrbMesh = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual") UMaterialInterface* OrbMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual") float OrbScale = 0.30f;
 
 private:
-    void EnsureISM();
-    void RebuildCurrPos();
-    void RebuildInstances();
-    AActor* GetAnchor() const;
+	void EnsureISM();
+	void RebuildCurrPos();
+	void RebuildInstances();
+	AActor* GetAnchor() const;
 
-    UPROPERTY(Transient) UInstancedStaticMeshComponent* ISM = nullptr;
-    UPROPERTY(Transient) AOrbSimDriver* Driver = nullptr;
-    UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* ISM = nullptr;
+	UPROPERTY(Transient) AOrbSimDriver* Driver = nullptr;
+	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
 
-    TMap<int32, FVector> PrevPos, CurrPos;
-    float PrevAlpha = 0.f;
+	TMap<int32, FVector> PrevPos, CurrPos;
+	TMap<int32, FRotator> PrevRot, CurrRot;
+	float PrevAlpha = 1.f;
+	float DirToYaw(uint8 Dir) const;
 };

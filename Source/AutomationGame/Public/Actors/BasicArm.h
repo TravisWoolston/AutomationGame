@@ -10,6 +10,7 @@ class AOrbSimDriver;
 class AGameTickManager;
 class UStaticMeshComponent;
 class USimWorldHex;
+
 /** Discrete arm instructions (Opus Magnum–style, kept simple to start) */
 UENUM(BlueprintType)
 enum class EArmCmd : uint8
@@ -20,7 +21,7 @@ enum class EArmCmd : uint8
 	RotateCW  UMETA(DisplayName = "Rotate CW (60° * Arg)"),
 	RotateCCW UMETA(DisplayName = "Rotate CCW (60° * Arg)"),
 	Wait      UMETA(DisplayName = "Wait (ticks = Arg)"),
-	Reset     UMETA(DisplayName = "Reset to Start (macro)") // <— added
+	Reset     UMETA(DisplayName = "Reset to Start (macro)")
 };
 
 /** One instruction + small integer argument (dir steps, wait ticks, etc.) */
@@ -65,6 +66,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (ClampMin = 0, ClampMax = 5))
 	uint8 FacingDir = 0;
 
+	/** Convenience: set grid placement & driver in one call. */
+	UFUNCTION(BlueprintCallable, Category = "Grid")
+	void InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, uint8 InFacing);
+
 	// --- Visuals ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	UStaticMesh* BaseMesh = nullptr;
@@ -76,18 +81,29 @@ public:
 	float BaseZ = 10.f;
 
 	/** Tile-based reach: 1 = adjacent target tile center. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", meta = (ClampMin = 1)) // <- new
-		int32 ReachTiles = 1;                                                               // <- new
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", meta = (ClampMin = 1))
+	int32 ReachTiles = 1;
 
-	/** (Legacy) scalar reach fraction — now ignored by default. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", AdvancedDisplay)   // <- new
-		float HandReachUU = 0.6f; // kept for backward compat; not used when ReachTiles>=1 // <- new
+	/** (Legacy) scalar reach fraction — kept for compatibility with old placements. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", AdvancedDisplay)
+	float HandReachUU = 0.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector BaseScale = FVector(1.f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector HandScale = FVector(0.4f);
+
+	/** Additive yaw (degrees) applied to the base mesh only, after grid yaw + facing. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	float BaseYawOffsetDeg = 0.f;
+
+	// Optional held-orb preview (purely visual)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	UStaticMesh* HeldOrbMesh = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	FVector HeldOrbScale = FVector(0.2f);
 
 	// --- Program control (Blueprint-friendly) ---
 	/** Program editable in BP (looped if bLoopProgram). */
@@ -124,10 +140,15 @@ private:
 	// Components
 	UPROPERTY(Transient) UStaticMeshComponent* BaseComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* HandComp = nullptr;
+	UPROPERTY(Transient) UStaticMeshComponent* HeldOrbComp = nullptr;
+
+	// Sim ref
+	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
 
 	// State
 	bool  bRunning = true;
-	bool  bHolding = false;       // fake “held orb”
+	bool  bHolding = false;       // holding an orb from Sim
+	uint8 HeldKind = 0;           // simple “orb kind” carried while holding
 	int32 PC = 0;                 // program counter
 	int32 WaitLeft = 0;           // ticks left for a Wait
 
@@ -147,15 +168,13 @@ private:
 	FVector HexToWorld(const FHex& H) const;         // grid → world
 	float   DirToYaw(uint8 Dir) const;               // grid yaw + 60° steps
 
-	FHex    ComputeTargetHex() const;                 // <- new
-	FHex    DirStep(uint8 Dir) const;                 // <- new
-	void    TryGrabAtTarget();                        // <- new
-	void    TryDropAtTarget();
-	// Cached references
-	UPROPERTY(Transient) USimWorldHex* Sim = nullptr; // <- new
+	FHex    DirStep(uint8 Dir) const;
+	FHex    ComputeTargetHex() const;
 
+	void    StepProgram();                           // advance one instruction (or wait)
+	void    ApplyRotateSteps(int32 StepsSigned);     // +CW, -CCW
+	void    ExpandResetAtPC();                       // turn Reset into Drop(if holding)+Rotate
 
-	void StepProgram();                               // advance one instruction (or wait)
-	void ApplyRotateSteps(int32 StepsSigned);         // +CW, -CCW
-	void ExpandResetAtPC();                           // turn Reset into Drop(if holding)+Rotate
+	// Visual held-orb toggle (purely cosmetic)
+	void ShowHeldOrb(bool bShow);
 };

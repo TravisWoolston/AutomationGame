@@ -1,0 +1,6 @@
+#include "AGLogChannels.h"
+
+DEFINE_LOG_CATEGORY(LogAGArm);
+DEFINE_LOG_CATEGORY(LogAGPlacement);
+DEFINE_LOG_CATEGORY(LogAGSim);
+DEFINE_LOG_CATEGORY(LogAGDirector);
