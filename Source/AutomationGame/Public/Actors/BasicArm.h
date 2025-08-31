@@ -130,6 +130,10 @@ public:
 	/** For debugging: execute current instruction immediately (ignores Wait). */
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void ExecuteCurrent();
+	// BasicArm.h
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
+	bool bAffectSim = false;   // default false: sim is authoritative
+
 
 protected:
 	// Fixed tick hookup

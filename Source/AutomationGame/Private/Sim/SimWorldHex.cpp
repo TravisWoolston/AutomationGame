@@ -76,11 +76,11 @@ void USimWorldHex::StepArms()
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
 	{
 		FArmState& S = Arms[ArmIndex];
-		UE_LOG(LogTemp, Warning, TEXT("Arm %d Tape Length: %d"), ArmIndex, S.Tape.Num());
-		for (int32 i = 0; i < S.Tape.Num(); ++i)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("  Tape[%d] Cmd=%d Arg=%d"), i, (int32)S.Tape[i].Cmd, S.Tape[i].Arg);
-		}
+		//UE_LOG(LogTemp, Warning, TEXT("Arm %d Tape Length: %d"), ArmIndex, S.Tape.Num());
+		//for (int32 i = 0; i < S.Tape.Num(); ++i)
+		//{
+		//	UE_LOG(LogTemp, Warning, TEXT("  Tape[%d] Cmd=%d Arg=%d"), i, (int32)S.Tape[i].Cmd, S.Tape[i].Arg);
+		//}
 
 		if (S.Tape.Num() == 0) continue;
 		const FOp& Op = S.Tape[S.PC];
@@ -135,8 +135,8 @@ void USimWorldHex::StepArms()
 		}
 		break;
 
-		case ECmd::RotateL: S.Facing = (EHexDir)(((uint8)S.Facing + 5) % 6); break;
-		case ECmd::RotateR: S.Facing = (EHexDir)(((uint8)S.Facing + 1) % 6); break;
+		case ECmd::RotateL: S.Facing = (EHexDir)(((uint8)S.Facing + 1) % 6); break; // CCW
+		case ECmd::RotateR: S.Facing = (EHexDir)(((uint8)S.Facing + 5) % 6); break; // CW
 		case ECmd::Extend:  S.ArmLen = FMath::Clamp<int32>(S.ArmLen + 1, 1, 3); break;
 		case ECmd::Retract: S.ArmLen = FMath::Clamp<int32>(S.ArmLen - 1, 1, 3); break;
 		case ECmd::MovePos: S.TrackIdx = FMath::Clamp<int32>(S.TrackIdx + 1, -4, 4); break;

@@ -29,12 +29,21 @@ FORCEINLINE uint32 GetTypeHash(const FHex& H)
 namespace HexUtil
 {
 	// Axial direction vectors (pointy-top convention)
-	static const FHex Dir[6] = { FHex(1,0), FHex(1,-1), FHex(0,-1), FHex(-1,0), FHex(-1,1), FHex(0,1) };
 
-	FORCEINLINE FHex Neighbor(const FHex& H, EHexDir D)
+
+	static inline FHex Step(uint8 Dir)
 	{
-		const FHex& V = Dir[(uint8)D % 6];
-		return FHex(H.Q + V.Q, H.R + V.R);
+		static const FHex kDir[6] = {
+			FHex(+1,  0), FHex(+1, -1), FHex(0, -1),
+			FHex(-1,  0), FHex(-1, +1), FHex(0, +1)
+		};
+		return kDir[Dir % 6];
+	}
+
+	static inline FHex Neighbor(const FHex& H, EHexDir D)
+	{
+		const FHex s = Step(static_cast<uint8>(D));
+		return FHex(H.Q + s.Q, H.R + s.R);
 	}
 
 	// World conversion (top-down pointy hexes). TileSize is center-to-center spacing.

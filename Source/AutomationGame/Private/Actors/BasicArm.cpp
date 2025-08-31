@@ -156,7 +156,21 @@ void ABasicArm::Tick(float DeltaSeconds)
 		);
 	}
 }
+void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
+{
+	if (!bRunning) { StepAlpha = 1.f; return; }
 
+	StepSecondsCur = StepSeconds;
+
+	// Lock the rendered yaw as the new "start" of the step (wrap-safe)
+	const float RenderedNow = NormDeg(
+		LastYawDeg + FMath::FindDeltaAngleDegrees(LastYawDeg, CurrYawDeg) * StepAlpha
+	);
+	LastYawDeg = RenderedNow;
+	StepAlpha = 0.f; // Reset only when simulation advances
+
+	StepProgram();   // may update CurrYawDeg
+}
 void ABasicArm::EnsureComps()
 {
 	if (!RootComponent)
@@ -278,21 +292,7 @@ void ABasicArm::ExecuteCurrent()
 	WaitLeft = SavedWait;
 }
 
-void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
-{
-	if (!bRunning) { StepAlpha = 1.f; return; }
 
-	StepSecondsCur = StepSeconds;
-
-	// Lock the rendered yaw as the new "start" of the step (wrap-safe)
-	const float RenderedNow = NormDeg(
-		LastYawDeg + FMath::FindDeltaAngleDegrees(LastYawDeg, CurrYawDeg) * StepAlpha
-	);
-	LastYawDeg = RenderedNow;
-	StepAlpha = 0.f; // Reset only when simulation advances
-
-	StepProgram();   // may update CurrYawDeg
-}
 
 void ABasicArm::ApplyRotateSteps(int32 StepsSigned)
 {
@@ -322,18 +322,16 @@ FHex ABasicArm::DirStep(uint8 Dir) const
 	return bPointy ? Pointy[D] : Flat[D];
 }
 
+// ABasicArm.cpp
 FHex ABasicArm::ComputeTargetHex() const
 {
 	FHex T(Q, R);
-	const FHex Step = DirStep(FacingDir);
 	const int32 N = FMath::Max(1, ReachTiles);
 	for (int32 i = 0; i < N; ++i)
-	{
-		T.Q += Step.Q;
-		T.R += Step.R;
-	}
+		T = HexUtil::Neighbor(T, static_cast<EHexDir>(FacingDir));
 	return T;
 }
+
 
 void ABasicArm::ExpandResetAtPC()
 {
@@ -383,8 +381,8 @@ void ABasicArm::StepProgram()
 	}
 
 	const FArmInstr I = Program[PC];
-	UE_LOG(LogAGArm, Log, TEXT("Arm '%s' Exec %s Arg=%d  (PC=%d/%d)"),
-		*GetName(), CmdName(I.Cmd), I.Arg, PC, Program.Num()); // <— add
+	//UE_LOG(LogAGArm, Log, TEXT("Arm '%s' Exec %s Arg=%d  (PC=%d/%d)"),
+	//	*GetName(), CmdName(I.Cmd), I.Arg, PC, Program.Num()); // <— add
 
 	switch (I.Cmd)
 	{
@@ -397,37 +395,17 @@ void ABasicArm::StepProgram()
 		++PC;
 		break;
 
+		// BasicArm.cpp (in StepProgram, Grab/Drop cases)
 	case EArmCmd::Grab:
 	{
-		if (!bHolding)
+		if (!bHolding && Sim)
 		{
+			FItem grabbed;
 			const FHex Target = ComputeTargetHex();
-			bool bOk = false;
-
-			if (Sim)
+			if (Sim->TryArmPickItem(Target, grabbed))
 			{
-				/*UE_LOG(LogAGArm, Log, TEXT("Arm %s: Grab OK at (%d,%d) kind=%d"),
-					*GetName(), Target.Q, Target.R, (int32)HeldKind);*/
-				uint8 Picked = 0;
-				bOk = Sim->TryPickupOrbAt(Target, Picked);
-				if (bOk) { HeldKind = Picked; }
-			}
-			else
-			{
-				// visual-only fallback
-				bOk = true; HeldKind = 0;
-			}
-
-			if (bOk)
-			{
-				bHolding = true;
+				bHolding = true;     // purely visual flag on the mesh
 				ShowHeldOrb(true);
-				/*UE_LOG(LogAGArm, Log, TEXT("Arm %s: Grab OK at (%d,%d) kind=%d"),
-					*GetName(), Target.Q, Target.R, (int32)HeldKind);*/
-			}
-			else
-			{
-				UE_LOG(LogAGArm, Verbose, TEXT("Arm %s: Grab failed at (%d,%d)"), *GetName(), Target.Q, Target.R);
 			}
 		}
 		++PC;
@@ -436,25 +414,11 @@ void ABasicArm::StepProgram()
 
 	case EArmCmd::Drop:
 	{
-		if (bHolding)
+		if (bHolding && bAffectSim && Sim)
 		{
 			const FHex Target = ComputeTargetHex();
-			bool bOk = false;
-
-			if (Sim)
-			{
-				bOk = Sim->TryPlaceOrbAt(Target, HeldKind);
-			}
-			else
-			{
-				// visual-only fallback
-				bOk = true;
-			}
-
-			/*UE_LOG(LogAGArm, Log, TEXT("Arm %s: Drop %s at (%d,%d) kind=%d"),
-				*GetName(), bOk ? TEXT("OK") : TEXT("FAILED"), Target.Q, Target.R, (int32)HeldKind);*/
-
-			if (bOk)
+			// place whatever you're visually “holding” — sim side tracks real FItem in FArmState
+			if (Sim->TryArmPlaceItem(Target, /*ignored if you want sim-owned Held*/ FItem{}))
 			{
 				bHolding = false;
 				ShowHeldOrb(false);
@@ -463,6 +427,7 @@ void ABasicArm::StepProgram()
 		++PC;
 		break;
 	}
+
 
 	case EArmCmd::RotateCW:
 		ApplyRotateSteps(FMath::Max(1, I.Arg));
@@ -488,8 +453,25 @@ void ABasicArm::ShowHeldOrb(bool bShow)
 {
 	if (HeldOrbComp)
 	{
-		const bool bVisible = bShow && HeldOrbMesh != nullptr;
-		HeldOrbComp->SetVisibility(bVisible, true);
+		if (bShow && HeldOrbMesh)
+		{
+			// Attach to socket on grab
+			HeldOrbComp->SetStaticMesh(HeldOrbMesh);
+			HeldOrbComp->SetVisibility(true, true);
+			HeldOrbComp->AttachToComponent(BaseComp, FAttachmentTransformRules::SnapToTargetIncludingScale, TEXT("GripSocket"));
+		}
+		else
+		{
+			// Detach and move to nearest tile on drop
+			HeldOrbComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+
+			// Move to target tile location
+			const FHex TargetHex = ComputeTargetHex();
+			const FVector TargetWorld = HexToWorld(TargetHex);
+			HeldOrbComp->SetWorldLocation(TargetWorld);
+
+			HeldOrbComp->SetVisibility(false, true); // Optionally hide after drop
+		}
 	}
 }
 

@@ -30,7 +30,6 @@ void UOrbRenderer::OnRegister()
 void UOrbRenderer::BeginPlay()
 {
 	Super::BeginPlay();
-
 	EnsureISM();
 
 	if (UWorld* W = GetWorld())
@@ -41,7 +40,10 @@ void UOrbRenderer::BeginPlay()
 
 	RebuildCurrPos();
 	PrevPos = CurrPos;
+	PrevRot = CurrRot;                      // <-- add this
+	PrevAlpha = Driver ? Driver->GetStepAlpha() : 0.f; // optional, keeps first frame clean
 }
+
 
 void UOrbRenderer::EnsureISM()
 {
@@ -69,42 +71,35 @@ AActor* UOrbRenderer::GetAnchor() const
 	return Driver ? Driver->GetGridAnchor() : nullptr;
 }
 
-void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorComponentTickFunction*)
+void UOrbRenderer::TickComponent(float /*DeltaTime*/, enum ELevelTick, FActorComponentTickFunction*)
 {
-	if (bAutoReacquire && (!Driver || !Sim))
+	// Reacquire if needed (some actors spawn after we BeginPlay)
+	if ((!Driver || !Sim) && bAutoReacquire)
 	{
 		if (UWorld* W = GetWorld())
 		{
-			Driver = AOrbSimDriver::Find(W);
-			if (Driver) Sim = Driver->GetSim();
-			if (Sim) { RebuildCurrPos(); PrevPos = CurrPos; }
+			if (!Driver) Driver = AOrbSimDriver::Find(W);
+			if (Driver && !Sim) Sim = Driver->GetSim();
+			if (Sim) { RebuildCurrPos(); PrevPos = CurrPos; PrevRot = CurrRot; }
 		}
 	}
-	if (!Driver) return;
+	if (!Driver || !Sim) return;  // nothing to render yet
+
 	const float Alpha = Driver->GetStepAlpha();
 
-	// If a new step started, update only moved orbs
-	if (Alpha < PrevAlpha)
+	if (Alpha < PrevAlpha) // step rolled over
 	{
-		// Instead of: PrevPos = CurrPos;
-		// Do:
-		for (const auto& KV : CurrPos)
-		{
-			int32 Id = KV.Key;
-			const FVector& Curr = KV.Value;
-			const FVector* Prev = PrevPos.Find(Id);
-			if (!Prev || !Prev->Equals(Curr, 0.01f))
-			{
-				PrevPos.Add(Id, Curr); // Only update if moved
-			}
-		}
-		PrevRot = CurrRot;
-		RebuildCurrPos();
+		const TMap<int32, FVector>  OldPos = CurrPos;
+		const TMap<int32, FRotator> OldRot = CurrRot;
+		RebuildCurrPos();              // build NEW
+		PrevPos = OldPos;              // keep OLD as prev
+		PrevRot = OldRot;
 	}
-	PrevAlpha = Alpha;
 
+	PrevAlpha = Alpha;
 	RebuildInstances();
 }
+
 
 void UOrbRenderer::RebuildCurrPos()
 {
@@ -167,9 +162,22 @@ void UOrbRenderer::RebuildInstances()
 
 	ISM->ClearInstances();
 	if (!OrbMesh) return;
-
+	TSet<int32> HeldIds;
+	for (const FArmState& S : Sim->Arms)
+	{
+		if (S.bHolding && S.Held.Id != 0)
+		{
+			HeldIds.Add(S.Held.Id);
+		}
+	}
 	for (int32 Id : Keys)
 	{
+		if (HeldIds.Contains(Id))
+		{
+			// This orb is being shown via a socket-attached component on the arm.
+			// Skip drawing it as an ISM instance.
+			continue;
+		}
 		const FVector* A = PrevPos.Find(Id);
 		const FVector* B = CurrPos.Find(Id);
 		const FRotator* RotA = PrevRot.Find(Id);
@@ -209,13 +217,13 @@ void UOrbRenderer::RebuildInstances()
 	//{
 		// Belt or normal movement: straight lerp
 		P = FMath::Lerp(From, To, Alpha);
-	//}
+		//}
 
-	FRotator RA = RotA ? *RotA : FRotator::ZeroRotator;
-	FRotator RB = RotB ? *RotB : RA;
-	FRotator R = FMath::Lerp(RA, RB, Alpha);
+		FRotator RA = RotA ? *RotA : FRotator::ZeroRotator;
+		FRotator RB = RotB ? *RotB : RA;
+		FRotator R = FMath::Lerp(RA, RB, Alpha);
 
-	ISM->AddInstance(FTransform(R, P, FVector(OrbScale)));
+		ISM->AddInstance(FTransform(R, P, FVector(OrbScale)));
 	}
 }
 

@@ -85,6 +85,29 @@ void ATestLevelDirector::ClearArms()
 		}
 	}
 }
+// TestLevelDirector.cpp  (where you currently construct ArmState then call Sim->AddArm)
+
+static TArray<FOp> ConvertProgramToOps(const TArray<FArmInstr>& Program)
+{
+	TArray<FOp> Out;
+	for (const FArmInstr& I : Program)
+	{
+		switch (I.Cmd)
+		{
+		case EArmCmd::NoOp:      Out.Add({ ECmd::Wait, 1 }); break;
+		case EArmCmd::Grab:      Out.Add({ ECmd::Grab, 0 }); break;
+		case EArmCmd::Drop:      Out.Add({ ECmd::Drop, 0 }); break;
+		case EArmCmd::RotateCW:  Out.Add({ ECmd::RotateR, (uint8)FMath::Max(1, I.Arg) }); break;
+		case EArmCmd::RotateCCW: Out.Add({ ECmd::RotateL, (uint8)FMath::Max(1, I.Arg) }); break;
+		case EArmCmd::Wait:      Out.Add({ ECmd::Wait,    (uint8)FMath::Clamp(I.Arg, 0, 255) }); break;
+		case EArmCmd::Reset:     Out.Add({ ECmd::Reset, 0 }); break;
+		default:                 Out.Add({ ECmd::Wait, 1 }); break;
+		}
+	}
+	return Out;
+}
+
+
 
 void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 {
@@ -144,6 +167,8 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			ArmState.PC = 0;
 			ArmState.bHolding = false;
 			// Set other fields as needed
+
+			ArmState.Tape = ConvertProgramToOps(A.Program);
 
 			int32 ArmIndex = Sim->AddArm(ArmState);
 			UE_LOG(LogTemp, Warning, TEXT("AddArm: Arm added at index %d, total arms now %d"), ArmIndex, Sim->Arms.Num());
