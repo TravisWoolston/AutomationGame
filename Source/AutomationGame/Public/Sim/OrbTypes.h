@@ -28,15 +28,30 @@ struct FOrb
 	uint8 Rot60 = 0;
 };
 
-/** Bond between orbs in a cluster (indices into FItem::Orbs). */
 USTRUCT(BlueprintType)
-struct AUTOMATIONGAME_API FClusterBond
+struct FOrbBond
 {
-	GENERATED_BODY();
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 A = 0;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 B = 0;
-	/** 0 = single bond (MVP). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 Kind = 0;
+	GENERATED_BODY()
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 OrbA = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 OrbB = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	uint8 BondType = 0; // e.g. single, double, etc.
+};
+
+USTRUCT(BlueprintType)
+struct FOrbData
+{
+	GENERATED_BODY()
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 Id = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	uint8 Type = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	uint8 Color = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FVector2D Offset; // Position relative to cluster origin
 };
 
 /** Item on a tile: either a single orb or a bonded cluster. */
@@ -54,10 +69,10 @@ struct AUTOMATIONGAME_API FItem
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FOrb Single;
 
 	/** Cluster payload (indices correspond to Bonds). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOrb> Orbs;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOrbData> Orbs; // One or more orbs
 
 	/** Bonds tying orbs in the cluster. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FClusterBond> Bonds;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOrbBond> Bonds; // Bonds between orbs
 
 	/** Helper to construct a single-orb item. */
 	static FItem MakeSingle(const FOrb& O) { FItem I; I.bIsCluster = false; I.Single = O; return I; }

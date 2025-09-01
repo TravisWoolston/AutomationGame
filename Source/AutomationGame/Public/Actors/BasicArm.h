@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "Sim/HexTypes.h"     // FHex
 #include "Sim/HexCoord.h"     // Axial<->XY helpers
+#include "Sim/OrbTypes.h"    // FOrb
 #include "BasicArm.generated.h"
 
 class AOrbSimDriver;
@@ -37,6 +38,8 @@ struct FArmInstr
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, UIMin = 0))
 	int32 Arg = 0;
 };
+
+
 
 UCLASS(Blueprintable)
 class AUTOMATIONGAME_API ABasicArm : public AActor
@@ -101,6 +104,20 @@ public:
 	// Optional held-orb preview (purely visual)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	UStaticMesh* HeldOrbMesh = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	UStaticMesh* MeshType1 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	UStaticMesh* MeshType2 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	UMaterialInterface* MaterialColor1 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	UMaterialInterface* MaterialColor2 = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	UMaterialInterface* DefaultOrbMaterial = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector HeldOrbScale = FVector(0.2f);
@@ -133,7 +150,11 @@ public:
 	// BasicArm.h
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
 	bool bAffectSim = false;   // default false: sim is authoritative
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
+	TMap<uint8, UStaticMesh*> OrbTypeToMesh;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
+	TMap<uint8, UMaterialInterface*> OrbColorToMaterial;
 
 protected:
 	// Fixed tick hookup
@@ -152,7 +173,7 @@ private:
 	// State
 	bool  bRunning = true;
 	bool  bHolding = false;       // holding an orb from Sim
-	uint8 HeldKind = 0;           // simple “orb kind” carried while holding
+	FItem HeldOrb; // Holds the actual item (single orb or cluster)
 	int32 PC = 0;                 // program counter
 	int32 WaitLeft = 0;           // ticks left for a Wait
 
@@ -164,6 +185,9 @@ private:
 
 	// Remember where Reset should point us
 	uint8 StartFacingDir = 0;     // captured at BeginPlay
+
+	// --- Orb mesh/material mapping ---
+
 
 	// Helpers
 	void EnsureComps();
@@ -181,4 +205,8 @@ private:
 
 	// Visual held-orb toggle (purely cosmetic)
 	void ShowHeldOrb(bool bShow);
+	void AttachHeldOrb();
+	void DetachHeldOrb();
+	UStaticMesh* GetMeshForOrbType(uint8 OrbType) const;
+	UMaterialInterface* GetMaterialForOrbColor(uint8 OrbColor) const;
 };

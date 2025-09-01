@@ -61,7 +61,7 @@ bool USimWorldHex::TryTakeItem(const FHex& H, FItem& Out)
 
 void USimWorldHex::StepSim()
 {
-	UE_LOG(LogTemp, Warning, TEXT("StepSim called"));
+	//UE_LOG(LogTemp, Warning, TEXT("StepSim called"));
 	SkipInputThisFrame.Reset();
 	SkipOutputThisFrame.Reset();
 
@@ -97,7 +97,6 @@ void USimWorldHex::StepArms()
 
 		case ECmd::Grab:
 		{
-			UE_LOG(LogTemp, Log, TEXT("Grab"));
 			if (!S.bHolding)
 			{
 				FHex Target = S.BaseHex;

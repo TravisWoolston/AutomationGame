@@ -36,12 +36,8 @@ ABasicArm::ABasicArm()
 	BaseComp->SetupAttachment(Root);
 	BaseComp->SetMobility(EComponentMobility::Movable);
 
-	HandComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ArmHand"));
-	HandComp->SetupAttachment(BaseComp);
-	HandComp->SetMobility(EComponentMobility::Movable);
-
 	HeldOrbComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HeldOrbPreview"));
-	HeldOrbComp->SetupAttachment(HandComp);
+	HeldOrbComp->SetupAttachment(BaseComp); // Attach directly to BaseComp
 	HeldOrbComp->SetMobility(EComponentMobility::Movable);
 	HeldOrbComp->SetVisibility(false, true);
 }
@@ -185,16 +181,10 @@ void ABasicArm::EnsureComps()
 		BaseComp->SetupAttachment(GetRootComponent());
 		BaseComp->RegisterComponent();
 	}
-	if (!HandComp)
-	{
-		HandComp = NewObject<UStaticMeshComponent>(this, TEXT("ArmHand"));
-		HandComp->SetupAttachment(BaseComp);
-		HandComp->RegisterComponent();
-	}
 	if (!HeldOrbComp)
 	{
 		HeldOrbComp = NewObject<UStaticMeshComponent>(this, TEXT("HeldOrbPreview"));
-		HeldOrbComp->SetupAttachment(HandComp);
+		HeldOrbComp->SetupAttachment(BaseComp); // Attach directly to BaseComp
 		HeldOrbComp->RegisterComponent();
 		HeldOrbComp->SetVisibility(false, true);
 	}
@@ -203,7 +193,6 @@ void ABasicArm::EnsureComps()
 void ABasicArm::RefreshMeshes()
 {
 	if (BaseComp) { BaseComp->SetStaticMesh(BaseMesh); BaseComp->SetRelativeScale3D(BaseScale); }
-	if (HandComp) { HandComp->SetStaticMesh(HandMesh); HandComp->SetRelativeScale3D(HandScale); }
 
 	if (HeldOrbComp)
 	{
@@ -246,17 +235,6 @@ void ABasicArm::RefreshPose(float InAlpha)
 	{
 		BaseComp->SetWorldLocation(BaseWorld);
 		BaseComp->SetWorldRotation(BaseRot);
-	}
-
-	// Hand position (purely cosmetic)
-	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
-	const FRotator HandRot(0.f, Yaw, 0.f);
-	const FVector Forward = HandRot.RotateVector(FVector(1, 0, 0));
-	const FVector HandWorld = BaseWorld + Forward * (Tile * HandReachUU);
-	if (HandComp)
-	{
-		HandComp->SetWorldLocation(HandWorld);
-		HandComp->SetWorldRotation(BaseRot);
 	}
 }
 
@@ -404,8 +382,9 @@ void ABasicArm::StepProgram()
 			const FHex Target = ComputeTargetHex();
 			if (Sim->TryArmPickItem(Target, grabbed))
 			{
-				bHolding = true;     // purely visual flag on the mesh
-				ShowHeldOrb(true);
+				bHolding = true;
+				HeldOrb = grabbed;
+				AttachHeldOrb();
 			}
 		}
 		++PC;
@@ -417,11 +396,10 @@ void ABasicArm::StepProgram()
 		if (bHolding && bAffectSim && Sim)
 		{
 			const FHex Target = ComputeTargetHex();
-			// place whatever you're visually “holding” — sim side tracks real FItem in FArmState
-			if (Sim->TryArmPlaceItem(Target, /*ignored if you want sim-owned Held*/ FItem{}))
+			if (Sim->TryArmPlaceItem(Target, FItem{}))
 			{
 				bHolding = false;
-				ShowHeldOrb(false);
+				DetachHeldOrb();
 			}
 		}
 		++PC;
@@ -451,27 +429,46 @@ void ABasicArm::StepProgram()
 
 void ABasicArm::ShowHeldOrb(bool bShow)
 {
-	if (HeldOrbComp)
+	if (!HeldOrbComp)
 	{
-		if (bShow && HeldOrbMesh)
-		{
-			// Attach to socket on grab
-			HeldOrbComp->SetStaticMesh(HeldOrbMesh);
-			HeldOrbComp->SetVisibility(true, true);
-			HeldOrbComp->AttachToComponent(BaseComp, FAttachmentTransformRules::SnapToTargetIncludingScale, TEXT("GripSocket"));
-		}
-		else
-		{
-			// Detach and move to nearest tile on drop
-			HeldOrbComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': HeldOrbComp is null, cannot show held orb."), *GetName());
+		return;
+	}
 
-			// Move to target tile location
-			const FHex TargetHex = ComputeTargetHex();
-			const FVector TargetWorld = HexToWorld(TargetHex);
-			HeldOrbComp->SetWorldLocation(TargetWorld);
+	// Remove previous orb meshes
+	TArray<USceneComponent*> ChildComponents;
+	HeldOrbComp->GetChildrenComponents(false, ChildComponents);
+	//for (USceneComponent* Child : ChildComponents)
+	//{
+	//	Child->DestroyComponent();
+	//}
 
-			HeldOrbComp->SetVisibility(false, true); // Optionally hide after drop
+	if (bShow && HeldOrb.Orbs.Num() > 0)
+	{
+		UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Showing held orb with %d sub-orbs."), *GetName(), HeldOrb.Orbs.Num());
+		HeldOrbComp->AttachToComponent(BaseComp, FAttachmentTransformRules::SnapToTargetIncludingScale, TEXT("GripSocket"));
+
+		for (const FOrbData& Orb : HeldOrb.Orbs)
+		{
+			UStaticMeshComponent* OrbMesh = NewObject<UStaticMeshComponent>(this);
+			OrbMesh->RegisterComponent();
+			OrbMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
+			OrbMesh->SetRelativeLocation(FVector(Orb.Offset, 0.f));
+			OrbMesh->SetMaterial(0, GetMaterialForOrbColor(Orb.Color));
+			OrbMesh->SetRelativeScale3D(HeldOrbScale);
+
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Created orb mesh for type=%d color=%d offset=(%.2f, %.2f)"), *GetName(), Orb.Type, Orb.Color, Orb.Offset.X, Orb.Offset.Y);
 		}
+		//HeldOrbComp->SetVisibility(true, true);
+	}
+	else
+	{
+		if (bShow)
+		{
+			UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': Tried to show held orb, but HeldOrb.Orbs.Num() == 0"), *GetName());
+		}
+		HeldOrbComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		//HeldOrbComp->SetVisibility(false, true);
 	}
 }
 
@@ -489,4 +486,73 @@ void ABasicArm::InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, 
 	CurrYawDeg = DirToYaw(FacingDir);
 	LastYawDeg = CurrYawDeg;
 	RefreshPose(1.f);
+}
+
+UStaticMesh* ABasicArm::GetMeshForOrbType(uint8 OrbType) const
+{
+	if (OrbTypeToMesh.Contains(OrbType))
+	{
+		return OrbTypeToMesh[OrbType];
+	}
+	// Fallback to default mesh if not found
+	return HeldOrbMesh;
+}
+
+UMaterialInterface* ABasicArm::GetMaterialForOrbColor(uint8 OrbColor) const
+{
+	if (OrbColorToMaterial.Contains(OrbColor))
+	{
+		return OrbColorToMaterial[OrbColor];
+	}
+	// Fallback to no material if not found
+	return nullptr;
+}
+
+void ABasicArm::AttachHeldOrb()
+{
+	if (HeldOrbComp)
+	{
+		HeldOrbComp->DestroyComponent();
+		HeldOrbComp = nullptr;
+	}
+
+	if (!bHolding) return;
+
+	// Handle cluster
+	if (HeldOrb.bIsCluster && HeldOrb.Orbs.Num() > 0)
+	{
+		HeldOrbComp = NewObject<UStaticMeshComponent>(this, TEXT("HeldOrb"));
+		HeldOrbComp->RegisterComponent();
+		HeldOrbComp->AttachToComponent(BaseComp, FAttachmentTransformRules::SnapToTargetIncludingScale, TEXT("GripSocket"));
+
+		for (const FOrbData& Orb : HeldOrb.Orbs)
+		{
+			UStaticMeshComponent* OrbMesh = NewObject<UStaticMeshComponent>(this);
+			OrbMesh->RegisterComponent();
+			OrbMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
+			OrbMesh->SetStaticMesh(GetMeshForOrbType(Orb.Type));
+			OrbMesh->SetMaterial(0, GetMaterialForOrbColor(Orb.Color));
+			OrbMesh->SetRelativeLocation(FVector(Orb.Offset, 0.f));
+			OrbMesh->SetRelativeScale3D(HeldOrbScale);
+		}
+	}
+	// Handle single orb
+	else if (!HeldOrb.bIsCluster)
+	{
+		HeldOrbComp = NewObject<UStaticMeshComponent>(this, TEXT("HeldOrb"));
+		HeldOrbComp->RegisterComponent();
+		HeldOrbComp->AttachToComponent(BaseComp, FAttachmentTransformRules::SnapToTargetIncludingScale, TEXT("GripSocket"));
+		HeldOrbComp->SetStaticMesh(GetMeshForOrbType(static_cast<uint8>(HeldOrb.Single.Type)));
+		HeldOrbComp->SetMaterial(0, GetMaterialForOrbColor(static_cast<uint8>(HeldOrb.Single.Color)));
+		HeldOrbComp->SetRelativeScale3D(HeldOrbScale);
+	}
+}
+
+void ABasicArm::DetachHeldOrb()
+{
+	if (HeldOrbComp)
+	{
+		HeldOrbComp->DestroyComponent();
+		HeldOrbComp = nullptr;
+	}
 }
