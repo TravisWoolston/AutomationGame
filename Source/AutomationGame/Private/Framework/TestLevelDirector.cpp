@@ -3,12 +3,63 @@
 #include "Actors/OrbSimDriver.h"
 #include "Sim/SimWorldHex.h"
 #include "Engine/World.h"
-#include "EngineUtils.h" // TActorIterator
+#include "EngineUtils.h"
 #include "AGLogChannels.h"
+#include "Actors/BasicArm.h"
+
+#if WITH_EDITOR
+#include "Editor.h"
+#include "Editor/EditorEngine.h"
+#include "Editor/UnrealEdEngine.h"
+#endif
+
+static TArray<FOp> ConvertProgramToOps(const TArray<FArmInstr>& Program)
+{
+	TArray<FOp> Out;
+	for (const FArmInstr& I : Program)
+	{
+		switch (I.Cmd)
+		{
+		case EArmCmd::NoOp:      Out.Add({ ECmd::Wait, 1 }); break;
+		case EArmCmd::Grab:      Out.Add({ ECmd::Grab, 0 }); break;
+		case EArmCmd::Drop:      Out.Add({ ECmd::Drop, 0 }); break;
+		case EArmCmd::RotateCW:  Out.Add({ ECmd::RotateR, (uint8)FMath::Max(1, I.Arg) }); break;
+		case EArmCmd::RotateCCW: Out.Add({ ECmd::RotateL, (uint8)FMath::Max(1, I.Arg) }); break;
+		case EArmCmd::Wait:      Out.Add({ ECmd::Wait,    (uint8)FMath::Clamp(I.Arg, 0, 255) }); break;
+		case EArmCmd::Reset:     Out.Add({ ECmd::Reset, 0 }); break;
+		default:                 Out.Add({ ECmd::Wait, 1 }); break;
+		}
+	}
+	return Out;
+}
+
+// Helper: copy any edited preview arm data (Program, loop flag, facing, reach) back into the scenario spec
+static void SyncPreviewEditsIntoScenario(FScenarioSpec& Scenario)
+{
+	for (FArmSpawnSpec& ArmSpec : Scenario.Arms)
+	{
+		if (ArmSpec.Spawned)
+		{
+			// Pull current live actor data back into the spec so re-apply uses edits
+			ArmSpec.Program = ArmSpec.Spawned->Program;        // assumes Program is public/UPROPERTY
+			ArmSpec.bLoopProgram = ArmSpec.Spawned->bLoopProgram;
+			ArmSpec.Facing = ArmSpec.Spawned->FacingDir;
+			//ArmSpec.ReachTiles = ArmSpec.Spawned->ReachTiles;     // if your spec tracks reach
+			UE_LOG(LogTemp, Verbose, TEXT("TestLevelDirector: Synced preview arm edits (Hex=%d,%d) ProgramLen=%d Facing=%d Loop=%d"),
+				ArmSpec.Q, ArmSpec.R, ArmSpec.Program.Num(), (int32)ArmSpec.Facing, ArmSpec.bLoopProgram ? 1 : 0);
+		}
+	}
+}
 
 ATestLevelDirector::ATestLevelDirector()
 {
 	PrimaryActorTick.bCanEverTick = false;
+#if WITH_EDITOR
+	if (GIsEditor)
+	{
+		FEditorDelegates::PreBeginPIE.AddUObject(this, &ATestLevelDirector::HandlePreBeginPIE);
+	}
+#endif
 }
 
 void ATestLevelDirector::BeginPlay()
@@ -85,32 +136,15 @@ void ATestLevelDirector::ClearArms()
 		}
 	}
 }
-// TestLevelDirector.cpp  (where you currently construct ArmState then call Sim->AddArm)
-
-static TArray<FOp> ConvertProgramToOps(const TArray<FArmInstr>& Program)
-{
-	TArray<FOp> Out;
-	for (const FArmInstr& I : Program)
-	{
-		switch (I.Cmd)
-		{
-		case EArmCmd::NoOp:      Out.Add({ ECmd::Wait, 1 }); break;
-		case EArmCmd::Grab:      Out.Add({ ECmd::Grab, 0 }); break;
-		case EArmCmd::Drop:      Out.Add({ ECmd::Drop, 0 }); break;
-		case EArmCmd::RotateCW:  Out.Add({ ECmd::RotateR, (uint8)FMath::Max(1, I.Arg) }); break;
-		case EArmCmd::RotateCCW: Out.Add({ ECmd::RotateL, (uint8)FMath::Max(1, I.Arg) }); break;
-		case EArmCmd::Wait:      Out.Add({ ECmd::Wait,    (uint8)FMath::Clamp(I.Arg, 0, 255) }); break;
-		case EArmCmd::Reset:     Out.Add({ ECmd::Reset, 0 }); break;
-		default:                 Out.Add({ ECmd::Wait, 1 }); break;
-		}
-	}
-	return Out;
-}
-
-
 
 void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 {
+	// NEW: capture any preview edits before we destroy preview actors
+	FScenarioSpec& MutableScenario = const_cast<FScenarioSpec&>(S);
+	SyncPreviewEditsIntoScenario(MutableScenario);
+
+	ClearArms(); // (existing call)
+
 	UWorld* W = GetWorld();
 	if (!W || !Driver) return;
 
@@ -170,8 +204,14 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 
 			ArmState.Tape = ConvertProgramToOps(A.Program);
 
+			// After adding the arm to the simulation:
 			int32 ArmIndex = Sim->AddArm(ArmState);
 			UE_LOG(LogTemp, Warning, TEXT("AddArm: Arm added at index %d, total arms now %d"), ArmIndex, Sim->Arms.Num());
+
+			// Set SimArmIndex on the visual arm
+			A.Spawned->SimArmIndex = ArmIndex;
+			A.Spawned->SetProgram(A.Program, A.bLoopProgram); // now pushes correctly
+			A.Spawned->Start();
 		}
 	}
 
@@ -182,3 +222,111 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		UE_LOG(LogTemp, Log, TEXT("GameTickManager: Play()"));
 	}
 }
+
+// Example for arms
+void ATestLevelDirector::SpawnScenarioPreview()
+{
+	ClearArms(); // <-- Add this line
+
+	UWorld* World = GetWorld();
+	if (!Driver) return;
+
+	for (FArmSpawnSpec& ArmSpec : Scenarios[ActiveScenarioIndex].Arms)
+	{
+		if (!ArmSpec.Spawned)
+		{
+			FVector WorldPos = GetWorldPositionForHex(ArmSpec.Q, ArmSpec.R);
+			FRotator WorldRot(0.f, Driver->GetGridYaw() + 60.f * (ArmSpec.Facing % 6), 0.f);
+
+			FTransform Tm(WorldRot, WorldPos);
+			ArmSpec.Spawned = World->SpawnActor<ABasicArm>(ArmClass, Tm);
+		}
+	}
+}
+
+FVector ATestLevelDirector::GetWorldPositionForHex(int32 Q, int32 R) const
+{
+	if (!Driver) return FVector::ZeroVector;
+	const AActor* Anchor = Driver->GetGridAnchor();
+	const FVector Origin = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	const float TileSize = Driver->GetTileSize();
+	const EHexOrientation Orientation = Driver->GetGridOrientation();
+	const float GridYaw = Driver->GetGridYaw();
+
+	// Convert axial (Q, R) to local XY
+	const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(Q, R), TileSize, Orientation);
+	// Rotate by grid yaw
+	const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+
+	// Final world position
+	return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
+}
+
+void ATestLevelDirector::CommitPreviewEdits()
+{
+	if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CommitPreviewEdits: Invalid ActiveScenarioIndex."));
+		return;
+	}
+	FScenarioSpec& Scenario = Scenarios[ActiveScenarioIndex];
+	SyncPreviewEditsIntoScenario(Scenario);
+	// Mark owning package/map dirty so changes persist after restart
+	if (UPackage* Pkg = GetOutermost())
+	{
+		Pkg->SetDirtyFlag(true);
+	}
+	UE_LOG(LogTemp, Log, TEXT("CommitPreviewEdits: Saved edits for Scenario '%s' (%d arms)."),
+		*Scenario.Name.ToString(), Scenario.Arms.Num());
+}
+
+// NEW: live patch helper
+void ATestLevelDirector::RefreshSpawnedArmsFromScenario(int32 ScenarioIndex)
+{
+	if (!Scenarios.IsValidIndex(ScenarioIndex) || !bAutoPatchSpawnedArms) return;
+
+	FScenarioSpec& Spec = Scenarios[ScenarioIndex];
+	for (FArmSpawnSpec& ArmSpec : Spec.Arms)
+	{
+		if (!ArmSpec.Spawned) continue;
+
+		ABasicArm* Arm = ArmSpec.Spawned;
+		// Patch Program / Loop
+		if (Arm->Program != ArmSpec.Program || Arm->bLoopProgram != ArmSpec.bLoopProgram)
+		{
+			Arm->SetProgram(ArmSpec.Program, ArmSpec.bLoopProgram);
+			UE_LOG(LogTemp, Verbose, TEXT("TestLevelDirector: Patched arm program at (%d,%d) Len=%d Loop=%d"),
+				ArmSpec.Q, ArmSpec.R, ArmSpec.Program.Num(), ArmSpec.bLoopProgram ? 1 : 0);
+		}
+		// Patch facing (and grid placement if moved)
+		bool bPlacementChanged = (Arm->Q != ArmSpec.Q) || (Arm->R != ArmSpec.R) || (Arm->FacingDir != ArmSpec.Facing);
+		if (bPlacementChanged)
+		{
+			const uint8 NewFacing = ArmSpec.Facing % 6;
+			Arm->InitializeOnGrid(Driver, ArmSpec.Q, ArmSpec.R, NewFacing);
+			UE_LOG(LogTemp, Verbose, TEXT("TestLevelDirector: Patched arm placement (%d,%d) Facing=%d"),
+				ArmSpec.Q, ArmSpec.R, (int32)NewFacing);
+		}
+	}
+}
+
+#if WITH_EDITOR
+void ATestLevelDirector::HandlePreBeginPIE(bool /*bIsSimulating*/)
+{
+	// Auto commit any preview edits so they are serialized into Scenario spec before ApplyScenario in BeginPlay
+	if (!IsValid(this)) return;
+	CommitPreviewEdits();
+}
+
+void ATestLevelDirector::PostEditChangeProperty(FPropertyChangedEvent& Event)
+{
+	Super::PostEditChangeProperty(Event);
+
+	// If the Scenarios array (or nested fields) changed, patch spawned preview arms
+	if (Event.MemberProperty &&
+		Event.MemberProperty->GetFName() == GET_MEMBER_NAME_CHECKED(ATestLevelDirector, Scenarios))
+	{
+		RefreshSpawnedArmsFromScenario(ActiveScenarioIndex);
+	}
+}
+#endif

@@ -32,7 +32,11 @@ bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 
 int32 USimWorldHex::AddArm(const FArmState& Arm)
 {
-	return Arms.Add(Arm);
+	int32 Index = Arms.Num();
+	FArmState ArmCopy = Arm;
+	ArmCopy.ArmIndex = Index;
+	Arms.Add(ArmCopy);
+	return Index;
 }
 
 // ---- Item helpers that also keep the Orb overlay in sync ----
@@ -72,15 +76,11 @@ void USimWorldHex::StepSim()
 
 void USimWorldHex::StepArms()
 {
-	//UE_LOG(LogTemp, Warning, TEXT("StepArms called, NumArms=%d"), Arms.Num());
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
 	{
 		FArmState& S = Arms[ArmIndex];
-		//UE_LOG(LogTemp, Warning, TEXT("Arm %d Tape Length: %d"), ArmIndex, S.Tape.Num());
-		//for (int32 i = 0; i < S.Tape.Num(); ++i)
-		//{
-		//	UE_LOG(LogTemp, Warning, TEXT("  Tape[%d] Cmd=%d Arg=%d"), i, (int32)S.Tape[i].Cmd, S.Tape[i].Arg);
-		//}
+		UE_LOG(LogTemp, Verbose, TEXT("Sim Pre Arm%d PC=%d Holding=%d HeldId=%d TapeLen=%d"),
+			ArmIndex, S.PC, S.bHolding ? 1 : 0, S.Held.Id, S.Tape.Num());
 
 		if (S.Tape.Num() == 0) continue;
 		const FOp& Op = S.Tape[S.PC];
@@ -134,8 +134,40 @@ void USimWorldHex::StepArms()
 		}
 		break;
 
-		case ECmd::RotateL: S.Facing = (EHexDir)(((uint8)S.Facing + 1) % 6); break; // CCW
-		case ECmd::RotateR: S.Facing = (EHexDir)(((uint8)S.Facing + 5) % 6); break; // CW
+		case ECmd::RotateL:
+		case ECmd::RotateR:
+		{
+			// Only block rotation if holding an orb
+			if (S.bHolding)
+			{
+				// Determine the direction after rotation
+				EHexDir NewFacing = S.Facing;
+				if (Op.Cmd == ECmd::RotateL)
+					NewFacing = (EHexDir)(((uint8)S.Facing + 1) % 6); // CCW
+				else
+					NewFacing = (EHexDir)(((uint8)S.Facing + 5) % 6); // CW
+
+				// Compute the target hex after rotation
+				FHex Target = S.BaseHex;
+				for (int i = 0; i < S.ArmLen; ++i)
+					Target = HexUtil::Neighbor(Target, NewFacing);
+
+				// If the target hex is occupied, wait
+				if (ItemMap.Contains(Target))
+				{
+					S.WaitCounter = 1;
+					goto AdvancePC;
+				}
+			}
+
+			// If not blocked, apply rotation
+			if (Op.Cmd == ECmd::RotateL)
+				S.Facing = (EHexDir)(((uint8)S.Facing + 1) % 6); // CCW
+			else
+				S.Facing = (EHexDir)(((uint8)S.Facing + 5) % 6); // CW
+		}
+		break;
+
 		case ECmd::Extend:  S.ArmLen = FMath::Clamp<int32>(S.ArmLen + 1, 1, 3); break;
 		case ECmd::Retract: S.ArmLen = FMath::Clamp<int32>(S.ArmLen - 1, 1, 3); break;
 		case ECmd::MovePos: S.TrackIdx = FMath::Clamp<int32>(S.TrackIdx + 1, -4, 4); break;
@@ -146,6 +178,8 @@ void USimWorldHex::StepArms()
 			S.Facing = S.HomeFacing; S.ArmLen = S.HomeArmLen; S.TrackIdx = S.HomeTrackIdx; break;
 		case ECmd::Repeat:  break;
 		}
+		UE_LOG(LogTemp, Verbose, TEXT("Sim Post Op Arm%d Cmd=%d Holding=%d HeldId=%d"),
+			ArmIndex, (int32)Op.Cmd, S.bHolding ? 1 : 0, S.Held.Id);
 	AdvancePC:
 		S.PC = (S.PC + 1) % S.Tape.Num();
 	}

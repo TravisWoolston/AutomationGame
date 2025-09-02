@@ -6,6 +6,7 @@
 #include "Actors/BasicArm.h"
 #include "Actors/OrbSimDriver.h"
 #include "Sim/HexCoord.h"
+#include "Sim/SimWorldHex.h"          // <-- ADDED for USimWorldHex / FArmState
 #include "DrawDebugHelpers.h"
 
 AGameManager::AGameManager()
@@ -151,6 +152,34 @@ void AGameManager::Rebuild()
 	EnsureISM();
 	BuildGridInstances();
 }
+
+// Local helper to mirror TestLevelDirector conversion so runtime-placed arms work too.
+static TArray<FOp> ConvertProgramToOps(const TArray<FArmInstr>& Program)
+{
+	TArray<FOp> Out;
+	if (Program.Num() == 0)
+	{
+		// Provide a harmless default so the arm has at least something to execute.
+		Out.Add({ ECmd::Wait, 1 });
+		return Out;
+	}
+	for (const FArmInstr& I : Program)
+	{
+		switch (I.Cmd)
+		{
+		case EArmCmd::NoOp:      Out.Add({ ECmd::Wait, 1 }); break;
+		case EArmCmd::Grab:      Out.Add({ ECmd::Grab, 0 }); break;
+		case EArmCmd::Drop:      Out.Add({ ECmd::Drop, 0 }); break;
+		case EArmCmd::RotateCW:  Out.Add({ ECmd::RotateR, (uint8)FMath::Max(1, I.Arg) }); break;
+		case EArmCmd::RotateCCW: Out.Add({ ECmd::RotateL, (uint8)FMath::Max(1, I.Arg) }); break;
+		case EArmCmd::Wait:      Out.Add({ ECmd::Wait, (uint8)FMath::Clamp(I.Arg, 0, 255) }); break;
+		case EArmCmd::Reset:     Out.Add({ ECmd::Reset, 0 }); break;
+		default:                 Out.Add({ ECmd::Wait, 1 }); break;
+		}
+	}
+	return Out;
+}
+
 ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop)
 {
 	if (!BasicArmClass)
@@ -180,11 +209,40 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 	ABasicArm* Arm = GetWorld()->SpawnActor<ABasicArm>(BasicArmClass, FTransform(FRotator(0, Yaw, 0), Loc), S);
 	if (!Arm) return nullptr;
 
+	// Initialize actor-side data
 	Arm->Driver = OrbSimDriver;
 	Arm->Q = Hex.Q;
 	Arm->R = Hex.R;
-	Arm->FacingDir = Facing;
+	Arm->FacingDir = Facing % 6;
 	Arm->SetProgram(Program, bLoop);
+
+	// --- Add to simulation so it actually runs ---
+	if (USimWorldHex* Sim = OrbSimDriver->GetSim())
+	{
+		FArmState ArmState;
+		ArmState.BaseHex = Hex;
+		ArmState.Facing = static_cast<EHexDir>(Facing % 6);
+		ArmState.HomeFacing = ArmState.Facing;
+		ArmState.HomeArmLen = FMath::Clamp(Arm->ReachTiles, 1, 3);        // NEW
+		ArmState.HomeTrackIdx = 0;
+		ArmState.ArmLen = ArmState.HomeArmLen;                            // NEW
+		ArmState.TrackIdx = 0;
+		ArmState.PC = 0;
+		ArmState.bHolding = false;
+		ArmState.WaitCounter = 0;                                         // (if field exists) NEW
+		ArmState.Tape = ConvertProgramToOps(Program);
+
+		const int32 ArmIndex = Sim->AddArm(ArmState);
+		Arm->SimArmIndex = ArmIndex;
+		Arm->Start();
+
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Spawned + registered arm at Hex(%d,%d) Facing=%d SimIndex=%d TapeLen=%d"),
+			Hex.Q, Hex.R, (int32)ArmState.Facing, ArmIndex, ArmState.Tape.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Arm spawned visually but Sim is null; program will not run."));
+	}
 
 	return Arm;
 }

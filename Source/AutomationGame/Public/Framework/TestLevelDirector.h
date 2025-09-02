@@ -2,9 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Sim/HexTypes.h"     // FHex
-#include "Sim/Tiles.h"        // ETileKind, FTile
-#include "Actors/BasicArm.h"  // FArmInstr, ABasicArm
+#include "Sim/HexTypes.h"
+#include "Sim/Tiles.h"
+#include "Actors/BasicArm.h"
 #include "TestLevelDirector.generated.h"
 
 class AGameTickManager;
@@ -56,8 +56,10 @@ struct FScenarioSpec
 	/** Optional: how far you want to generate tiles elsewhere (purely visual is handled elsewhere). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 1)) int32 GridRadius = 8;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FPlacedTileSpec> Tiles;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FArmSpawnSpec> Arms;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FPlacedTileSpec> Tiles;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TArray<FArmSpawnSpec> Arms;
 
 	/** Should the tick manager start playing after setup? */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bAutoPlay = true;
@@ -69,33 +71,46 @@ class AUTOMATIONGAME_API ATestLevelDirector : public AActor
 	GENERATED_BODY()
 public:
 	ATestLevelDirector();
-
 	virtual void BeginPlay() override;
 
-	// Refs (auto-found if left null)
 	UPROPERTY(EditAnywhere, Category = "Refs") AGameTickManager* TickManager = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Refs") AOrbSimDriver* Driver = nullptr;
 
-	// Optional auto-spawn if missing
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AGameTickManager> TickManagerClass;
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AOrbSimDriver>   DriverClass;
 
-	// Arm blueprint/class to spawn
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<ABasicArm> ArmClass;
 
-	// Scenarios
 	UPROPERTY(EditAnywhere, Category = "Scenarios") TArray<FScenarioSpec> Scenarios;
 	UPROPERTY(EditAnywhere, Category = "Scenarios", meta = (ClampMin = 0)) int32 ActiveScenarioIndex = 0;
 
-	/** Build the active scenario (also callable in editor). */
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
 	void BuildActiveScenario();
 
-	/** Destroy any arms this director spawned. */
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
 	void ClearArms();
+
+	UFUNCTION(CallInEditor, Category = "Scenario")
+	void SpawnScenarioPreview();
+
+	UFUNCTION(BlueprintCallable, Category = "Scenario")
+	FVector GetWorldPositionForHex(int32 Q, int32 R) const;
+
+	UPROPERTY(EditAnywhere, Category = "Scenarios|Editing")
+	bool bAutoPatchSpawnedArms = true;
+
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
+	void CommitPreviewEdits();
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
+#endif
 
 private:
 	void AutoFindOrSpawn();
 	void ApplyScenario(const FScenarioSpec& S);
+	void RefreshSpawnedArmsFromScenario(int32 ScenarioIndex);
+#if WITH_EDITOR
+	void HandlePreBeginPIE(bool bIsSimulating);
+#endif
 };

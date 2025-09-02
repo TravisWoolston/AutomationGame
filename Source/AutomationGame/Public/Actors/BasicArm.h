@@ -37,11 +37,21 @@ struct FArmInstr
 	/** For Rotate/Wait, meaning depends on Cmd. Ignored otherwise. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, UIMin = 0))
 	int32 Arg = 0;
+
+	// Added equality operators so TArray<FArmInstr>::operator== works
+	bool operator==(const FArmInstr& Other) const
+	{
+		return Cmd == Other.Cmd && Arg == Other.Arg;
+	}
+	bool operator!=(const FArmInstr& Other) const
+	{
+		return !(*this == Other);
+	}
 };
 
 
 
-UCLASS(Blueprintable)
+UCLASS()
 class AUTOMATIONGAME_API ABasicArm : public AActor
 {
 	GENERATED_BODY()
@@ -143,11 +153,13 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void ResetProgram();
-
+	UFUNCTION(BlueprintCallable, Category = "Program")
+	void SyncFromSim(const FArmState& SimState);  // also sets SimArmIndex	
 	/** For debugging: execute current instruction immediately (ignores Wait). */
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void ExecuteCurrent();
-	// BasicArm.h
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
+	int32 SimArmIndex;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
 	bool bAffectSim = false;   // default false: sim is authoritative
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
@@ -155,6 +167,16 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
 	TMap<uint8, UMaterialInterface*> OrbColorToMaterial;
+
+public:
+	void PushProgramToSim();
+	void PushRuntimePropertiesToSim();   // NEW
+	UFUNCTION(BlueprintCallable, Category = "Program")
+	void RebuildTapeFromProgram();          // runtime/editor safe manual push
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
+#endif
 
 protected:
 	// Fixed tick hookup
@@ -192,6 +214,7 @@ private:
 	// Helpers
 	void EnsureComps();
 	void RefreshMeshes();
+	void SyncFromSim();
 	void RefreshPose(float InAlpha);                 // update transforms
 	FVector HexToWorld(const FHex& H) const;         // grid → world
 	float   DirToYaw(uint8 Dir) const;               // grid yaw + 60° steps
@@ -209,4 +232,13 @@ private:
 	void DetachHeldOrb();
 	UStaticMesh* GetMeshForOrbType(uint8 OrbType) const;
 	UMaterialInterface* GetMaterialForOrbColor(uint8 OrbColor) const;
+
+	// NEW: track previous held item to know when to rebuild visual
+	int32 LastHeldItemId = 0;
+
+	// NEW helper: update (attach/detach) held orb visual when state changes
+	void UpdateHeldOrbVisual();
+
+	UStaticMesh* ResolveOrbMesh(const FItem& Item) const;      // NEW
+	UMaterialInterface* ResolveOrbMaterial(const FItem& Item) const; // NEW
 };

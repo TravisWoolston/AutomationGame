@@ -127,10 +127,10 @@ void UOrbRenderer::RebuildCurrPos()
 	for (const FArmState& S : Sim->Arms)
 	{
 		if (!S.bHolding) continue;
-		if (S.Held.Id != 0)
+		/*if (S.Held.Id != 0)
 		{
 			UE_LOG(LogTemp, Log, TEXT("Rendering held orb Id=%d at arm hand"), S.Held.Id);
-		}
+		}*/
 		FHex Grip = S.BaseHex;
 		for (int i = 0; i < S.ArmLen; ++i) Grip = HexUtil::Neighbor(Grip, S.Facing);
 		const FHexAxial A(Grip.Q, Grip.R);

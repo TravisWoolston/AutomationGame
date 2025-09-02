@@ -123,7 +123,8 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		AGameManager* GM = Cast<AGameManager>(GMActor);
 		if (GM)
 		{
-			GM->SpawnBasicArmAt(FHex{ A.Q, A.R }, BeltDir % 6, TArray<FArmInstr>(), true);
+			ABasicArm* NewArm = GM->SpawnBasicArmAt(FHex{ A.Q, A.R }, BeltDir % 6, TArray<FArmInstr>(), true);
+
 		}
 		else
 		{
