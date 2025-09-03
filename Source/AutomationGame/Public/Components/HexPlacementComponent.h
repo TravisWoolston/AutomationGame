@@ -1,6 +1,7 @@
 #pragma once
 #include "AutomationGameMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Sim/HexTypes.h"  
 #include "HexPlacementComponent.generated.h"
 
 class USimWorldHex; class APlayerController; class AActor; class AOrbSimDriver;
@@ -30,13 +31,37 @@ public:
 	/** Debug overlay: prints and draws pick positions. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebug = true;
 
+	/** Optional base material for hologram preview (should be translucent & unlit). */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	UMaterialInterface* PreviewBaseMaterial = nullptr;
+
+	/** Mesh used for Input/Output tiles if no board tile mesh is available. */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	UStaticMesh* GenericTilePreviewMesh = nullptr;
+
+	/** Optional mesh specifically for belt preview (falls back to GenericTilePreviewMesh). */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	UStaticMesh* BeltMeshPreview = nullptr;
+
+	/** Optional mesh specifically for arm base preview (falls back to GenericTilePreviewMesh). */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	UStaticMesh* ArmBasePreviewMesh = nullptr;
+
+	/** Scale applied to preview (slightly smaller than real). */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	float PreviewScale = 0.95f;
+
+	/** Vertical Z offset so the hologram floats slightly above ground. */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	float PreviewZOffset = 4.f;
+
 	// Input API
 	UFUNCTION(BlueprintCallable, Category = "Place") void HandlePlace(bool bPressed);
 	UFUNCTION(BlueprintCallable, Category = "Place") void HandleRemove(bool bPressed);
 	UFUNCTION(BlueprintCallable, Category = "Place") void RotateCW();
 	UFUNCTION(BlueprintCallable, Category = "Place") void RotateCCW();
 	UFUNCTION(BlueprintCallable, Category = "Place") void SetPlaceKind(EPlaceKind NewKind);
-
+	FVector HexToWorld(const FHex& H) const;
 protected:
 	virtual void BeginPlay() override;
 	virtual void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
@@ -48,9 +73,23 @@ private:
 	bool bWasClickingL = false;
 	bool bWasClickingR = false;
 
+	// --- New preview state ---
+	UPROPERTY(Transient) UStaticMeshComponent* PreviewComp = nullptr;
+	UPROPERTY(Transient) UMaterialInstanceDynamic* PreviewMID = nullptr;
+	FHex HoverHex{ INT32_MAX, INT32_MAX };   // invalid sentinel
+	bool bHoverValid = false;
+	FVector LastHoverWorld = FVector::ZeroVector;
+
 	bool HitPlane(FVector& OutWorld) const;
 	void DoPlaceAt(const FVector& World);
 	void DoRemoveAt(const FVector& World);
+
+	void EnsurePreviewComponent();
+	void UpdateHoverHex();          // derive HoverHex from cursor each tick
+	void UpdatePreviewVisual();     // position + mesh + color
+	bool CanPlaceAt(const FHex& Hex) const;
+	UStaticMesh* SelectPreviewMesh() const;
+
 
 	FORCEINLINE AActor* GetAnchor() const;
 };

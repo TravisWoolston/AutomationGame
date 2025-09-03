@@ -789,3 +789,60 @@ void ABasicArm::UpdateHeldOrbVisual()
 	LastHeldItemId = CurrentId;
 }
 
+// --- Sync / detach implementations added ---
+
+void ABasicArm::SyncFromSim(const FArmState& SimState)
+{
+	// Update orientation
+	FacingDir = static_cast<uint8>(SimState.Facing);
+	CurrYawDeg = DirToYaw(FacingDir);
+
+	// Reach (clamped the same way we push)
+	if (ReachTiles != SimState.ArmLen)
+	{
+		ReachTiles = SimState.ArmLen;
+	}
+
+	// Holding state + item payload
+	bHolding = SimState.bHolding;
+	if (bHolding)
+	{
+		HeldOrb = SimState.Held;   // assumes FArmState has Held (or adapt if different field name)
+	}
+	else
+	{
+		HeldOrb = FItem();
+	}
+
+	UpdateHeldOrbVisual();
+}
+
+void ABasicArm::SyncFromSim()
+{
+	if (!Sim || SimArmIndex < 0 || SimArmIndex >= Sim->Arms.Num())
+	{
+		return;
+	}
+	SyncFromSim(Sim->Arms[SimArmIndex]);
+}
+
+void ABasicArm::DetachHeldOrb()
+{
+	if (!HeldOrbComp) return;
+
+	// Destroy any child components (cluster meshes)
+	TArray<USceneComponent*> ChildComps;
+	HeldOrbComp->GetChildrenComponents(false, ChildComps);
+	for (USceneComponent* C : ChildComps)
+	{
+		if (C && C != HeldOrbComp)
+		{
+			C->DestroyComponent();
+		}
+	}
+
+	HeldOrbComp->SetStaticMesh(nullptr);
+	HeldOrbComp->SetVisibility(false, true);
+	HeldOrbComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+}
+

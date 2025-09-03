@@ -13,7 +13,8 @@
 #include "Editor/UnrealEdEngine.h"
 #endif
 
-static TArray<FOp> ConvertProgramToOps(const TArray<FArmInstr>& Program)
+// Renamed to avoid redefinition clash with identical static function in GameManager.cpp when unity build groups files.
+static TArray<FOp> ConvertProgramToOps_TLD(const TArray<FArmInstr>& Program)
 {
 	TArray<FOp> Out;
 	for (const FArmInstr& I : Program)
@@ -202,7 +203,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			ArmState.bHolding = false;
 			// Set other fields as needed
 
-			ArmState.Tape = ConvertProgramToOps(A.Program);
+			ArmState.Tape = ConvertProgramToOps_TLD(A.Program);
 
 			// After adding the arm to the simulation:
 			int32 ArmIndex = Sim->AddArm(ArmState);
