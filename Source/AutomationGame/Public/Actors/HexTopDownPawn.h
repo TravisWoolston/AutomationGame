@@ -40,6 +40,7 @@ private:
 	void SetInputMode2();
 	void SetInputMode3();
 	void SetInputMode4();
+	void SetInputMode5();
 	void RotCW() { if (Placer) Placer->RotateCW(); }
 	void RotCCW() { if (Placer) Placer->RotateCCW(); }
 };

@@ -54,3 +54,5 @@ namespace HexUtil
 		return FVector(x, y, 0.f);
 	}
 }
+
+enum class ETileKind : uint8;  // forward declare (optional, only if required by types here)

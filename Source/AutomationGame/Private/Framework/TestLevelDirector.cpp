@@ -331,3 +331,12 @@ void ATestLevelDirector::PostEditChangeProperty(FPropertyChangedEvent& Event)
 	}
 }
 #endif
+
+void ATestLevelDirector::ReapplyActiveScenario()
+{
+	if (Scenarios.IsValidIndex(ActiveScenarioIndex))
+	{
+		ApplyScenario(Scenarios[ActiveScenarioIndex]);
+		UE_LOG(LogTemp, Log, TEXT("Reapplied scenario '%s'"), *Scenarios[ActiveScenarioIndex].Name.ToString());
+	}
+}

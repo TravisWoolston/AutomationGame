@@ -39,6 +39,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Visual") UMaterialInterface* OrbMaterial = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual") float OrbScale = 0.30f;
 
+	/** If true use sim's belt interpolation (BeltProgress + FrameAlpha) instead of prev/curr hex lerp. */
+	UPROPERTY(EditAnywhere, Category = "Visual")
+	bool bUseSimVisualInterpolation = true;
+
 private:
 	void EnsureISM();
 	void RebuildCurrPos();
@@ -53,4 +57,6 @@ private:
 	TMap<int32, FRotator> PrevRot, CurrRot;
 	float PrevAlpha = 1.f;
 	float DirToYaw(uint8 Dir) const;
+
+	int32 LastSeenStepCounter = -1;
 };

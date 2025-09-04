@@ -102,6 +102,9 @@ public:
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
 	void CommitPreviewEdits();
 
+	UFUNCTION(CallInEditor, BlueprintCallable, Category="Scenarios")
+	void ReapplyActiveScenario();
+
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
 #endif

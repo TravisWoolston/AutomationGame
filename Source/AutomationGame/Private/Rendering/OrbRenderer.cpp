@@ -71,9 +71,8 @@ AActor* UOrbRenderer::GetAnchor() const
 	return Driver ? Driver->GetGridAnchor() : nullptr;
 }
 
-void UOrbRenderer::TickComponent(float /*DeltaTime*/, enum ELevelTick, FActorComponentTickFunction*)
+void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorComponentTickFunction*)
 {
-	// Reacquire if needed (some actors spawn after we BeginPlay)
 	if ((!Driver || !Sim) && bAutoReacquire)
 	{
 		if (UWorld* W = GetWorld())
@@ -83,17 +82,32 @@ void UOrbRenderer::TickComponent(float /*DeltaTime*/, enum ELevelTick, FActorCom
 			if (Sim) { RebuildCurrPos(); PrevPos = CurrPos; PrevRot = CurrRot; }
 		}
 	}
-	if (!Driver || !Sim) return;  // nothing to render yet
+	if (!Driver || !Sim) return;
 
 	const float Alpha = Driver->GetStepAlpha();
+	const int32 Step = Sim->GetStepCounter();
 
-	if (Alpha < PrevAlpha) // step rolled over
+	// Feed frame alpha early
+	if (bUseSimVisualInterpolation)
 	{
+		Sim->SetFrameAlpha(Alpha);
+	}
+
+	// Detect new fixed step via counter instead of Alpha wrap
+	if (Step != LastSeenStepCounter)
+	{
+		LastSeenStepCounter = Step;
+
 		const TMap<int32, FVector>  OldPos = CurrPos;
 		const TMap<int32, FRotator> OldRot = CurrRot;
-		RebuildCurrPos();              // build NEW
-		PrevPos = OldPos;              // keep OLD as prev
+		RebuildCurrPos();
+		PrevPos = OldPos;
 		PrevRot = OldRot;
+
+		if (bUseSimVisualInterpolation)
+		{
+			Sim->SetFrameAlpha(0.f); // start interpolation from segment head
+		}
 	}
 
 	PrevAlpha = Alpha;
@@ -152,32 +166,54 @@ void UOrbRenderer::RebuildCurrPos()
 void UOrbRenderer::RebuildInstances()
 {
 	EnsureISM();
-	if (!ISM || !Driver) return;
+	if (!ISM || !Driver || !Sim) return;
+
 	const float Alpha = Driver->GetStepAlpha();
-
-	TSet<int32> Keys;
-	PrevPos.GetKeys(Keys);
-	TArray<int32> CurrKeys; CurrPos.GetKeys(CurrKeys);
-	for (int32 K : CurrKeys) Keys.Add(K);
-
 	ISM->ClearInstances();
 	if (!OrbMesh) return;
+
+	// Build set of held item ids so we don't double render
 	TSet<int32> HeldIds;
 	for (const FArmState& S : Sim->Arms)
 	{
 		if (S.bHolding && S.Held.Id != 0)
-		{
 			HeldIds.Add(S.Held.Id);
-		}
 	}
-	for (int32 Id : Keys)
+
+	if (bUseSimVisualInterpolation)
 	{
-		if (HeldIds.Contains(Id))
+		// Direct per-item query (belt interpolation already applied in sim)
+		for (const auto& KV : Sim->ItemMap)
 		{
-			// This orb is being shown via a socket-attached component on the arm.
-			// Skip drawing it as an ISM instance.
-			continue;
+			const int32 Id = KV.Value.Id;
+			if (Id == 0) continue;
+			if (HeldIds.Contains(Id)) continue;
+
+			FVector Pos;
+			if (!Sim->GetItemVisualLocation(Id, Pos))
+			{
+				// Fallback: try current map hex center (already stored in CurrPos if present)
+				if (const FVector* CP = CurrPos.Find(Id))
+					Pos = *CP;
+				else
+					continue;
+			}
+
+			// Optional: small vertical offset could be added per type
+			ISM->AddInstance(FTransform(FRotator::ZeroRotator, Pos, FVector(OrbScale)));
 		}
+		return; // done
+	}
+
+	// Legacy prev->curr interpolation path
+	TSet<int32> AllIds;
+	PrevPos.GetKeys(AllIds);
+	for (const auto& K : CurrPos) AllIds.Add(K.Key);
+
+	for (int32 Id : AllIds)
+	{
+		if (HeldIds.Contains(Id)) continue;
+
 		const FVector* A = PrevPos.Find(Id);
 		const FVector* B = CurrPos.Find(Id);
 		const FRotator* RotA = PrevRot.Find(Id);

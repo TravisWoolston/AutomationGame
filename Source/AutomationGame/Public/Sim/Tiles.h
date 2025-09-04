@@ -8,7 +8,8 @@ enum class ETileKind : uint8
     Empty=0,
     Input,
     Output,
-    Belt,      // conveyor tile (Arg = direction 0..5)
+    Belt,
+    Bond      // NEW: two?hex bonding glyph
 };
 
 USTRUCT(BlueprintType)

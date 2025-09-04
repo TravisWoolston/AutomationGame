@@ -7,7 +7,14 @@
 class USimWorldHex; class APlayerController; class AActor; class AOrbSimDriver;
 
 UENUM(BlueprintType)
-enum class EPlaceKind : uint8 { Input, Output, Belt, Arm };
+enum class EPlaceKind : uint8
+{
+	Input,
+	Output,
+	Belt,
+	Arm,
+	Bond      // NEW: place a Bond glyph (uses BeltDir for its direction)
+};
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of truth). */
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
@@ -46,6 +53,19 @@ public:
 	/** Optional mesh specifically for arm base preview (falls back to GenericTilePreviewMesh). */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	UStaticMesh* ArmBasePreviewMesh = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	UStaticMesh* BondPreviewMesh = nullptr;
+
+	/** Optional material for the fused Bond preview (expects scalar params: TileRadius, Span, PadW, PadH, FlatTop, Tint). */
+	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	UMaterialInterface* BondPreviewMaterial = nullptr;
+
+	/** Relative pad extents (multipliers of TileRadius) for decorative squares in Bond material. */
+	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	float BondPadWidthFactor = 0.22f;
+
+	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	float BondPadHeightFactor = 0.18f;
 
 	/** Scale applied to preview (slightly smaller than real). */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
@@ -54,6 +74,10 @@ public:
 	/** Vertical Z offset so the hologram floats slightly above ground. */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	float PreviewZOffset = 4.f;
+
+	/** Additional yaw applied to belt preview meshes to compensate for authoring forward (+X expected). */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	float BeltVisualYawOffsetDeg = -90.f;
 
 	// Input API
 	UFUNCTION(BlueprintCallable, Category = "Place") void HandlePlace(bool bPressed);
