@@ -1,14 +1,14 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Actors/HexBoardActor.h"      // <-- Ensure UHT knows this UCLASS (required for UPROPERTY pointer)
+#include "Sim/HexCoord.h"
+#include "Sim/HexTypes.h"
 #include "HexFactoryActor.generated.h"
 
 class UInstancedStaticMeshComponent;
 class USimWorldHex;
 class AOrbSimDriver;
-class UStaticMesh;
-class UMaterialInterface;
+class AHexBoardActor;
 
 UCLASS()
 class AUTOMATIONGAME_API AHexFactoryActor : public AActor
@@ -20,45 +20,58 @@ public:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 
-	UFUNCTION(BlueprintCallable) void Rebuild();
+	UFUNCTION(BlueprintCallable, Category = "Build")
+	void Rebuild();
 
-	/** Visuals */
+	// ----- Shared / Grid -----
+	UPROPERTY(EditAnywhere, Category = "Grid") bool bAutoRefresh = true;
+
+	AActor* GetAnchor() const;
+
+	// ----- Visual Assets -----
 	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UStaticMesh* TileMesh = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* TileMaterial = nullptr;
+
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UStaticMesh* BeltMesh = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UMaterialInterface* BeltMaterial = nullptr;
-	UPROPERTY(EditAnywhere, Category = "Visual|Belts") float BeltZOffset = 10.f;
-	UPROPERTY(EditAnywhere, Category = "Visual|Belts") FVector BeltScale = FVector(1.f, 1.f, 1.f);
+	UPROPERTY(EditAnywhere, Category = "Visual|Belts") FVector BeltScale = FVector(1.f);
+	UPROPERTY(EditAnywhere, Category = "Visual|Belts") float BeltZOffset = 8.f;
+	UPROPERTY(EditAnywhere, Category = "Visual|Belts") bool bAlwaysDrawBeltArrows = false;
+	UPROPERTY(EditAnywhere, Category = "Visual|Belts") float DebugArrowLenScale = 0.55f;
+	UPROPERTY(EditAnywhere, Category = "Visual|Belts") float DebugArrowThickness = 4.f;
 
-	/** Extra yaw applied to every belt mesh after direction is resolved (compensate mesh authoring). */
-	UPROPERTY(EditAnywhere, Category = "Visual|Belts", meta = (ClampMin = -360.0, ClampMax = 360.0))
-	float BeltVisualYawOffsetDeg = -90.f;
+	// ----- NEW: Bond visuals (handled like belts) -----
+	UPROPERTY(EditAnywhere, Category = "Visual|Bonds") UStaticMesh* BondMesh = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Bonds") UMaterialInterface* BondMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Bonds") FVector BondScale = FVector(1.f, 1.f, 1.f);
+	UPROPERTY(EditAnywhere, Category = "Visual|Bonds") float BondZOffset = 10.f;
 
-	/** Debug */
-	UPROPERTY(EditAnywhere, Category = "Debug") bool bAutoRefresh = true;
-	UPROPERTY(EditAnywhere, Category = "Debug") bool bAlwaysDrawBeltArrows = false;
-	UPROPERTY(EditAnywhere, Category = "Debug") float DebugArrowLenScale = 0.6f;
-	UPROPERTY(EditAnywhere, Category = "Debug") float DebugArrowThickness = 6.f;
+	// Optional debug arrows for bonds
+	UPROPERTY(EditAnywhere, Category = "Visual|Bonds") bool bDrawBondDebugArrows = false;
 
-	/** Board reference (optional). If null, the actor will auto-find it. */
-	UPROPERTY(EditAnywhere, Category = "Board") AHexBoardActor* Board = nullptr;
+protected:
+	// Components
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* TileISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondISM = nullptr;
 
-	/** Anchor override (optional). */
-	UPROPERTY(EditAnywhere, Category = "Grid") bool bOverrideAnchor = false;
-	UPROPERTY(EditAnywhere, Category = "Grid", meta = (EditCondition = "bOverrideAnchor")) AActor* AnchorOverride = nullptr;
+	// References
+	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
+	UPROPERTY(Transient) AOrbSimDriver* Driver = nullptr;
+	UPROPERTY(Transient) AHexBoardActor* Board = nullptr;
 
-private:
+	// Revisions
+	int32 LastSeenRevision = -1;
+	int32 LastSeenBoardRevision = -1;
+
 	void EnsureComponents();
 	void RebuildInternal();
 	void RebuildTiles();
 	void RebuildBelts();
+	void RebuildBonds();          // NEW
 	void DrawBeltArrow(const FVector& Center, float TileRadiusUU, float YawDeg);
-	AActor* GetAnchor() const;
+	void DrawBondArrow(const FVector& A, const FVector& B);
 
-	UPROPERTY(Transient) UInstancedStaticMeshComponent* TileISM = nullptr;
-	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltISM = nullptr;
-	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
-	UPROPERTY(Transient) AOrbSimDriver* Driver = nullptr;
-	int32 LastSeenRevision = -1;
-	int32 LastSeenBoardRevision = -1;
+private:
+	FVector HexToWorld(const FHex& H) const;
 };

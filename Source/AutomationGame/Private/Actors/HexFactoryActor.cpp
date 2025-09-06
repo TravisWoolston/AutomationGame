@@ -1,18 +1,13 @@
-#include "Actors/HexFactoryActor.h"            // own header first
+#include "Actors/HexFactoryActor.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Actors/OrbSimDriver.h"
 #include "Actors/HexBoardActor.h"
 #include "Sim/SimWorldHex.h"
-#include "Sim/HexTypes.h"
-#include "Sim/Tiles.h"
 #include "Sim/HexCoord.h"
 #include "Engine/World.h"
-#include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
-
-namespace { static inline float DirYawDeg(uint8 Dir) { return 60.f * (Dir % 6); } }
 
 AHexFactoryActor::AHexFactoryActor()
 {
@@ -24,12 +19,14 @@ AHexFactoryActor::AHexFactoryActor()
 	TileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("TileISM"));
 	TileISM->SetupAttachment(Root);
 	TileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	TileISM->SetCastShadow(false);
 
 	BeltISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltISM"));
 	BeltISM->SetupAttachment(Root);
 	BeltISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	BeltISM->SetCastShadow(false);
+
+	BondISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BondISM"));
+	BondISM->SetupAttachment(Root);
+	BondISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 void AHexFactoryActor::EnsureComponents()
@@ -40,28 +37,24 @@ void AHexFactoryActor::EnsureComponents()
 		Root->RegisterComponent();
 		SetRootComponent(Root);
 	}
-	if (!TileISM)
-	{
-		TileISM = NewObject<UInstancedStaticMeshComponent>(this, TEXT("TileISM_Runtime"));
-		TileISM->SetupAttachment(GetRootComponent());
-		TileISM->RegisterComponent();
-		TileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		TileISM->SetCastShadow(false);
-	}
-	if (!BeltISM)
-	{
-		BeltISM = NewObject<UInstancedStaticMeshComponent>(this, TEXT("BeltISM_Runtime"));
-		BeltISM->SetupAttachment(GetRootComponent());
-		BeltISM->RegisterComponent();
-		BeltISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		BeltISM->SetCastShadow(false);
-	}
-	BeltISM->SetVisibility(true, true);
+	auto EnsureISM = [&](UInstancedStaticMeshComponent*& Comp, const TCHAR* Name)
+		{
+			if (!Comp)
+			{
+				Comp = NewObject<UInstancedStaticMeshComponent>(this, Name);
+				Comp->SetupAttachment(GetRootComponent());
+				Comp->RegisterComponent();
+				Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
+			Comp->SetVisibility(true, true);
+		};
+	EnsureISM(TileISM, TEXT("TileISM_Runtime"));
+	EnsureISM(BeltISM, TEXT("BeltISM_Runtime"));
+	EnsureISM(BondISM, TEXT("BondISM_Runtime"));
 }
 
 AActor* AHexFactoryActor::GetAnchor() const
 {
-	if (bOverrideAnchor && AnchorOverride) return AnchorOverride;
 	return Driver ? Driver->GetGridAnchor() : nullptr;
 }
 
@@ -74,11 +67,13 @@ void AHexFactoryActor::BeginPlay()
 	{
 		Driver = AOrbSimDriver::Find(W);
 		if (Driver) Sim = Driver->GetSim();
-		if (!Board)
+		for (TActorIterator<AHexBoardActor> It(W); It; ++It)
 		{
-			for (TActorIterator<AHexBoardActor> It(W); It; ++It) { Board = *It; break; }
+			Board = *It;
+			break;
 		}
 	}
+
 	RebuildInternal();
 }
 
@@ -101,6 +96,19 @@ void AHexFactoryActor::Rebuild()
 	RebuildInternal();
 }
 
+FVector AHexFactoryActor::HexToWorld(const FHex& H) const
+{
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
+	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+
+	const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
+	const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+	return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+}
+
 void AHexFactoryActor::RebuildInternal()
 {
 	EnsureComponents();
@@ -113,38 +121,34 @@ void AHexFactoryActor::RebuildInternal()
 	if (TileMaterial) TileISM->SetMaterial(0, TileMaterial);
 	if (BeltMesh) BeltISM->SetStaticMesh(BeltMesh);
 	if (BeltMaterial) BeltISM->SetMaterial(0, BeltMaterial);
+	if (BondMesh) BondISM->SetStaticMesh(BondMesh);
+	if (BondMaterial) BondISM->SetMaterial(0, BondMaterial);
 
 	TileISM->ClearInstances();
 	BeltISM->ClearInstances();
+	BondISM->ClearInstances();
 
 	RebuildTiles();
 	RebuildBelts();
+	RebuildBonds();   // NEW
 }
 
 void AHexFactoryActor::RebuildTiles()
 {
-	// Ground comes from the Board (authoritative), not from the sim.
 	if (!Board) return;
-	const AActor* Anchor = GetAnchor();
-	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 
 	for (const FHex& H : Board->GetAllHexes())
 	{
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
 		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-
 		if (TileMesh)
-		{
-			TileISM->AddInstance(FTransform(FRotator::ZeroRotator, Loc, FVector(1)));
-		}
-		else
-		{
-			DrawDebugPoint(GetWorld(), Loc + FVector(0, 0, 2), 6.f, FColor::Cyan, false, 1.5f);
-		}
+			TileISM->AddInstance(FTransform(FRotator::ZeroRotator, Loc, FVector(1.f)));
 	}
 }
 
@@ -154,66 +158,88 @@ void AHexFactoryActor::DrawBeltArrow(const FVector& Center, float TileRadiusUU, 
 	const FVector Dir = FRotator(0.f, YawDeg, 0.f).RotateVector(FVector(1, 0, 0));
 	const FVector A = Center + FVector(0, 0, BeltZOffset + 2.f);
 	const FVector B = A + Dir * Len;
-	DrawDebugDirectionalArrow(GetWorld(), A, B, 18.f, FColor::Yellow, false, 1.0f, 0, DebugArrowThickness);
+	DrawDebugDirectionalArrow(GetWorld(), A, B, 16.f, FColor::Yellow, false, 1.0f, 0, DebugArrowThickness);
+}
+
+void AHexFactoryActor::DrawBondArrow(const FVector& A, const FVector& B)
+{
+	DrawDebugLine(GetWorld(), A + FVector(0, 0, BondZOffset + 2.f), B + FVector(0, 0, BondZOffset + 2.f), FColor::Cyan, false, 1.0f, 0, 2.f);
 }
 
 void AHexFactoryActor::RebuildBelts()
 {
 	if (!Sim) return;
-	const AActor* Anchor = GetAnchor();
-	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
-	const int32 VisOffset = Driver ? Driver->GetBeltVisualOffset() : 0;
-	const bool  bCW = Driver ? Driver->IsBeltYawClockwise() : true; // now only affects input layer (rotation functions), not value remap
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 
-	auto ComputeForwardYaw = [&](const FHex& Base, uint8 Dir)->float
-	{
-		const FHex Forward = HexUtil::Neighbor(Base, (EHexDir)(Dir % 6));
-
-		const FVector2D LocalBase    = HexCoord::AxialToXY(FHexAxial(Base.Q,    Base.R),    Tile, Ori);
-		const FVector2D LocalForward = HexCoord::AxialToXY(FHexAxial(Forward.Q, Forward.R), Tile, Ori);
-
-		const FVector2D RotBase    = HexCoord::Rotate2D(LocalBase, GridYaw);
-		const FVector2D RotForward = HexCoord::Rotate2D(LocalForward, GridYaw);
-
-		const FVector2D Delta = RotForward - RotBase;
-		if (Delta.IsNearlyZero()) return GridYaw;
-
-		const float RawYaw = FMath::RadiansToDegrees(FMath::Atan2(Delta.Y, Delta.X));
-		return RawYaw + BeltVisualYawOffsetDeg;
-	};
+	auto ForwardYaw = [&](const FHex& Base, uint8 Dir)->float
+		{
+			const FHex Fwd = HexUtil::Neighbor(Base, (EHexDir)(Dir % 6));
+			const FVector2D Axy = HexCoord::Rotate2D(HexCoord::AxialToXY(FHexAxial(Base.Q, Base.R), Tile, Ori), GridYaw);
+			const FVector2D Bxy = HexCoord::Rotate2D(HexCoord::AxialToXY(FHexAxial(Fwd.Q, Fwd.R), Tile, Ori), GridYaw);
+			const FVector2D Delta = Bxy - Axy;
+			return Delta.IsNearlyZero() ? 0.f : FMath::RadiansToDegrees(FMath::Atan2(Delta.Y, Delta.X));
+		};
 
 	for (const auto& KV : Sim->TileMap)
 	{
 		const FHex& H = KV.Key;
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Belt) continue;
-		if (Board && !Board->HasHex(H)) continue;
-
-		uint8 RawDir = uint8(T.Arg & 0xFF);
-
-		int32 AdjustedDir = (int32(RawDir) + VisOffset) % 6;
-		if (AdjustedDir < 0) AdjustedDir += 6;
-
-		// NOTE: Removed previous (6 - AdjustedDir) % 6 mirror. Rotation direction now controlled purely
-		// by how RotateCW/RotateCCW adjust RawDir at placement time.
-
-		const float Yaw = ComputeForwardYaw(H, (uint8)AdjustedDir);
 
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
-		const FVector2D RotXY   = HexCoord::Rotate2D(LocalXY, GridYaw);
+		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
 		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, BeltZOffset);
+		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF));
 
 		if (BeltMesh)
 		{
 			BeltISM->AddInstance(FTransform(FRotator(0.f, Yaw, 0.f), Loc, BeltScale));
-			if (bAlwaysDrawBeltArrows) DrawBeltArrow(Loc, Tile, Yaw);
+			if (bAlwaysDrawBeltArrows)
+				DrawBeltArrow(Loc, Tile, Yaw);
 		}
-		else
+	}
+}
+
+void AHexFactoryActor::RebuildBonds()
+{
+	if (!Sim) return;
+	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
+	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
+	for (const auto& KV : Sim->TileMap)
+	{
+		const FHex& H = KV.Key;
+		const FTile& T = KV.Value;
+		if (T.Kind != ETileKind::Bond) continue;
+
+		const uint8 Dir = (uint8)(T.Arg & 0xFF);
+		const FHex N = HexUtil::Neighbor(H, (EHexDir)(Dir % 6));
+
+		// World positions of each hex center
+		const FVector2D AxyLocal = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
+		const FVector2D BxyLocal = HexCoord::AxialToXY(FHexAxial(N.Q, N.R), Tile, Ori);
+		const FVector2D Axy = HexCoord::Rotate2D(AxyLocal, GridYaw);
+		const FVector2D Bxy = HexCoord::Rotate2D(BxyLocal, GridYaw);
+		const FVector WorldA = AnchorV + FVector(Axy.X, Axy.Y, BondZOffset);
+		const FVector WorldB = AnchorV + FVector(Bxy.X, Bxy.Y, BondZOffset);
+		const FVector Mid = (WorldA + WorldB) * 0.5f;
+		const FVector2D Delta2D(Bxy - Axy);
+		const float Yaw = Delta2D.IsNearlyZero()
+			? 0.f
+			: FMath::RadiansToDegrees(FMath::Atan2(Delta2D.Y, Delta2D.X));
+
+		if (BondMesh)
 		{
-			DrawBeltArrow(Loc, Tile, Yaw);
+			BondISM->AddInstance(FTransform(FRotator(0.f, Yaw, 0.f), Mid, BondScale));
+			if (bDrawBondDebugArrows)
+				DrawBondArrow(WorldA, WorldB);
 		}
 	}
 }

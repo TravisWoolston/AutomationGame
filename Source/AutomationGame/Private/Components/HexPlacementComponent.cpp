@@ -196,30 +196,44 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	}
 
 	// OPTIONAL: spawn a persistent bond visual actor (only if you have ABondGlyphActor / or static mesh)
-	if (T.Kind == ETileKind::Bond && BondPreviewMesh)
-	{
-		const FHex Partner = HexUtil::Neighbor(Root, (EHexDir)(BeltDir % 6));
-		const FVector CA = HexToWorld(Root);
-		const FVector CB = HexToWorld(Partner);
-		const FVector Mid = (CA + CB) * 0.5f + FVector(0, 0, PreviewZOffset);
-		const float YawWorld = ComputeDirYawFromNeighbor(this, Root, BeltDir % 6);
+	// if (T.Kind == ETileKind::Bond && BondPreviewMesh)
+	// {
+	// 	const FHex Partner = HexUtil::Neighbor(Root, (EHexDir)(BeltDir % 6));
+	// 	const FVector CA = HexToWorld(Root);
+	// 	const FVector CB = HexToWorld(Partner);
+	// 	const FVector Mid = (CA + CB) * 0.5f + FVector(0, 0, PreviewZOffset);
+	// 	const float YawWorld = ComputeDirYawFromNeighbor(this, Root, BeltDir % 6);
 
-		// Create a component directly on the owner instead of spawning a base AActor with no root.
-		if (AActor* Owner = GetOwner())
-		{
-			UStaticMeshComponent* BondVisComp = NewObject<UStaticMeshComponent>(Owner);
-			BondVisComp->SetStaticMesh(BondPreviewMesh);
-			BondVisComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			BondVisComp->SetMobility(EComponentMobility::Movable);
-			BondVisComp->SetupAttachment(Owner->GetRootComponent());
-			BondVisComp->RegisterComponent();
-			BondVisComp->SetWorldLocationAndRotation(Mid, FRotator(0.f, YawWorld, 0.f));
-			BondVisComp->SetWorldScale3D(FVector(PreviewScale));
+	// 	// Use the grid anchor (true world space) so the mesh does not follow the camera/tool owner.
+	// 	AActor* AnchorActor = GetAnchor();
+	// 	AActor* VisualOuter = AnchorActor ? AnchorActor : GetOwner();
+	// 	if (VisualOuter)
+	// 	{
+	// 		USceneComponent* Parent = AnchorActor
+	// 			? AnchorActor->GetRootComponent()
+	// 			: VisualOuter->GetRootComponent();
 
-			// (Optional) Store pointer if you need to remove later when tile deleted.
-			// BondVisuals.Add(Root, BondVisComp);
-		}
-	}
+	// 		if (!Parent)
+	// 		{
+	// 			// Ensure a root exists (rare edge if anchor root missing)
+	// 			Parent = NewObject<USceneComponent>(VisualOuter, TEXT("BondVisRootTemp"));
+	// 			Parent->RegisterComponent();
+	// 			VisualOuter->SetRootComponent(Parent);
+	// 		}
+
+	// 		UStaticMeshComponent* BondVisComp = NewObject<UStaticMeshComponent>(VisualOuter);
+	// 		BondVisComp->SetStaticMesh(BondPreviewMesh);
+	// 		BondVisComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	// 		BondVisComp->SetMobility(EComponentMobility::Movable);
+	// 		BondVisComp->SetupAttachment(Parent);
+	// 		BondVisComp->RegisterComponent();
+	// 		BondVisComp->SetWorldLocationAndRotation(Mid, FRotator(0.f, YawWorld, 0.f));
+	// 		BondVisComp->SetWorldScale3D(FVector(PreviewScale));
+
+	// 		// (Optional) Track for cleanup if tiles are later removed.
+	// 		// BondVisuals.Add(Root, BondVisComp);
+	// 	}
+	// }
 }
 
 void UHexPlacementComponent::DoRemoveAt(const FVector& World)
