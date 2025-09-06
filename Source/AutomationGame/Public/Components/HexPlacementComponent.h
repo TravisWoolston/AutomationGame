@@ -79,6 +79,16 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	float BeltVisualYawOffsetDeg = -90.f;
 
+	// Bond preview orientation fix (if your bond SDF always assumes pointy-top)
+	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	bool bBondPreviewAssumesPointyTop = true;
+
+	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	float BondOrientationFixDegPointyToFlat = 30.f;   // rotation to apply when grid is FlatTop
+
+	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	float BondOrientationFixDegFlatToPointy = -30.f;  // rotation if inverse assumption ever needed
+
 	// Input API
 	UFUNCTION(BlueprintCallable, Category = "Place") void HandlePlace(bool bPressed);
 	UFUNCTION(BlueprintCallable, Category = "Place") void HandleRemove(bool bPressed);

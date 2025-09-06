@@ -37,7 +37,16 @@ static void ReacquireSimIfNeeded(UWorld* W, AOrbSimDriver*& Driver, USimWorldHex
 		if (Driver) Sim = Driver->GetSim();
 	}
 }
-
+static float ComputeDirYawFromNeighbor(const UHexPlacementComponent* Self, const FHex& Base, uint8 Dir)
+{
+	if (!Self) return 0.f;
+	const FHex Neighbor = HexUtil::Neighbor(Base, (EHexDir)(Dir % 6));
+	const FVector A = Self->HexToWorld(Base);
+	const FVector B = Self->HexToWorld(Neighbor);
+	const FVector2D D(B.X - A.X, B.Y - A.Y);
+	if (D.IsNearlyZero()) return 0.f;
+	return FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X));
+}
 void UHexPlacementComponent::TickComponent(float DeltaTime, enum ELevelTick, FActorComponentTickFunction*)
 {
 	// Keep sim refs fresh
@@ -98,10 +107,8 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 {
 	UWorld* W = GetWorld();
 	if ((!Driver || !Sim) && W) ReacquireSimIfNeeded(W, Driver, Sim);
-	if (!Sim)
-	{
-		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red, TEXT("No Sim/Driver found; cannot place."));
-		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: missing Sim/Driver; cannot place."));
+	if (!Sim) {
+		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Sim missing; cannot place."));
 		return;
 	}
 
@@ -117,6 +124,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	FVector2D P(World.X - OriginXY.X, World.Y - OriginXY.Y);
 	const FVector2D Local = HexCoord::Rotate2D(P, -Yaw);
 	const FHexAxial A = HexCoord::XYToAxialRound(Local, Tile, Ori);
+	const FHex Root{ A.Q, A.R };
 
 	FTile T{};
 	switch (PlaceKind)
@@ -129,54 +137,87 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	{
 		AActor* GMActor = nullptr;
 		for (TActorIterator<AActor> It(GetWorld()); It; ++It)
-		{
 			if (It->IsA<AGameManager>()) { GMActor = *It; break; }
-		}
-		AGameManager* GM = Cast<AGameManager>(GMActor);
-		if (GM)
+
+		if (AGameManager* GM = Cast<AGameManager>(GMActor))
 		{
 			GM->SpawnBasicArmAt(FHex{ A.Q, A.R }, BeltDir % 6, TArray<FArmInstr>(), true);
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn Arm; no GameManager found."));
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 2.f, FColor::Red,
-					TEXT("Cannot spawn Arm; no GameManager found."));
-			}
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn Arm (no GameManager)."));
 		}
 		return;
 	}
 	default:
-		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: PlaceKind not set; skipping."));
+		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: PlaceKind unset; skip."));
 		return;
 	}
 
-	Sim->PlaceTile(FHex{ A.Q, A.R }, T);
+	// Attempt placement
+	const bool bPlaced = Sim->PlaceTile(Root, T);
+	if (!bPlaced)
+	{
+		if (T.Kind == ETileKind::Bond)
+		{
+			const FHex Partner = HexUtil::Neighbor(Root, (EHexDir)(BeltDir % 6));
+			UE_LOG(LogTemp, Warning,
+				TEXT("HexPlacementComponent: Bond placement FAILED at Root(%d,%d) Partner(%d,%d). Partner occupied by blocking tile."),
+				Root.Q, Root.R, Partner.Q, Partner.R);
+			if (GEngine)
+				GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Red,
+					FString::Printf(TEXT("Bond blocked (%d,%d)->(%d,%d)"), Root.Q, Root.R, Partner.Q, Partner.R));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Placement failed at (%d,%d)."), Root.Q, Root.R);
+		}
+		return;
+	}
 
+	// Success logging
 	if (bDebug)
 	{
 		if (T.Kind == ETileKind::Belt)
 		{
-			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Placed Belt at Hex(%d,%d) Dir=%d"),
-				A.Q, A.R, (int32)BeltDir);
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Cyan,
-					FString::Printf(TEXT("Placed Belt at Hex(%d,%d) Dir=%d"), A.Q, A.R, (int32)BeltDir));
-			}
+			UE_LOG(LogTemp, Log, TEXT("Placed Belt at Hex(%d,%d) Dir=%d"), Root.Q, Root.R, (int32)BeltDir);
+		}
+		else if (T.Kind == ETileKind::Bond)
+		{
+			const FHex Partner = HexUtil::Neighbor(Root, (EHexDir)(BeltDir % 6));
+			UE_LOG(LogTemp, Log, TEXT("Placed Bond at Root(%d,%d) -> Partner(%d,%d) Dir=%d"),
+				Root.Q, Root.R, Partner.Q, Partner.R, (int32)BeltDir);
 		}
 		else
 		{
 			const FString KindName = StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind);
-			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Placed %s at Hex(%d,%d)"),
-				*KindName, A.Q, A.R);
-			if (GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Cyan,
-					FString::Printf(TEXT("Placed %s at Hex(%d,%d)"), *KindName, A.Q, A.R));
-			}
+			UE_LOG(LogTemp, Log, TEXT("Placed %s at Hex(%d,%d)"), *KindName, Root.Q, Root.R);
+		}
+	}
+
+	// OPTIONAL: spawn a persistent bond visual actor (only if you have ABondGlyphActor / or static mesh)
+	if (T.Kind == ETileKind::Bond && BondPreviewMesh)
+	{
+		const FHex Partner = HexUtil::Neighbor(Root, (EHexDir)(BeltDir % 6));
+		const FVector CA = HexToWorld(Root);
+		const FVector CB = HexToWorld(Partner);
+		const FVector Mid = (CA + CB) * 0.5f + FVector(0, 0, PreviewZOffset);
+		const float YawWorld = ComputeDirYawFromNeighbor(this, Root, BeltDir % 6);
+
+		// Create a component directly on the owner instead of spawning a base AActor with no root.
+		if (AActor* Owner = GetOwner())
+		{
+			UStaticMeshComponent* BondVisComp = NewObject<UStaticMeshComponent>(Owner);
+			BondVisComp->SetStaticMesh(BondPreviewMesh);
+			BondVisComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			BondVisComp->SetMobility(EComponentMobility::Movable);
+			BondVisComp->SetupAttachment(Owner->GetRootComponent());
+			BondVisComp->RegisterComponent();
+			BondVisComp->SetWorldLocationAndRotation(Mid, FRotator(0.f, YawWorld, 0.f));
+			BondVisComp->SetWorldScale3D(FVector(PreviewScale));
+
+			// (Optional) Store pointer if you need to remove later when tile deleted.
+			// BondVisuals.Add(Root, BondVisComp);
 		}
 	}
 }
@@ -380,16 +421,7 @@ void UHexPlacementComponent::UpdateHoverHex()
 // #include "Sim/HexCoord.h"
 
 // --- Helper: compute yaw from HoverHex to its neighbor in BeltDir (center-to-center) ---
-static float ComputeDirYawFromNeighbor(const UHexPlacementComponent* Self, const FHex& Base, uint8 Dir)
-{
-	if (!Self) return 0.f;
-	const FHex Neighbor = HexUtil::Neighbor(Base, (EHexDir)(Dir % 6));
-	const FVector A = Self->HexToWorld(Base);
-	const FVector B = Self->HexToWorld(Neighbor);
-	const FVector2D D(B.X - A.X, B.Y - A.Y);
-	if (D.IsNearlyZero()) return 0.f;
-	return FMath::RadiansToDegrees(FMath::Atan2(D.Y, D.X));
-}
+
 
 void UHexPlacementComponent::UpdatePreviewVisual()
 {
@@ -397,40 +429,26 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 
 	const bool bPlaceOK = CanPlaceAt(HoverHex);
 	const float Tile = Driver ? Driver->GetTileSize() : (Sim ? Sim->TileSizeUU : 100.f);
-	const EHexOrientation GridOri = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
-	const bool bFlatTop = (GridOri == EHexOrientation::FlatTop);
 
-	// Base center of hovered hex (still used for non-bond)
 	const FVector CenterA = HexToWorld(HoverHex) + FVector(0, 0, PreviewZOffset);
 
-	// Draw outline(s)
+	// Outline (keep single hex for non-bond, two for bond)
 	if (PlaceKind != EPlaceKind::Bond)
 	{
-		DrawDebugCircle(
-			GetWorld(),
-			CenterA,
-			Tile * 0.95f,
-			6,
-			bPlaceOK ? FColor(0, 200, 40, 255) : FColor(200, 20, 20, 255),
-			false, 0.f, 0, 2.f,
-			FVector(1, 0, 0), FVector(0, 1, 0), false);
+		DrawDebugCircle(GetWorld(), CenterA, Tile * 0.95f, 6,
+			bPlaceOK ? FColor(0, 200, 40) : FColor(200, 20, 20),
+			false, 0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
 	}
 	else
 	{
-		// For Bond show both hex footprints
 		const FHex NeighborHex = HexUtil::Neighbor(HoverHex, (EHexDir)(BeltDir % 6));
 		const FVector CenterB = HexToWorld(NeighborHex) + FVector(0, 0, PreviewZOffset);
-		const FColor Col = bPlaceOK ? FColor(0, 200, 40, 255) : FColor(200, 20, 20, 255);
-		for (const FVector& C : { CenterA, CenterB })
-		{
-			DrawDebugCircle(
-				GetWorld(), C, Tile * 0.95f, 6, Col,
-				false, 0.f, 0, 2.f,
-				FVector(1, 0, 0), FVector(0, 1, 0), false);
-		}
+		const FColor Col = bPlaceOK ? FColor(0, 200, 40) : FColor(200, 20, 20);
+		DrawDebugCircle(GetWorld(), CenterA, Tile * 0.95f, 6, Col, false, 0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+		DrawDebugCircle(GetWorld(), CenterB, Tile * 0.95f, 6, Col, false, 0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
 	}
 
-	// Directional visualization for Belt / Arm (arrow) and (legacy) line for Bond is replaced by fused mesh, so skip arrow for Bond now.
+	// Direction arrow only for Belt/Arm
 	if (PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm)
 	{
 		const FHex NeighborHex = HexUtil::Neighbor(HoverHex, (EHexDir)(BeltDir % 6));
@@ -438,105 +456,59 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		const FVector DirVec = (CenterB - CenterA).GetSafeNormal();
 		if (!DirVec.IsNearlyZero())
 		{
-			const FColor Color = bPlaceOK ? FColor(0, 200, 40, 255) : FColor(200, 20, 20, 255);
 			const float ArrowLen = (CenterB - CenterA).Size() * 0.55f;
 			const FVector Tip = CenterA + DirVec * ArrowLen;
-			DrawDebugLine(GetWorld(), CenterA, Tip, Color, false, 0.f, 0, 3.f);
-			const FVector Side = FVector(-DirVec.Y, DirVec.X, 0.f);
-			DrawDebugLine(GetWorld(), Tip, Tip - DirVec * (ArrowLen * 0.25f) + Side * (ArrowLen * 0.15f), Color, false, 0.f, 0, 2.f);
-			DrawDebugLine(GetWorld(), Tip, Tip - DirVec * (ArrowLen * 0.25f) - Side * (ArrowLen * 0.15f), Color, false, 0.f, 0, 2.f);
+			const FColor Col = bPlaceOK ? FColor(0, 200, 40) : FColor(200, 20, 20);
+			DrawDebugLine(GetWorld(), CenterA, Tip, Col, false, 0.f, 0, 3.f);
+			const FVector Side(-DirVec.Y, DirVec.X, 0.f);
+			DrawDebugLine(GetWorld(), Tip, Tip - DirVec * (ArrowLen * 0.25f) + Side * (ArrowLen * 0.15f), Col, false, 0.f, 0, 2.f);
+			DrawDebugLine(GetWorld(), Tip, Tip - DirVec * (ArrowLen * 0.25f) - Side * (ArrowLen * 0.15f), Col, false, 0.f, 0, 2.f);
 		}
 	}
 
-	// Mesh preview for Belt / Arm / Bond
+	// Mesh preview (now also trivial for Bond)
 	if (PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond)
 	{
 		EnsurePreviewComponent();
 		if (!PreviewComp) return;
 
-		// Select (plane) mesh for bond, normal logic otherwise
-		if (UStaticMesh* Mesh = SelectPreviewMesh())
-		{
-			if (PreviewComp->GetStaticMesh() != Mesh)
-				PreviewComp->SetStaticMesh(Mesh);
-		}
-		else
+		UStaticMesh* Mesh = SelectPreviewMesh();
+		if (!Mesh)
 		{
 			PreviewComp->SetVisibility(false);
 			return;
 		}
+		if (PreviewComp->GetStaticMesh() != Mesh)
+			PreviewComp->SetStaticMesh(Mesh);
 
-		// Effective direction (reserved for future driver offsets)
 		const uint8 EffectiveDir = BeltDir % 6;
-		float Yaw = ComputeDirYawFromNeighbor(this, HoverHex, EffectiveDir);
+		const float Yaw = ComputeDirYawFromNeighbor(this, HoverHex, EffectiveDir);
 
-		FVector UseLoc = CenterA;          // default for non-bond
-		FVector UseScale(PreviewScale);    // uniform default
+		FVector UseLoc = CenterA;
+		FVector UseScale(PreviewScale);
+
 		if (PlaceKind == EPlaceKind::Bond)
 		{
+			// Midpoint between the two hex centers
 			const FHex NeighborHex = HexUtil::Neighbor(HoverHex, (EHexDir)EffectiveDir);
 			const FVector CenterB = HexToWorld(NeighborHex) + FVector(0, 0, PreviewZOffset);
-			const FVector Mid = (CenterA + CenterB) * 0.5f;
-			UseLoc = Mid;
-
-			// Span between centers
-			const float Span = FVector2D(CenterB.X - CenterA.X, CenterB.Y - CenterA.Y).Size();
-
-			// Geometric width/height similar to BondGlyphActor
-			const float Sqrt3 = 1.7320508075688772f;
-			float HexWidthAxis = bFlatTop ? 2.f * Tile : Sqrt3 * Tile;
-			float HexHeightPerp = bFlatTop ? (Sqrt3 * Tile) : (2.f * Tile);
-			const float FullWidth = Span + HexWidthAxis;   // extent along bond axis
-			const float FullHeight = HexHeightPerp;
-
-			// Plane mesh assumed 100uu square -> convert
-			UseScale = FVector(FullWidth * 0.01f, FullHeight * 0.01f, 1.f);
-
-			// Ensure bond material instance
-			if (BondPreviewMaterial)
-			{
-				if (!PreviewMID || PreviewMID->Parent != BondPreviewMaterial)
-				{
-					PreviewMID = UMaterialInstanceDynamic::Create(BondPreviewMaterial, this);
-					PreviewComp->SetMaterial(0, PreviewMID);
-				}
-				if (PreviewMID)
-				{
-					PreviewMID->SetScalarParameterValue(TEXT("TileRadius"), Tile);
-					PreviewMID->SetScalarParameterValue(TEXT("Span"), Span);
-					PreviewMID->SetScalarParameterValue(TEXT("PadW"), Tile * BondPadWidthFactor);
-					PreviewMID->SetScalarParameterValue(TEXT("PadH"), Tile * BondPadHeightFactor);
-					PreviewMID->SetScalarParameterValue(TEXT("FlatTop"), bFlatTop ? 1.f : 0.f);
-					const FLinearColor Col = bPlaceOK
-						? FLinearColor(0.f, 0.9f, 0.f, 0.55f)
-						: FLinearColor(0.9f, 0.f, 0.f, 0.6f);
-					PreviewMID->SetVectorParameterValue(TEXT("Tint"), Col);
-				}
-			}
-			else if (PreviewMID)
-			{
-				// Fallback tint if using generic preview material
-				const FLinearColor Col = bPlaceOK
-					? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
-					: FLinearColor(0.9f, 0.f, 0.f, 0.6f);
-				PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
-			}
-		}
-		else
-		{
-			// Non-bond: standard tint
-			if (PreviewMID)
-			{
-				const FLinearColor Col = bPlaceOK
-					? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
-					: FLinearColor(0.9f, 0.f, 0.f, 0.6f);
-				PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
-			}
+			UseLoc = (CenterA + CenterB) * 0.5f;
+			// Assume authored size fits two hexes; let user adjust in editor via mesh or PreviewScale
+			UseScale = FVector(PreviewScale);
 		}
 
 		PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, Yaw, 0.f));
 		PreviewComp->SetWorldScale3D(UseScale);
 		PreviewComp->SetVisibility(true);
+
+		// Simple tint if material supports a Tint param (optional)
+		if (PreviewMID)
+		{
+			const FLinearColor Col = bPlaceOK
+				? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
+				: FLinearColor(0.9f, 0.f, 0.f, 0.6f);
+			PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
+		}
 	}
 	else if (PreviewComp)
 	{
