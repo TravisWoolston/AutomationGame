@@ -59,23 +59,22 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	if (!Sim) return;
 
-	// Accumulate StepAlpha for smooth interpolation
 	const float Fixed = FMath::Max(KINDA_SMALL_NUMBER, Sim->FixedStepSec);
 	StepAlpha += DeltaSeconds / Fixed;
-	StepAlpha = FMath::Clamp(StepAlpha, 0.f, 1.f); // Clamp to [0,1]
-}
+	StepAlpha = FMath::Clamp(StepAlpha, 0.f, 1.f);
 
-// OrbSimDriver.cpp
+	Sim->SetFrameAlpha(StepAlpha);   // was: Sim->FrameAlpha = StepAlpha;
+}
 
 void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 {
 	if (!Sim) return;
 
-	// Run the world sim for this frame
 	UE_LOG(LogTemp, VeryVerbose, TEXT("OrbSimDriver: StepSim dt=%.3f"), StepSeconds);
 	Sim->StepSim();
-	StepAlpha = 0.f; // Reset only when simulation advances
-	// Optional quick visibility: do we have items at inputs?
+
+	StepAlpha = 0.f;
+	Sim->SetFrameAlpha(0.f);         // was: Sim->FrameAlpha = 0.f;
 #if !(UE_BUILD_SHIPPING)
 	FItem Tmp;
 	const bool L = Sim->PeekItemAt(FHex(-1, 0), Tmp);
@@ -104,6 +103,10 @@ AOrbSimDriver* AOrbSimDriver::Find(UWorld* World)
 	}
 	return nullptr;
 }
+
+
+
+
 
 
 

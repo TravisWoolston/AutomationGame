@@ -18,7 +18,6 @@ struct FPlacedTileSpec
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex Hex { 0, 0 };
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) ETileKind Kind = ETileKind::Empty;
-	/** Meaningful for belts (0..5). Ignored for non-directional tiles. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, ClampMax = 5)) uint8 Dir = 0;
 };
 
@@ -29,16 +28,9 @@ struct FArmSpawnSpec
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Q = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 R = 0;
-	/** 0..5 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, ClampMax = 5)) uint8 Facing = 0;
-
-	/** Program to load into the arm; will loop if bLoopProgram is true. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FArmInstr> Program;
-
-	/** Loop the arm’s program after the end. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bLoopProgram = true;
-
-	/** (Runtime) spawned arm reference. */
 	UPROPERTY(Transient) ABasicArm* Spawned = nullptr;
 };
 
@@ -47,21 +39,12 @@ struct FScenarioSpec
 {
 	GENERATED_BODY()
 
-	/** Friendly name for the picker. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FName Name = "Scenario";
-
-	/** Sim tile size for this scenario. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 8)) float TileSizeUU = 120.f;
-
-	/** Optional: how far you want to generate tiles elsewhere (purely visual is handled elsewhere). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 1)) int32 GridRadius = 8;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	TArray<FPlacedTileSpec> Tiles;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	TArray<FArmSpawnSpec> Arms;
-
-	/** Should the tick manager start playing after setup? */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FPlacedTileSpec> Tiles;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FArmSpawnSpec> Arms;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bAutoPlay = true;
 };
 
@@ -72,13 +55,13 @@ class AUTOMATIONGAME_API ATestLevelDirector : public AActor
 public:
 	ATestLevelDirector();
 	virtual void BeginPlay() override;
+	virtual void BeginDestroy() override;
 
 	UPROPERTY(EditAnywhere, Category = "Refs") AGameTickManager* TickManager = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Refs") AOrbSimDriver* Driver = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AGameTickManager> TickManagerClass;
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AOrbSimDriver>   DriverClass;
-
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<ABasicArm> ArmClass;
 
 	UPROPERTY(EditAnywhere, Category = "Scenarios") TArray<FScenarioSpec> Scenarios;
@@ -86,24 +69,45 @@ public:
 
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
 	void BuildActiveScenario();
-
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
 	void ClearArms();
-
 	UFUNCTION(CallInEditor, Category = "Scenario")
 	void SpawnScenarioPreview();
-
 	UFUNCTION(BlueprintCallable, Category = "Scenario")
 	FVector GetWorldPositionForHex(int32 Q, int32 R) const;
+
+	// Runtime + editor API to change scenario (auto rebuild)
+	UFUNCTION(BlueprintCallable, Category = "Scenarios")
+	void SetActiveScenarioIndex(int32 NewIndex);
 
 	UPROPERTY(EditAnywhere, Category = "Scenarios|Editing")
 	bool bAutoPatchSpawnedArms = true;
 
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
 	void CommitPreviewEdits();
-
-	UFUNCTION(CallInEditor, BlueprintCallable, Category="Scenarios")
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
 	void ReapplyActiveScenario();
+
+	// Runtime mutation API (used by placement component)
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	void UpsertTileSpec(const FHex& Hex, ETileKind Kind, uint8 Dir);
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	bool RemoveTileSpec(const FHex& Hex);
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	void UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop);
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	bool RemoveArmSpec(int32 Q, int32 R);
+
+	// Control what runtime edits get written back into scenario specs.
+	UPROPERTY(EditAnywhere, Category="Scenarios|Runtime Capture")
+	bool bCaptureRuntimeProgramEdits = true;
+
+	UPROPERTY(EditAnywhere, Category="Scenarios|Runtime Capture")
+	bool bCaptureRuntimeFacingEdits = false;   // NEW: default off so placing arms won't overwrite original facing
+
+	// Manually capture current facing (if bCaptureRuntimeFacingEdits is false)
+	UFUNCTION(CallInEditor, BlueprintCallable, Category="Scenarios|Runtime Capture")
+	void CommitRuntimeFacingEdits();
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
@@ -113,7 +117,15 @@ private:
 	void AutoFindOrSpawn();
 	void ApplyScenario(const FScenarioSpec& S);
 	void RefreshSpawnedArmsFromScenario(int32 ScenarioIndex);
+	void MarkActiveScenarioDirty();
+	void ResetSimForActiveScenario();          // NEW: clears sim before applying scenario
+
+	void SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Scenario); // filtered version
+
 #if WITH_EDITOR
 	void HandlePreBeginPIE(bool bIsSimulating);
+	void HandleEndPIE(bool bIsSimulating);
+	void MirrorScenarioEditsToEditor();       // live mirroring during PIE
+	void SyncAllRuntimeArmEdits();            // harvest live arm program/facing into specs
 #endif
 };

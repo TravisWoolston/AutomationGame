@@ -1,10 +1,10 @@
 #pragma once
 #include "AutomationGameMinimal.h"
 #include "Components/ActorComponent.h"
-#include "Sim/HexTypes.h"  
+#include "Sim/HexTypes.h"  // for FHex
 #include "HexPlacementComponent.generated.h"
 
-class USimWorldHex; class APlayerController; class AActor; class AOrbSimDriver;
+class USimWorldHex; class APlayerController; class AActor; class AOrbSimDriver; class ATestLevelDirector;
 
 UENUM(BlueprintType)
 enum class EPlaceKind : uint8
@@ -57,14 +57,14 @@ public:
 	UStaticMesh* BondPreviewMesh = nullptr;
 
 	/** Optional material for the fused Bond preview (expects scalar params: TileRadius, Span, PadW, PadH, FlatTop, Tint). */
-	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	UPROPERTY(EditAnywhere, Category = "Placement Preview|Bond")
 	UMaterialInterface* BondPreviewMaterial = nullptr;
 
 	/** Relative pad extents (multipliers of TileRadius) for decorative squares in Bond material. */
-	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	UPROPERTY(EditAnywhere, Category = "Placement Preview|Bond")
 	float BondPadWidthFactor = 0.22f;
 
-	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	UPROPERTY(EditAnywhere, Category = "Placement Preview|Bond")
 	float BondPadHeightFactor = 0.18f;
 
 	/** Scale applied to preview (slightly smaller than real). */
@@ -80,13 +80,13 @@ public:
 	float BeltVisualYawOffsetDeg = -90.f;
 
 	// Bond preview orientation fix (if your bond SDF always assumes pointy-top)
-	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	UPROPERTY(EditAnywhere, Category = "Placement Preview|Bond")
 	bool bBondPreviewAssumesPointyTop = true;
 
-	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	UPROPERTY(EditAnywhere, Category = "Placement Preview|Bond")
 	float BondOrientationFixDegPointyToFlat = 30.f;   // rotation to apply when grid is FlatTop
 
-	UPROPERTY(EditAnywhere, Category="Placement Preview|Bond")
+	UPROPERTY(EditAnywhere, Category = "Placement Preview|Bond")
 	float BondOrientationFixDegFlatToPointy = -30.f;  // rotation if inverse assumption ever needed
 
 	// Input API
@@ -126,4 +126,8 @@ private:
 
 
 	FORCEINLINE AActor* GetAnchor() const;
+
+public:
+	UPROPERTY(EditAnywhere, Category = "Scenario") bool bAutoScenarioCapture = true;
+	UPROPERTY(Transient) ATestLevelDirector* CachedTLD = nullptr;
 };

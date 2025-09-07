@@ -60,7 +60,9 @@ public:
 
 public:
 	// ----- Visual interpolation (belt smoothing) -----
-	void SetFrameAlpha(float InAlpha) { FrameAlpha = FMath::Clamp(InAlpha, 0.f, 0.9999f); }
+	void SetFrameAlpha(float InAlpha) { FrameAlpha = FMath::Clamp(InAlpha, 0.f, 1.f); }
+	float GetFrameAlpha() const { return FrameAlpha; }
+
 	bool GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const;
 
 	int32 GetStepCounter() const { return StepCounter; }
@@ -143,10 +145,10 @@ private:
 
 private:
 	// ---- Bond control (glyphs will call these later) ----
-	UFUNCTION(BlueprintCallable, Category="Sim|Bond")
+	UFUNCTION(BlueprintCallable, Category = "Sim|Bond")
 	bool BreakBondBetween(int32 ItemA, int32 ItemB);
 
-	UFUNCTION(BlueprintCallable, Category="Sim|Bond")
+	UFUNCTION(BlueprintCallable, Category = "Sim|Bond")
 	int32 BreakAllBondsForItem(int32 ItemId);
 
 	bool IsItemBonded(int32 ItemId) const
@@ -155,4 +157,13 @@ private:
 			return L->Num() > 0;
 		return false;
 	}
+
+private:
+	TSet<int32>   ItemsMovedLastStep;
+	TMap<int32, FHex> PrevItemHex;
+
+private:
+	void SpawnInputs();
+	void ProcessOutputs();
+	void SpawnInputsAfterBelts();
 };

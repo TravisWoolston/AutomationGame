@@ -12,10 +12,22 @@
 #include "DrawDebugHelpers.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Framework/TestLevelDirector.h"
 
 UHexPlacementComponent::UHexPlacementComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+}
+
+// Added: helper to locate ATestLevelDirector
+static ATestLevelDirector* FindTLD(UWorld* W)
+{
+	if (!W) return nullptr;
+	for (TActorIterator<ATestLevelDirector> It(W); It; ++It)
+	{
+		return *It;
+	}
+	return nullptr;
 }
 
 void UHexPlacementComponent::BeginPlay()
@@ -27,6 +39,8 @@ void UHexPlacementComponent::BeginPlay()
 		if (Driver) Sim = Driver->GetSim();
 		PC = W->GetFirstPlayerController();
 	}
+
+	CachedTLD = FindTLD(GetWorld());
 }
 
 static void ReacquireSimIfNeeded(UWorld* W, AOrbSimDriver*& Driver, USimWorldHex*& Sim)
@@ -49,17 +63,14 @@ static float ComputeDirYawFromNeighbor(const UHexPlacementComponent* Self, const
 }
 void UHexPlacementComponent::TickComponent(float DeltaTime, enum ELevelTick, FActorComponentTickFunction*)
 {
-	// Keep sim refs fresh
 	if ((!Driver || !Sim) && GetWorld()) ReacquireSimIfNeeded(GetWorld(), Driver, Sim);
 
-	// Always update hover + preview if we have a player controller (independent of input polling)
 	if (PC)
 	{
 		UpdateHoverHex();
 		UpdatePreviewVisual();
 	}
 
-	// Input polling (placing / removing) still optional
 	if (!bUseInputPolling) return;
 	if (!Sim || !PC) return;
 
@@ -147,6 +158,16 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn Arm (no GameManager)."));
 		}
+
+		// Scenario capture for arm
+		if (bAutoScenarioCapture)
+		{
+			if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
+			if (CachedTLD)
+			{
+				CachedTLD->UpsertArmSpec(A.Q, A.R, BeltDir % 6, TArray<FArmInstr>(), true);
+			}
+		}
 		return;
 	}
 	default:
@@ -175,6 +196,16 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		return;
 	}
 
+	// Scenario capture (tiles only)
+	if (bPlaced && bAutoScenarioCapture)
+	{
+		if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
+		if (CachedTLD)
+		{
+			CachedTLD->UpsertTileSpec(Root, T.Kind, (uint8)BeltDir);
+		}
+	}
+
 	// Success logging
 	if (bDebug)
 	{
@@ -194,46 +225,6 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			UE_LOG(LogTemp, Log, TEXT("Placed %s at Hex(%d,%d)"), *KindName, Root.Q, Root.R);
 		}
 	}
-
-	// OPTIONAL: spawn a persistent bond visual actor (only if you have ABondGlyphActor / or static mesh)
-	// if (T.Kind == ETileKind::Bond && BondPreviewMesh)
-	// {
-	// 	const FHex Partner = HexUtil::Neighbor(Root, (EHexDir)(BeltDir % 6));
-	// 	const FVector CA = HexToWorld(Root);
-	// 	const FVector CB = HexToWorld(Partner);
-	// 	const FVector Mid = (CA + CB) * 0.5f + FVector(0, 0, PreviewZOffset);
-	// 	const float YawWorld = ComputeDirYawFromNeighbor(this, Root, BeltDir % 6);
-
-	// 	// Use the grid anchor (true world space) so the mesh does not follow the camera/tool owner.
-	// 	AActor* AnchorActor = GetAnchor();
-	// 	AActor* VisualOuter = AnchorActor ? AnchorActor : GetOwner();
-	// 	if (VisualOuter)
-	// 	{
-	// 		USceneComponent* Parent = AnchorActor
-	// 			? AnchorActor->GetRootComponent()
-	// 			: VisualOuter->GetRootComponent();
-
-	// 		if (!Parent)
-	// 		{
-	// 			// Ensure a root exists (rare edge if anchor root missing)
-	// 			Parent = NewObject<USceneComponent>(VisualOuter, TEXT("BondVisRootTemp"));
-	// 			Parent->RegisterComponent();
-	// 			VisualOuter->SetRootComponent(Parent);
-	// 		}
-
-	// 		UStaticMeshComponent* BondVisComp = NewObject<UStaticMeshComponent>(VisualOuter);
-	// 		BondVisComp->SetStaticMesh(BondPreviewMesh);
-	// 		BondVisComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	// 		BondVisComp->SetMobility(EComponentMobility::Movable);
-	// 		BondVisComp->SetupAttachment(Parent);
-	// 		BondVisComp->RegisterComponent();
-	// 		BondVisComp->SetWorldLocationAndRotation(Mid, FRotator(0.f, YawWorld, 0.f));
-	// 		BondVisComp->SetWorldScale3D(FVector(PreviewScale));
-
-	// 		// (Optional) Track for cleanup if tiles are later removed.
-	// 		// BondVisuals.Add(Root, BondVisComp);
-	// 	}
-	// }
 }
 
 void UHexPlacementComponent::DoRemoveAt(const FVector& World)
@@ -263,6 +254,17 @@ void UHexPlacementComponent::DoRemoveAt(const FVector& World)
 		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Yellow,
 			FString::Printf(TEXT("Removed tile at Hex(%d,%d)"), A.Q, A.R));
 	}
+
+	// Scenario capture removal
+	if (bAutoScenarioCapture)
+	{
+		if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
+		if (CachedTLD)
+		{
+			CachedTLD->RemoveTileSpec(FHex{ A.Q, A.R });
+			CachedTLD->RemoveArmSpec(A.Q, A.R); // in case an arm spec was there
+		}
+	}
 }
 
 void UHexPlacementComponent::HandlePlace(bool bPressed)
@@ -281,19 +283,15 @@ void UHexPlacementComponent::HandleRemove(bool bPressed)
 
 void UHexPlacementComponent::RotateCW()
 {
-	// Simple enumeration step: +1 (60° CW in axial order)
 	BeltDir = (BeltDir + 5) % 6;
 }
 
 void UHexPlacementComponent::RotateCCW()
 {
-	// -1
 	BeltDir = (BeltDir + 1) % 6;
 }
 
 void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) { PlaceKind = NewKind; }
-
-/* ---------------- Preview / Hover ---------------- */
 
 void UHexPlacementComponent::EnsurePreviewComponent()
 {
@@ -336,20 +334,14 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 bool UHexPlacementComponent::CanPlaceAt(const FHex& Hex) const
 {
 	if (!Sim) return true;
-	// If Sim exposes a query, use it here. Placeholder returns true (allow all).
-	// Example (uncomment if available):
-	// const FTile Existing = Sim->GetTile(Hex);
-	// return Existing.Kind == ETileKind::Empty;
 	return true;
 }
 
 FVector UHexPlacementComponent::HexToWorld(const FHex& H) const
 {
-	// Compute hex center from axial coordinates (approximation based on chosen orientation).
-	// Assumption: 'Tile' represents the hex radius (distance from center to a vertex).
 	if (!Driver && !Sim)
 	{
-		return LastHoverWorld; // fallback
+		return LastHoverWorld;
 	}
 
 	const float Tile = Driver ? Driver->GetTileSize() : (Sim ? Sim->TileSizeUU : 100.f);
@@ -358,7 +350,6 @@ FVector UHexPlacementComponent::HexToWorld(const FHex& H) const
 	const float YawDeg = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 
-	// Axial q,r
 	const float q = (float)H.Q;
 	const float r = (float)H.R;
 
@@ -367,22 +358,15 @@ FVector UHexPlacementComponent::HexToWorld(const FHex& H) const
 
 	if (Ori == EHexOrientation::PointyTop)
 	{
-		// pointy-top axial -> pixel
-		// x = size * (sqrt(3) * q + sqrt(3)/2 * r)
-		// y = size * (3/2 * r)
 		Local.X = Tile * (Sqrt3 * q + (Sqrt3 * 0.5f) * r);
 		Local.Y = Tile * (1.5f * r);
 	}
 	else
 	{
-		// flat-top axial -> pixel
-		// x = size * (3/2 * q)
-		// y = size * (sqrt(3) * r + sqrt(3)/2 * q)
 		Local.X = Tile * (1.5f * q);
 		Local.Y = Tile * (Sqrt3 * r + (Sqrt3 * 0.5f) * q);
 	}
 
-	// Rotate back into world space
 	const float YawRad = FMath::DegreesToRadians(YawDeg);
 	const float CosA = FMath::Cos(YawRad);
 	const float SinA = FMath::Sin(YawRad);
@@ -430,12 +414,6 @@ void UHexPlacementComponent::UpdateHoverHex()
 	HoverHex = FHex{ A.Q, A.R };
 	bHoverValid = true;
 }
-
-// ADD near other includes if HexUtil not already available (it is via HexCoord.h)
-// #include "Sim/HexCoord.h"
-
-// --- Helper: compute yaw from HoverHex to its neighbor in BeltDir (center-to-center) ---
-
 
 void UHexPlacementComponent::UpdatePreviewVisual()
 {
