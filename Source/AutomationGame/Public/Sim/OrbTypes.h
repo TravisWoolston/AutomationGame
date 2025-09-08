@@ -17,13 +17,9 @@ USTRUCT(BlueprintType)
 struct FOrb
 {
 	GENERATED_BODY();
-	/** Kind/category of orb (resource type). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EOrbType  Type = EOrbType::None;
-	/** Display/processing color. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EOrbColor Color = EOrbColor::White;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	uint8 Kind = 0;
-	/** Orientation on hex grid in 60° steps (0..5). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 Kind = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, ClampMax = 5))
 	uint8 Rot60 = 0;
 };
@@ -32,26 +28,24 @@ USTRUCT(BlueprintType)
 struct FOrbBond
 {
 	GENERATED_BODY()
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	int32 OrbA = 0;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	int32 OrbB = 0;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	uint8 BondType = 0; // e.g. single, double, etc.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 OrbA = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 OrbB = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 BondType = 0;
 };
 
+/** Data for an orb inside a grabbed cluster (includes integer axial delta). */
 USTRUCT(BlueprintType)
 struct FOrbData
 {
 	GENERATED_BODY()
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	int32 Id = 0;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	uint8 Type = 0;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	uint8 Color = 0;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	FVector2D Offset; // Position relative to cluster origin
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 Type = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 Color = 0;
+	/** Visual (floating) offset used for rendering the held cluster. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector2D Offset = FVector2D::ZeroVector;
+	/** Integer axial deltas from pivot at grab time (lossless for rotation). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 dQ = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 dR = 0;
 };
 
 /** Item on a tile: either a single orb or a bonded cluster. */
@@ -59,21 +53,16 @@ USTRUCT(BlueprintType)
 struct AUTOMATIONGAME_API FItem
 {
 	GENERATED_BODY();
-	/** Unique identity for render interpolation across steps. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32 Id = 0;
-
-	/** If false, use Single; if true, use Orbs+Bonds. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bIsCluster = false;
-
-	/** Single-orb payload when not a cluster. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FOrb Single;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOrbData> Orbs;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOrbBond> Bonds;
 
-	/** Cluster payload (indices correspond to Bonds). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOrbData> Orbs; // One or more orbs
+	// NEW: facing direction (0..5) of the arm at the moment this cluster was grabbed.
+	// Singles ignore this (value stays -1). Used so drop rotates relative, not absolute.
+	UPROPERTY()
+	int8 GrabFacing = -1;
 
-	/** Bonds tying orbs in the cluster. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOrbBond> Bonds; // Bonds between orbs
-
-	/** Helper to construct a single-orb item. */
 	static FItem MakeSingle(const FOrb& O) { FItem I; I.bIsCluster = false; I.Single = O; return I; }
 };

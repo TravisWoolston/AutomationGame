@@ -220,6 +220,10 @@ void ABasicArm::RefreshPose(float InAlpha)
 	}
 
 
+	if (bHolding && HeldOrb.bIsCluster)
+	{
+		UpdateHeldClusterTransforms(Yaw + BaseYawOffsetDeg);
+	}
 }
 
 void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= true*/)
@@ -691,6 +695,7 @@ void ABasicArm::AttachHeldOrb()
 		return;
 	}
 
+	// Ensure parent component (acts as pivot at grip)
 	if (!HeldOrbComp)
 	{
 		HeldOrbComp = NewObject<UStaticMeshComponent>(this, TEXT("HeldOrb"));
@@ -706,35 +711,42 @@ void ABasicArm::AttachHeldOrb()
 	HeldOrbComp->SetVisibility(true, true);
 	HeldOrbComp->SetRelativeScale3D(HeldOrbScale);
 
-	// Clear children (cluster rebuild)
-	TArray<USceneComponent*> ChildComps; // renamed from Children to avoid hiding AActor::Children
+	// Clear old children
+	TArray<USceneComponent*> ChildComps;
 	HeldOrbComp->GetChildrenComponents(false, ChildComps);
-	for (USceneComponent* ChildComp : ChildComps)
+	for (USceneComponent* C : ChildComps)
 	{
-		if (ChildComp) ChildComp->DestroyComponent();
+		if (C) C->DestroyComponent();
 	}
 
-	const bool bHasSocket = BaseComp && BaseComp->DoesSocketExist(TEXT("GripSocket"));
-	if (!bHasSocket)
-	{
-		UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': GripSocket missing on base mesh; orb will appear at pivot."), *GetName());
-	}
+	const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
+	const float OffsetBaseScale = (bScaleClusterOffsetsByTile ? Tile : 1.f) * ClusterOffsetScale;
 
 	if (HeldOrb.bIsCluster)
 	{
-		UStaticMesh* Container = ResolveOrbMesh(HeldOrb);
-		if (Container) HeldOrbComp->SetStaticMesh(Container);
-		else HeldOrbComp->SetStaticMesh(HeldOrbMesh);
-		if (HeldOrbComp->GetStaticMesh() == nullptr)
+		// Optional container mesh
+		if (bShowClusterContainerMesh)
 		{
-			static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-			if (SphereMesh.Succeeded()) HeldOrbComp->SetStaticMesh(SphereMesh.Object);
+			UStaticMesh* Container = ResolveOrbMesh(HeldOrb);
+			if (!Container) Container = HeldOrbMesh;
+			HeldOrbComp->SetStaticMesh(Container);
 		}
+		else
+		{
+			HeldOrbComp->SetStaticMesh(nullptr);
+		}
+
+		if (!bShowClusterContainerMesh && !HeldOrbComp->GetStaticMesh())
+		{
+			// Accept empty parent; just holds sub-orbs.
+		}
+
 		for (const FOrbData& Sub : HeldOrb.Orbs)
 		{
 			UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
 			SubMesh->RegisterComponent();
 			SubMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
+
 			UStaticMesh* SM = OrbTypeToMesh.FindRef(Sub.Type);
 			if (!SM) SM = HeldOrbMesh;
 			if (!SM)
@@ -743,13 +755,17 @@ void ABasicArm::AttachHeldOrb()
 				if (SphereMesh.Succeeded()) SM = SphereMesh.Object;
 			}
 			SubMesh->SetStaticMesh(SM);
+
 			UMaterialInterface* Mat = OrbColorToMaterial.FindRef(Sub.Color);
 			if (!Mat) Mat = DefaultOrbMaterial;
-			SubMesh->SetMaterial(0, Mat);
-			SubMesh->SetRelativeLocation(FVector(Sub.Offset, 0.f));
+			if (Mat) SubMesh->SetMaterial(0, Mat);
+
+			const FVector2D Off2D = Sub.Offset * OffsetBaseScale;
+			SubMesh->SetRelativeLocation(FVector(Off2D.X, Off2D.Y, 0.f));
 			SubMesh->SetRelativeScale3D(HeldOrbScale);
 		}
-		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached cluster Id=%d (#=%d)"), *GetName(), HeldOrb.Id, HeldOrb.Orbs.Num());
+		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached cluster Id=%d (#=%d) scale(Offsets)=%.2f Tile=%.1f"),
+			*GetName(), HeldOrb.Id, HeldOrb.Orbs.Num(), OffsetBaseScale, Tile);
 	}
 	else
 	{
@@ -761,12 +777,11 @@ void ABasicArm::AttachHeldOrb()
 			if (SphereMesh.Succeeded()) Mesh = SphereMesh.Object;
 		}
 		HeldOrbComp->SetStaticMesh(Mesh);
+
 		UMaterialInterface* Mat = ResolveOrbMaterial(HeldOrb);
 		if (!Mat) Mat = DefaultOrbMaterial;
 		if (Mat) HeldOrbComp->SetMaterial(0, Mat);
-		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached single orb Id=%d Type=%d Kind=%d Mesh=%s"),
-			*GetName(), HeldOrb.Id, (uint8)HeldOrb.Single.Type, HeldOrb.Single.Kind,
-			Mesh ? *Mesh->GetName() : TEXT("None"));
+		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached single orb Id=%d"), *GetName(), HeldOrb.Id);
 	}
 }
 
@@ -844,5 +859,18 @@ void ABasicArm::DetachHeldOrb()
 	HeldOrbComp->SetStaticMesh(nullptr);
 	HeldOrbComp->SetVisibility(false, true);
 	HeldOrbComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+}
+
+void ABasicArm::UpdateHeldClusterTransforms(float CurrentYawDeg)
+{
+	// Currently cluster sub‑orb components are attached under HeldOrbComp which
+	// inherits rotation from the arm base, so no per‑tick adjustment is required.
+	// This stub exists so future logic (e.g. pivoting / in‑hand rotation separate
+	// from arm facing) can apply an additional transform.
+	// Suppress unused param warning.
+	(void)CurrentYawDeg;
+
+	// If later you add explicit in‑hand rotation, iterate HeldClusterComps and
+	// set their relative locations after rotating HeldClusterLocalOffsets.
 }
 

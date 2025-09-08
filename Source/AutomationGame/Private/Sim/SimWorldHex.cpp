@@ -231,6 +231,70 @@ void USimWorldHex::StepArms()
 			ItemIdToHex.Add(KV.Value.Id, KV.Key);
 	}
 
+	// --- Local helpers (can access private FBond type through this) ---
+	auto GatherBondedClusterFn = [&](int32 RootId, TSet<int32>& OutIds)
+		{
+			if (RootId == 0 || OutIds.Contains(RootId)) return;
+			TArray<int32> Stack;
+			Stack.Add(RootId);
+			OutIds.Add(RootId);
+			while (Stack.Num())
+			{
+				int32 Cur = Stack.Pop(EAllowShrinking::No);
+				if (const TArray<int32>* BondList = ItemToBonds.Find(Cur))
+				{
+					for (int32 BondIdx : *BondList)
+					{
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& B = Bonds[BondIdx];
+						const int32 Other = (B.ItemA == Cur) ? B.ItemB : B.ItemA;
+						if (Other != 0 && !OutIds.Contains(Other))
+						{
+							OutIds.Add(Other);
+							Stack.Add(Other);
+						}
+					}
+				}
+			}
+		};
+
+	auto RotateAxial60Fn = [](const FHex& D, int32 StepsCCW)->FHex
+		{
+			int32 n = ((StepsCCW % 6) + 6) % 6;
+			FHex r = D;
+			for (int32 i = 0; i < n; ++i)
+			{
+				const int32 q = r.Q;
+				const int32 rr = r.R;
+				r.Q = -rr;
+				r.R = q + rr;
+			}
+			return r;
+		};
+
+	auto ApproxXYToAxialFn = [&](const FVector2D& Offset)->FHex
+		{
+			// Small brute force – cluster sizes are tiny.
+			float Best = FLT_MAX;
+			int32 BestQ = 0, BestR = 0;
+			for (int q = -6; q <= 6; ++q)
+			{
+				for (int r = -6; r <= 6; ++r)
+				{
+					const FVector2D XY = HexCoord::AxialToXY(FHexAxial(q, r), 1.f, GridOrientation);
+					const float DistSq = (XY - Offset).SizeSquared();
+					if (DistSq < Best)
+					{
+						Best = DistSq;
+						BestQ = q;
+						BestR = r;
+					}
+				}
+			}
+			return FHex(BestQ, BestR);
+		};
+	// ---------------------------------------------------------------
+
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 	{
 		FArmState& S = Arms[ArmIndex];
@@ -250,30 +314,168 @@ void USimWorldHex::StepArms()
 		case ECmd::Grab:
 			if (!S.bHolding)
 			{
+				bool bGrabSucceeded = false;            // NEW
+
 				FHex Target = S.BaseHex;
 				for (int i = 0; i < S.ArmLen; ++i)
 					Target = HexUtil::Neighbor(Target, S.Facing);
-				FItem Temp;
-				if (TryArmPickItem(Target, Temp))
+
+				FItem* Found = ItemMap.Find(Target);
+				if (!Found)
 				{
-					S.Held = Temp;
-					S.bHolding = true;
-					SkipInputThisFrame.Add(Target);
+					FItem Temp;
+					if (TryArmPickItem(Target, Temp))
+					{
+						S.Held = Temp;
+						S.bHolding = true;
+						SkipInputThisFrame.Add(Target);
+						bGrabSucceeded = true;        // NEW
+					}
 				}
+				else
+				{
+					TSet<int32> ClusterIds;
+					if (Found->Id != 0 && ItemToBonds.Contains(Found->Id))
+						GatherBondedClusterFn(Found->Id, ClusterIds);
+
+					if (ClusterIds.Num() <= 1)
+					{
+						FItem SingleOut;
+						if (TryArmPickItem(Target, SingleOut))
+						{
+							S.Held = SingleOut;
+							S.bHolding = true;
+							SkipInputThisFrame.Add(Target);
+							bGrabSucceeded = true;    // NEW
+						}
+					}
+					else
+					{
+						FItem Cluster;
+						Cluster.bIsCluster = true;
+						Cluster.Id = Found->Id;
+						Cluster.GrabFacing = (int8)S.Facing;
+
+						for (int32 ItemId : ClusterIds)
+						{
+							const FHex* HexPtr = nullptr;
+							for (const auto& KV : ItemMap)
+							{
+								if (KV.Value.Id == ItemId) { HexPtr = &KV.Key; break; }
+							}
+							if (!HexPtr) continue;
+
+							FHex D(HexPtr->Q - Target.Q, HexPtr->R - Target.R);
+							const FVector2D Off2D = HexCoord::AxialToXY(FHexAxial(D.Q, D.R), 1.f, GridOrientation);
+
+							FOrbData Orb;
+							const FItem* It = ItemMap.Find(*HexPtr);
+							if (It && !It->bIsCluster)
+							{
+								Orb.Type = (uint8)It->Single.Type;
+								Orb.Color = (uint8)It->Single.Color;
+							}
+							Orb.Offset = Off2D;
+							Orb.dQ = (int8)D.Q;
+							Orb.dR = (int8)D.R;
+							Cluster.Orbs.Add(Orb);
+						}
+
+						for (int32 ItemId : ClusterIds)
+						{
+							FHex RemoveHex; bool bFoundHex = false;
+							for (const auto& KV : ItemMap)
+								if (KV.Value.Id == ItemId) { RemoveHex = KV.Key; bFoundHex = true; break; }
+							if (bFoundHex)
+							{
+								FItem Dummy;
+								TryTakeItem(RemoveHex, Dummy);
+							}
+						}
+
+						for (int32 i = Bonds.Num() - 1; i >= 0; --i)
+						{
+							const FBond& B = Bonds[i];
+							if (ClusterIds.Contains(B.ItemA) || ClusterIds.Contains(B.ItemB))
+								RemoveBondIndex(i);
+						}
+
+						if (Cluster.Orbs.Num() > 0)   // only succeed if we actually built something
+						{
+							S.Held = Cluster;
+							S.bHolding = true;
+							SkipInputThisFrame.Add(Target);
+							bGrabSucceeded = true;    // NEW
+						}
+					}
+				}
+
+				// NEW: If grab failed (nothing there), do NOT advance PC; retry next tick.
+				if (!bGrabSucceeded)
+					continue;
 			}
 			break;
 
 		case ECmd::Drop:
 			if (S.bHolding)
 			{
-				FHex Target = S.BaseHex;
+				FHex GripTarget = S.BaseHex;
 				for (int i = 0; i < S.ArmLen; ++i)
-					Target = HexUtil::Neighbor(Target, S.Facing);
-				if (TryArmPlaceItem(Target, S.Held))
+					GripTarget = HexUtil::Neighbor(GripTarget, S.Facing);
+
+				if (!S.Held.bIsCluster)
 				{
+					if (TryArmPlaceItem(GripTarget, S.Held))
+					{
+						S.bHolding = false;
+						S.Held = FItem();
+						SkipOutputThisFrame.Add(GripTarget);
+					}
+				}
+				else
+				{
+					// Compute rotation delta relative to grab, not absolute facing.
+					const uint8 CurFacingSteps = (uint8)S.Facing % 6;
+					const int8 StoredGrabFacing = (int8)(S.Held.GrabFacing);
+					const uint8 FacingDelta = (StoredGrabFacing >= 0)
+						? (uint8)(((int32)CurFacingSteps - (int32)(StoredGrabFacing % 6) + 6) % 6)
+						: CurFacingSteps; // fallback for legacy items
+
+					bool bBlocked = false;
+					TArray<FHex> TargetHexes;
+					TargetHexes.Reserve(S.Held.Orbs.Num());
+
+					for (const FOrbData& Sub : S.Held.Orbs)
+					{
+						FHex Local;
+						if (Sub.dQ != 0 || Sub.dR != 0 || Sub.Offset.IsNearlyZero())
+							Local = FHex(Sub.dQ, Sub.dR);
+						else
+							Local = ApproxXYToAxialFn(Sub.Offset); // legacy fallback
+
+						FHex RotLocal = RotateAxial60Fn(Local, FacingDelta);
+						FHex WorldHex(GripTarget.Q + RotLocal.Q, GripTarget.R + RotLocal.R);
+						if (ItemMap.Contains(WorldHex)) { bBlocked = true; break; }
+						TargetHexes.Add(WorldHex);
+					}
+
+					if (bBlocked)
+					{
+						if (S.WaitCounter == 0) S.WaitCounter = 1;
+						break;
+					}
+
+					for (int32 idx = 0; idx < S.Held.Orbs.Num(); ++idx)
+					{
+						const FOrbData& Sub = S.Held.Orbs[idx];
+						FOrb O; O.Type = (EOrbType)Sub.Type; O.Color = (EOrbColor)Sub.Color;
+						FItem NewItem = FItem::MakeSingle(O);
+						NewItem.Id = NextItemId++;
+						TryPutItem(TargetHexes[idx], NewItem);
+						SkipOutputThisFrame.Add(TargetHexes[idx]);
+					}
 					S.bHolding = false;
 					S.Held = FItem();
-					SkipOutputThisFrame.Add(Target);
 				}
 			}
 			break;
@@ -281,33 +483,40 @@ void USimWorldHex::StepArms()
 		case ECmd::RotateL:
 		case ECmd::RotateR:
 		{
+			// If we were told to wait (from a previously blocked rotate) count it down and retry next tick.
+			if (S.WaitCounter > 0)
+			{
+				--S.WaitCounter;
+				// Do NOT advance PC; retry this same rotate instruction.
+				continue;
+			}
+
+			EHexDir NewFacing = (Op.Cmd == ECmd::RotateL)
+				? (EHexDir)(((uint8)S.Facing + 1) % 6)
+				: (EHexDir)(((uint8)S.Facing + 5) % 6);
+
+			FHex OldHand = S.BaseHex;
+			for (int i = 0; i < S.ArmLen; ++i)
+				OldHand = HexUtil::Neighbor(OldHand, S.Facing);
+
+			FHex NewHand = S.BaseHex;
+			for (int i = 0; i < S.ArmLen; ++i)
+				NewHand = HexUtil::Neighbor(NewHand, NewFacing);
+
+			const int32 dQ = NewHand.Q - OldHand.Q;
+			const int32 dR = NewHand.R - OldHand.R;
+
+			bool bBlocked = false;
+
+			// (A) Collision / cluster checks only if holding
 			if (S.bHolding)
 			{
-				EHexDir NewFacing = (Op.Cmd == ECmd::RotateL)
-					? (EHexDir)(((uint8)S.Facing + 1) % 6)
-					: (EHexDir)(((uint8)S.Facing + 5) % 6);
-
-				FHex OldHand = S.BaseHex;
-				for (int i = 0; i < S.ArmLen; ++i)
-					OldHand = HexUtil::Neighbor(OldHand, S.Facing);
-
-				FHex NewHand = S.BaseHex;
-				for (int i = 0; i < S.ArmLen; ++i)
-					NewHand = HexUtil::Neighbor(NewHand, NewFacing);
-
-				const int32 dQ = NewHand.Q - OldHand.Q;
-				const int32 dR = NewHand.R - OldHand.R;
-
-				bool bBlocked = false;
-
-				// Build bonded cluster (connected component) containing held item
 				TSet<int32> ClusterIds;
 				if (S.Held.Id != 0 && ItemToBonds.Contains(S.Held.Id))
 				{
 					TArray<int32> Stack;
 					Stack.Add(S.Held.Id);
 					ClusterIds.Add(S.Held.Id);
-
 					while (Stack.Num())
 					{
 						int32 CurId = Stack.Pop(EAllowShrinking::No);
@@ -330,22 +539,21 @@ void USimWorldHex::StepArms()
 				if (ClusterIds.Num() == 0 && S.Held.Id != 0)
 					ClusterIds.Add(S.Held.Id);
 
-				// 1) New hand destination cannot contain a foreign (non-cluster) item
+				// 1) Destination hand cannot contain foreign item
 				if (const FItem* Occ = ItemMap.Find(NewHand))
 				{
 					if (!ClusterIds.Contains(Occ->Id))
 						bBlocked = true;
 				}
 
-				// 2) Translate every on-board cluster member by (dQ,dR), ensure no foreign collisions
+				// 2) Cluster rigid translation test
 				if (!bBlocked && ClusterIds.Num() > 1)
 				{
 					for (int32 ItemId : ClusterIds)
 					{
-						if (ItemId == S.Held.Id) continue; // held item not currently on board
+						if (ItemId == S.Held.Id) continue;
 						const FHex* CurHex = ItemIdToHex.Find(ItemId);
-						if (!CurHex) continue; // could have been picked up earlier this tick
-
+						if (!CurHex) continue;
 						FHex Dest(CurHex->Q + dQ, CurHex->R + dR);
 						if (const FItem* Occ = ItemMap.Find(Dest))
 						{
@@ -357,19 +565,63 @@ void USimWorldHex::StepArms()
 						}
 					}
 				}
+			}
 
-				if (bBlocked)
+			// (B) Inter-arm overlap (even if not holding)
+			if (!bBlocked)
+			{
+				for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
 				{
-					S.WaitCounter = 1;
-					goto AdvancePC;
+					if (OtherIdx == ArmIndex) continue;
+					const FArmState& Other = Arms[OtherIdx];
+					if (!Other.bHolding) continue;
+
+					FHex OtherHand = Other.BaseHex;
+					for (int i = 0; i < Other.ArmLen; ++i)
+						OtherHand = HexUtil::Neighbor(OtherHand, Other.Facing);
+
+					if (NewHand == OtherHand)
+					{
+						bBlocked = true;
+						break;
+					}
+
+					// If translating bonded cluster, ensure no cluster member lands on another arm's hand
+					if (S.bHolding && S.Held.Id != 0 && !bBlocked)
+					{
+						for (auto& KV : ItemMap)
+						{
+							const FItem& It = KV.Value;
+							if (It.Id == 0 || It.Id == S.Held.Id) continue;
+							if (IsItemBonded(It.Id))
+							{
+								const FHex CurHex = KV.Key;
+								FHex Dest(CurHex.Q + dQ, CurHex.R + dR);
+								if (Dest == OtherHand)
+								{
+									bBlocked = true;
+									break;
+								}
+							}
+						}
+						if (bBlocked) break;
+					}
 				}
 			}
 
+			if (bBlocked)
+			{
+				// Arm cannot rotate this tick; set a 1‑tick wait and retry SAME instruction.
+				if (S.WaitCounter == 0)
+				{
+					S.WaitCounter = 1;
+				}
+				// Do NOT advance PC; keep pointing at this rotate op.
+				continue;
+			}
+
 			// Commit rotation
-			if (Op.Cmd == ECmd::RotateL)
-				S.Facing = (EHexDir)(((uint8)S.Facing + 1) % 6);
-			else
-				S.Facing = (EHexDir)(((uint8)S.Facing + 5) % 6);
+			S.Facing = NewFacing;
 		}
 		break;
 
@@ -418,7 +670,7 @@ void USimWorldHex::StepBelts()
 {
 	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return;
 
-	const float Speed = FMath::Max(0.f, BeltSpeedTilesPerTick);	
+	const float Speed = FMath::Max(0.f, BeltSpeedTilesPerTick);
 	const float BlockClamp = BeltBlockedClamp;
 
 	// --- NEW: gather all hand hexes of arms that are currently holding an item (treated as occupied) ---
@@ -787,84 +1039,84 @@ void USimWorldHex::StepBelts()
 	TSet<int32> PulledThisPass;
 
 	auto TryTranslateClusterPull = [&](int32 SeedItemId, const FHex& DestHex, uint8, TSet<int32>& OutMovedIds) -> bool
-	{
-		// If destination is a held hand hex, block
-		if (HeldHandHexes.Contains(DestHex)) return false; // NEW
-
-		TSet<int32> ClusterItemIds;
-		if (const TArray<int32>* BondIdxList = ItemToBonds.Find(SeedItemId))
 		{
-			TArray<int32> Stack;
-			Stack.Add(SeedItemId);
-			ClusterItemIds.Add(SeedItemId);
-			while (Stack.Num())
+			// If destination is a held hand hex, block
+			if (HeldHandHexes.Contains(DestHex)) return false; // NEW
+
+			TSet<int32> ClusterItemIds;
+			if (const TArray<int32>* BondIdxList = ItemToBonds.Find(SeedItemId))
 			{
-				int32 Cur = Stack.Pop(EAllowShrinking::No);
-				if (const TArray<int32>* Neigh = Adj.Find(Cur))
-					for (int32 N : *Neigh)
-						if (!ClusterItemIds.Contains(N))
-						{
-							ClusterItemIds.Add(N);
-							Stack.Add(N);
-						}
+				TArray<int32> Stack;
+				Stack.Add(SeedItemId);
+				ClusterItemIds.Add(SeedItemId);
+				while (Stack.Num())
+				{
+					int32 Cur = Stack.Pop(EAllowShrinking::No);
+					if (const TArray<int32>* Neigh = Adj.Find(Cur))
+						for (int32 N : *Neigh)
+							if (!ClusterItemIds.Contains(N))
+							{
+								ClusterItemIds.Add(N);
+								Stack.Add(N);
+							}
+				}
 			}
-		}
-		else ClusterItemIds.Add(SeedItemId);
+			else ClusterItemIds.Add(SeedItemId);
 
-		for (int32 Id : ClusterItemIds)
-			if (OutMovedIds.Contains(Id)) return false;
+			for (int32 Id : ClusterItemIds)
+				if (OutMovedIds.Contains(Id)) return false;
 
-		const FHex* SeedFrom = ItemHex.Find(SeedItemId);
-		if (!SeedFrom) return false;
-		const int32 dQ = DestHex.Q - SeedFrom->Q;
-		const int32 dR = DestHex.R - SeedFrom->R;
+			const FHex* SeedFrom = ItemHex.Find(SeedItemId);
+			if (!SeedFrom) return false;
+			const int32 dQ = DestHex.Q - SeedFrom->Q;
+			const int32 dR = DestHex.R - SeedFrom->R;
 
-		for (int32 Id : ClusterItemIds)
-		{
-			const FHex* FromHex = ItemHex.Find(Id);
-			if (!FromHex) return false;
-			FHex ToHex(FromHex->Q + dQ, FromHex->R + dR);
-
-			if (HeldHandHexes.Contains(ToHex)) return false; // NEW
-			if (LocalOccupied.Contains(ToHex))
+			for (int32 Id : ClusterItemIds)
 			{
-				if (const FItem* Occ = ItemMap.Find(ToHex))
-					if (!ClusterItemIds.Contains(Occ->Id))
-						return false;
+				const FHex* FromHex = ItemHex.Find(Id);
+				if (!FromHex) return false;
+				FHex ToHex(FromHex->Q + dQ, FromHex->R + dR);
+
+				if (HeldHandHexes.Contains(ToHex)) return false; // NEW
+				if (LocalOccupied.Contains(ToHex))
+				{
+					if (const FItem* Occ = ItemMap.Find(ToHex))
+						if (!ClusterItemIds.Contains(Occ->Id))
+							return false;
+						else
+							// Occupied by held hand hex or something synthetic
+							return false;
+				}
+			}
+
+			TMap<FHex, FItem> Snapshot = ItemMap;
+			for (int32 Id : ClusterItemIds)
+			{
+				const FHex* FromHex = ItemHex.Find(Id);
+				if (!FromHex) continue;
+				FHex ToHex(FromHex->Q + dQ, FromHex->R + dR);
+				if (HeldHandHexes.Contains(ToHex)) continue; // safety
+
+				const FItem* Found = Snapshot.Find(*FromHex);
+				if (!Found || Found->Id != Id) continue;
+
+				ItemMap.Remove(*FromHex);
+				OrbAt.Remove(*FromHex);
+				ItemMap.Add(ToHex, *Found);
+				OrbAt.Add(ToHex, KindFromItem(*Found));
+
+				ItemHex[Id] = ToHex;
+				LocalOccupied.Remove(*FromHex);
+				LocalOccupied.Add(ToHex);
+
+				if (const FTile* TD = TileMap.Find(ToHex); TD && TD->Kind == ETileKind::Belt)
+					BeltProgress.Add(Id, 0.f);
 				else
-					// Occupied by held hand hex or something synthetic
-					return false;
+					BeltProgress.Remove(Id);
 			}
-		}
-
-		TMap<FHex, FItem> Snapshot = ItemMap;
-		for (int32 Id : ClusterItemIds)
-		{
-			const FHex* FromHex = ItemHex.Find(Id);
-			if (!FromHex) continue;
-			FHex ToHex(FromHex->Q + dQ, FromHex->R + dR);
-			if (HeldHandHexes.Contains(ToHex)) continue; // safety
-
-			const FItem* Found = Snapshot.Find(*FromHex);
-			if (!Found || Found->Id != Id) continue;
-
-			ItemMap.Remove(*FromHex);
-			OrbAt.Remove(*FromHex);
-			ItemMap.Add(ToHex, *Found);
-			OrbAt.Add(ToHex, KindFromItem(*Found));
-
-			ItemHex[Id] = ToHex;
-			LocalOccupied.Remove(*FromHex);
-			LocalOccupied.Add(ToHex);
-
-			if (const FTile* TD = TileMap.Find(ToHex); TD && TD->Kind == ETileKind::Belt)
-				BeltProgress.Add(Id, 0.f);
-			else
-				BeltProgress.Remove(Id);
-		}
-		for (int32 Id : ClusterItemIds) OutMovedIds.Add(Id);
-		return true;
-	};
+			for (int32 Id : ClusterItemIds) OutMovedIds.Add(Id);
+			return true;
+		};
 
 	for (const auto& KV : TileMap)
 	{
@@ -1365,6 +1617,7 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 	OutWorld = FMath::Lerp(CurCenter, NextCenter, VisualP);
 	return true;
 }
+
 
 
 

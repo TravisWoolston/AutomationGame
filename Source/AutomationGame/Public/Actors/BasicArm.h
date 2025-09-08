@@ -171,6 +171,17 @@ public:
 public:
 	void PushProgramToSim();
 	void PushRuntimePropertiesToSim();   // NEW
+	/** If true, cluster sub-orb offsets are multiplied by TileSize (grid units -> UU). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
+	bool bScaleClusterOffsetsByTile = true;
+
+	/** Extra scalar applied after (optional) tile scaling. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals", meta = (ClampMin = 0.01))
+	float ClusterOffsetScale = 1.f;
+
+	/** Show the container/static mesh for a cluster (sphere) in addition to sub-orbs. Usually false. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
+	bool bShowClusterContainerMesh = false;
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void RebuildTapeFromProgram();          // runtime/editor safe manual push
 
@@ -188,6 +199,14 @@ private:
 	UPROPERTY(Transient) UStaticMeshComponent* BaseComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* HandComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* HeldOrbComp = nullptr;
+
+	// --- Held cluster visual support ---
+	UPROPERTY(Transient)
+	TArray<UStaticMeshComponent*> HeldClusterComps;          // One per sub-orb
+	TArray<FVector2D> HeldClusterLocalOffsets;               // Raw (unrotated) 2D offsets from FOrbData
+	void RebuildHeldClusterVisual();                         // Build from HeldOrb
+	void ClearHeldClusterVisual(bool bKeepParent = true);
+	void UpdateHeldClusterTransforms(float CurrentYawDeg);   // Called each tick after RefreshPose
 
 	// Sim ref
 	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
@@ -241,4 +260,6 @@ private:
 
 	UStaticMesh* ResolveOrbMesh(const FItem& Item) const;      // NEW
 	UMaterialInterface* ResolveOrbMaterial(const FItem& Item) const; // NEW
+
+
 };

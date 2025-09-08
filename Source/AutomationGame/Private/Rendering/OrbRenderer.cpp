@@ -200,14 +200,14 @@ void UOrbRenderer::RebuildCurrPos()
 		if (!Item.bIsCluster)
 		{
 			CurrPos.Add(ItemId, TileWorld);
-			// (Optional) orientation could come from Item.Single.Rot60
 		}
 		else
 		{
 			for (int32 SubIdx = 0; SubIdx < Item.Orbs.Num(); ++SubIdx)
 			{
 				const FOrbData& Sub = Item.Orbs[SubIdx];
-				const FVector2D OffRot = RotateXY(Sub.Offset, Yaw); // If Offset is already world UU, keep. If in tile units multiply by Tile.
+				// Treat offsets as tile-based; scale by Tile
+				const FVector2D OffRot = RotateXY(Sub.Offset * Tile, Yaw);
 				const FVector SubWorld = TileWorld + FVector(OffRot.X, OffRot.Y, 0.f);
 				const int32 SubId = MakeSubOrbId(ItemId, SubIdx);
 				CurrPos.Add(SubId, SubWorld);
@@ -222,7 +222,6 @@ void UOrbRenderer::RebuildCurrPos()
 		const FItem& Held = S.Held;
 		if (Held.Id == 0) continue;
 
-		// Compute grip hex (end of arm)
 		FHex Grip = S.BaseHex;
 		for (int i = 0; i < S.ArmLen; ++i)
 			Grip = HexUtil::Neighbor(Grip, S.Facing);
@@ -245,8 +244,8 @@ void UOrbRenderer::RebuildCurrPos()
 			for (int32 SubIdx = 0; SubIdx < Held.Orbs.Num(); ++SubIdx)
 			{
 				const FOrbData& Sub = Held.Orbs[SubIdx];
-				// Rotate offset by arm yaw so cluster rotates with arm
-				const FVector2D OffRot = RotateXY(Sub.Offset, OrbYaw + Yaw); // OrbYaw relative to grid + grid yaw
+				// Rotate + scale offsets (tile units -> UU)
+				const FVector2D OffRot = RotateXY(Sub.Offset * Tile, OrbYaw + Yaw);
 				const FVector SubWorld = GripWorld + FVector(OffRot.X, OffRot.Y, 0.f);
 				const int32 SubId = MakeSubOrbId(Held.Id, SubIdx);
 				CurrPos.Add(SubId, SubWorld);
