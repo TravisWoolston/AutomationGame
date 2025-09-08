@@ -59,6 +59,7 @@ public:
 	bool TryTakeItem(const FHex& H, FItem& Out);
 
 public:
+	FVector HexCenterToWorld(const FHex& H) const;
 	// ----- Visual interpolation (belt smoothing) -----
 	void SetFrameAlpha(float InAlpha) { FrameAlpha = FMath::Clamp(InAlpha, 0.f, 1.f); }
 	float GetFrameAlpha() const { return FrameAlpha; }
@@ -85,7 +86,7 @@ private:
 	float   GridYawDeg = 0.f;
 	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
 
-	FVector HexCenterToWorld(const FHex& H) const;
+	
 
 private:
 	// One-frame skip sets

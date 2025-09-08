@@ -1,6 +1,9 @@
 #pragma once
 #include "AutomationGameMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Sim/ArmTypes.h"
+#include "Sim/HexTypes.h"
+#include "Sim/HexCoord.h"          // <-- Needed for EHexOrientation
 #include "OrbRenderer.generated.h"
 
 class UInstancedStaticMeshComponent;
@@ -59,4 +62,18 @@ private:
 	float DirToYaw(uint8 Dir) const;
 
 	int32 LastSeenStepCounter = -1;
+
+protected:
+	// New: arm facing history for arc interpolation
+	TMap<int32, uint8> PrevArmFacing;
+	TMap<int32, uint8> CurrArmFacing;
+
+	// Helper for rotational interpolation of held items
+	FVector ComputeArmGripAtYaw(
+		const FArmState& S,
+		float YawDeg,
+		const AActor* Anchor,
+		float Tile,
+		float GridYaw,
+		EHexOrientation Ori) const;
 };

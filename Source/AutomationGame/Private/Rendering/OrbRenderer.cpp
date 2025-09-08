@@ -11,6 +11,51 @@
 #include "Engine/Engine.h"
 #include "GameFramework/Actor.h"
 
+static FORCEINLINE int32 MakeSubOrbId(int32 ItemId, int32 SubIdx)
+{
+	return (ItemId << 8) | (SubIdx & 0xFF);
+}
+
+// Optional utility to rotate a raw FVector2D (not hex axial) by yaw degrees.
+static FORCEINLINE FVector2D RotateXY(const FVector2D& V, float YawDeg)
+{
+	const float Rad = FMath::DegreesToRadians(YawDeg);
+	const float C = FMath::Cos(Rad);
+	const float S = FMath::Sin(Rad);
+	return FVector2D(C * V.X - S * V.Y, S * V.X + C * V.Y);
+}
+
+// Helper for shortest yaw interpolation
+static float LerpAngleDeg(float A, float B, float T)
+{
+	float Delta = FMath::UnwindDegrees(B - A);
+	// Shortest path
+	if (Delta > 180.f) Delta -= 360.f;
+	if (Delta < -180.f) Delta += 360.f;
+	return FMath::UnwindDegrees(A + Delta * T);
+}
+
+// Compute arm base world position (without iterating arm length)
+static FVector ComputeArmBaseWorld(const FArmState& S, const AActor* Anchor, float Tile, float GridYaw, EHexOrientation Ori)
+{
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	const FHexAxial A(S.BaseHex.Q, S.BaseHex.R);
+	const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
+	const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+	return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+}
+
+// Returns grip world center (end effector) at a given yaw (continuous) for pure rotation (no extension animation yet)
+FVector UOrbRenderer::ComputeArmGripAtYaw(const FArmState& S, float YawDeg, const AActor* Anchor, float Tile, float GridYaw, EHexOrientation Ori) const
+{
+	const FVector Base = ComputeArmBaseWorld(S, Anchor, Tile, GridYaw, Ori);
+	// Direction unit in local (grid-rotated) space
+	const float Rad = FMath::DegreesToRadians(YawDeg);
+	const FVector2D Dir(FMath::Cos(Rad), FMath::Sin(Rad));
+	const float Reach = float(S.ArmLen) * Tile;
+	return Base + FVector(Dir.X * Reach, Dir.Y * Reach, 0.f);
+}
+
 UOrbRenderer::UOrbRenderer()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -98,15 +143,28 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 	{
 		LastSeenStepCounter = Step;
 
+		// Capture previous arm facings before rebuild
+		PrevArmFacing = CurrArmFacing;
+		CurrArmFacing.Reset();
+
 		const TMap<int32, FVector>  OldPos = CurrPos;
 		const TMap<int32, FRotator> OldRot = CurrRot;
 		RebuildCurrPos();
 		PrevPos = OldPos;
 		PrevRot = OldRot;
 
+		// Fill CurrArmFacing after new sim snapshot
+		for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
+		{
+			CurrArmFacing.Add(ArmIdx, (uint8)Sim->Arms[ArmIdx].Facing);
+			// Ensure Prev has entry (for first step or newly added arms)
+			if (!PrevArmFacing.Contains(ArmIdx))
+				PrevArmFacing.Add(ArmIdx, CurrArmFacing[ArmIdx]);
+		}
+
 		if (bUseSimVisualInterpolation)
 		{
-			Sim->SetFrameAlpha(0.f); // start interpolation from segment head
+			Sim->SetFrameAlpha(0.f);
 		}
 	}
 
@@ -127,38 +185,73 @@ void UOrbRenderer::RebuildCurrPos()
 	const float Yaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 
+	// Board items (not held)
 	for (const auto& KV : Sim->ItemMap)
 	{
-		const int32 Id = KV.Value.Id;
-		if (Id == 0) continue;
+		const FItem& Item = KV.Value;
+		const int32 ItemId = Item.Id;
+		if (ItemId == 0) continue;
+
 		const FHexAxial A(KV.Key.Q, KV.Key.R);
 		const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
-		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-		CurrPos.Add(Id, Loc);
+		const FVector TileWorld = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+
+		if (!Item.bIsCluster)
+		{
+			CurrPos.Add(ItemId, TileWorld);
+			// (Optional) orientation could come from Item.Single.Rot60
+		}
+		else
+		{
+			for (int32 SubIdx = 0; SubIdx < Item.Orbs.Num(); ++SubIdx)
+			{
+				const FOrbData& Sub = Item.Orbs[SubIdx];
+				const FVector2D OffRot = RotateXY(Sub.Offset, Yaw); // If Offset is already world UU, keep. If in tile units multiply by Tile.
+				const FVector SubWorld = TileWorld + FVector(OffRot.X, OffRot.Y, 0.f);
+				const int32 SubId = MakeSubOrbId(ItemId, SubIdx);
+				CurrPos.Add(SubId, SubWorld);
+			}
+		}
 	}
 
+	// Held items (per arm)
 	for (const FArmState& S : Sim->Arms)
 	{
 		if (!S.bHolding) continue;
-		/*if (S.Held.Id != 0)
-		{
-			UE_LOG(LogTemp, Log, TEXT("Rendering held orb Id=%d at arm hand"), S.Held.Id);
-		}*/
+		const FItem& Held = S.Held;
+		if (Held.Id == 0) continue;
+
+		// Compute grip hex (end of arm)
 		FHex Grip = S.BaseHex;
-		for (int i = 0; i < S.ArmLen; ++i) Grip = HexUtil::Neighbor(Grip, S.Facing);
-		const FHexAxial A(Grip.Q, Grip.R);
-		const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
+		for (int i = 0; i < S.ArmLen; ++i)
+			Grip = HexUtil::Neighbor(Grip, S.Facing);
+
+		const FHexAxial GA(Grip.Q, Grip.R);
+		const FVector2D LocalXY = HexCoord::AxialToXY(GA, Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
-		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		const FVector GripWorld = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
 
-		float OrbYaw = DirToYaw(static_cast<uint8>(S.Facing));
-		FRotator OrbRot(0.f, OrbYaw, 0.f);
+		const float OrbYaw = DirToYaw(static_cast<uint8>(S.Facing));
+		const FRotator BaseRot(0.f, OrbYaw, 0.f);
 
-		if (S.Held.Id != 0)
+		if (!Held.bIsCluster)
 		{
-			CurrPos.Add(S.Held.Id, Loc);
-			CurrRot.Add(S.Held.Id, OrbRot);
+			CurrPos.Add(Held.Id, GripWorld);
+			CurrRot.Add(Held.Id, BaseRot);
+		}
+		else
+		{
+			for (int32 SubIdx = 0; SubIdx < Held.Orbs.Num(); ++SubIdx)
+			{
+				const FOrbData& Sub = Held.Orbs[SubIdx];
+				// Rotate offset by arm yaw so cluster rotates with arm
+				const FVector2D OffRot = RotateXY(Sub.Offset, OrbYaw + Yaw); // OrbYaw relative to grid + grid yaw
+				const FVector SubWorld = GripWorld + FVector(OffRot.X, OffRot.Y, 0.f);
+				const int32 SubId = MakeSubOrbId(Held.Id, SubIdx);
+				CurrPos.Add(SubId, SubWorld);
+				CurrRot.Add(SubId, BaseRot);
+			}
 		}
 	}
 }
@@ -250,10 +343,36 @@ void UOrbRenderer::RebuildInstances()
 		//	P = InterpArc(ArmBase, From, To, Alpha);
 		//}
 	//else
-	//{
-		// Belt or normal movement: straight lerp
+		// Default straight interpolation
 		P = FMath::Lerp(From, To, Alpha);
-		//}
+
+		// Arm rotation arc (only if held and position changed by rotation)
+		if (bHeldByArm)
+		{
+			// Find arm record
+			const AActor* Anchor = GetAnchor();
+			const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
+			const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+			const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+
+			for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
+			{
+				const FArmState& S = Sim->Arms[ArmIdx];
+				if (S.bHolding && S.Held.Id == Id)
+				{
+					const uint8* PrevF = PrevArmFacing.Find(ArmIdx);
+					const uint8* CurrF = CurrArmFacing.Find(ArmIdx);
+					if (PrevF && CurrF)
+					{
+						float YawA = DirToYaw(*PrevF);
+						float YawB = DirToYaw(*CurrF);
+						float YawI = LerpAngleDeg(YawA, YawB, Alpha);
+						P = ComputeArmGripAtYaw(S, YawI, Anchor, Tile, GridYaw, Ori);
+					}
+					break;
+				}
+			}
+		}
 
 		FRotator RA = RotA ? *RotA : FRotator::ZeroRotator;
 		FRotator RB = RotB ? *RotB : RA;
@@ -268,5 +387,8 @@ float UOrbRenderer::DirToYaw(uint8 Dir) const
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
 	return FMath::UnwindDegrees(GridYaw + 60.f * float(Dir % 6));
 }
+
+
+
 
 

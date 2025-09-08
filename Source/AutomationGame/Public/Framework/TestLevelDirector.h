@@ -99,14 +99,14 @@ public:
 	bool RemoveArmSpec(int32 Q, int32 R);
 
 	// Control what runtime edits get written back into scenario specs.
-	UPROPERTY(EditAnywhere, Category="Scenarios|Runtime Capture")
+	UPROPERTY(EditAnywhere, Category = "Scenarios|Runtime Capture")
 	bool bCaptureRuntimeProgramEdits = true;
 
-	UPROPERTY(EditAnywhere, Category="Scenarios|Runtime Capture")
+	UPROPERTY(EditAnywhere, Category = "Scenarios|Runtime Capture")
 	bool bCaptureRuntimeFacingEdits = false;   // NEW: default off so placing arms won't overwrite original facing
 
 	// Manually capture current facing (if bCaptureRuntimeFacingEdits is false)
-	UFUNCTION(CallInEditor, BlueprintCallable, Category="Scenarios|Runtime Capture")
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios|Runtime Capture")
 	void CommitRuntimeFacingEdits();
 
 #if WITH_EDITOR

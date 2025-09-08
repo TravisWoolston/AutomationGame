@@ -175,18 +175,20 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 	{
 		if (!ArmClass) continue;
 
+		// Spawn deferred so we can finish configuration before BeginPlay-style logic
 		FTransform Tm;
 		Tm.SetLocation(Driver->GetGridAnchor() ? Driver->GetGridAnchor()->GetActorLocation() : FVector::ZeroVector);
+
 		A.Spawned = W->SpawnActorDeferred<ABasicArm>(ArmClass, Tm, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (!A.Spawned) continue;
 
+		// Basic spatial init (does not start execution)
 		A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.Facing);
-		A.Spawned->SetProgram(A.Program, A.bLoopProgram);
-		A.Spawned->FinishSpawning(Tm);
-		A.Spawned->Start();
 
+		int32 ArmIndex = INDEX_NONE;
 		if (USimWorldHex* Sim = Driver->GetSim())
 		{
+			// Build initial sim-side arm state (tape comes from scenario program)
 			FArmState ArmState;
 			ArmState.BaseHex = FHex(A.Q, A.R);
 			ArmState.Facing = (EHexDir)(A.Facing % 6);
@@ -198,16 +200,28 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			ArmState.PC = 0;
 			ArmState.bHolding = false;
 			ArmState.Tape = ConvertProgramToOps_TLD(A.Program);
-			int32 ArmIndex = Sim->AddArm(ArmState);
-			A.Spawned->SimArmIndex = ArmIndex;
 
-			// Late push ensures future live edits (SetProgram) sync (SimArmIndex now valid).
-			A.Spawned->PushProgramToSim();
+			ArmIndex = Sim->AddArm(ArmState);
+			A.Spawned->SimArmIndex = ArmIndex;
 		}
+
+		// Finish spawn now that SimArmIndex is valid
+		A.Spawned->FinishSpawning(Tm);
+
+		// Apply program AFTER SimArmIndex is assigned so SetProgram can push immediately
+		A.Spawned->SetProgram(A.Program, A.bLoopProgram);
+
+		// Now start execution
+		A.Spawned->Start();
+
+		// If your SetProgram implementation does NOT push to sim, uncomment:
+		// A.Spawned->PushProgramToSim();
 	}
 
 	if (TickManager && S.bAutoPlay)
+	{
 		TickManager->Play();
+	}
 }
 
 void ATestLevelDirector::SpawnScenarioPreview()
