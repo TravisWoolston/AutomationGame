@@ -89,6 +89,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Placement Preview|Bond")
 	float BondOrientationFixDegFlatToPointy = -30.f;  // rotation if inverse assumption ever needed
 
+	// Add a preview fix angle so the arm placement mesh can be rotated without changing sim logic.
+	UPROPERTY(EditAnywhere, Category="Placement Preview")
+	float ArmPreviewFacingFixDeg = 180.f;
+
 	// Input API
 	UFUNCTION(BlueprintCallable, Category = "Place") void HandlePlace(bool bPressed);
 	UFUNCTION(BlueprintCallable, Category = "Place") void HandleRemove(bool bPressed);

@@ -1,4 +1,4 @@
-#include "Rendering/OrbRenderer.h"
+﻿#include "Rendering/OrbRenderer.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Actors/OrbSimDriver.h"
 #include "Sim/SimWorldHex.h"
@@ -241,16 +241,16 @@ void UOrbRenderer::RebuildCurrPos()
 		}
 		else
 		{
-			for (int32 SubIdx = 0; SubIdx < Held.Orbs.Num(); ++SubIdx)
-			{
-				const FOrbData& Sub = Held.Orbs[SubIdx];
-				// Rotate + scale offsets (tile units -> UU)
-				const FVector2D OffRot = RotateXY(Sub.Offset * Tile, OrbYaw + Yaw);
-				const FVector SubWorld = GripWorld + FVector(OffRot.X, OffRot.Y, 0.f);
-				const int32 SubId = MakeSubOrbId(Held.Id, SubIdx);
-				CurrPos.Add(SubId, SubWorld);
-				CurrRot.Add(SubId, BaseRot);
-			}
+			//for (int32 SubIdx = 0; SubIdx < Held.Orbs.Num(); ++SubIdx)
+			//{
+			//	const FOrbData& Sub = Held.Orbs[SubIdx];
+			//	// Rotate + scale offsets (tile units -> UU)
+			//	const FVector2D OffRot = RotateXY(Sub.Offset * Tile, OrbYaw + Yaw);
+			//	const FVector SubWorld = GripWorld + FVector(OffRot.X, OffRot.Y, 0.f);
+			//	const int32 SubId = MakeSubOrbId(Held.Id, SubIdx);
+			//	CurrPos.Add(SubId, SubWorld);
+			//	CurrRot.Add(SubId, BaseRot);
+			//}
 		}
 	}
 }
@@ -317,22 +317,19 @@ void UOrbRenderer::RebuildInstances()
 		FVector P;
 		// Check if this orb is currently held by an arm
 		bool bHeldByArm = false;
-		FVector ArmBase;
+		//FVector ArmBase;
 		for (const FArmState& S : Sim->Arms)
 		{
-			if (S.bHolding && S.Held.Id == Id)
+			if (S.bHolding && S.Held.Id != 0)
 			{
-				// Arm base world position
-				FHex BaseHex = S.BaseHex;
-				const AActor* Anchor = GetAnchor();
-				const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
-				const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
-				const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
-				const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(BaseHex.Q, BaseHex.R), Tile, Ori);
-				const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Driver->GetGridYaw());
-				ArmBase = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-				bHeldByArm = true;
-				break;
+				HeldIds.Add(S.Held.Id);
+				if (S.Held.bIsCluster)
+				{
+					for (int32 i = 0; i < S.Held.Orbs.Num(); ++i)
+					{
+						HeldIds.Add(MakeSubOrbId(S.Held.Id, i)); // Skip sub‑orb ISM instances while held
+					}
+				}
 			}
 		}
 

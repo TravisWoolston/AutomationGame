@@ -159,7 +159,6 @@ static TArray<FOp> ConvertProgramToOps(const TArray<FArmInstr>& Program)
 	TArray<FOp> Out;
 	if (Program.Num() == 0)
 	{
-		// Provide a harmless default so the arm has at least something to execute.
 		Out.Add({ ECmd::Wait, 1 });
 		return Out;
 	}
@@ -174,6 +173,8 @@ static TArray<FOp> ConvertProgramToOps(const TArray<FArmInstr>& Program)
 		case EArmCmd::RotateCCW: Out.Add({ ECmd::RotateL, (uint8)FMath::Max(1, I.Arg) }); break;
 		case EArmCmd::Wait:      Out.Add({ ECmd::Wait, (uint8)FMath::Clamp(I.Arg, 0, 255) }); break;
 		case EArmCmd::Reset:     Out.Add({ ECmd::Reset, 0 }); break;
+		case EArmCmd::Extend:    Out.Add({ ECmd::Extend,  (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;  // NEW
+		case EArmCmd::Retract:   Out.Add({ ECmd::Retract, (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;  // NEW
 		default:                 Out.Add({ ECmd::Wait, 1 }); break;
 		}
 	}

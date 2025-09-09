@@ -22,7 +22,9 @@ enum class EArmCmd : uint8
 	RotateCW  UMETA(DisplayName = "Rotate CW (60° * Arg)"),
 	RotateCCW UMETA(DisplayName = "Rotate CCW (60° * Arg)"),
 	Wait      UMETA(DisplayName = "Wait (ticks = Arg)"),
-	Reset     UMETA(DisplayName = "Reset to Start (macro)")
+	Reset     UMETA(DisplayName = "Reset to Start (macro)"),
+	Extend    UMETA(DisplayName = "Extend (+Arg, default 1)"),   // NEW
+	Retract   UMETA(DisplayName = "Retract (-Arg, default 1)")   // NEW
 };
 
 /** One instruction + small integer argument (dir steps, wait ticks, etc.) */
@@ -262,4 +264,38 @@ private:
 	UMaterialInterface* ResolveOrbMaterial(const FItem& Item) const; // NEW
 
 
+public:
+	// If > 0 overrides ReachTiles * TileSize for grip distance (UU)
+	UPROPERTY(EditAnywhere, Category = "Arm|Grip")
+	float GripDistanceOverride = 0.f;
+
+	// Vertical (Z) offset for the grip pivot relative to base component
+	UPROPERTY(EditAnywhere, Category = "Arm|Grip")
+	float GripZOffset = 0.f;
+
+	// Extra lateral (Y) offset if your mesh forward axis is not centered
+	UPROPERTY(EditAnywhere, Category = "Arm|Grip")
+	float GripSideOffset = 0.f;
+
+	// If true we still try to use a socket; if false we force procedural pivot usage
+	UPROPERTY(EditAnywhere, Category = "Arm|Grip")
+	bool bUseGripSocket = false;
+
+	/** If the authored arm mesh forward is flipped, invert cluster visual layout (does not affect logic). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
+	bool bInvertClusterVisualFacing = true;                // RESTORED
+
+	/** Local rotation applied to the procedural grip pivot after its location update. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm|Grip")
+	FRotator GripPivotLocalRotation = FRotator::ZeroRotator; // RESTORED
+
+protected:
+	UPROPERTY(Transient)
+	USceneComponent* GripPivotComp = nullptr;
+
+	FVector ComputeGripLocalOffset() const;
+
+public:
+	UPROPERTY(EditAnywhere, Category = "Debug")
+	bool bDebugHandLocation = false;
 };

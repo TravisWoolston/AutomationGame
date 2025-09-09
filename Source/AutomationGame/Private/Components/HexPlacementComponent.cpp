@@ -476,6 +476,12 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		const uint8 EffectiveDir = BeltDir % 6;
 		const float Yaw = ComputeDirYawFromNeighbor(this, HoverHex, EffectiveDir);
 
+		float FixedYaw = Yaw;
+		if (PlaceKind == EPlaceKind::Arm)
+		{
+			FixedYaw = FMath::UnwindDegrees(FixedYaw + ArmPreviewFacingFixDeg);
+		}
+
 		FVector UseLoc = CenterA;
 		FVector UseScale(PreviewScale);
 
@@ -489,7 +495,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			UseScale = FVector(PreviewScale);
 		}
 
-		PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, Yaw, 0.f));
+		PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw, 0.f));
 		PreviewComp->SetWorldScale3D(UseScale);
 		PreviewComp->SetVisibility(true);
 

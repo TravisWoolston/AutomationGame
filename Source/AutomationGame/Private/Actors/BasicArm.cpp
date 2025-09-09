@@ -42,6 +42,9 @@ ABasicArm::ABasicArm()
 	HeldOrbComp->SetupAttachment(BaseComp); // Attach directly to BaseComp
 	HeldOrbComp->SetMobility(EComponentMobility::Movable);
 	HeldOrbComp->SetVisibility(false, true);
+
+	GripPivotComp = CreateDefaultSubobject<USceneComponent>(TEXT("GripPivot"));
+	GripPivotComp->SetupAttachment(BaseComp);
 }
 
 void ABasicArm::OnConstruction(const FTransform& Transform)
@@ -162,6 +165,12 @@ void ABasicArm::EnsureComps()
 		HeldOrbComp->RegisterComponent();
 		HeldOrbComp->SetVisibility(false, true);
 	}
+	if (!GripPivotComp)
+	{
+		GripPivotComp = NewObject<USceneComponent>(this, TEXT("GripPivot"));
+		GripPivotComp->SetupAttachment(BaseComp);
+		GripPivotComp->RegisterComponent();
+	}
 }
 
 void ABasicArm::RefreshMeshes()
@@ -198,7 +207,7 @@ float ABasicArm::DirToYaw(uint8 Dir) const
 void ABasicArm::RefreshPose(float InAlpha)
 {
 	// Apply easing to alpha
-	float EasedAlpha = FMath::InterpEaseInOut(0.f, 1.f, InAlpha, 2); // Quadratic ease-in-out
+	float EasedAlpha = FMath::InterpEaseInOut(0.f, 1.f, InAlpha, 2);
 
 	const FVector BaseWorld = HexToWorld(FHex(Q, R)) + FVector(0, 0, BaseZ);
 
@@ -207,7 +216,6 @@ void ABasicArm::RefreshPose(float InAlpha)
 	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
 	const float Yaw = NormDeg(StartYaw + Delta * EasedAlpha);
 
-	// Debug logging for twitchy movement
 	UE_LOG(LogAGArm, Verbose, TEXT("RefreshPose: Q=%d R=%d LastYaw=%.2f CurrYaw=%.2f StepAlpha=%.2f EasedAlpha=%.2f Delta=%.2f Yaw=%.2f"),
 		Q, R, StartYaw, TargetYaw, InAlpha, EasedAlpha, Delta, Yaw);
 
@@ -219,10 +227,44 @@ void ABasicArm::RefreshPose(float InAlpha)
 		BaseComp->SetWorldRotation(BaseRot);
 	}
 
+	// --- NEW: precise hand (grab/drop) target world location ---
+	FVector HandWorld = BaseWorld; // fallback
+	{
+		const FHex TargetHex = ComputeTargetHex();
+		HandWorld = HexToWorld(TargetHex);
+		// Apply same vertical offsets we use for grip pivot
+		HandWorld.Z += GripZOffset;
+	}
+
+	// Keep GripPivotComp at exact hand world position (unless using a socket)
+	if (GripPivotComp && !bUseGripSocket)
+	{
+		// Convert to BaseComp local so animation / rotation stays consistent
+		if (BaseComp)
+		{
+			const FTransform BaseXform = BaseComp->GetComponentTransform();
+			const FVector Local = BaseXform.InverseTransformPosition(HandWorld);
+			GripPivotComp->SetRelativeLocation(Local);
+			GripPivotComp->SetRelativeRotation(GripPivotLocalRotation);
+		}
+		else
+		{
+			GripPivotComp->SetWorldLocation(HandWorld);
+			GripPivotComp->SetWorldRotation(GripPivotLocalRotation);
+		}
+	}
+
+	// Optional debug draw
+	if (bDebugHandLocation && GetWorld())
+	{
+		const FVector Start = BaseComp ? BaseComp->GetComponentLocation() : GetActorLocation();
+		DrawDebugLine(GetWorld(), Start, HandWorld, FColor::Green, false, 0.f, 0, 2.f);
+		DrawDebugSphere(GetWorld(), HandWorld, 6.f, 12, FColor::Yellow, false, 0.f);
+	}
 
 	if (bHolding && HeldOrb.bIsCluster)
 	{
-		UpdateHeldClusterTransforms(Yaw + BaseYawOffsetDeg);
+		// (no per‑tick cluster rotation)
 	}
 }
 
@@ -254,6 +296,8 @@ static TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& Program)
 		case EArmCmd::RotateCCW: Out.Add({ ECmd::RotateL, (uint8)FMath::Max(1, I.Arg) }); break;
 		case EArmCmd::Wait:      Out.Add({ ECmd::Wait, (uint8)FMath::Clamp(I.Arg, 0, 255) }); break;
 		case EArmCmd::Reset:     Out.Add({ ECmd::Reset, 0 }); break;
+		case EArmCmd::Extend:    Out.Add({ ECmd::Extend,  (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
+		case EArmCmd::Retract:   Out.Add({ ECmd::Retract, (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
 		default:                 Out.Add({ ECmd::Wait, 1 }); break;
 		}
 	}
@@ -349,6 +393,19 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent& Event)
 		if (Sim->Arms[SimArmIndex].Tape.Num() == 0)
 		{
 			PushProgramToSim();
+		}
+	}
+
+	if (GIsPlayInEditorWorld && !bUseGripSocket && GripPivotComp)
+	{
+		//PropName = Event.Property ? Event.Property->GetFName() : NAME_None;
+		if (PropName == GET_MEMBER_NAME_CHECKED(ABasicArm, GripPivotLocalRotation) ||
+			PropName == GET_MEMBER_NAME_CHECKED(ABasicArm, GripDistanceOverride) ||
+			PropName == GET_MEMBER_NAME_CHECKED(ABasicArm, GripSideOffset) ||
+			PropName == GET_MEMBER_NAME_CHECKED(ABasicArm, GripZOffset))
+		{
+			GripPivotComp->SetRelativeLocation(ComputeGripLocalOffset());
+			GripPivotComp->SetRelativeRotation(GripPivotLocalRotation);
 		}
 	}
 }
@@ -467,105 +524,7 @@ void ABasicArm::StepProgram()
 	}
 
 	const FArmInstr I = Program[PC];
-	//UE_LOG(LogAGArm, Log, TEXT("Arm '%s' Exec %s Arg=%d  (PC=%d/%d)"),
-	//	*GetName(), CmdName(I.Cmd), I.Arg, PC, Program.Num()); // <— add
 
-	//switch (I.Cmd)
-	//{
-	//case EArmCmd::NoOp:
-	//	++PC;
-	//	break;
-
-	//case EArmCmd::Wait:
-	//	WaitLeft = FMath::Max(0, I.Arg - 1); // consume one tick now; wait the rest
-	//	++PC;
-	//	break;
-
-	//case EArmCmd::Grab:
-	//{
-	//	if (!bHolding && Sim)
-	//	{
-	//		FItem grabbed;
-	//		const FHex Target = ComputeTargetHex();
-	//		if (Sim->TryArmPickItem(Target, grabbed))
-	//		{
-	//			bHolding = true;
-	//			HeldOrb = grabbed;
-	//			AttachHeldOrb();
-	//		}
-	//	}
-	//	++PC;
-	//	break;
-	//}
-
-	//case EArmCmd::Drop:
-	//{
-	//	if (bHolding)
-	//	{
-	//		if (bAffectSim && Sim)
-	//		{
-	//			const FHex Target = ComputeTargetHex();
-	//			if (Sim->TryArmPlaceItem(Target, FItem{}))
-	//			{
-	//				bHolding = false;
-	//			}
-	//		}
-	//		else
-	//		{
-	//			bHolding = false;
-	//		}
-	//		DetachHeldOrb();
-	//	}
-	//	++PC;
-	//	break;
-	//}
-
-	//case EArmCmd::RotateCW:
-	//case EArmCmd::RotateCCW:
-	//{
-	//	if (bHolding && Sim)
-	//	{
-	//		int32 Steps = FMath::Max(1, I.Arg);
-	//		int32 DirDelta = (I.Cmd == EArmCmd::RotateCW) ? Steps : -Steps;
-	//		uint8 StartFacing = FacingDir;
-
-	//		// Check each intermediate rotation step for collision
-	//		for (int32 s = 1; s <= FMath::Abs(DirDelta); ++s)
-	//		{
-	//			uint8 TestFacing = uint8(Mod6(int32(StartFacing) + (DirDelta > 0 ? s : -s)));
-	//			FHex TestHex(Q, R);
-	//			const int32 N = FMath::Max(1, ReachTiles);
-	//			for (int32 i = 0; i < N; ++i)
-	//				TestHex = HexUtil::Neighbor(TestHex, static_cast<EHexDir>(TestFacing));
-
-	//			// If the test hex contains an orb, wait until it is clear
-
-	//			if (Sim->HasOrbAt(TestHex))
-	//			{
-	//				UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': Rotation tile occupied."), *GetName());
-	//				WaitLeft = 1;
-	//				return;
-	//			}
-	//			else {
-	//				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Rotation step %d/%d clear."), *GetName(), s, FMath::Abs(DirDelta));
-	//			}
-	//		}
-	//	}
-
-	//	int32 RotateSteps = (I.Cmd == EArmCmd::RotateCW) ? FMath::Max(1, I.Arg) : -FMath::Max(1, I.Arg);
-	//	//ApplyRotateSteps(RotateSteps);
-	//	++PC;
-	//	break;
-	//}
-
-	//case EArmCmd::Reset:
-	//	ExpandResetAtPC();
-	//	break;
-
-	//default:
-	//	++PC;
-	//	break;
-	//}
 }
 
 void ABasicArm::ShowHeldOrb(bool bShow)
@@ -695,17 +654,32 @@ void ABasicArm::AttachHeldOrb()
 		return;
 	}
 
-	// Ensure parent component (acts as pivot at grip)
 	if (!HeldOrbComp)
 	{
 		HeldOrbComp = NewObject<UStaticMeshComponent>(this, TEXT("HeldOrb"));
 		HeldOrbComp->RegisterComponent();
 	}
 
-	// Always reattach to ensure socket binding
-	HeldOrbComp->AttachToComponent(BaseComp,
-		FAttachmentTransformRules::SnapToTargetIncludingScale,
-		TEXT("GripSocket"));
+	USceneComponent* ParentForHeld = nullptr;
+
+	if (bUseGripSocket && BaseComp && BaseComp->DoesSocketExist(TEXT("GripSocket")))
+	{
+		ParentForHeld = BaseComp;
+		HeldOrbComp->AttachToComponent(BaseComp,
+			FAttachmentTransformRules::SnapToTargetIncludingScale,
+			TEXT("GripSocket"));
+	}
+	else
+	{
+		// Fallback: procedural pivot
+		ParentForHeld = GripPivotComp ? GripPivotComp : BaseComp;
+		if (GripPivotComp && !bUseGripSocket)
+		{
+			GripPivotComp->SetRelativeLocation(ComputeGripLocalOffset());
+		}
+		HeldOrbComp->AttachToComponent(ParentForHeld,
+			FAttachmentTransformRules::SnapToTargetIncludingScale);
+	}
 
 	HeldOrbComp->SetMobility(EComponentMobility::Movable);
 	HeldOrbComp->SetVisibility(true, true);
@@ -760,10 +734,19 @@ void ABasicArm::AttachHeldOrb()
 			if (!Mat) Mat = DefaultOrbMaterial;
 			if (Mat) SubMesh->SetMaterial(0, Mat);
 
-			const FVector2D Off2D = Sub.Offset * OffsetBaseScale;
+			FVector2D Off2D = Sub.Offset * OffsetBaseScale;
+			if (bInvertClusterVisualFacing)
+			{
+				// 180° flip around Z so visual layout matches logical facing.
+				Off2D *= -1.f;
+			}
 			SubMesh->SetRelativeLocation(FVector(Off2D.X, Off2D.Y, 0.f));
 			SubMesh->SetRelativeScale3D(HeldOrbScale);
+
+			HeldClusterComps.Add(SubMesh);
+			HeldClusterLocalOffsets.Add(Off2D);
 		}
+		//UpdateHeldClusterTransforms(DirToYaw(FacingDir) + BaseYawOffsetDeg);
 		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached cluster Id=%d (#=%d) scale(Offsets)=%.2f Tile=%.1f"),
 			*GetName(), HeldOrb.Id, HeldOrb.Orbs.Num(), OffsetBaseScale, Tile);
 	}
@@ -861,16 +844,22 @@ void ABasicArm::DetachHeldOrb()
 	HeldOrbComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
 }
 
-void ABasicArm::UpdateHeldClusterTransforms(float CurrentYawDeg)
+void ABasicArm::UpdateHeldClusterTransforms(float /*CurrentYawDeg*/)
 {
-	// Currently cluster sub‑orb components are attached under HeldOrbComp which
-	// inherits rotation from the arm base, so no per‑tick adjustment is required.
-	// This stub exists so future logic (e.g. pivoting / in‑hand rotation separate
-	// from arm facing) can apply an additional transform.
-	// Suppress unused param warning.
-	(void)CurrentYawDeg;
+	// Intentionally empty: cluster sub‑orb relative offsets are authored in world/grid
+	// space at grab time and we parent them under HeldOrbComp which already rotates
+	// with the arm. Applying an additional per‑tick rotation caused the apparent
+	// reverse / double rotation. Leaving offsets untouched keeps the cluster rigid.
+}
 
-	// If later you add explicit in‑hand rotation, iterate HeldClusterComps and
-	// set their relative locations after rotating HeldClusterLocalOffsets.
+FVector ABasicArm::ComputeGripLocalOffset() const
+{
+	const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
+	const float Dist = (GripDistanceOverride > 0.f)
+		? GripDistanceOverride
+		: (float)FMath::Max(1, ReachTiles) * Tile;
+
+	// Forward = +X (assumed arm mesh forward axis)
+	return FVector(Dist, GripSideOffset, GripZOffset);
 }
 
