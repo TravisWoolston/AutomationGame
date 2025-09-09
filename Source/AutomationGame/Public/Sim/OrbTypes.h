@@ -41,11 +41,11 @@ struct FOrbData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 Type = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 Color = 0;
-	/** Visual (floating) offset used for rendering the held cluster. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FVector2D Offset = FVector2D::ZeroVector;
-	/** Integer axial deltas from pivot at grab time (lossless for rotation). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 dQ = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 dR = 0;
+	// NEW: original item Id for this orb (preserved while held so bonds stay valid)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32 ItemId = 0;
 };
 
 /** Item on a tile: either a single orb or a bonded cluster. */

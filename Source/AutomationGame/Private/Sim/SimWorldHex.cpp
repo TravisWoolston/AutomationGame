@@ -4,7 +4,6 @@
 
 // Near top (after includes) add if not already in header:
 static constexpr float DEFAULT_BELT_SPEED_TILES_PER_SECOND = 1.0f;
-static TMap<int32, TArray<FIntPoint>> GHeldClusterSavedBonds;
 // Helper used only inside StepBonds to index held cluster sub‑orbs.
 struct FHeldOrbRef
 {
@@ -363,34 +362,48 @@ void USimWorldHex::StepArms()
 					{
 						FItem Cluster;
 						Cluster.bIsCluster = true;
-						Cluster.Id = Found->Id;
+						Cluster.Id = Found->Id;                 // Arbitrary representative Id (not reused for sub‑orbs)
 						Cluster.GrabFacing = (int8)S.Facing;
 
+						// Gather cluster members (Id -> local offsets)
+						TArray<int32> ClusterOrder;
+						ClusterOrder.Reserve(ClusterIds.Num());
 						for (int32 ItemId : ClusterIds)
 						{
 							const FHex* HexPtr = nullptr;
 							for (const auto& KV : ItemMap)
-							{
 								if (KV.Value.Id == ItemId) { HexPtr = &KV.Key; break; }
-							}
 							if (!HexPtr) continue;
 
 							FHex D(HexPtr->Q - Target.Q, HexPtr->R - Target.R);
 							const FVector2D Off2D = HexCoord::AxialToXY(FHexAxial(D.Q, D.R), 1.f, GridOrientation);
 
 							FOrbData Orb;
-							const FItem* It = ItemMap.Find(*HexPtr);
-							if (It && !It->bIsCluster)
+							if (const FItem* It = ItemMap.Find(*HexPtr))
 							{
-								Orb.Type = (uint8)It->Single.Type;
-								Orb.Color = (uint8)It->Single.Color;
+								if (!It->bIsCluster)
+								{
+									Orb.Type = (uint8)It->Single.Type;
+									Orb.Color = (uint8)It->Single.Color;
+								}
+								Orb.ItemId = It->Id;         // preserve original Id
 							}
 							Orb.Offset = Off2D;
 							Orb.dQ = (int8)D.Q;
 							Orb.dR = (int8)D.R;
 							Cluster.Orbs.Add(Orb);
+							ClusterOrder.Add(Orb.ItemId);
 						}
 
+						// Preserve last hex positions for ALL items so CleanupBrokenBonds keeps offsets/bonds alive.
+						for (int32 ItemId : ClusterIds)
+						{
+							for (const auto& KV : ItemMap)
+								if (KV.Value.Id == ItemId)
+									HeldItemLastHex.FindOrAdd(ItemId) = KV.Key;
+						}
+
+						// Remove only the items themselves from the board (keep Bonds unchanged!)
 						for (int32 ItemId : ClusterIds)
 						{
 							FHex RemoveHex; bool bFoundHex = false;
@@ -403,68 +416,12 @@ void USimWorldHex::StepArms()
 							}
 						}
 
-						// Map original item ids -> sub‑orb indices
-						TMap<int32, int32> IdToSubIdx;
-						for (int32 idx = 0; idx < Cluster.Orbs.Num(); ++idx)
-						{
-							// We stored Cluster.Orbs in the same enumeration order as ClusterIds traversal.
-							// Build a reverse map using the item id we attached to each orb (reuse KV from earlier)
-							// We need a reliable association: rebuild by matching (dQ,dR) offset difference from Target.
-							for (int32 ItemId : ClusterIds)
-							{
-								// Find hex of this item
-								const FHex* HexPtr = nullptr;
-								for (const auto& KV2 : ItemMap)
-									if (KV2.Value.Id == ItemId) { HexPtr = &KV2.Key; break; }
-								if (!HexPtr) continue;
-
-								const FHex D(HexPtr->Q - Target.Q, HexPtr->R - Target.R);
-								if (D.Q == Cluster.Orbs[idx].dQ && D.R == Cluster.Orbs[idx].dR)
-								{
-									IdToSubIdx.FindOrAdd(ItemId, idx);
-									break;
-								}
-							}
-						}
-
-						// Capture intra‑cluster bonds (both endpoints inside ClusterIds)
-						TArray<FIntPoint> SavedPairs;
-						for (int32 i = 0; i < Bonds.Num(); ++i)
-						{
-							const FBond& B = Bonds[i];
-							if (ClusterIds.Contains(B.ItemA) && ClusterIds.Contains(B.ItemB))
-							{
-								const int32* AIdx = IdToSubIdx.Find(B.ItemA);
-								const int32* BIdx = IdToSubIdx.Find(B.ItemB);
-								if (AIdx && BIdx)
-								{
-									SavedPairs.Add(FIntPoint(*AIdx, *BIdx));
-								}
-							}
-						}
-
-						// Now REMOVE ONLY those bonds (leave unrelated bonds alone)
-						for (int32 i = Bonds.Num() - 1; i >= 0; --i)
-						{
-							const FBond& B = Bonds[i];
-							if (ClusterIds.Contains(B.ItemA) && ClusterIds.Contains(B.ItemB))
-							{
-								RemoveBondIndex(i);
-							}
-						}
-
-						// Store for this arm index
-						if (SavedPairs.Num() > 0)
-						{
-							GHeldClusterSavedBonds.Add(ArmIndex, MoveTemp(SavedPairs));
-						}
-
-						if (Cluster.Orbs.Num() > 0)   // only succeed if we actually built something
+						if (Cluster.Orbs.Num() > 0)
 						{
 							S.Held = Cluster;
 							S.bHolding = true;
 							SkipInputThisFrame.Add(Target);
-							bGrabSucceeded = true;    // NEW
+							bGrabSucceeded = true;
 						}
 					}
 				}
@@ -529,88 +486,32 @@ void USimWorldHex::StepArms()
 						break;
 					}
 
+					// Place each sub‑orb back with its preserved ItemId (or assign if missing)
 					for (int32 idx = 0; idx < S.Held.Orbs.Num(); ++idx)
 					{
 						const FOrbData& Sub = S.Held.Orbs[idx];
 						FOrb O; O.Type = (EOrbType)Sub.Type; O.Color = (EOrbColor)Sub.Color;
+
 						FItem NewItem = FItem::MakeSingle(O);
-						NewItem.Id = NextItemId++;
-						TryPutItem(TargetHexes[idx], NewItem);
-						SkipOutputThisFrame.Add(TargetHexes[idx]);
-					}
-					// Recreate original intra‑cluster bonds (if any were saved)
-					if (TArray<FIntPoint>* SavedPairs = GHeldClusterSavedBonds.Find(ArmIndex))
-					{
-						// Collect the new item ids we just placed in the same order as TargetHexes / Held.Orbs
-						TArray<int32> NewItemIds;
-						NewItemIds.Reserve(S.Held.Orbs.Num());
-						for (int32 idx2 = 0; idx2 < S.Held.Orbs.Num(); ++idx2)
+						if (Sub.ItemId > 0)
 						{
-							const FHex HexPlaced = TargetHexes[idx2];
-							if (FItem* ItPlaced = ItemMap.Find(HexPlaced))
-							{
-								NewItemIds.Add(ItPlaced->Id);
-							}
-							else
-							{
-								NewItemIds.Add(0);
-							}
+							NewItem.Id = Sub.ItemId;          // reuse original Id
+							// Defensive: keep NextItemId ahead
+							NextItemId = FMath::Max(NextItemId, NewItem.Id + 1);
+						}
+						else
+						{
+							NewItem.Id = NextItemId++;        // legacy fallback
 						}
 
-						for (const FIntPoint& Pair : *SavedPairs)
+						if (TryPutItem(TargetHexes[idx], NewItem))
 						{
-							if (!NewItemIds.IsValidIndex(Pair.X) || !NewItemIds.IsValidIndex(Pair.Y)) continue;
-							const int32 AId = NewItemIds[Pair.X];
-							const int32 BId = NewItemIds[Pair.Y];
-							if (AId == 0 || BId == 0 || AId == BId) continue;
-
-							// Find their hexes
-							const FHex* AHex = nullptr;
-							const FHex* BHex = nullptr;
-							for (const auto& KV : ItemMap)
-							{
-								if (KV.Value.Id == AId) AHex = &KV.Key;
-								else if (KV.Value.Id == BId) BHex = &KV.Key;
-								if (AHex && BHex) break;
-							}
-							if (!AHex || !BHex) continue;
-
-							// Avoid duplicate bond (defensive)
-							bool bDup = false;
-							if (const TArray<int32>* BondList = ItemToBonds.Find(AId))
-							{
-								for (int32 BondIdx : *BondList)
-								{
-									const FBond& B = Bonds[BondIdx];
-									if ((B.ItemA == AId && B.ItemB == BId) ||
-										(B.ItemA == BId && B.ItemB == AId))
-									{
-										bDup = true; break;
-									}
-								}
-							}
-							if (bDup) continue;
-
-							FBond NB;
-							NB.ItemA = AId;
-							NB.ItemB = BId;
-							NB.Root = *AHex;
-							NB.dQ = (int8)(BHex->Q - AHex->Q);
-							NB.dR = (int8)(BHex->R - AHex->R);
-							NB.bActive = true;
-							const int32 NewBondIdx = Bonds.Add(NB);
-							AddItemBondLink(NB.ItemA, NewBondIdx);
-							AddItemBondLink(NB.ItemB, NewBondIdx);
-
-							if (bDevDebugBonds && GEngine)
-							{
-								GEngine->AddOnScreenDebugMessage(-1, 0.6f, FColor::Cyan,
-									FString::Printf(TEXT("Restored bond: %d-%d (Arm %d)"), AId, BId, ArmIndex));
-							}
+							SkipOutputThisFrame.Add(TargetHexes[idx]);
+							HeldItemLastHex.Remove(NewItem.Id);
 						}
-
-						GHeldClusterSavedBonds.Remove(ArmIndex);
 					}
+
+					// Bonds referencing these Ids were never removed; offsets will self‑heal in CleanupBrokenBonds next tick.
 					S.bHolding = false;
 					S.Held = FItem();
 				}
@@ -824,119 +725,118 @@ void USimWorldHex::StepBonds()
 
 	TSet<int32> HeldIds;
 	for (const FArmState& A : Arms)
-		if (A.bHolding && A.Held.Id != 0)
+	{
+		if (!A.bHolding) continue;
+
+		if (A.Held.bIsCluster)
+		{
+			for (const FOrbData& Sub : A.Held.Orbs)
+				if (Sub.ItemId > 0)
+					HeldIds.Add(Sub.ItemId);
+		}
+		else if (A.Held.Id != 0)
+		{
 			HeldIds.Add(A.Held.Id);
+		}
+	}
 
 	CleanupBrokenBonds(HeldIds);
 
-	// --- NEW: Build spatial index of held cluster orbs so bond tiles can act on them while held ---
-	TMap<FHex, FHeldOrbRef> HeldOrbAt;              // hex -> (arm, subIndex)
-	HeldOrbAt.Reserve(64);
-	auto RotateAxial60Fn_Local = [](const FHex& D, int32 StepsCCW)->FHex
-		{
-			int32 n = ((StepsCCW % 6) + 6) % 6;
-			FHex r = D;
-			for (int32 i = 0; i < n; ++i)
-			{
-				const int32 q = r.Q;
-				const int32 rr = r.R;
-				r.Q = -rr;
-				r.R = q + rr;
-			}
-			return r;
-		};
-
-	for (int32 ArmIdx = 0; ArmIdx < Arms.Num(); ++ArmIdx)
+	// Build virtual occupancy for held orbs (cluster only)
+	TMap<FHex, int32> VirtualHeldItemAt;
+	for (const FArmState& A : Arms)
 	{
-		const FArmState& A = Arms[ArmIdx];
 		if (!A.bHolding || !A.Held.bIsCluster) continue;
 
-		// Hand (grip) hex
 		FHex GripHex = A.BaseHex;
 		for (int i = 0; i < A.ArmLen; ++i)
 			GripHex = HexUtil::Neighbor(GripHex, A.Facing);
 
-		const uint8 CurFacingSteps = (uint8)A.Facing % 6;
-		const int8 GrabFacing = (int8)A.Held.GrabFacing;
-		const uint8 FacingDelta = (GrabFacing >= 0)
-			? (uint8)(((int32)CurFacingSteps - (int32)(GrabFacing % 6) + 6) % 6)
-			: CurFacingSteps;
+		const uint8 cur = (uint8)A.Facing % 6;
+		const int8 grab = (int8)A.Held.GrabFacing;
+		const uint8 facingDelta = (grab >= 0)
+			? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+			: cur;
+		const uint8 ccw = (uint8)((6 - facingDelta) % 6);
 
-		const uint8 CCWSteps = (uint8)((6 - FacingDelta) % 6);
-
-		for (int32 s = 0; s < A.Held.Orbs.Num(); ++s)
-		{
-			const FOrbData& Sub = A.Held.Orbs[s];
-			FHex Local;
-			if (Sub.dQ != 0 || Sub.dR != 0 || Sub.Offset.IsNearlyZero())
-				Local = FHex(Sub.dQ, Sub.dR);
-			else
+		auto Rot60 = [](FHex D, uint8 StepsCCW)
 			{
-				// Fallback: approximate from legacy 2D offset (small search)
-				FHex Best(0, 0);
-				float BestDist = FLT_MAX;
-				for (int q = -6; q <= 6; ++q)
+				for (uint8 i = 0; i < (StepsCCW % 6); ++i)
 				{
-					for (int r = -6; r <= 6; ++r)
-					{
-						FVector2D XY = HexCoord::AxialToXY(FHexAxial(q, r), 1.f, GridOrientation);
-						float D2 = (XY - Sub.Offset).SizeSquared();
-						if (D2 < BestDist) { BestDist = D2; Best = FHex(q, r); }
-					}
+					int32 q = D.Q;
+					int32 r = D.R;
+					D.Q = -r;
+					D.R = q + r;
 				}
-				Local = Best;
-			}
+				return D;
+			};
 
-			FHex RotLocal = RotateAxial60Fn_Local(Local, CCWSteps);
-			FHex WorldHex(GripHex.Q + RotLocal.Q, GripHex.R + RotLocal.R);
-			HeldOrbAt.Add(WorldHex, FHeldOrbRef{ ArmIdx, s });
+		for (const FOrbData& Sub : A.Held.Orbs)
+		{
+			if (Sub.ItemId <= 0) continue;
+			FHex Local(Sub.dQ, Sub.dR);
+			FHex Rot = Rot60(Local, ccw);
+			FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+			VirtualHeldItemAt.FindOrAdd(World, Sub.ItemId);
 		}
 	}
 
-	// --- Existing bond formation, but extended to detect bonds between held cluster orbs ---
+	// Bond formation (world or held)
 	TSet<int32> Newly;
 	for (const auto& KV : TileMap)
 	{
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Bond) continue;
 		const uint8 Dir = (uint8)(T.Arg & 0xFF);
+		const FHex AHex = KV.Key;
+		const FHex BHex = HexUtil::Neighbor(AHex, (EHexDir)(Dir % 6));
 
-		const FHex Root = KV.Key;
-		const FHex Other = HexUtil::Neighbor(Root, (EHexDir)(Dir % 6));
+		// Resolve item ids at endpoints (world or virtual held)
+		int32 AId = 0, BId = 0;
+		if (FItem* IA = ItemMap.Find(AHex)) AId = IA->Id;
+		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) AId = *HeldA;
 
-		const FHeldOrbRef* RefA = HeldOrbAt.Find(Root);
-		const FHeldOrbRef* RefB = HeldOrbAt.Find(Other);
+		if (FItem* IB = ItemMap.Find(BHex)) BId = IB->Id;
+		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) BId = *HeldB;
 
-		if (RefA && RefB && RefA->ArmIndex == RefB->ArmIndex)
+		if (AId <= 0 || BId <= 0 || AId == BId) continue;
+
+		// Prevent duplicates
+		bool bDup = false;
+		if (const TArray<int32>* AList = ItemToBonds.Find(AId))
 		{
-			// Bond between two sub‑orbs of same held cluster
-			TArray<FIntPoint>& SavedPairs = GHeldClusterSavedBonds.FindOrAdd(RefA->ArmIndex);
-
-			bool bAlready = false;
-			for (const FIntPoint& P : SavedPairs)
+			for (int32 BondIdx : *AList)
 			{
-				if ((P.X == RefA->SubIdx && P.Y == RefB->SubIdx) ||
-					(P.X == RefB->SubIdx && P.Y == RefA->SubIdx))
+				const FBond& B = Bonds[BondIdx];
+				if ((B.ItemA == AId && B.ItemB == BId) ||
+					(B.ItemA == BId && B.ItemB == AId))
 				{
-					bAlready = true; break;
+					bDup = true; break;
 				}
 			}
-			if (!bAlready)
-			{
-				SavedPairs.Add(FIntPoint(RefA->SubIdx, RefB->SubIdx));
-				if (bDevDebugBonds && GEngine)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 0.45f, FColor::Orange,
-						FString::Printf(TEXT("Held bond registered (Arm %d: %d-%d)"),
-							RefA->ArmIndex, RefA->SubIdx, RefB->SubIdx));
-				}
-			}
-			// Do NOT attempt world bond creation now (items absent); restored on drop.
-			continue;
 		}
+		if (bDup) continue;
 
-		// Fallback: normal world bond attempt (only if both endpoints are world items)
-		TryFormBondAt(KV.Key, Dir, HeldIds, Newly);
+		// Form bond even if one/both held; we store their last hex / virtual hex. CleanupBrokenBonds
+		// keeps offsets coherent as positions change when dropped.
+		FBond NewB;
+		NewB.ItemA = AId;
+		NewB.ItemB = BId;
+		NewB.Root = AHex;
+		NewB.dQ = (int8)(BHex.Q - AHex.Q);
+		NewB.dR = (int8)(BHex.R - AHex.R);
+		NewB.bActive = true;
+		const int32 NewIdx = Bonds.Add(NewB);
+		AddItemBondLink(NewB.ItemA, NewIdx);
+		AddItemBondLink(NewB.ItemB, NewIdx);
+		Newly.Add(NewB.ItemA);
+		Newly.Add(NewB.ItemB);
+
+		if (bDevDebugBonds && GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 0.6f, FColor::Purple,
+				FString::Printf(TEXT("Bond formed (live/held ok): %d-%d"), AId, BId));
+		}
 	}
 }
 
@@ -1511,8 +1411,6 @@ void USimWorldHex::StepBelts()
 }
 
 // --- NEW: split glyph handling so inputs spawn before belts ---
-// (place near other private helpers)
-
 void USimWorldHex::SpawnInputs()
 {
 	if (TileMap.Num() == 0) return;
