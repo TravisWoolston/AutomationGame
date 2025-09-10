@@ -533,6 +533,7 @@ void USimWorldHex::StepArms()
 				? (EHexDir)(((uint8)S.Facing + 1) % 6)
 				: (EHexDir)(((uint8)S.Facing + 5) % 6);
 
+			// Hand positions before/after rotation
 			FHex OldHand = S.BaseHex;
 			for (int i = 0; i < S.ArmLen; ++i)
 				OldHand = HexUtil::Neighbor(OldHand, S.Facing);
@@ -544,107 +545,183 @@ void USimWorldHex::StepArms()
 			const int32 dQ = NewHand.Q - OldHand.Q;
 			const int32 dR = NewHand.R - OldHand.R;
 
-			bool bBlocked = false;
+			// Occupancy: world items
+			TSet<FHex> WorldOcc;
+			for (const auto& KV : ItemMap)
+				WorldOcc.Add(KV.Key);
 
-			// (A) Collision / cluster checks only if holding
-			if (S.bHolding)
-			{
-				TSet<int32> ClusterIds;
-				if (S.Held.Id != 0 && ItemToBonds.Contains(S.Held.Id))
+			// Helper: compute hand hex for a given arm/facing
+			auto ComputeGripHex = [](const FArmState& A, EHexDir Facing)->FHex
 				{
-					TArray<int32> Stack;
-					Stack.Add(S.Held.Id);
-					ClusterIds.Add(S.Held.Id);
-					while (Stack.Num())
+					FHex Grip = A.BaseHex;
+					for (int i = 0; i < A.ArmLen; ++i)
+						Grip = HexUtil::Neighbor(Grip, Facing);
+					return Grip;
+				};
+
+			// Helper: rotate an axial coordinate by StepsCCW 60° steps
+			auto Rot60 = [](FHex D, uint8 StepsCCW)
+				{
+					for (uint8 i = 0; i < (StepsCCW % 6); ++i)
 					{
-						int32 CurId = Stack.Pop(EAllowShrinking::No);
-						if (const TArray<int32>* BondList = ItemToBonds.Find(CurId))
-						{
-							for (int32 BondIdx : *BondList)
-							{
-								if (!Bonds.IsValidIndex(BondIdx)) continue;
-								const FBond& B = Bonds[BondIdx];
-								const int32 Other = (B.ItemA == CurId) ? B.ItemB : B.ItemA;
-								if (!ClusterIds.Contains(Other))
-								{
-									ClusterIds.Add(Other);
-									Stack.Add(Other);
-								}
-							}
-						}
+						const int32 q = D.Q;
+						const int32 r = D.R;
+						D.Q = -r;
+						D.R = q + r;
+					}
+					return D;
+				};
+
+			// Build occupancy for other arms' held orbs (and their hands)
+			TSet<FHex> OtherHeldOcc;
+			for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
+			{
+				if (OtherIdx == ArmIndex) continue;
+				const FArmState& O = Arms[OtherIdx];
+				if (!O.bHolding) continue;
+
+				// Always include their hand hex
+				const FHex OHand = ComputeGripHex(O, O.Facing);
+				OtherHeldOcc.Add(OHand);
+
+				if (O.Held.bIsCluster)
+				{
+					// Virtual positions of their sub-orbs at current facing
+					const uint8 cur = (uint8)O.Facing % 6;
+					const int8 grab = (int8)O.Held.GrabFacing;
+					const uint8 facingDelta = (grab >= 0)
+						? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+						: cur;
+					const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+					for (const FOrbData& Sub : O.Held.Orbs)
+					{
+						FHex Local(Sub.dQ, Sub.dR);
+						FHex RotLocal = Rot60(Local, ccw);
+						OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R));
 					}
 				}
-				if (ClusterIds.Num() == 0 && S.Held.Id != 0)
-					ClusterIds.Add(S.Held.Id);
-
-				// 1) Destination hand cannot contain foreign item
-				if (const FItem* Occ = ItemMap.Find(NewHand))
+				else
 				{
-					if (!ClusterIds.Contains(Occ->Id))
-						bBlocked = true;
+					// Single held orb occupies the hand
+					OtherHeldOcc.Add(OHand);
 				}
+			}
 
-				// 2) Cluster rigid translation test
-				if (!bBlocked && ClusterIds.Num() > 1)
+			// Self held-orb positions at start and end, plus two “mid” phases
+			auto BuildLocals = [&](EHexDir Facing, TArray<FHex>& OutLocals)->void
 				{
-					for (int32 ItemId : ClusterIds)
+					OutLocals.Reset();
+					if (!S.bHolding)
+						return;
+
+					const FHex Grip = ComputeGripHex(S, Facing);
+					if (!S.Held.bIsCluster)
 					{
-						if (ItemId == S.Held.Id) continue;
-						const FHex* CurHex = ItemIdToHex.Find(ItemId);
-						if (!CurHex) continue;
-						FHex Dest(CurHex->Q + dQ, CurHex->R + dR);
-						if (const FItem* Occ = ItemMap.Find(Dest))
-						{
-							if (!ClusterIds.Contains(Occ->Id))
-							{
-								bBlocked = true;
-								break;
-							}
-						}
+						OutLocals.Add(Grip);
+						return;
+					}
+
+					const uint8 cur = (uint8)Facing % 6;
+					const int8 grab = (int8)S.Held.GrabFacing;
+					const uint8 facingDelta = (grab >= 0)
+						? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+						: cur;
+					const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+					for (const FOrbData& Sub : S.Held.Orbs)
+					{
+						FHex Local(Sub.dQ, Sub.dR);
+						FHex RotLocal = Rot60(Local, ccw);
+						OutLocals.Add(FHex(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R));
+					}
+				};
+
+			TArray<FHex> StartLocals, EndLocals, MidTranslateLocals, MidRotateLocals;
+			BuildLocals(S.Facing, StartLocals);
+			BuildLocals(NewFacing, EndLocals);
+
+			// Mid A: translate hand first (Old orientation at New hand)
+			if (S.bHolding)
+			{
+				if (!S.Held.bIsCluster)
+				{
+					MidTranslateLocals.Add(NewHand);
+				}
+				else
+				{
+					// Old orientation at New hand
+					const uint8 curOld = (uint8)S.Facing % 6;
+					const int8 grab = (int8)S.Held.GrabFacing;
+					const uint8 facingDeltaOld = (grab >= 0)
+						? (uint8)(((int32)curOld - (int32)(grab % 6) + 6) % 6)
+						: curOld;
+					const uint8 ccwOld = (uint8)((6 - facingDeltaOld) % 6);
+					for (const FOrbData& Sub : S.Held.Orbs)
+					{
+						FHex Local(Sub.dQ, Sub.dR);
+						FHex RotLocal = Rot60(Local, ccwOld);
+						MidTranslateLocals.Add(FHex(NewHand.Q + RotLocal.Q, NewHand.R + RotLocal.R));
 					}
 				}
 			}
 
-			// (B) Inter-arm overlap (even if not holding)
-			if (!bBlocked)
+			// Mid B: rotate first (New orientation at Old hand)
+			if (S.bHolding)
 			{
-				for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
+				if (!S.Held.bIsCluster)
 				{
-					if (OtherIdx == ArmIndex) continue;
-					const FArmState& Other = Arms[OtherIdx];
-					if (!Other.bHolding) continue;
-
-					FHex OtherHand = Other.BaseHex;
-					for (int i = 0; i < Other.ArmLen; ++i)
-						OtherHand = HexUtil::Neighbor(OtherHand, Other.Facing);
-
-					if (NewHand == OtherHand)
+					MidRotateLocals.Add(OldHand);
+				}
+				else
+				{
+					const uint8 curNew = (uint8)NewFacing % 6;
+					const int8 grab = (int8)S.Held.GrabFacing;
+					const uint8 facingDeltaNew = (grab >= 0)
+						? (uint8)(((int32)curNew - (int32)(grab % 6) + 6) % 6)
+						: curNew;
+					const uint8 ccwNew = (uint8)((6 - facingDeltaNew) % 6);
+					for (const FOrbData& Sub : S.Held.Orbs)
 					{
-						bBlocked = true;
-						break;
-					}
-
-					// If translating bonded cluster, ensure no cluster member lands on another arm's hand
-					if (S.bHolding && S.Held.Id != 0 && !bBlocked)
-					{
-						for (auto& KV : ItemMap)
-						{
-							const FItem& It = KV.Value;
-							if (It.Id == 0 || It.Id == S.Held.Id) continue;
-							if (IsItemBonded(It.Id))
-							{
-								const FHex CurHex = KV.Key;
-								FHex Dest(CurHex.Q + dQ, CurHex.R + dR);
-								if (Dest == OtherHand)
-								{
-									bBlocked = true;
-									break;
-								}
-							}
-						}
-						if (bBlocked) break;
+						FHex Local(Sub.dQ, Sub.dR);
+						FHex RotLocal = Rot60(Local, ccwNew);
+						MidRotateLocals.Add(FHex(OldHand.Q + RotLocal.Q, OldHand.R + RotLocal.R));
 					}
 				}
+			}
+
+			auto OverlapsAny = [&](const FHex& H)->bool
+				{
+					return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H);
+				};
+
+			bool bBlocked = false;
+
+			// 1) Destination hand cannot contain foreign item/held orb (covers single held-orb too)
+			if (OverlapsAny(NewHand))
+			{
+				bBlocked = true;
+			}
+
+			// 2) End positions of all sub-orbs
+			if (!bBlocked)
+			{
+				for (const FHex& H : EndLocals)
+					if (OverlapsAny(H)) { bBlocked = true; break; }
+			}
+
+			// 3) Mid A: translate first (hand moves; orientation unchanged)
+			if (!bBlocked)
+			{
+				for (const FHex& H : MidTranslateLocals)
+					if (OverlapsAny(H)) { bBlocked = true; break; }
+			}
+
+			// 4) Mid B: rotate first (orientation changes; hand stays)
+			if (!bBlocked)
+			{
+				for (const FHex& H : MidRotateLocals)
+					if (OverlapsAny(H)) { bBlocked = true; break; }
 			}
 
 			if (bBlocked)
@@ -660,26 +737,6 @@ void USimWorldHex::StepArms()
 
 			// Commit rotation
 			S.Facing = NewFacing;
-		}
-		break;
-
-		case ECmd::Extend:
-		{
-			// Op.Arg == 0 -> default step of 1
-			const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
-			const int32 OldLen = S.ArmLen;
-			S.ArmLen = FMath::Clamp<int32>(S.ArmLen + Delta, 1, MAX_ARM_LEN);
-
-			if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
-			{
-				FHex Hand = S.BaseHex;
-				for (int i = 0; i < S.ArmLen; ++i)
-					Hand = HexUtil::Neighbor(Hand, S.Facing);
-				GEngine->AddOnScreenDebugMessage(
-					-1, 1.5f, FColor::Cyan,
-					FString::Printf(TEXT("[Arm %d] EXTEND (Δ=%d) Len=%d Hand=(%d,%d)"),
-						ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
-			}
 		}
 		break;
 
@@ -781,7 +838,7 @@ void USimWorldHex::StepBonds()
 		}
 	}
 
-	// Bond formation (world or held)
+	// Bond formation (world or virtual held)
 	TSet<int32> Newly;
 	for (const auto& KV : TileMap)
 	{
@@ -1254,12 +1311,18 @@ void USimWorldHex::StepBelts()
 				if (HeldHandHexes.Contains(ToHex)) return false; // NEW
 				if (LocalOccupied.Contains(ToHex))
 				{
+					// Allow landing on a hex currently occupied by another member of the same cluster;
+					// the whole cluster translates atomically. Block only if it's a foreign occupant.
 					if (const FItem* Occ = ItemMap.Find(ToHex))
+					{
 						if (!ClusterItemIds.Contains(Occ->Id))
-							return false;
-						else
-							// Occupied by held hand hex or something synthetic
-							return false;
+							return false; // foreign item blocks
+					}
+					else
+					{
+						// Occupied by something non-item (e.g. held hand hex); treat as blocked
+						return false;
+					}
 				}
 			}
 
@@ -1308,8 +1371,13 @@ void USimWorldHex::StepBelts()
 
 		if (FItem* BehindItem = ItemMap.Find(Behind))
 		{
+			// Do not pull twice within the same belt step or the same tick
 			if (ItemsMovedForward.Contains(BehindItem->Id)) continue;
 			if (PulledThisPass.Contains(BehindItem->Id)) continue;
+
+			// NEW: prevent instant pull of freshly spawned/dropped items (not present at this hex last tick)
+			const FHex* Prev = PrevItemHex.Find(BehindItem->Id);
+			if (!Prev || *Prev != Behind) continue;
 
 			bool bAllowPull = true;
 			if (const FTile* BehindTile = TileMap.Find(Behind); BehindTile && BehindTile->Kind == ETileKind::Belt)

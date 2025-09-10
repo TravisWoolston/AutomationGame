@@ -13,6 +13,23 @@
 #include "Editor/UnrealEdEngine.h"
 #endif
 
+// Destroy an actor immediately in editor/PIE, otherwise defer to runtime Destroy().
+static void DestroyActorNow(AActor* Actor)
+{
+	if (!Actor) return;
+#if WITH_EDITOR
+	if (UWorld* W = Actor->GetWorld())
+	{
+		if (W->IsEditorWorld() || W->IsPlayInEditor())
+		{
+			W->EditorDestroyActor(Actor, /*bShouldModifyLevel*/true);
+			return;
+		}
+	}
+#endif
+	Actor->Destroy();
+}
+
 static TArray<FOp> ConvertProgramToOps_TLD(const TArray<FArmInstr>& Program)
 {
 	TArray<FOp> Out;
@@ -127,7 +144,7 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 			}
 			for (ABasicArm* Arm : ToDestroy)
 			{
-				if (Arm) Arm->Destroy();
+				if (Arm) DestroyActorNow(Arm);
 			}
 		}
 	}
@@ -150,7 +167,7 @@ void ATestLevelDirector::ClearArms()
 		for (FArmSpawnSpec& S : Sc.Arms)
 			if (S.Spawned)
 			{
-				S.Spawned->Destroy();
+				DestroyActorNow(S.Spawned);
 				S.Spawned = nullptr;
 			}
 }
@@ -416,16 +433,50 @@ bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+
 	for (int32 i = 0; i < Sc.Arms.Num(); ++i)
 	{
 		if (Sc.Arms[i].Q == Q && Sc.Arms[i].R == R)
 		{
+			if (Sc.Arms[i].Spawned)
+			{
+				DestroyActorNow(Sc.Arms[i].Spawned);
+				Sc.Arms[i].Spawned = nullptr;
+			}
+			else if (UWorld* W = GetWorld())
+			{
+				for (TActorIterator<ABasicArm> It(W); It; ++It)
+				{
+					if (It->Q == Q && It->R == R)
+					{
+						DestroyActorNow(*It);
+						break;
+					}
+				}
+			}
+
 			Sc.Arms.RemoveAt(i);
 			MarkActiveScenarioDirty();
 #if WITH_EDITOR
 			MirrorScenarioEditsToEditor();
 #endif
 			return true;
+		}
+	}
+
+	if (UWorld* W = GetWorld())
+	{
+		for (TActorIterator<ABasicArm> It(W); It; ++It)
+		{
+			if (It->Q == Q && It->R == R)
+			{
+				DestroyActorNow(*It);
+				MarkActiveScenarioDirty();
+#if WITH_EDITOR
+				MirrorScenarioEditsToEditor();
+#endif
+				return true;
+			}
 		}
 	}
 	return false;
