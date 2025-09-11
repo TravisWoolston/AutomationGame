@@ -171,6 +171,8 @@ void ABasicArm::EnsureComps()
 		GripPivotComp->SetupAttachment(BaseComp);
 		GripPivotComp->RegisterComponent();
 	}
+	// Set the local rotation offset once during initialization
+	GripPivotComp->SetRelativeRotation(GripPivotLocalRotation);
 }
 
 void ABasicArm::RefreshMeshes()
@@ -245,12 +247,15 @@ void ABasicArm::RefreshPose(float InAlpha)
 			const FTransform BaseXform = BaseComp->GetComponentTransform();
 			const FVector Local = BaseXform.InverseTransformPosition(HandWorld);
 			GripPivotComp->SetRelativeLocation(Local);
-			GripPivotComp->SetRelativeRotation(GripPivotLocalRotation);
+			// Don't set rotation here - let the attachment system handle it automatically
+			// The GripPivotLocalRotation should be set once during initialization, not every frame
 		}
 		else
 		{
 			GripPivotComp->SetWorldLocation(HandWorld);
-			GripPivotComp->SetWorldRotation(GripPivotLocalRotation);
+			// For world space, we need to apply the full rotation
+			const FRotator WorldRotation = FRotator(0.f, Yaw + BaseYawOffsetDeg, 0.f) + GripPivotLocalRotation;
+			GripPivotComp->SetWorldRotation(WorldRotation);
 		}
 	}
 
@@ -262,10 +267,8 @@ void ABasicArm::RefreshPose(float InAlpha)
 		DrawDebugSphere(GetWorld(), HandWorld, 6.f, 12, FColor::Yellow, false, 0.f);
 	}
 
-	if (bHolding && HeldOrb.bIsCluster)
-	{
-		// (no per‑tick cluster rotation)
-	}
+	// Opus Magnum approach: cluster rotates naturally with the arm
+	// No per-tick updates needed - the attachment system handles rotation
 }
 
 void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= true*/)
@@ -715,6 +718,10 @@ void ABasicArm::AttachHeldOrb()
 			// Accept empty parent; just holds sub-orbs.
 		}
 
+		// Opus Magnum approach: position sub-orbs relative to the grabbed orb
+		// The grabbed orb should be at the grab point, others positioned relative to it
+		UE_LOG(LogAGArm, Log, TEXT("Attaching cluster with %d sub-orbs, GrabFacing=%d"), 
+			HeldOrb.Orbs.Num(), (int32)HeldOrb.GrabFacing);
 		for (const FOrbData& Sub : HeldOrb.Orbs)
 		{
 			UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
@@ -734,17 +741,36 @@ void ABasicArm::AttachHeldOrb()
 			if (!Mat) Mat = DefaultOrbMaterial;
 			if (Mat) SubMesh->SetMaterial(0, Mat);
 
+			// Rotate the offset based on the arm's facing direction at grab time
+			// The offsets are stored in absolute hex coordinates, so we need to rotate them
+			// to be relative to the arm's facing direction when grabbed
 			FVector2D Off2D = Sub.Offset * OffsetBaseScale;
+			
+			// Apply rotation based on GrabFacing to make offsets relative to arm direction
+			if (HeldOrb.GrabFacing >= 0)
+			{
+				const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
+				const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
+				const float CosA = FMath::Cos(YawRad);
+				const float SinA = FMath::Sin(YawRad);
+				const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
+				const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
+				Off2D = FVector2D(RotX, RotY);
+			}
+			
 			if (bInvertClusterVisualFacing)
 			{
 				// 180° flip around Z so visual layout matches logical facing.
 				Off2D *= -1.f;
 			}
 			SubMesh->SetRelativeLocation(FVector(Off2D.X, Off2D.Y, 0.f));
+			
+			// Debug logging to see the offsets
+			UE_LOG(LogAGArm, Log, TEXT("Cluster sub-orb: ItemId=%d Offset=(%.2f,%.2f) dQ=%d dR=%d FinalPos=(%.2f,%.2f)"), 
+				Sub.ItemId, Sub.Offset.X, Sub.Offset.Y, Sub.dQ, Sub.dR, Off2D.X, Off2D.Y);
 			SubMesh->SetRelativeScale3D(HeldOrbScale);
 
 			HeldClusterComps.Add(SubMesh);
-			HeldClusterLocalOffsets.Add(Off2D);
 		}
 		//UpdateHeldClusterTransforms(DirToYaw(FacingDir) + BaseYawOffsetDeg);
 		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached cluster Id=%d (#=%d) scale(Offsets)=%.2f Tile=%.1f"),
@@ -846,10 +872,9 @@ void ABasicArm::DetachHeldOrb()
 
 void ABasicArm::UpdateHeldClusterTransforms(float /*CurrentYawDeg*/)
 {
-	// Intentionally empty: cluster sub‑orb relative offsets are authored in world/grid
-	// space at grab time and we parent them under HeldOrbComp which already rotates
-	// with the arm. Applying an additional per‑tick rotation caused the apparent
-	// reverse / double rotation. Leaving offsets untouched keeps the cluster rigid.
+	// Opus Magnum approach: cluster rotates naturally with the arm
+	// The cluster is attached to HeldOrbComp which rotates with the arm
+	// No per-tick updates needed - the attachment system handles rotation
 }
 
 FVector ABasicArm::ComputeGripLocalOffset() const

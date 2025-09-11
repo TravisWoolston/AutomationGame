@@ -202,6 +202,17 @@ void USimWorldHex::CleanupBrokenBonds(const TSet<int32>& HeldIds)
 						B.ItemA, B.ItemB, dq, dr));
 			}
 		}
+		
+		// Update HeldItemLastHex for held items to their current virtual positions
+		// This ensures the virtual positions stay current as the arm moves/rotates
+		if (HeldIds.Contains(B.ItemA))
+		{
+			HeldItemLastHex.FindOrAdd(B.ItemA, *AHex);
+		}
+		if (HeldIds.Contains(B.ItemB))
+		{
+			HeldItemLastHex.FindOrAdd(B.ItemB, *BHex);
+		}
 	}
 }
 
@@ -883,6 +894,17 @@ void USimWorldHex::StepBonds()
 		NewB.dQ = (int8)(BHex.Q - AHex.Q);
 		NewB.dR = (int8)(BHex.R - AHex.R);
 		NewB.bActive = true;
+		
+		// Update HeldItemLastHex for held items to their virtual positions
+		// This ensures CleanupBrokenBonds can track them correctly
+		if (HeldIds.Contains(AId))
+		{
+			HeldItemLastHex.FindOrAdd(AId, AHex);
+		}
+		if (HeldIds.Contains(BId))
+		{
+			HeldItemLastHex.FindOrAdd(BId, BHex);
+		}
 		const int32 NewIdx = Bonds.Add(NewB);
 		AddItemBondLink(NewB.ItemA, NewIdx);
 		AddItemBondLink(NewB.ItemB, NewIdx);
