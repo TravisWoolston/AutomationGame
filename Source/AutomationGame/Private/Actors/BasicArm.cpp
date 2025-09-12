@@ -138,7 +138,7 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 	LastYawDeg = RenderedYaw;
 
 	// NOW pull new sim state (sets CurrYawDeg)
-	SyncFromSim();
+	SyncFromCurrentSim();
 
 	StepAlpha = 0.f;
 	RefreshPose(0.f);
@@ -798,19 +798,25 @@ void ABasicArm::AttachHeldOrb()
 void ABasicArm::UpdateHeldOrbVisual()
 {
 	const int32 CurrentId = bHolding ? (HeldOrb.Id == 0 ? -1 : HeldOrb.Id) : 0; // -1 denotes held with no Id
+	const int32 CurrentOrbCount = bHolding ? HeldOrb.Orbs.Num() : 0;
 
-	if (CurrentId == LastHeldItemId)
+	// Check if the held item changed OR if the cluster composition changed
+	bool bNeedsUpdate = (CurrentId != LastHeldItemId) || (CurrentOrbCount != LastHeldOrbCount);
+
+	if (!bNeedsUpdate)
 		return;
 
 	if (!bHolding)
 	{
 		DetachHeldOrb();
 		LastHeldItemId = 0;
+		LastHeldOrbCount = 0;
 		return;
 	}
 
 	AttachHeldOrb(); // always when holding
 	LastHeldItemId = CurrentId;
+	LastHeldOrbCount = CurrentOrbCount;
 }
 
 // --- Sync / detach implementations added ---
@@ -841,13 +847,43 @@ void ABasicArm::SyncFromSim(const FArmState& SimState)
 	UpdateHeldOrbVisual();
 }
 
-void ABasicArm::SyncFromSim()
+void ABasicArm::SyncFromCurrentSim()
 {
 	if (!Sim || SimArmIndex < 0 || SimArmIndex >= Sim->Arms.Num())
 	{
 		return;
 	}
 	SyncFromSim(Sim->Arms[SimArmIndex]);
+}
+
+void ABasicArm::UpdateHeldClusterOnly()
+{
+	if (!Sim || SimArmIndex < 0 || SimArmIndex >= Sim->Arms.Num())
+	{
+		return;
+	}
+	
+	// Only update the held orb data and visual, don't touch orientation or other state
+	const FArmState& SimState = Sim->Arms[SimArmIndex];
+	
+	// Update holding state and item payload only
+	bool bWasHolding = bHolding;
+	bHolding = SimState.bHolding;
+	
+	if (bHolding)
+	{
+		HeldOrb = SimState.Held;
+	}
+	else
+	{
+		HeldOrb = FItem();
+	}
+	
+	// Only update visual if holding state changed or cluster composition changed
+	if (bWasHolding != bHolding || (bHolding && HeldOrb.Orbs.Num() != LastHeldOrbCount))
+	{
+		UpdateHeldOrbVisual();
+	}
 }
 
 void ABasicArm::DetachHeldOrb()

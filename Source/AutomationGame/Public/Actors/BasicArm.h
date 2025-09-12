@@ -156,7 +156,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void ResetProgram();
 	UFUNCTION(BlueprintCallable, Category = "Program")
-	void SyncFromSim(const FArmState& SimState);  // also sets SimArmIndex	
+	void SyncFromSim(const FArmState& SimState);  // also sets SimArmIndex
+	
+	UFUNCTION(BlueprintCallable, Category = "Program")
+	void SyncFromCurrentSim();  // sync from current sim state
+	
+	UFUNCTION(BlueprintCallable, Category = "Program")
+	void UpdateHeldClusterOnly();  // update only the held cluster visual	
 	/** For debugging: execute current instruction immediately (ignores Wait). */
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void ExecuteCurrent();
@@ -235,7 +241,6 @@ private:
 	// Helpers
 	void EnsureComps();
 	void RefreshMeshes();
-	void SyncFromSim();
 	void RefreshPose(float InAlpha);                 // update transforms
 	FVector HexToWorld(const FHex& H) const;         // grid → world
 	float   DirToYaw(uint8 Dir) const;               // grid yaw + 60° steps
@@ -256,6 +261,7 @@ private:
 
 	// NEW: track previous held item to know when to rebuild visual
 	int32 LastHeldItemId = 0;
+	int32 LastHeldOrbCount = 0;
 
 	// NEW helper: update (attach/detach) held orb visual when state changes
 	void UpdateHeldOrbVisual();

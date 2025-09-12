@@ -137,6 +137,9 @@ private:
 	// Helpers for multi-bond bookkeeping
 	void AddItemBondLink(int32 ItemId, int32 BondIndex);
 	void RemoveItemBondLink(int32 ItemId, int32 BondIndex);
+	
+	// Opus Magnum style cluster management
+	void AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex);
 
 	UPROPERTY(EditAnywhere, Category = "Debug")
 	bool bDevDebugBonds = true;
