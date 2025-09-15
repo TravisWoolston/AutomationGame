@@ -47,6 +47,18 @@ void AOrbSimDriver::BeginPlay()
 		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Synced Sim with pre-set parameters - TileSize=%.1f Orientation=%d Yaw=%.1f"), 
 			TileSizeUU, (int32)GridOrientation, GridYawDeg);
 	}
+	
+	// Always sync debug settings when Sim is created
+	if (Sim)
+	{
+		Sim->bDebugLogs = bDebugLogs;
+		Sim->bDebugSpheres = bDebugSpheres;
+		Sim->bDebugLines = bDebugLines;
+		Sim->bDebugBonds = bDebugBonds;
+	}
+	
+	// Sync debug settings to all arms
+	SyncDebugSettingsToArms();
 
 	// Subscribe to fixed tick
 	if (AGameTickManager* M = AGameTickManager::Get(this))
@@ -127,10 +139,98 @@ void AOrbSimDriver::SetGridParameters(EHexOrientation InOrientation, float InYaw
 		Sim->TileSizeUU = TileSizeUU;
 		const FVector AnchorLoc = InAnchor ? InAnchor->GetActorLocation() : FVector::ZeroVector;
 		Sim->SetWorldTransform(AnchorLoc, GridYawDeg, GridOrientation);
+		
+		// Sync debug settings
+		Sim->bDebugLogs = bDebugLogs;
+		Sim->bDebugSpheres = bDebugSpheres;
+		Sim->bDebugLines = bDebugLines;
+		Sim->bDebugBonds = bDebugBonds;
 	}
 	
 	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Grid parameters updated - Orientation=%d Yaw=%.1f TileSize=%.1f Sim=%s"),
 		(int32)GridOrientation, GridYawDeg, TileSizeUU, Sim ? TEXT("exists") : TEXT("null"));
+}
+
+void AOrbSimDriver::SyncDebugSettingsToArms()
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicArm> It(World); It; ++It)
+		{
+			ABasicArm* Arm = *It;
+			if (Arm)
+			{
+				Arm->bDebugLogs = bDebugLogs;
+				Arm->bDebugSpheres = bDebugSpheres;
+				Arm->bDebugLines = bDebugLines;
+			}
+		}
+	}
+}
+
+#if WITH_EDITOR
+void AOrbSimDriver::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	
+	if (HasAnyFlags(RF_ClassDefaultObject)) return;
+	if (!GIsPlayInEditorWorld) return; // only care while PIE is running
+	
+	const FName PropName = PropertyChangedEvent.Property ? PropertyChangedEvent.Property->GetFName() : NAME_None;
+	
+	// Check if any debug settings changed
+	if (PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugLogs) ||
+		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugSpheres) ||
+		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugLines) ||
+		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugBonds))
+	{
+		// Sync to sim
+		if (Sim)
+		{
+			Sim->bDebugLogs = bDebugLogs;
+			Sim->bDebugSpheres = bDebugSpheres;
+			Sim->bDebugLines = bDebugLines;
+			Sim->bDebugBonds = bDebugBonds;
+		}
+		
+		// Sync to all arms
+		SyncDebugSettingsToArms();
+		
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Debug settings changed - Logs=%d Spheres=%d Lines=%d Bonds=%d"), 
+			bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0, bDebugBonds ? 1 : 0);
+	}
+}
+#endif
+
+void AOrbSimDriver::ForceSyncDebugSettings()
+{
+	// Sync to sim
+	if (Sim)
+	{
+		Sim->bDebugLogs = bDebugLogs;
+		Sim->bDebugSpheres = bDebugSpheres;
+		Sim->bDebugLines = bDebugLines;
+		Sim->bDebugBonds = bDebugBonds;
+	}
+	
+	// Sync to all arms
+	SyncDebugSettingsToArms();
+	
+	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Force synced debug settings - Logs=%d Spheres=%d Lines=%d Bonds=%d"), 
+		bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0, bDebugBonds ? 1 : 0);
+}
+
+void AOrbSimDriver::CreateTestBonds()
+{
+	if (Sim)
+	{
+		Sim->CreateTestBonds();
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Created test bonds"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: No Sim found, cannot create test bonds"));
+	}
 }
 
 

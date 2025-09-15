@@ -171,6 +171,10 @@ public:
 	/** For debugging: execute current instruction immediately (ignores Wait). */
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void ExecuteCurrent();
+	
+	/** Sync debug settings from the OrbSimDriver */
+	UFUNCTION(BlueprintCallable, Category = "Debug")
+	void SyncDebugSettingsFromDriver();
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
 	int32 SimArmIndex;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
@@ -317,4 +321,13 @@ protected:
 public:
 	UPROPERTY(EditAnywhere, Category = "Debug")
 	bool bDebugHandLocation = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bDebugLogs = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bDebugSpheres = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bDebugLines = false;
 };

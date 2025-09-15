@@ -218,8 +218,11 @@ void ABasicArm::RefreshPose(float InAlpha)
 	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
 	const float Yaw = NormDeg(StartYaw + Delta * EasedAlpha);
 
-	UE_LOG(LogAGArm, Verbose, TEXT("RefreshPose: Q=%d R=%d LastYaw=%.2f CurrYaw=%.2f StepAlpha=%.2f EasedAlpha=%.2f Delta=%.2f Yaw=%.2f"),
-		Q, R, StartYaw, TargetYaw, InAlpha, EasedAlpha, Delta, Yaw);
+	if (bDebugLogs)
+	{
+		UE_LOG(LogAGArm, Verbose, TEXT("RefreshPose: Q=%d R=%d LastYaw=%.2f CurrYaw=%.2f StepAlpha=%.2f EasedAlpha=%.2f Delta=%.2f Yaw=%.2f"),
+			Q, R, StartYaw, TargetYaw, InAlpha, EasedAlpha, Delta, Yaw);
+	}
 
 	const FRotator BaseRot(0.f, Yaw + BaseYawOffsetDeg, 0.f);
 
@@ -323,12 +326,29 @@ void ABasicArm::RefreshPose(float InAlpha)
 		DrawDebugLine(GetWorld(), Start, InterpolatedHandWorld, FColor::Green, false, 0.f, 0, 2.f);
 		DrawDebugSphere(GetWorld(), InterpolatedHandWorld, 6.f, 12, FColor::Yellow, false, 0.f);
 	}
+	
+	// Debug lines for arm reach and target
+	if (bDebugLines && GetWorld())
+	{
+		const FHex TargetHex = ComputeTargetHex();
+		const FVector TargetWorld = HexToWorld(TargetHex);
+		
+		// Draw line from arm base to target hex
+		DrawDebugLine(GetWorld(), BaseWorld, TargetWorld, FColor::Red, false, 0.f, 0, 2.f);
+		
+		// Draw line from arm base to current hand position
+		DrawDebugLine(GetWorld(), BaseWorld, InterpolatedHandWorld, FColor::Orange, false, 0.f, 0, 1.f);
+		
+		// Draw hex outline at target
+		const float Tile = Driver ? Driver->GetTileSize() : 100.f;
+		DrawDebugCircle(GetWorld(), TargetWorld, Tile * 0.5f, 6, FColor::Red, false, 0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+	}
 
 	// Opus Magnum approach: cluster rotates naturally with the arm
 	// No per-tick updates needed - the attachment system handles rotation
 	
 	// Debug: Draw spheres showing simulation positions of held cluster orbs
-	if (bHolding && HeldOrb.bIsCluster && GetWorld())
+	if (bDebugSpheres && bHolding && HeldOrb.bIsCluster && GetWorld())
 	{
 		const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
 		const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
@@ -557,6 +577,22 @@ void ABasicArm::ExecuteCurrent()
 	WaitLeft = 0;
 	//StepProgram();
 	WaitLeft = SavedWait;
+}
+
+void ABasicArm::SyncDebugSettingsFromDriver()
+{
+	if (Driver)
+	{
+		bDebugLogs = Driver->bDebugLogs;
+		bDebugSpheres = Driver->bDebugSpheres;
+		bDebugLines = Driver->bDebugLines;
+		UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Synced debug settings from driver - Logs=%d Spheres=%d Lines=%d"), 
+			*GetName(), bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0);
+	}
+	else
+	{
+		UE_LOG(LogAGArm, Warning, TEXT("BasicArm '%s': No driver found for debug sync"), *GetName());
+	}
 }
 
 

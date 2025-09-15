@@ -23,6 +23,9 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	/** Called by GameTickManager each fixed step. */
 	UFUNCTION() void HandleFixedTickSeconds(float StepSeconds);
@@ -46,6 +49,19 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Belts")
 	bool bBeltYawClockwise = true;
+
+	/** Debug toggles */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bDebugLogs = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bDebugSpheres = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bDebugLines = false;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool bDebugBonds = false;
 
 	/** Optional reference to a manager if you want to sync knobs externally (not required). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Framework")
@@ -71,6 +87,18 @@ public:
 	/** Set grid parameters from GameManager (source of truth) */
 	UFUNCTION(BlueprintCallable, Category = "Grid")
 	void SetGridParameters(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor);
+	
+	/** Sync debug settings to all BasicArm actors in the world */
+	UFUNCTION(BlueprintCallable, Category = "Debug")
+	void SyncDebugSettingsToArms();
+	
+	/** Force sync debug settings to arms and sim (useful for runtime changes) */
+	UFUNCTION(BlueprintCallable, Category = "Debug")
+	void ForceSyncDebugSettings();
+	
+	/** Create test bonds for debugging (temporary) */
+	UFUNCTION(BlueprintCallable, Category = "Debug")
+	void CreateTestBonds();
 
 	UFUNCTION(BlueprintCallable, Category = "Belts") int32 GetBeltVisualOffset() const { return BeltVisualDirOffset; }
 	UFUNCTION(BlueprintCallable, Category = "Belts") bool  IsBeltYawClockwise() const { return bBeltYawClockwise; }

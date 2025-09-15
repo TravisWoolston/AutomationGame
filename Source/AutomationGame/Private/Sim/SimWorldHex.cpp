@@ -4,6 +4,7 @@
 #include "Actors/BasicArm.h"
 #include "Actors/OrbSimDriver.h"
 #include "EngineUtils.h"
+#include "DrawDebugHelpers.h"
 
 // Near top (after includes) add if not already in header:
 static constexpr float DEFAULT_BELT_SPEED_TILES_PER_SECOND = 1.0f;
@@ -237,6 +238,9 @@ void USimWorldHex::StepSim()
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
 	StepBonds();
 	ProcessOutputs();
+	
+	// Debug visualization
+	DrawBondDebugLines();
 }
 void USimWorldHex::StepGlyphs()
 {
@@ -884,6 +888,36 @@ void USimWorldHex::StepBonds()
 		}
 	}
 
+	// Check if any arms are currently moving or rotating
+	bool bAnyArmMoving = false;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+		{
+			ABasicArm* ArmActor = *ActorItr;
+			if (ArmActor && ArmActor->SimArmIndex >= 0 && ArmActor->SimArmIndex < Arms.Num())
+			{
+				// Check if the arm is currently animating (rotating, moving, etc.)
+				if (ArmActor->IsAnimating())
+				{
+					bAnyArmMoving = true;
+					break;
+				}
+			}
+		}
+	}
+	
+	// Only form bonds when no arms are moving to prevent premature bond formation
+	if (bAnyArmMoving)
+	{
+		if (bDebugLogs && bDevDebugBonds && GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Yellow,
+				TEXT("Skipping bond formation - arm(s) moving"));
+		}
+		return;
+	}
+
 	// Bond formation (world or virtual held)
 	TSet<int32> Newly;
 	for (const auto& KV : TileMap)
@@ -896,13 +930,43 @@ void USimWorldHex::StepBonds()
 
 		// Resolve item ids at endpoints (world or virtual held)
 		int32 AId = 0, BId = 0;
-		if (FItem* IA = ItemMap.Find(AHex)) AId = IA->Id;
-		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) AId = *HeldA;
+		bool bAIsHeld = false, bBIsHeld = false;
+		
+		if (FItem* IA = ItemMap.Find(AHex)) 
+		{
+			AId = IA->Id;
+			bAIsHeld = false; // On board
+		}
+		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) 
+		{
+			AId = *HeldA;
+			bAIsHeld = true; // Held
+		}
 
-		if (FItem* IB = ItemMap.Find(BHex)) BId = IB->Id;
-		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) BId = *HeldB;
+		if (FItem* IB = ItemMap.Find(BHex)) 
+		{
+			BId = IB->Id;
+			bBIsHeld = false; // On board
+		}
+		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) 
+		{
+			BId = *HeldB;
+			bBIsHeld = true; // Held
+		}
 
 		if (AId <= 0 || BId <= 0 || AId == BId) continue;
+		
+		// Allow bonds between held and board items, but handle them specially
+		// Don't form bonds between two held items from different arms
+		if (bAIsHeld && bBIsHeld) 
+		{
+			if (bDebugLogs && bDevDebugBonds && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Orange,
+					FString::Printf(TEXT("Skipping bond formation - both items %d and %d are held"), AId, BId));
+			}
+			continue;
+		}
 
 		// Prevent duplicates
 		bool bDup = false;
@@ -930,89 +994,39 @@ void USimWorldHex::StepBonds()
 		NewB.dR = (int8)(BHex.R - AHex.R);
 		NewB.bActive = true;
 		
-		// Update HeldItemLastHex for held items to their virtual positions
-		// This ensures CleanupBrokenBonds can track them correctly
-		if (HeldIds.Contains(AId))
-		{
-			HeldItemLastHex.FindOrAdd(AId, AHex);
-		}
-		if (HeldIds.Contains(BId))
-		{
-			HeldItemLastHex.FindOrAdd(BId, BHex);
-		}
+		// Form bond between items
 		const int32 NewIdx = Bonds.Add(NewB);
 		AddItemBondLink(NewB.ItemA, NewIdx);
 		AddItemBondLink(NewB.ItemB, NewIdx);
 		Newly.Add(NewB.ItemA);
 		Newly.Add(NewB.ItemB);
 
-		if (bDevDebugBonds && GEngine)
+		if (bDebugLogs && bDevDebugBonds && GEngine)
 		{
 			GEngine->AddOnScreenDebugMessage(-1, 0.6f, FColor::Purple,
-				FString::Printf(TEXT("Bond formed (live/held ok): %d-%d"), AId, BId));
+				FString::Printf(TEXT("Bond formed: %d-%d"), AId, BId));
 		}
 
-		// Opus Magnum behavior: If one orb is held and the other is on the board,
-		// immediately add the board orb to the held cluster
-		bool bAIsHeld = HeldIds.Contains(AId);
-		bool bBIsHeld = HeldIds.Contains(BId);
-		
-		if (bDevDebugBonds && GEngine)
+		// Handle held-to-board bonds: add board orb to held cluster with correct positioning
+		if (bAIsHeld && !bBIsHeld)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::White,
-				FString::Printf(TEXT("Bond formed: A=%d (held=%d) B=%d (held=%d)"), 
-					AId, bAIsHeld ? 1 : 0, BId, bBIsHeld ? 1 : 0));
-		}
-		
-		// Check if any arms are currently rotating (have pending rotation animations)
-		bool bAnyArmRotating = false;
-		if (UWorld* World = GetWorld())
-		{
-			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+			// A is held, B is on board - add B to the held cluster
+			if (bDebugLogs && bDevDebugBonds && GEngine)
 			{
-				ABasicArm* ArmActor = *ActorItr;
-				if (ArmActor && ArmActor->SimArmIndex >= 0 && ArmActor->SimArmIndex < Arms.Num())
-				{
-					// Check if the arm is currently rotating (IsAnimating returns true if animation is in progress)
-					if (ArmActor->IsAnimating())
-					{
-						bAnyArmRotating = true;
-						break;
-					}
-				}
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
+					FString::Printf(TEXT("Adding board orb %d to held cluster (held orb %d)"), BId, AId));
 			}
+			AddBoardOrbToHeldCluster(AId, BId, BHex);
 		}
-		
-		if (bDevDebugBonds && bAnyArmRotating && GEngine)
+		else if (bBIsHeld && !bAIsHeld)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
-				TEXT("Deferring bond formation - arm(s) still rotating"));
-		}
-		
-		// Only form held-to-board bonds if no arms are currently rotating
-		// This prevents adding orbs to held clusters while the arm is mid-rotation
-		if (!bAnyArmRotating)
-		{
-			if (bAIsHeld && !bBIsHeld)
+			// B is held, A is on board - add A to the held cluster
+			if (bDebugLogs && bDevDebugBonds && GEngine)
 			{
-				// A is held, B is on board - add B to the held cluster
-				if (bDevDebugBonds && GEngine)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
-						FString::Printf(TEXT("Adding board orb %d to held cluster (held orb %d)"), BId, AId));
-				}
-				AddBoardOrbToHeldCluster(AId, BId, BHex);
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
+					FString::Printf(TEXT("Adding board orb %d to held cluster (held orb %d)"), AId, BId));
 			}
-			else if (bBIsHeld && !bAIsHeld)
-			{
-				// B is held, A is on board - add A to the held cluster
-				if (bDevDebugBonds && GEngine)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
-						FString::Printf(TEXT("Adding board orb %d to held cluster (held orb %d)"), AId, BId));
-				}
-				AddBoardOrbToHeldCluster(BId, AId, AHex);
-			}
+			AddBoardOrbToHeldCluster(BId, AId, AHex);
 		}
 	}
 
@@ -2177,13 +2191,37 @@ void USimWorldHex::AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, c
 			BoardOrbHex.R - GripHex.R
 		);
 		
+		// Apply the same rotation that the cluster uses to ensure correct positioning
+		const uint8 cur = (uint8)Arm.Facing % 6;
+		const int8 grab = (int8)Arm.Held.GrabFacing;
+		const uint8 facingDelta = (grab >= 0)
+			? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+			: cur;
+		const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+		
+		// Rotate the offset to match the cluster's current orientation
+		auto Rot60 = [](FHex D, uint8 StepsCCW)
+		{
+			for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+			{
+				int32 q = D.Q;
+				int32 r = D.R;
+				D.Q = -r;
+				D.R = q + r;
+			}
+			return D;
+		};
+		
+		// Apply the inverse rotation to get the local cluster coordinates
+		FHex LocalOffset = Rot60(NewOrbClusterOffset, (6 - ccw) % 6);
+		
 		// Create new FOrbData for the board orb
 		FOrbData NewOrb;
 		NewOrb.ItemId = BoardOrbId;
 		NewOrb.Type = (uint8)BoardItem->Single.Type;
 		NewOrb.Color = (uint8)BoardItem->Single.Color;
-		NewOrb.dQ = (int8)NewOrbClusterOffset.Q;
-		NewOrb.dR = (int8)NewOrbClusterOffset.R;
+		NewOrb.dQ = (int8)LocalOffset.Q;
+		NewOrb.dR = (int8)LocalOffset.R;
 		NewOrb.Offset = FVector2D::ZeroVector; // Let the arm calculate this from dQ/dR
 		
 		// Add the orb to the cluster
@@ -2220,6 +2258,256 @@ void USimWorldHex::AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, c
 	}
 }
 
+void USimWorldHex::DrawBondDebugLines()
+{
+	if (!bDebugLines || !bDebugBonds || Bonds.Num() == 0)
+	{
+		return;
+	}
+	
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	
+	// Get driver for coordinate conversion
+	AOrbSimDriver* Driver = nullptr;
+	for (TActorIterator<AOrbSimDriver> It(World); It; ++It)
+	{
+		Driver = *It;
+		break;
+	}
+	
+	if (!Driver)
+	{
+		return;
+	}
+	
+	const AActor* Anchor = Driver->GetGridAnchor();
+	const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	const float Tile = Driver->GetTileSize();
+	const EHexOrientation DriverGridOrientation = Driver->GetGridOrientation();
+	const float GridYaw = Driver->GetGridYaw();
+	
+	// Helper lambda to convert hex to world position
+	auto HexToWorld = [&](const FHex& H) -> FVector
+	{
+		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, DriverGridOrientation);
+		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+		return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
+	};
+	
+	// Draw debug lines for all active bonds
+	for (const FBond& Bond : Bonds)
+	{
+		if (!Bond.bActive)
+		{
+			continue;
+		}
+		
+		// Find the actual positions of the bonded items
+		FVector PosA, PosB;
+		bool bFoundA = false, bFoundB = false;
+		
+		// Check if items are on the board
+		for (const auto& ItemKV : ItemMap)
+		{
+			if (ItemKV.Value.Id == Bond.ItemA)
+			{
+				PosA = HexToWorld(ItemKV.Key);
+				bFoundA = true;
+			}
+			if (ItemKV.Value.Id == Bond.ItemB)
+			{
+				PosB = HexToWorld(ItemKV.Key);
+				bFoundB = true;
+			}
+		}
+		
+		// Check if items are held by arms (for held clusters)
+		if (!bFoundA || !bFoundB)
+		{
+			for (const FArmState& Arm : Arms)
+			{
+				if (!Arm.bHolding) continue;
+				
+				if (Arm.Held.bIsCluster)
+				{
+					for (const FOrbData& Sub : Arm.Held.Orbs)
+					{
+						if (Sub.ItemId == Bond.ItemA && !bFoundA)
+						{
+							// Calculate held orb position
+							FHex GripHex = Arm.BaseHex;
+							for (int i = 0; i < Arm.ArmLen; ++i)
+								GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
+							
+							const uint8 cur = (uint8)Arm.Facing % 6;
+							const int8 grab = (int8)Arm.Held.GrabFacing;
+							const uint8 facingDelta = (grab >= 0)
+								? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+								: cur;
+							const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+							
+							auto Rot60 = [](FHex D, uint8 StepsCCW)
+							{
+								for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+								{
+									int32 q = D.Q;
+									int32 r = D.R;
+									D.Q = -r;
+									D.R = q + r;
+								}
+								return D;
+							};
+							
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex Rot = Rot60(Local, ccw);
+							FHex WorldHex(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+							PosA = HexToWorld(WorldHex);
+							bFoundA = true;
+						}
+						if (Sub.ItemId == Bond.ItemB && !bFoundB)
+						{
+							// Calculate held orb position (same logic as above)
+							FHex GripHex = Arm.BaseHex;
+							for (int i = 0; i < Arm.ArmLen; ++i)
+								GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
+							
+							const uint8 cur = (uint8)Arm.Facing % 6;
+							const int8 grab = (int8)Arm.Held.GrabFacing;
+							const uint8 facingDelta = (grab >= 0)
+								? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+								: cur;
+							const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+							
+							auto Rot60 = [](FHex D, uint8 StepsCCW)
+							{
+								for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+								{
+									int32 q = D.Q;
+									int32 r = D.R;
+									D.Q = -r;
+									D.R = q + r;
+								}
+								return D;
+							};
+							
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex Rot = Rot60(Local, ccw);
+							FHex WorldHex(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+							PosB = HexToWorld(WorldHex);
+							bFoundB = true;
+						}
+					}
+				}
+				else if (Arm.Held.Id == Bond.ItemA && !bFoundA)
+				{
+					// Single held item
+					FHex GripHex = Arm.BaseHex;
+					for (int i = 0; i < Arm.ArmLen; ++i)
+						GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
+					PosA = HexToWorld(GripHex);
+					bFoundA = true;
+				}
+				else if (Arm.Held.Id == Bond.ItemB && !bFoundB)
+				{
+					// Single held item
+					FHex GripHex = Arm.BaseHex;
+					for (int i = 0; i < Arm.ArmLen; ++i)
+						GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
+					PosB = HexToWorld(GripHex);
+					bFoundB = true;
+				}
+			}
+		}
+		
+		// Only draw if both positions were found
+		if (!bFoundA || !bFoundB)
+		{
+			continue;
+		}
+		
+		// Add some height offset to make bonds visible above the ground
+		PosA.Z += 15.f;
+		PosB.Z += 15.f;
+		
+		// Draw the bond line (persistent for 1 second to avoid flickering)
+		DrawDebugLine(World, PosA, PosB, FColor::Cyan, false, 1.0f, 0, 2.f);
+		
+		// Draw small spheres at bond endpoints (persistent for 1 second)
+		DrawDebugSphere(World, PosA, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
+		DrawDebugSphere(World, PosB, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
+		
+		// Draw bond ID text at midpoint (persistent for 1 second)
+		FVector Midpoint = (PosA + PosB) * 0.5f;
+		Midpoint.Z += 10.f;
+		DrawDebugString(World, Midpoint, 
+			FString::Printf(TEXT("Bond: %d-%d"), Bond.ItemA, Bond.ItemB), 
+			nullptr, FColor::Cyan, 1.0f, true, 0.8f);
+	}
+}
 
-
+void USimWorldHex::CreateTestBonds()
+{
+	// Create some test bonds for debugging
+	// This is a temporary function to test bond visualization
+	
+	// Clear existing bonds
+	Bonds.Empty();
+	ItemToBonds.Empty();
+	
+	// Create test items at specific hexes
+	FHex TestHex1(0, 0);
+	FHex TestHex2(1, 0);
+	FHex TestHex3(0, 1);
+	
+	// Create test orbs
+	FOrb Orb1; Orb1.Type = EOrbType::BaseA; Orb1.Color = EOrbColor::Red;
+	FOrb Orb2; Orb2.Type = EOrbType::BaseB; Orb2.Color = EOrbColor::Blue;
+	FOrb Orb3; Orb3.Type = EOrbType::BaseA; Orb3.Color = EOrbColor::Green;
+	
+	FItem Item1 = FItem::MakeSingle(Orb1);
+	FItem Item2 = FItem::MakeSingle(Orb2);
+	FItem Item3 = FItem::MakeSingle(Orb3);
+	
+	Item1.Id = NextItemId++;
+	Item2.Id = NextItemId++;
+	Item3.Id = NextItemId++;
+	
+	// Place items
+	ItemMap.Add(TestHex1, Item1);
+	ItemMap.Add(TestHex2, Item2);
+	ItemMap.Add(TestHex3, Item3);
+	
+	// Create bonds between them
+	FBond Bond1;
+	Bond1.ItemA = Item1.Id;
+	Bond1.ItemB = Item2.Id;
+	Bond1.Root = TestHex1;
+	Bond1.dQ = 1;
+	Bond1.dR = 0;
+	Bond1.bActive = true;
+	
+	FBond Bond2;
+	Bond2.ItemA = Item1.Id;
+	Bond2.ItemB = Item3.Id;
+	Bond2.Root = TestHex1;
+	Bond2.dQ = 0;
+	Bond2.dR = 1;
+	Bond2.bActive = true;
+	
+	// Add bonds
+	const int32 Bond1Idx = Bonds.Add(Bond1);
+	const int32 Bond2Idx = Bonds.Add(Bond2);
+	
+	AddItemBondLink(Bond1.ItemA, Bond1Idx);
+	AddItemBondLink(Bond1.ItemB, Bond1Idx);
+	AddItemBondLink(Bond2.ItemA, Bond2Idx);
+	AddItemBondLink(Bond2.ItemB, Bond2Idx);
+	
+	UE_LOG(LogTemp, Log, TEXT("Created test bonds: %d-%d and %d-%d"), 
+		Bond1.ItemA, Bond1.ItemB, Bond2.ItemA, Bond2.ItemB);
+}
 

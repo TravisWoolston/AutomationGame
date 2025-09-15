@@ -19,6 +19,12 @@ public:
 	// Config
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float TileSizeUU = 120.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float FixedStepSec = 0.20f; // 5 Hz
+	
+	// Debug toggles
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugLogs = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugSpheres = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugLines = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugBonds = false;
 
 	// ---- Arm <-> Item API ----
 	UFUNCTION(BlueprintCallable, Category = "Sim|Arm")
@@ -76,6 +82,10 @@ public:
 		GridYawDeg = InGridYawDeg;
 		GridOrientation = InOrientation;
 	}
+
+	/** Create test bonds for debugging (temporary) */
+	UFUNCTION(BlueprintCallable, Category = "Debug")
+	void CreateTestBonds();
 
 private:
 	float FrameAlpha = 0.f;
@@ -140,6 +150,9 @@ private:
 	
 	// Opus Magnum style cluster management
 	void AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex);
+	
+	// Debug visualization
+	void DrawBondDebugLines();
 
 	UPROPERTY(EditAnywhere, Category = "Debug")
 	bool bDevDebugBonds = true;
