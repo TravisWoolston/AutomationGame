@@ -100,8 +100,8 @@ public:
 	int32 ReachTiles = 1;
 
 	/** (Legacy) scalar reach fraction — kept for compatibility with old placements. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", AdvancedDisplay)
-	float HandReachUU = 0.6f;
+	// UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", AdvancedDisplay)
+	// float HandReachUU = 0.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector BaseScale = FVector(1.f);
@@ -163,6 +163,11 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void UpdateHeldClusterOnly();  // update only the held cluster visual	
+	
+	/** Check if the arm is currently animating (rotating, etc.) */
+	UFUNCTION(BlueprintPure, Category = "Program")
+	bool IsAnimating() const { return StepAlpha < 1.0f; }
+	
 	/** For debugging: execute current instruction immediately (ignores Wait). */
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void ExecuteCurrent();
@@ -231,6 +236,10 @@ private:
 	float StepAlpha = 0.f;        // 0..1 inside current fixed step (local)
 	float LastYawDeg = 0.f;       // snapshot at step start
 	float CurrYawDeg = 0.f;       // target yaw derived from FacingDir
+	
+	// Previous hand position for smooth interpolation
+	FVector LastHandWorld = FVector::ZeroVector;
+	FHex LastTargetHex = FHex(0, 0);
 
 	// Remember where Reset should point us
 	uint8 StartFacingDir = 0;     // captured at BeginPlay
@@ -282,6 +291,10 @@ public:
 	// Extra lateral (Y) offset if your mesh forward axis is not centered
 	UPROPERTY(EditAnywhere, Category = "Arm|Grip")
 	float GripSideOffset = 0.f;
+
+	// Additional offset for fine-tuning grip position (in world space)
+	UPROPERTY(EditAnywhere, Category = "Arm|Grip")
+	FVector GripLocationOffset = FVector::ZeroVector;
 
 	// If true we still try to use a socket; if false we force procedural pivot usage
 	UPROPERTY(EditAnywhere, Category = "Arm|Grip")

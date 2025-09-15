@@ -24,7 +24,7 @@ void AOrbSimDriver::BeginPlay()
 		{
 			// Default init radius; change to whatever your game needs.
 			Sim->Initialize(20);
-			// Keep sim's spacing aligned with our knob at start.
+			// Keep sim's spacing aligned with our current tile size
 			Sim->TileSizeUU = TileSizeUU;
 		}
 	}
@@ -36,6 +36,16 @@ void AOrbSimDriver::BeginPlay()
 		{
 			for (TActorIterator<AGameManager> It(W); It; ++It) { GM = *It; break; }
 		}
+	}
+	
+	// If GameManager already set our parameters before Sim was created, sync them now
+	if (Sim && (GridOrientation != EHexOrientation::PointyTop || GridYawDeg != 0.f || TileSizeUU != 120.f))
+	{
+		Sim->TileSizeUU = TileSizeUU;
+		const FVector AnchorLoc = GridAnchor ? GridAnchor->GetActorLocation() : FVector::ZeroVector;
+		Sim->SetWorldTransform(AnchorLoc, GridYawDeg, GridOrientation);
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Synced Sim with pre-set parameters - TileSize=%.1f Orientation=%d Yaw=%.1f"), 
+			TileSizeUU, (int32)GridOrientation, GridYawDeg);
 	}
 
 	// Subscribe to fixed tick
@@ -104,9 +114,24 @@ AOrbSimDriver* AOrbSimDriver::Find(UWorld* World)
 	return nullptr;
 }
 
-
-
-
+void AOrbSimDriver::SetGridParameters(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor)
+{
+	GridOrientation = InOrientation;
+	GridYawDeg = InYawDeg;
+	TileSizeUU = InTileSizeUU;
+	GridAnchor = InAnchor;
+	
+	// Update the sim's parameters to match (if sim exists)
+	if (Sim)
+	{
+		Sim->TileSizeUU = TileSizeUU;
+		const FVector AnchorLoc = InAnchor ? InAnchor->GetActorLocation() : FVector::ZeroVector;
+		Sim->SetWorldTransform(AnchorLoc, GridYawDeg, GridOrientation);
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Grid parameters updated - Orientation=%d Yaw=%.1f TileSize=%.1f Sim=%s"),
+		(int32)GridOrientation, GridYawDeg, TileSizeUU, Sim ? TEXT("exists") : TEXT("null"));
+}
 
 
 

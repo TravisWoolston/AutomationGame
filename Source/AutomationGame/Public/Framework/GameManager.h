@@ -46,6 +46,14 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Grid", meta = (ClampMin = "1.0"))
 	float TileSizeUU = 120.f;
 
+	/** PointyTop vs FlatTop orientation of the hex grid. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
+
+	/** World yaw (deg) for the grid around the anchor. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (ClampMin = -360.0, ClampMax = 360.0))
+	float GridYawDeg = 0.f;
+
 	/** Radius in hexes (axial distance). */
 	UPROPERTY(EditAnywhere, Category = "Grid", meta = (ClampMin = "1", UIMin = "1"))
 	int32 Radius = 12;
@@ -89,6 +97,7 @@ private:
 	void TryLoadInitial();
 	void EnsureISM();
 	void BuildGridInstances();
+	void SyncOrbSimDriverParameters(); // Sync OrbSimDriver to match GameManager parameters
 
 	// state
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* ISM = nullptr;

@@ -20,6 +20,22 @@ AHexFactoryActor::AHexFactoryActor()
 	TileISM->SetupAttachment(Root);
 	TileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	InputTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputTileISM"));
+	InputTileISM->SetupAttachment(Root);
+	InputTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	OutputTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputTileISM"));
+	OutputTileISM->SetupAttachment(Root);
+	OutputTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	BeltTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltTileISM"));
+	BeltTileISM->SetupAttachment(Root);
+	BeltTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	BondTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BondTileISM"));
+	BondTileISM->SetupAttachment(Root);
+	BondTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	BeltISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltISM"));
 	BeltISM->SetupAttachment(Root);
 	BeltISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -49,6 +65,10 @@ void AHexFactoryActor::EnsureComponents()
 			Comp->SetVisibility(true, true);
 		};
 	EnsureISM(TileISM, TEXT("TileISM_Runtime"));
+	EnsureISM(InputTileISM, TEXT("InputTileISM_Runtime"));
+	EnsureISM(OutputTileISM, TEXT("OutputTileISM_Runtime"));
+	EnsureISM(BeltTileISM, TEXT("BeltTileISM_Runtime"));
+	EnsureISM(BondTileISM, TEXT("BondTileISM_Runtime"));
 	EnsureISM(BeltISM, TEXT("BeltISM_Runtime"));
 	EnsureISM(BondISM, TEXT("BondISM_Runtime"));
 }
@@ -66,10 +86,21 @@ void AHexFactoryActor::BeginPlay()
 	if (UWorld* W = GetWorld())
 	{
 		Driver = AOrbSimDriver::Find(W);
-		if (Driver) Sim = Driver->GetSim();
+		if (Driver) 
+		{
+			Sim = Driver->GetSim();
+			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::BeginPlay: Driver=%s Sim=%s"), 
+				Driver ? TEXT("found") : TEXT("null"), Sim ? TEXT("found") : TEXT("null"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::BeginPlay: No OrbSimDriver found"));
+		}
+		
 		for (TActorIterator<AHexBoardActor> It(W); It; ++It)
 		{
 			Board = *It;
+			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::BeginPlay: Found HexBoardActor"));
 			break;
 		}
 	}
@@ -87,12 +118,20 @@ void AHexFactoryActor::Tick(float DeltaSeconds)
 
 	if (Sim->TileRevision != LastSeenRevision || bBoardChanged)
 	{
+		UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::Tick: Triggering rebuild - TileRevision=%d LastSeen=%d BoardChanged=%d"), 
+			Sim->TileRevision, LastSeenRevision, bBoardChanged ? 1 : 0);
 		RebuildInternal();
 	}
 }
 
 void AHexFactoryActor::Rebuild()
 {
+	// Reacquire Sim reference in case it was created after our BeginPlay
+	if (!Sim && Driver)
+	{
+		Sim = Driver->GetSim();
+		UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::Rebuild: Reacquired Sim=%s"), Sim ? TEXT("found") : TEXT("null"));
+	}
 	RebuildInternal();
 }
 
@@ -111,44 +150,121 @@ FVector AHexFactoryActor::HexToWorld(const FHex& H) const
 
 void AHexFactoryActor::RebuildInternal()
 {
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildInternal: Starting rebuild"));
+	
 	EnsureComponents();
-	if (!Sim) return;
+	
+	// Reacquire Sim reference in case it was created after our BeginPlay
+	if (!Sim && Driver)
+	{
+		Sim = Driver->GetSim();
+		UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildInternal: Reacquired Sim=%s"), Sim ? TEXT("found") : TEXT("null"));
+	}
+	
+	if (!Sim) 
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildInternal: Sim is null after reacquisition attempt"));
+		return;
+	}
 
 	LastSeenRevision = Sim->TileRevision;
 	LastSeenBoardRevision = Board ? Board->BoardRevision : -1;
 
-	if (TileMesh) TileISM->SetStaticMesh(TileMesh);
+	// Set up tile ISM components
+	if (TileMesh) 
+	{
+		TileISM->SetStaticMesh(TileMesh);
+		InputTileISM->SetStaticMesh(TileMesh);
+		OutputTileISM->SetStaticMesh(TileMesh);
+		BeltTileISM->SetStaticMesh(TileMesh);
+		BondTileISM->SetStaticMesh(TileMesh);
+	}
+	
 	if (TileMaterial) TileISM->SetMaterial(0, TileMaterial);
+	if (InputTileMaterial) InputTileISM->SetMaterial(0, InputTileMaterial);
+	if (OutputTileMaterial) OutputTileISM->SetMaterial(0, OutputTileMaterial);
+	if (BeltTileMaterial) BeltTileISM->SetMaterial(0, BeltTileMaterial);
+	if (BondTileMaterial) BondTileISM->SetMaterial(0, BondTileMaterial);
+
 	if (BeltMesh) BeltISM->SetStaticMesh(BeltMesh);
 	if (BeltMaterial) BeltISM->SetMaterial(0, BeltMaterial);
 	if (BondMesh) BondISM->SetStaticMesh(BondMesh);
 	if (BondMaterial) BondISM->SetMaterial(0, BondMaterial);
 
+	// Clear all instances
 	TileISM->ClearInstances();
+	InputTileISM->ClearInstances();
+	OutputTileISM->ClearInstances();
+	BeltTileISM->ClearInstances();
+	BondTileISM->ClearInstances();
 	BeltISM->ClearInstances();
 	BondISM->ClearInstances();
 
 	RebuildTiles();
 	RebuildBelts();
 	RebuildBonds();   // NEW
+	
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildInternal: Rebuild complete"));
 }
 
 void AHexFactoryActor::RebuildTiles()
 {
-	if (!Board) return;
+	if (!Sim) return;
+	
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 
-	for (const FHex& H : Board->GetAllHexes())
+	// Helper function to add tile instance to appropriate ISM
+	auto AddTileInstance = [&](const FHex& H, ETileKind TileKind)
 	{
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
 		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-		if (TileMesh)
-			TileISM->AddInstance(FTransform(FRotator::ZeroRotator, Loc, FVector(1.f)));
+		const FTransform Transform(FRotator::ZeroRotator, Loc, FVector(1.f));
+		
+		switch (TileKind)
+		{
+		case ETileKind::Input:
+			if (InputTileISM) InputTileISM->AddInstance(Transform);
+			break;
+		case ETileKind::Output:
+			if (OutputTileISM) OutputTileISM->AddInstance(Transform);
+			break;
+		case ETileKind::Belt:
+			if (BeltTileISM) BeltTileISM->AddInstance(Transform);
+			break;
+		case ETileKind::Bond:
+			if (BondTileISM) BondTileISM->AddInstance(Transform);
+			break;
+		default:
+			// Empty tiles or unknown types go to the default TileISM
+			if (TileISM) TileISM->AddInstance(Transform);
+			break;
+		}
+	};
+
+	// Render tiles from the simulation
+	for (const auto& KV : Sim->TileMap)
+	{
+		const FHex& H = KV.Key;
+		const FTile& T = KV.Value;
+		AddTileInstance(H, T.Kind);
+	}
+
+	// Also render empty tiles from the board if it exists
+	if (Board)
+	{
+		for (const FHex& H : Board->GetAllHexes())
+		{
+			// Only add if not already in simulation
+			if (!Sim->TileMap.Contains(H))
+			{
+				AddTileInstance(H, ETileKind::Empty);
+			}
+		}
 	}
 }
 
@@ -168,12 +284,19 @@ void AHexFactoryActor::DrawBondArrow(const FVector& A, const FVector& B)
 
 void AHexFactoryActor::RebuildBelts()
 {
-	if (!Sim) return;
+	if (!Sim) 
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildBelts: Sim is null"));
+		return;
+	}
+	
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	
+	int32 BeltCount = 0;
 
 	auto ForwardYaw = [&](const FHex& Base, uint8 Dir)->float
 		{
@@ -190,6 +313,7 @@ void AHexFactoryActor::RebuildBelts()
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Belt) continue;
 
+		BeltCount++;
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
 		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, BeltZOffset);
@@ -201,17 +325,31 @@ void AHexFactoryActor::RebuildBelts()
 			if (bAlwaysDrawBeltArrows)
 				DrawBeltArrow(Loc, Tile, Yaw);
 		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildBelts: BeltMesh is null"));
+		}
 	}
+	
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildBelts: Found %d belts, BeltMesh=%s, BeltISM=%s"), 
+		BeltCount, BeltMesh ? TEXT("exists") : TEXT("null"), BeltISM ? TEXT("exists") : TEXT("null"));
 }
 
 void AHexFactoryActor::RebuildBonds()
 {
-	if (!Sim) return;
+	if (!Sim) 
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildBonds: Sim is null"));
+		return;
+	}
+	
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	
+	int32 BondCount = 0;
 
 	for (const auto& KV : Sim->TileMap)
 	{
@@ -219,6 +357,7 @@ void AHexFactoryActor::RebuildBonds()
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Bond) continue;
 
+		BondCount++;
 		const uint8 Dir = (uint8)(T.Arg & 0xFF);
 		const FHex N = HexUtil::Neighbor(H, (EHexDir)(Dir % 6));
 
@@ -241,5 +380,12 @@ void AHexFactoryActor::RebuildBonds()
 			if (bDrawBondDebugArrows)
 				DrawBondArrow(WorldA, WorldB);
 		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildBonds: BondMesh is null"));
+		}
 	}
+	
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildBonds: Found %d bonds, BondMesh=%s, BondISM=%s"), 
+		BondCount, BondMesh ? TEXT("exists") : TEXT("null"), BondISM ? TEXT("exists") : TEXT("null"));
 }

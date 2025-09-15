@@ -1,6 +1,7 @@
 #include "Framework/TestLevelDirector.h"
 #include "Framework/GameTickManager.h"
 #include "Actors/OrbSimDriver.h"
+#include "Actors/HexFactoryActor.h"
 #include "Sim/SimWorldHex.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -80,7 +81,13 @@ void ATestLevelDirector::BeginPlay()
 {
 	Super::BeginPlay();
 	AutoFindOrSpawn();
+	
+	// Wait one frame to ensure GameManager has completed its initialization and synced parameters
+	GetWorld()->GetTimerManager().SetTimerForNextTick(this, &ATestLevelDirector::DelayedScenarioApplication);
+}
 
+void ATestLevelDirector::DelayedScenarioApplication()
+{
 	if (Scenarios.IsValidIndex(ActiveScenarioIndex))
 	{
 		ApplyScenario(Scenarios[ActiveScenarioIndex]);
@@ -88,6 +95,20 @@ void ATestLevelDirector::BeginPlay()
 	if (Driver && Driver->GetSim())
 	{
 		Driver->GetSim()->StepSim();
+	}
+	
+	// Force any HexFactoryActor instances to rebuild their visuals
+	if (UWorld* W = GetWorld())
+	{
+		for (TActorIterator<AHexFactoryActor> It(W); It; ++It)
+		{
+			AHexFactoryActor* Factory = *It;
+			if (Factory)
+			{
+				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Forcing HexFactoryActor rebuild"));
+				Factory->Rebuild();
+			}
+		}
 	}
 }
 
@@ -157,6 +178,10 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 		// Reinitialize simulation (clears tiles, items, arms, bonds, etc.)
 		Sim->Initialize(Spec.GridRadius);
 		Sim->TileSizeUU = Spec.TileSizeUU;
+		
+		// Ensure sim gets the correct grid parameters from OrbSimDriver
+		const FVector AnchorLoc = Driver->GetGridAnchor() ? Driver->GetGridAnchor()->GetActorLocation() : FVector::ZeroVector;
+		Sim->SetWorldTransform(AnchorLoc, Driver->GetGridYaw(), Driver->GetGridOrientation());
 	}
 }
 
@@ -562,7 +587,7 @@ void ATestLevelDirector::ReapplyActiveScenario()
 
 void ATestLevelDirector::CommitRuntimeFacingEdits()
 {
-	// One–shot capture of current facing directions regardless of bCaptureRuntimeFacingEdits flag
+	// Oneï¿½shot capture of current facing directions regardless of bCaptureRuntimeFacingEdits flag
 	for (FScenarioSpec& Scenario : Scenarios)
 	{
 		for (FArmSpawnSpec& ArmSpec : Scenario.Arms)

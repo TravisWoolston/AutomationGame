@@ -69,6 +69,9 @@ void AGameManager::AutoFindRefs()
 		FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 		OrbSimDriver = W->SpawnActor<AOrbSimDriver>(OrbSimDriverClass, GetActorTransform(), S); // <-- typed
 	}
+	
+	// Sync OrbSimDriver parameters with GameManager (GameManager is the source of truth)
+	SyncOrbSimDriverParameters();
 }
 
 void AGameManager::SetGridRadius(int32 NewRadius)
@@ -127,12 +130,12 @@ void AGameManager::BuildGridInstances()
 	const float S = FMath::Max(1.f, TileSizeUU);
 	const FVector Origin = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
 
-	const auto ToWorld = [S, Origin](int32 Q, int32 R)->FVector
+	const auto ToWorld = [S, Origin, this](int32 Q, int32 R)->FVector
 		{
-			// pointy-top axial spacing
-			const float X = S * (1.5f * Q);
-			const float Y = S * ((FMath::Sqrt(3.f) / 2.f) * (2 * R + Q));
-			return Origin + FVector(X, Y, 0.f);
+			// Use the same coordinate conversion as HexCoord::AxialToXY
+			const FVector2D XY = HexCoord::AxialToXY(FHexAxial(Q, R), S, GridOrientation);
+			const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
+			return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
 		};
 
 	for (int r = -Radius; r <= Radius; ++r)
@@ -151,6 +154,8 @@ void AGameManager::Rebuild()
 {
 	EnsureISM();
 	BuildGridInstances();
+	// Sync OrbSimDriver whenever we rebuild the grid
+	SyncOrbSimDriverParameters();
 }
 
 // Local helper to mirror TestLevelDirector conversion so runtime-placed arms work too.
@@ -246,4 +251,15 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 	}
 
 	return Arm;
+}
+
+void AGameManager::SyncOrbSimDriverParameters()
+{
+	if (!OrbSimDriver) return;
+	
+	// GameManager is the source of truth - sync OrbSimDriver to match
+	OrbSimDriver->SetGridParameters(GridOrientation, GridYawDeg, TileSizeUU, GridAnchor);
+	
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver parameters - Orientation=%d Yaw=%.1f TileSize=%.1f"),
+		(int32)GridOrientation, GridYawDeg, TileSizeUU);
 }

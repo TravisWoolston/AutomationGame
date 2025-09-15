@@ -269,7 +269,20 @@ void UOrbRenderer::RebuildInstances()
 	for (const FArmState& S : Sim->Arms)
 	{
 		if (S.bHolding && S.Held.Id != 0)
+		{
 			HeldIds.Add(S.Held.Id);
+			// Also add sub-orb IDs for clusters
+			if (S.Held.bIsCluster)
+			{
+				for (const FOrbData& Sub : S.Held.Orbs)
+				{
+					if (Sub.ItemId > 0)
+					{
+						HeldIds.Add(Sub.ItemId);
+					}
+				}
+			}
+		}
 	}
 
 	if (bUseSimVisualInterpolation)

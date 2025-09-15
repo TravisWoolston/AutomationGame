@@ -119,6 +119,7 @@ private:
 	void RefreshSpawnedArmsFromScenario(int32 ScenarioIndex);
 	void MarkActiveScenarioDirty();
 	void ResetSimForActiveScenario();          // NEW: clears sim before applying scenario
+	void DelayedScenarioApplication();         // NEW: applies scenarios after GameManager initialization
 
 	void SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Scenario); // filtered version
 

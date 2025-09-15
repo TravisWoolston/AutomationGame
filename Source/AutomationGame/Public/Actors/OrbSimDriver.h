@@ -39,17 +39,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Grid")
 	bool bUseAnchorZForPicking = true;
 
-	/** PointyTop vs FlatTop orientation of the hex grid. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
-	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
-
-	/** World yaw (deg) for the grid around the anchor. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (ClampMin = -360.0, ClampMax = 360.0))
-	float GridYawDeg = 0.f;
-
-	/** Single knob for hex spacing used across systems (source of truth here). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (ClampMin = 1.0))
-	float TileSizeUU = 120.f;
 
 	/** Visual conventions for belts */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Belts")
@@ -78,6 +67,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Grid") EHexOrientation GetGridOrientation() const { return GridOrientation; }
 	UFUNCTION(BlueprintCallable, Category = "Grid") float           GetGridYaw() const { return GridYawDeg; }
 	UFUNCTION(BlueprintCallable, Category = "Grid") float           GetTileSize() const { return TileSizeUU; }
+	
+	/** Set grid parameters from GameManager (source of truth) */
+	UFUNCTION(BlueprintCallable, Category = "Grid")
+	void SetGridParameters(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor);
 
 	UFUNCTION(BlueprintCallable, Category = "Belts") int32 GetBeltVisualOffset() const { return BeltVisualDirOffset; }
 	UFUNCTION(BlueprintCallable, Category = "Belts") bool  IsBeltYawClockwise() const { return bBeltYawClockwise; }
@@ -93,4 +86,9 @@ private:
 	float StepAlpha = 0.f;
 
 	bool bSubscribed = false;
+	
+	/** Grid parameters (set by GameManager - source of truth) */
+	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
+	float GridYawDeg = 0.f;
+	float TileSizeUU = 120.f;
 };

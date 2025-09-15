@@ -31,6 +31,12 @@ public:
 	// ----- Visual Assets -----
 	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UStaticMesh* TileMesh = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* TileMaterial = nullptr;
+	
+	// Different materials for different tile types
+	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* InputTileMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* OutputTileMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* BeltTileMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* BondTileMaterial = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UStaticMesh* BeltMesh = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UMaterialInterface* BeltMaterial = nullptr;
@@ -52,6 +58,10 @@ public:
 protected:
 	// Components
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* TileISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputTileISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputTileISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltTileISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondTileISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondISM = nullptr;
 
