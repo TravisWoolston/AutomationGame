@@ -8,6 +8,7 @@
 #include "DrawDebugHelpers.h"
 #include "Rendering/OrbRenderer.h"
 #include "EngineUtils.h"
+#include "Data/OrbMaterialManager.h"
 
 static inline float NormDeg(float D) { return FMath::UnwindDegrees(D); }
 namespace { inline int32 Mod6(int32 V) { return (V % 6 + 6) % 6; } }
@@ -110,11 +111,39 @@ void ABasicArm::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// Sync from sim
+	// Sync all state from simulation immediately
 	if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
 	{
 		const FArmState& SimState = Sim->Arms[SimArmIndex];
-		SyncFromSim(SimState);
+		
+		// Update orientation and reach immediately
+		FacingDir = static_cast<uint8>(SimState.Facing);
+		CurrYawDeg = DirToYaw(FacingDir);
+		
+		if (ReachTiles != SimState.ArmLen)
+		{
+			ReachTiles = SimState.ArmLen;
+		}
+		
+		// Update holding state + item payload immediately when simulation state changes
+		bool bWasHolding = bHolding;
+		bHolding = SimState.bHolding;
+		
+		if (bHolding)
+		{
+			HeldOrb = SimState.Held;
+		}
+		else
+		{
+			HeldOrb = FItem();
+		}
+		
+		// Update visual immediately when holding state or cluster composition changes
+		if (bWasHolding != bHolding || (bHolding && HeldOrb.Orbs.Num() != LastHeldOrbCount))
+		{
+			UpdateHeldOrbVisual();
+			LastHeldOrbCount = bHolding ? HeldOrb.Orbs.Num() : 0;
+		}
 	}
 
 	// Advance StepAlpha for interpolation
@@ -139,9 +168,7 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 		NormDeg(LastYawDeg + FMath::FindDeltaAngleDegrees(LastYawDeg, CurrYawDeg) * StepAlpha);
 	LastYawDeg = RenderedYaw;
 
-	// NOW pull new sim state (sets CurrYawDeg)
-	SyncFromCurrentSim();
-
+	// Reset StepAlpha for new animation cycle
 	StepAlpha = 0.f;
 	RefreshPose(0.f);
 }
@@ -183,9 +210,16 @@ void ABasicArm::RefreshMeshes()
 
 	if (HeldOrbComp)
 	{
-		HeldOrbComp->SetStaticMesh(HeldOrbMesh);
+		// Get mesh from centralized system
+		UStaticMesh* CentralizedMesh = nullptr;
+		if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
+		{
+			CentralizedMesh = MaterialManager->GetOrbMesh();
+		}
+		
+		HeldOrbComp->SetStaticMesh(CentralizedMesh);
 		HeldOrbComp->SetRelativeScale3D(HeldOrbScale);
-		HeldOrbComp->SetVisibility(bHolding && HeldOrbMesh != nullptr, true);
+		HeldOrbComp->SetVisibility(bHolding && CentralizedMesh != nullptr, true);
 	}
 }
 
@@ -715,7 +749,7 @@ void ABasicArm::ShowHeldOrb(bool bShow)
 			OrbMesh->RegisterComponent();
 			OrbMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
 			OrbMesh->SetRelativeLocation(FVector(Orb.Offset, 0.f));
-			OrbMesh->SetMaterial(0, GetMaterialForOrbColor(Orb.Color));
+			OrbMesh->SetMaterial(0, GetMaterialForOrbColor(Orb.Type));
 			OrbMesh->SetRelativeScale3D(HeldOrbScale);
 
 			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Created orb mesh for type=%d color=%d offset=(%.2f, %.2f)"), *GetName(), Orb.Type, Orb.Color, Orb.Offset.X, Orb.Offset.Y);
@@ -751,59 +785,93 @@ void ABasicArm::InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, 
 
 UStaticMesh* ABasicArm::GetMeshForOrbType(uint8 OrbType) const
 {
-	if (OrbTypeToMesh.Contains(OrbType))
+	// Use centralized material manager
+	if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
 	{
-		return OrbTypeToMesh[OrbType];
+		UStaticMesh* CentralizedMesh = MaterialManager->GetOrbMesh();
+		if (CentralizedMesh)
+		{
+			return CentralizedMesh;
+		}
 	}
-	// Fallback to default mesh if not found
-	return HeldOrbMesh;
+
+	// Final fallback to engine default
+	return nullptr;
 }
 
-UMaterialInterface* ABasicArm::GetMaterialForOrbColor(uint8 OrbColor) const
+UMaterialInterface* ABasicArm::GetMaterialForOrbColor(uint8 OrbType) const
 {
-	if (OrbColorToMaterial.Contains(OrbColor))
+	// Use centralized material manager
+	if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
 	{
-		return OrbColorToMaterial[OrbColor];
+		// Use the orb type directly as the material key
+		EOrbType EOrbTypeValue = (EOrbType)OrbType;
+		UMaterialInterface* CentralizedMaterial = MaterialManager->GetMaterialForOrbType(EOrbTypeValue);
+		if (CentralizedMaterial)
+		{
+			return CentralizedMaterial;
+		}
+		
+		// Try the default material from the centralized system
+		UMaterialInterface* DefaultMaterial = MaterialManager->GetDefaultOrbMaterial();
+		if (DefaultMaterial)
+		{
+			return DefaultMaterial;
+		}
 	}
-	// Fallback to no material if not found
+
+	// Final fallback to engine default
 	return nullptr;
 }
 
 // Add helper functions near other helpers (e.g. after GetMaterialForOrbColor)
 UStaticMesh* ABasicArm::ResolveOrbMesh(const FItem& Item) const
 {
-	// Prefer cluster: each sub-orb handled individually below; for single just pick once.
-	if (Item.bIsCluster)
+	// Use centralized material manager
+	if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
 	{
-		// Use HeldOrbMesh as container base (or first sub-orb mesh if available)
-		if (HeldOrbMesh) return HeldOrbMesh;
-		if (Item.Orbs.Num() > 0)
+		UStaticMesh* CentralizedMesh = MaterialManager->GetOrbMesh();
+		if (CentralizedMesh)
 		{
-			uint8 Key = Item.Orbs[0].Type;
-			if (OrbTypeToMesh.Contains(Key)) return OrbTypeToMesh[Key];
+			return CentralizedMesh;
 		}
-		return HeldOrbMesh;
 	}
-	// Single orb
-	uint8 Key = Item.Single.Kind != 0 ? Item.Single.Kind : static_cast<uint8>(Item.Single.Type);
-	if (OrbTypeToMesh.Contains(Key)) return OrbTypeToMesh[Key];
-	return HeldOrbMesh;
+
+	// Final fallback to engine default
+	return nullptr;
 }
 
 UMaterialInterface* ABasicArm::ResolveOrbMaterial(const FItem& Item) const
 {
-	if (Item.bIsCluster)
+	// Use centralized material manager
+	if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
 	{
-		if (Item.Orbs.Num() > 0)
+		EOrbType OrbType = EOrbType::BaseA; // Default
+		if (Item.bIsCluster && Item.Orbs.Num() > 0)
 		{
-			uint8 C = Item.Orbs[0].Color;
-			if (OrbColorToMaterial.Contains(C)) return OrbColorToMaterial[C];
+			OrbType = (EOrbType)Item.Orbs[0].Type;
 		}
-		return DefaultOrbMaterial;
+		else if (!Item.bIsCluster)
+		{
+			OrbType = Item.Single.Type;
+		}
+
+		UMaterialInterface* CentralizedMaterial = MaterialManager->GetMaterialForOrbType(OrbType);
+		if (CentralizedMaterial)
+		{
+			return CentralizedMaterial;
+		}
+		
+		// Try the default material from the centralized system
+		UMaterialInterface* DefaultMaterial = MaterialManager->GetDefaultOrbMaterial();
+		if (DefaultMaterial)
+		{
+			return DefaultMaterial;
+		}
 	}
-	uint8 C = static_cast<uint8>(Item.Single.Color);
-	if (OrbColorToMaterial.Contains(C)) return OrbColorToMaterial[C];
-	return DefaultOrbMaterial;
+
+	// Final fallback to engine default
+	return nullptr;
 }
 
 // Replace AttachHeldOrb() with more robust version
@@ -863,7 +931,6 @@ void ABasicArm::AttachHeldOrb()
 		if (bShowClusterContainerMesh)
 		{
 			UStaticMesh* Container = ResolveOrbMesh(HeldOrb);
-			if (!Container) Container = HeldOrbMesh;
 			HeldOrbComp->SetStaticMesh(Container);
 		}
 		else
@@ -879,25 +946,18 @@ void ABasicArm::AttachHeldOrb()
 
 		// Opus Magnum approach: position sub-orbs relative to the grabbed orb
 		// The grabbed orb should be at the grab point, others positioned relative to it
-		UE_LOG(LogAGArm, Log, TEXT("Attaching cluster with %d sub-orbs, GrabFacing=%d"), 
-			HeldOrb.Orbs.Num(), (int32)HeldOrb.GrabFacing);
+		// UE_LOG(LogAGArm, Log, TEXT("Attaching cluster with %d sub-orbs, GrabFacing=%d"), 
+		// 	HeldOrb.Orbs.Num(), (int32)HeldOrb.GrabFacing);
 		for (const FOrbData& Sub : HeldOrb.Orbs)
 		{
 			UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
 			SubMesh->RegisterComponent();
 			SubMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
 
-			UStaticMesh* SM = OrbTypeToMesh.FindRef(Sub.Type);
-			if (!SM) SM = HeldOrbMesh;
-			if (!SM)
-			{
-				static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-				if (SphereMesh.Succeeded()) SM = SphereMesh.Object;
-			}
+			UStaticMesh* SM = GetMeshForOrbType(Sub.Type);
 			SubMesh->SetStaticMesh(SM);
 
-			UMaterialInterface* Mat = OrbColorToMaterial.FindRef(Sub.Color);
-			if (!Mat) Mat = DefaultOrbMaterial;
+			UMaterialInterface* Mat = GetMaterialForOrbColor(Sub.Type);
 			if (Mat) 
 			{
 				SubMesh->SetMaterial(0, Mat);
@@ -931,9 +991,7 @@ void ABasicArm::AttachHeldOrb()
 			
 			SubMesh->SetRelativeLocation(FVector(Off2D.X, Off2D.Y, 0.f));
 			
-			// Debug logging to see the offsets
-			UE_LOG(LogAGArm, Log, TEXT("Cluster sub-orb: ItemId=%d Offset=(%.2f,%.2f) dQ=%d dR=%d FinalPos=(%.2f,%.2f)"), 
-				Sub.ItemId, Sub.Offset.X, Sub.Offset.Y, Sub.dQ, Sub.dR, Off2D.X, Off2D.Y);
+
 			SubMesh->SetRelativeScale3D(HeldOrbScale);
 
 			HeldClusterComps.Add(SubMesh);
@@ -945,23 +1003,13 @@ void ABasicArm::AttachHeldOrb()
 			GenerateBondedOrbMeshes();
 		}
 
-		//UpdateHeldClusterTransforms(DirToYaw(FacingDir) + BaseYawOffsetDeg);
-		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached cluster Id=%d (#=%d) scale(Offsets)=%.2f Tile=%.1f"),
-			*GetName(), HeldOrb.Id, HeldOrb.Orbs.Num(), OffsetBaseScale, Tile);
 	}
 	else
 	{
 		UStaticMesh* Mesh = ResolveOrbMesh(HeldOrb);
-		if (!Mesh) Mesh = HeldOrbMesh;
-		if (!Mesh)
-		{
-			static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-			if (SphereMesh.Succeeded()) Mesh = SphereMesh.Object;
-		}
 		HeldOrbComp->SetStaticMesh(Mesh);
 
 		UMaterialInterface* Mat = ResolveOrbMaterial(HeldOrb);
-		if (!Mat) Mat = DefaultOrbMaterial;
 		if (Mat) 
 		{
 			HeldOrbComp->SetMaterial(0, Mat);
@@ -1061,12 +1109,10 @@ void ABasicArm::UpdateHeldClusterOnly()
 	const int32 NewOrbCount = bHolding ? HeldOrb.Orbs.Num() : 0;
 	const bool bClusterChanged = (NewOrbCount != LastHeldOrbCount);
 	
-	UE_LOG(LogAGArm, Log, TEXT("UpdateHeldClusterOnly: bWasHolding=%d bHolding=%d NewOrbCount=%d LastHeldOrbCount=%d bClusterChanged=%d"), 
-		bWasHolding ? 1 : 0, bHolding ? 1 : 0, NewOrbCount, LastHeldOrbCount, bClusterChanged ? 1 : 0);
+
 	
 	if (bWasHolding != bHolding || (bHolding && bClusterChanged))
 	{
-		UE_LOG(LogAGArm, Log, TEXT("UpdateHeldClusterOnly: Triggering visual update"));
 		UpdateHeldOrbVisual();
 	}
 }

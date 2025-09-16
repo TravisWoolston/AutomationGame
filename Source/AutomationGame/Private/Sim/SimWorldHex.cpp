@@ -1855,7 +1855,7 @@ void USimWorldHex::SpawnInputs()
 		if (SkipInputThisFrame.Contains(H)) continue;
 		if (ItemMap.Contains(H)) continue;           // occupied already
 
-		FOrb O; O.Type = (EOrbType)((uint8)EOrbType::BaseA + (T.Arg % 4));
+		FOrb O; O.Type = (EOrbType)T.Arg;
 		FItem NewItem = FItem::MakeSingle(O);
 		NewItem.Id = NextItemId++;
 		TryPutItem(H, NewItem);
@@ -1874,7 +1874,7 @@ void USimWorldHex::SpawnInputsAfterBelts()
 		if (SkipInputThisFrame.Contains(H)) continue;
 		if (ItemMap.Contains(H)) continue; // still occupied after belts
 
-		FOrb O; O.Type = (EOrbType)((uint8)EOrbType::BaseA + (T.Arg % 4));
+		FOrb O; O.Type = (EOrbType)T.Arg;
 		FItem NewItem = FItem::MakeSingle(O);
 		NewItem.Id = NextItemId++;
 		TryPutItem(H, NewItem);

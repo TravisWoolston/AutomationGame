@@ -4,6 +4,7 @@
 #include "Sim/ArmTypes.h"
 #include "Sim/HexTypes.h"
 #include "Sim/HexCoord.h"          // <-- Needed for EHexOrientation
+#include "Sim/OrbTypes.h"          // <-- Needed for EOrbType
 #include "OrbRenderer.generated.h"
 
 class UInstancedStaticMeshComponent;
@@ -38,8 +39,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Debug") bool bAutoReacquire = true;
 
 	/** Basic visuals */
-	UPROPERTY(EditAnywhere, Category = "Visual") UStaticMesh* OrbMesh = nullptr;
-	UPROPERTY(EditAnywhere, Category = "Visual") UMaterialInterface* OrbMaterial = nullptr;
+	// Note: OrbMesh and OrbMaterial are now managed by UOrbMaterialManager
 	UPROPERTY(EditAnywhere, Category = "Visual") float OrbScale = 0.30f;
 
 	/** Bond connection visuals */
@@ -58,7 +58,7 @@ private:
 	void RebuildBondedOrbs();
 	AActor* GetAnchor() const;
 
-	UPROPERTY(Transient) UInstancedStaticMeshComponent* ISM = nullptr;
+	UPROPERTY(Transient) TMap<EOrbType, UInstancedStaticMeshComponent*> OrbTypeISMs;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondedOrbISM = nullptr;
 	UPROPERTY(Transient) AOrbSimDriver* Driver = nullptr;
 	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;

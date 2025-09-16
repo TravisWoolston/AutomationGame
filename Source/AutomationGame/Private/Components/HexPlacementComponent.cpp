@@ -13,6 +13,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Framework/TestLevelDirector.h"
+#include "Actors/HexFactoryActor.h"
+#include "Data/OrbMaterialManager.h"
 
 UHexPlacementComponent::UHexPlacementComponent()
 {
@@ -140,7 +142,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	FTile T{};
 	switch (PlaceKind)
 	{
-	case EPlaceKind::Input:  T = FTile{ ETileKind::Input,  0 }; break;
+	case EPlaceKind::Input:  T = FTile{ ETileKind::Input,  (uint8)GetCurrentInputOrbType() }; break;
 	case EPlaceKind::Output: T = FTile{ ETileKind::Output, 0 }; break;
 	case EPlaceKind::Belt:   T = FTile{ ETileKind::Belt,   (uint8)BeltDir }; break;
 	case EPlaceKind::Bond:   T = FTile{ ETileKind::Bond,   (uint8)BeltDir }; break;
@@ -293,6 +295,36 @@ void UHexPlacementComponent::RotateCCW()
 
 void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) { PlaceKind = NewKind; }
 
+void UHexPlacementComponent::CycleNextType()
+{
+	CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % 6; // 0-5 for the 6 orb types
+}
+
+void UHexPlacementComponent::CyclePreviousType()
+{
+	CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + 6) % 6; // Wrap around to 5 if going below 0
+}
+
+void UHexPlacementComponent::CycleInputOrbType()
+{
+	CycleNextType();
+}
+
+EOrbType UHexPlacementComponent::GetCurrentInputOrbType() const
+{
+	// Map index to EOrbType enum values
+	switch (CurrentInputOrbTypeIndex)
+	{
+	case 0: return EOrbType::None;
+	case 1: return EOrbType::BaseA;
+	case 2: return EOrbType::BaseB;
+	case 3: return EOrbType::BaseC;
+	case 4: return EOrbType::MetalA;
+	case 5: return EOrbType::CatalystX;
+	default: return EOrbType::BaseA;
+	}
+}
+
 void UHexPlacementComponent::EnsurePreviewComponent()
 {
 	if (PreviewComp) return;
@@ -318,10 +350,11 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 	switch (PlaceKind)
 	{
 	case EPlaceKind::Input:
+		return GetActualOrbMesh();
 	case EPlaceKind::Output:
 		return GenericTilePreviewMesh;
 	case EPlaceKind::Belt:
-		return BeltMeshPreview ? BeltMeshPreview : GenericTilePreviewMesh;
+		return GetActualBeltMesh();
 	case EPlaceKind::Arm:
 		return ArmBasePreviewMesh ? ArmBasePreviewMesh : GenericTilePreviewMesh;
 	case EPlaceKind::Bond:
@@ -329,6 +362,105 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 	default:
 		return GenericTilePreviewMesh;
 	}
+}
+
+UStaticMesh* UHexPlacementComponent::GetActualBeltMesh() const
+{
+	// First try the local preview mesh
+	if (BeltMeshPreview)
+	{
+		return BeltMeshPreview;
+	}
+	
+	// Fallback: try to find AHexFactoryActor in the world
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AHexFactoryActor> It(World); It; ++It)
+		{
+			AHexFactoryActor* FactoryActor = *It;
+			if (FactoryActor && FactoryActor->BeltMesh)
+			{
+				// Cache the reference for future use
+				const_cast<UHexPlacementComponent*>(this)->BeltMeshPreview = FactoryActor->BeltMesh;
+				return FactoryActor->BeltMesh;
+			}
+		}
+	}
+	
+	// Final fallback
+	return GenericTilePreviewMesh;
+}
+
+UMaterialInterface* UHexPlacementComponent::GetActualBeltMaterial() const
+{
+	// First try the local preview material
+	if (BeltMaterialPreview)
+	{
+		return BeltMaterialPreview;
+	}
+	
+	// Fallback: try to find AHexFactoryActor in the world
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AHexFactoryActor> It(World); It; ++It)
+		{
+			AHexFactoryActor* FactoryActor = *It;
+			if (FactoryActor && FactoryActor->BeltMaterial)
+			{
+				// Cache the reference for future use
+				const_cast<UHexPlacementComponent*>(this)->BeltMaterialPreview = FactoryActor->BeltMaterial;
+				return FactoryActor->BeltMaterial;
+			}
+		}
+	}
+	
+	// Final fallback
+	return nullptr;
+}
+
+UStaticMesh* UHexPlacementComponent::GetActualOrbMesh() const
+{
+	// Try to find UOrbMaterialManager in the world
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbMaterialManager* MaterialManager = (*It)->FindComponentByClass<UOrbMaterialManager>())
+			{
+				UStaticMesh* OrbMesh = MaterialManager->GetOrbMesh();
+				if (OrbMesh)
+				{
+					return OrbMesh;
+				}
+			}
+		}
+	}
+	
+	// Final fallback
+	return GenericTilePreviewMesh;
+}
+
+UMaterialInterface* UHexPlacementComponent::GetActualOrbMaterial() const
+{
+	// Try to find UOrbMaterialManager in the world
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbMaterialManager* MaterialManager = (*It)->FindComponentByClass<UOrbMaterialManager>())
+			{
+				EOrbType CurrentType = GetCurrentInputOrbType();
+				UMaterialInterface* OrbMaterial = MaterialManager->GetMaterialForOrbType(CurrentType);
+				if (OrbMaterial)
+				{
+					return OrbMaterial;
+				}
+			}
+		}
+	}
+	
+	// Final fallback
+	return nullptr;
 }
 
 bool UHexPlacementComponent::CanPlaceAt(const FHex& Hex) const
@@ -458,8 +590,8 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		}
 	}
 
-	// Mesh preview (now also trivial for Bond)
-	if (PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond)
+	// Mesh preview (now also for Input, Belt, Arm, and Bond)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond)
 	{
 		EnsurePreviewComponent();
 		if (!PreviewComp) return;
@@ -499,9 +631,19 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		PreviewComp->SetWorldScale3D(UseScale);
 		PreviewComp->SetVisibility(true);
 
-		// Simple tint if material supports a Tint param (optional)
-		if (PreviewMID)
+		// Set material based on placement type
+		if (PlaceKind == EPlaceKind::Input)
 		{
+			// For input tiles, use the actual orb material
+			UMaterialInterface* OrbMaterial = GetActualOrbMaterial();
+			if (OrbMaterial)
+			{
+				PreviewComp->SetMaterial(0, OrbMaterial);
+			}
+		}
+		else if (PreviewMID)
+		{
+			// For other types, use the tinted material
 			const FLinearColor Col = bPlaceOK
 				? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
 				: FLinearColor(0.9f, 0.f, 0.f, 0.6f);

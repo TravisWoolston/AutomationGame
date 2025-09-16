@@ -159,7 +159,7 @@ private:
 	void DrawBondDebugLines();
 
 	UPROPERTY(EditAnywhere, Category = "Debug")
-	bool bDevDebugBonds = true;
+	bool bDevDebugBonds = false;
 
 	// Held items last board position (for future bond persistence if needed)
 	TMap<int32, FHex> HeldItemLastHex;

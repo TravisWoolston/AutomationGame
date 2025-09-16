@@ -114,22 +114,7 @@ public:
 	float BaseYawOffsetDeg = 0.f;
 
 	// Optional held-orb preview (purely visual)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
-	UStaticMesh* HeldOrbMesh = nullptr;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
-	UStaticMesh* MeshType1 = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
-	UStaticMesh* MeshType2 = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
-	UMaterialInterface* MaterialColor1 = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
-	UMaterialInterface* MaterialColor2 = nullptr;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
-	UMaterialInterface* DefaultOrbMaterial = nullptr;
+	// Note: Orb meshes and materials are now managed by UOrbMaterialManager
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector HeldOrbScale = FVector(0.2f);
@@ -183,11 +168,6 @@ public:
 	int32 SimArmIndex;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
 	bool bAffectSim = false;   // default false: sim is authoritative
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
-	TMap<uint8, UStaticMesh*> OrbTypeToMesh;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
-	TMap<uint8, UMaterialInterface*> OrbColorToMaterial;
 
 public:
 	void PushProgramToSim();

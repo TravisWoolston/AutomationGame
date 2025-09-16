@@ -29,6 +29,7 @@ public:
 
 private:
 	float AxisX = 0.f, AxisY = 0.f, AxisZoom = 0.f;
+	bool bSelectionActive = false;
 	void MoveX(float V) { AxisX = V; }
 	void MoveY(float V) { AxisY = V; }
 	void Zoom(float V) { AxisZoom = V; }
@@ -43,4 +44,12 @@ private:
 	void SetInputMode5();
 	void RotCW() { if (Placer) Placer->RotateCW(); }
 	void RotCCW() { if (Placer) Placer->RotateCCW(); }
+
+	// Input type cycling
+	void CycleInputTypeNext() { if (Placer) Placer->CycleNextType(); }
+	void CycleInputTypePrevious() { if (Placer) Placer->CyclePreviousType(); }
+	
+	// Selection modifier key
+	void SelectionActivePressed();
+	void SelectionActiveReleased();
 };

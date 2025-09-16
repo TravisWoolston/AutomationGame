@@ -34,8 +34,8 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 	FVector Delta = (Right * AxisX + Fwd * AxisY) * MoveSpeed * DeltaSeconds;
 	AddActorWorldOffset(Delta, true);
 
-	// Zoom
-	if (AxisZoom != 0.f)
+	// Zoom (disabled when SelectionActive is held)
+	if (AxisZoom != 0.f && !bSelectionActive)
 	{
 		SpringArm->TargetArmLength = FMath::Clamp(SpringArm->TargetArmLength - AxisZoom * ZoomSpeed * DeltaSeconds, MinArm, MaxArm);
 	}
@@ -61,6 +61,14 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	IC->BindAction("Kind3", IE_Pressed, this, &AHexTopDownPawn::SetInputMode3);
 	IC->BindAction("Kind4", IE_Pressed, this, &AHexTopDownPawn::SetInputMode4);
 	IC->BindAction("Kind5", IE_Pressed, this, &AHexTopDownPawn::SetInputMode5);
+
+	// Input type cycling (for when in Input mode)
+	IC->BindAction("CycleNextType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypeNext);
+	IC->BindAction("CyclePreviousType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypePrevious);
+	
+	// Selection modifier key (Left Alt)
+	IC->BindAction("SelectionActive", IE_Pressed, this, &AHexTopDownPawn::SelectionActivePressed);
+	IC->BindAction("SelectionActive", IE_Released, this, &AHexTopDownPawn::SelectionActiveReleased);
 }
 
 void AHexTopDownPawn::SetInputMode1() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Input); }
@@ -68,3 +76,6 @@ void AHexTopDownPawn::SetInputMode2() { if (Placer) Placer->SetPlaceKind(EPlaceK
 void AHexTopDownPawn::SetInputMode3() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Belt); }
 void AHexTopDownPawn::SetInputMode4() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Arm); }
 void AHexTopDownPawn::SetInputMode5() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Bond); }
+
+void AHexTopDownPawn::SelectionActivePressed() { bSelectionActive = true; }
+void AHexTopDownPawn::SelectionActiveReleased() { bSelectionActive = false; }

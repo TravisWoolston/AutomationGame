@@ -10,6 +10,7 @@
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/Engine.h"
 #include "GameFramework/Actor.h"
+#include "Data/OrbMaterialManager.h"
 
 static FORCEINLINE int32 MakeSubOrbId(int32 ItemId, int32 SubIdx)
 {
@@ -60,12 +61,9 @@ UOrbRenderer::UOrbRenderer()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 
+	// Initialize bonded orb mesh to a small sphere by default
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMat(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-	if (!OrbMesh && SphereMesh.Succeeded()) OrbMesh = SphereMesh.Object;
-	if (!OrbMaterial && BasicMat.Succeeded()) OrbMaterial = BasicMat.Object;
-	
-	// Initialize bonded orb mesh to a small sphere by default
 	if (!BondedOrbMesh && SphereMesh.Succeeded()) BondedOrbMesh = SphereMesh.Object;
 	if (!BondedOrbMaterial && BasicMat.Succeeded()) BondedOrbMaterial = BasicMat.Object;
 }
@@ -96,28 +94,57 @@ void UOrbRenderer::BeginPlay()
 
 void UOrbRenderer::EnsureISM()
 {
-	if (ISM) return;
-
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
 
-	// Create main orb ISM
-	ISM = NewObject<UInstancedStaticMeshComponent>(Owner, TEXT("OrbRenderer_ISM"));
-	ISM->RegisterComponent();
+	// Get material manager
+	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
+	if (!MaterialManager) return;
 
-	if (Owner->GetRootComponent())
-	{
-		ISM->AttachToComponent(Owner->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-	}
+	// Get the base mesh from material manager
+	UStaticMesh* BaseMesh = MaterialManager->GetOrbMesh();
+	if (!BaseMesh) return;
 
-	if (OrbMesh) ISM->SetStaticMesh(OrbMesh);
-	if (OrbMaterial) 
+	// Create ISM components for each orb type
+	TArray<EOrbType> AllOrbTypes = {
+		EOrbType::None,
+		EOrbType::BaseA,
+		EOrbType::BaseB,
+		EOrbType::BaseC,
+		EOrbType::MetalA,
+		EOrbType::CatalystX
+	};
+
+	for (EOrbType OrbType : AllOrbTypes)
 	{
-		ISM->SetMaterial(0, OrbMaterial);
-		// Ensure the material renders as opaque (not transparent)
-		ISM->SetRenderCustomDepth(false);
+		// Skip if already created
+		if (OrbTypeISMs.Contains(OrbType)) continue;
+
+		// Create ISM component for this orb type
+		FString ComponentName = FString::Printf(TEXT("OrbRenderer_ISM_%d"), (int32)OrbType);
+		UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(Owner, *ComponentName);
+		ISM->RegisterComponent();
+
+		if (Owner->GetRootComponent())
+		{
+			ISM->AttachToComponent(Owner->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+		}
+
+		// Set mesh and material for this orb type
+		ISM->SetStaticMesh(BaseMesh);
+		
+		UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(OrbType);
+		if (TypeMaterial)
+		{
+			ISM->SetMaterial(0, TypeMaterial);
+			ISM->SetRenderCustomDepth(false);
+		}
+		
+		ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		
+		// Store in map
+		OrbTypeISMs.Add(OrbType, ISM);
 	}
-	ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// Create bonded orb ISM
 	BondedOrbISM = NewObject<UInstancedStaticMeshComponent>(Owner, TEXT("BondedOrbRenderer_ISM"));
@@ -287,11 +314,18 @@ void UOrbRenderer::RebuildCurrPos()
 void UOrbRenderer::RebuildInstances()
 {
 	EnsureISM();
-	if (!ISM || !Driver || !Sim) return;
+	if (!Driver || !Sim) return;
 
 	const float Alpha = Driver->GetStepAlpha();
-	ISM->ClearInstances();
-	if (!OrbMesh) return;
+	
+	// Clear all ISM instances
+	for (auto& KV : OrbTypeISMs)
+	{
+		if (KV.Value)
+		{
+			KV.Value->ClearInstances();
+		}
+	}
 
 	// Build set of held item ids so we don't double render
 	TSet<int32> HeldIds;
@@ -333,8 +367,25 @@ void UOrbRenderer::RebuildInstances()
 					continue;
 			}
 
-			// Optional: small vertical offset could be added per type
-			ISM->AddInstance(FTransform(FRotator::ZeroRotator, Pos, FVector(OrbScale)));
+			// Get the orb type and find the appropriate ISM
+			EOrbType OrbType = EOrbType::BaseA; // Default
+			if (KV.Value.bIsCluster && KV.Value.Orbs.Num() > 0)
+			{
+				OrbType = (EOrbType)KV.Value.Orbs[0].Type;
+			}
+			else if (!KV.Value.bIsCluster)
+			{
+				OrbType = KV.Value.Single.Type;
+			}
+
+			// Add to the appropriate ISM
+			if (UInstancedStaticMeshComponent** ISMPtr = OrbTypeISMs.Find(OrbType))
+			{
+				if (UInstancedStaticMeshComponent* ISM = *ISMPtr)
+				{
+					ISM->AddInstance(FTransform(FRotator::ZeroRotator, Pos, FVector(OrbScale)));
+				}
+			}
 		}
 		return; // done
 	}
@@ -416,7 +467,32 @@ void UOrbRenderer::RebuildInstances()
 		FRotator RB = RotB ? *RotB : RA;
 		FRotator R = FMath::Lerp(RA, RB, Alpha);
 
-		ISM->AddInstance(FTransform(R, P, FVector(OrbScale)));
+		// Get the orb type for this item
+		EOrbType OrbType = EOrbType::BaseA; // Default
+		for (const auto& KV : Sim->ItemMap)
+		{
+			if (KV.Value.Id == Id)
+			{
+				if (KV.Value.bIsCluster && KV.Value.Orbs.Num() > 0)
+				{
+					OrbType = (EOrbType)KV.Value.Orbs[0].Type;
+				}
+				else if (!KV.Value.bIsCluster)
+				{
+					OrbType = KV.Value.Single.Type;
+				}
+				break;
+			}
+		}
+
+		// Add to the appropriate ISM
+		if (UInstancedStaticMeshComponent** ISMPtr = OrbTypeISMs.Find(OrbType))
+		{
+			if (UInstancedStaticMeshComponent* ISM = *ISMPtr)
+			{
+				ISM->AddInstance(FTransform(R, P, FVector(OrbScale)));
+			}
+		}
 	}
 }
 

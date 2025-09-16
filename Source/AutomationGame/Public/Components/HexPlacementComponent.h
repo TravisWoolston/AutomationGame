@@ -2,6 +2,7 @@
 #include "AutomationGameMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Sim/HexTypes.h"  // for FHex
+#include "Sim/OrbTypes.h"  // for EOrbType
 #include "HexPlacementComponent.generated.h"
 
 class USimWorldHex; class APlayerController; class AActor; class AOrbSimDriver; class ATestLevelDirector;
@@ -49,6 +50,10 @@ public:
 	/** Optional mesh specifically for belt preview (falls back to GenericTilePreviewMesh). */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	UStaticMesh* BeltMeshPreview = nullptr;
+
+	/** Optional material specifically for belt preview. */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	UMaterialInterface* BeltMaterialPreview = nullptr;
 
 	/** Optional mesh specifically for arm base preview (falls back to GenericTilePreviewMesh). */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
@@ -99,6 +104,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Place") void RotateCW();
 	UFUNCTION(BlueprintCallable, Category = "Place") void RotateCCW();
 	UFUNCTION(BlueprintCallable, Category = "Place") void SetPlaceKind(EPlaceKind NewKind);
+	
+	// Orb type cycling input handlers
+	UFUNCTION(BlueprintCallable, Category = "Place|Input") void CycleNextType();
+	UFUNCTION(BlueprintCallable, Category = "Place|Input") void CyclePreviousType();
+	
+	/** Cycle to next orb type for input placement */
+	UFUNCTION(BlueprintCallable, Category = "Place|Input") void CycleInputOrbType();
+	
+	/** Get the current orb type for input placement */
+	UFUNCTION(BlueprintPure, Category = "Place|Input") EOrbType GetCurrentInputOrbType() const;
+	
 	FVector HexToWorld(const FHex& H) const;
 protected:
 	virtual void BeginPlay() override;
@@ -118,6 +134,10 @@ private:
 	bool bHoverValid = false;
 	FVector LastHoverWorld = FVector::ZeroVector;
 
+	// Input orb type management
+	UPROPERTY(EditAnywhere, Category = "Input", meta = (ClampMin = "0", ClampMax = "5"))
+	int32 CurrentInputOrbTypeIndex = 0;
+
 	bool HitPlane(FVector& OutWorld) const;
 	void DoPlaceAt(const FVector& World);
 	void DoRemoveAt(const FVector& World);
@@ -127,6 +147,10 @@ private:
 	void UpdatePreviewVisual();     // position + mesh + color
 	bool CanPlaceAt(const FHex& Hex) const;
 	UStaticMesh* SelectPreviewMesh() const;
+	UStaticMesh* GetActualBeltMesh() const;
+	UMaterialInterface* GetActualBeltMaterial() const;
+	UStaticMesh* GetActualOrbMesh() const;
+	UMaterialInterface* GetActualOrbMaterial() const;
 
 
 	FORCEINLINE AActor* GetAnchor() const;
