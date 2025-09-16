@@ -288,6 +288,11 @@ private:
 
 	// Bonded orb mesh generation
 	void GenerateBondedOrbMeshes();
+	
+	// Helper to get bonded orb properties from OrbRenderer
+	UStaticMesh* GetBondedOrbMesh() const;
+	UMaterialInterface* GetBondedOrbMaterial() const;
+	float GetBondedOrbScale() const;
 
 
 public:
@@ -338,16 +343,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugLines = false;
 
-	// Bonded orb mesh properties
-	UPROPERTY(EditAnywhere, Category = "Bonded Orbs")
-	UStaticMesh* BondedOrbMesh = nullptr;
-
-	UPROPERTY(EditAnywhere, Category = "Bonded Orbs")
-	UMaterialInterface* BondedOrbMaterial = nullptr;
-
-	UPROPERTY(EditAnywhere, Category = "Bonded Orbs")
-	float BondedOrbScale = 0.15f;
-
+	// Bonded orb mesh properties (get from OrbRenderer)
 	UPROPERTY(EditAnywhere, Category = "Bonded Orbs")
 	bool bShowBondedOrbs = true;
 };

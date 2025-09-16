@@ -6,6 +6,8 @@
 #include "AGLogChannels.h"
 #include "Sim/SimWorldHex.h"
 #include "DrawDebugHelpers.h"
+#include "Rendering/OrbRenderer.h"
+#include "EngineUtils.h"
 
 static inline float NormDeg(float D) { return FMath::UnwindDegrees(D); }
 namespace { inline int32 Mod6(int32 V) { return (V % 6 + 6) % 6; } }
@@ -938,7 +940,7 @@ void ABasicArm::AttachHeldOrb()
 		}
 
 		// Generate bonded orb meshes for held cluster
-		if (bShowBondedOrbs && BondedOrbMesh && Sim)
+		if (bShowBondedOrbs && GetBondedOrbMesh() && Sim)
 		{
 			GenerateBondedOrbMeshes();
 		}
@@ -1109,10 +1111,14 @@ FVector ABasicArm::ComputeGripLocalOffset() const
 
 void ABasicArm::GenerateBondedOrbMeshes()
 {
+	UStaticMesh* BondedOrbMesh = GetBondedOrbMesh();
 	if (!bHolding || !HeldOrb.bIsCluster || !BondedOrbMesh || !Sim)
 	{
 		return;
 	}
+
+	// Get tile size from driver
+	const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
 
 	// Clear existing bonded orb meshes
 	TArray<USceneComponent*> ChildComps;
@@ -1205,6 +1211,7 @@ void ABasicArm::GenerateBondedOrbMeshes()
 			BondMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
 			BondMesh->SetStaticMesh(BondedOrbMesh);
 			
+			UMaterialInterface* BondedOrbMaterial = GetBondedOrbMaterial();
 			if (BondedOrbMaterial)
 			{
 				BondMesh->SetMaterial(0, BondedOrbMaterial);
@@ -1229,6 +1236,7 @@ void ABasicArm::GenerateBondedOrbMeshes()
 			FRotator Rotation = FQuat(RotationMatrix).Rotator();
 
 			// Scale the cylinder to fit the bond length
+			float BondedOrbScale = GetBondedOrbScale();
 			FVector Scale = FVector(BondedOrbScale, BondedOrbScale, 1.f);
 
 			// Set the transform
@@ -1237,5 +1245,50 @@ void ABasicArm::GenerateBondedOrbMeshes()
 			BondMesh->SetRelativeScale3D(Scale);
 		}
 	}
+}
+
+UStaticMesh* ABasicArm::GetBondedOrbMesh() const
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
+			{
+				return Renderer->BondedOrbMesh;
+			}
+		}
+	}
+	return nullptr;
+}
+
+UMaterialInterface* ABasicArm::GetBondedOrbMaterial() const
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
+			{
+				return Renderer->BondedOrbMaterial;
+			}
+		}
+	}
+	return nullptr;
+}
+
+float ABasicArm::GetBondedOrbScale() const
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
+			{
+				return Renderer->BondedOrbScale;
+			}
+		}
+	}
+	return 0.15f; // Default fallback
 }
 
