@@ -7,6 +7,7 @@
 #include "Sim/HexCoord.h"
 #include "Sim/OrbTypes.h"
 #include "Data/OrbMaterialManager.h"
+#include "Framework/GameManager.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
@@ -449,15 +450,39 @@ void AHexFactoryActor::RebuildOutputs()
 	
 	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found OrbMaterialManager: %s"), MaterialManager ? *MaterialManager->GetName() : TEXT("null"));
 	
-	// Get the base orb mesh from material manager
-	UStaticMesh* BaseOrbMesh = MaterialManager->GetOrbMesh();
-	if (!BaseOrbMesh)
+	// Get the tile mesh from GameManager instead of orb mesh
+	UStaticMesh* BaseTileMesh = nullptr;
+	if (UWorld* World = GetWorld())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No orb mesh found in material manager. Please assign OrbMesh in the OrbMaterialManager component."));
-		return;
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager && GameManager->TileMesh)
+			{
+				BaseTileMesh = GameManager->TileMesh;
+				UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found tile mesh from GameManager: %s"), *BaseTileMesh->GetName());
+				break;
+			}
+		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found material manager and orb mesh"));
+	if (!BaseTileMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No tile mesh found in GameManager. Please assign TileMesh in the GameManager."));
+		// Fallback to local tile mesh
+		if (TileMesh)
+		{
+			BaseTileMesh = TileMesh;
+			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Using local TileMesh as fallback"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("HexFactoryActor::RebuildOutputs: No tile mesh available"));
+			return;
+		}
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Using tile mesh for outputs"));
 	
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
@@ -465,7 +490,7 @@ void AHexFactoryActor::RebuildOutputs()
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 	
-	// Set up all output ISM components with the base orb mesh and type-specific materials
+	// Set up all output ISM components with the tile mesh and type-specific materials
 	TArray<EOrbType> AllOrbTypes = {
 		EOrbType::None,
 		EOrbType::BaseA,
@@ -480,8 +505,8 @@ void AHexFactoryActor::RebuildOutputs()
 		UInstancedStaticMeshComponent* OutputISM = GetOutputISMForType(OrbType);
 		if (OutputISM)
 		{
-			// Set the base orb mesh
-			OutputISM->SetStaticMesh(BaseOrbMesh);
+			// Set the tile mesh
+			OutputISM->SetStaticMesh(BaseTileMesh);
 			
 			// Get the material for this orb type
 			UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(OrbType);
@@ -506,7 +531,7 @@ void AHexFactoryActor::RebuildOutputs()
 			
 			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Set up ISM for type %d with mesh %s and material %s"), 
 				(int32)OrbType, 
-				BaseOrbMesh ? TEXT("valid") : TEXT("null"),
+				BaseTileMesh ? TEXT("valid") : TEXT("null"),
 				TypeMaterial ? TEXT("valid") : TEXT("null"));
 		}
 		else
