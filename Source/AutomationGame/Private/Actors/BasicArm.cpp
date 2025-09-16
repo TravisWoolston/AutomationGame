@@ -277,8 +277,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 				// Calculate the offset of the grabbed orb from the cluster center
 				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
 				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(GrabbedOrb->dQ, GrabbedOrb->dR), Tile, GridOrientation);
-				const float OffsetBaseScale = (bScaleClusterOffsetsByTile ? Tile : 1.f) * ClusterOffsetScale;
-				FVector2D OrbOffset = HexOffset * OffsetBaseScale;
+				FVector2D OrbOffset = HexOffset * ClusterOffsetScale;
 				
 				// Apply rotation based on GrabFacing to make offset relative to arm direction
 				if (HeldOrb.GrabFacing >= 0)
@@ -897,13 +896,18 @@ void ABasicArm::AttachHeldOrb()
 
 			UMaterialInterface* Mat = OrbColorToMaterial.FindRef(Sub.Color);
 			if (!Mat) Mat = DefaultOrbMaterial;
-			if (Mat) SubMesh->SetMaterial(0, Mat);
+			if (Mat) 
+			{
+				SubMesh->SetMaterial(0, Mat);
+				// Ensure the material renders as opaque (not transparent)
+				SubMesh->SetRenderCustomDepth(false);
+			}
 
 			// Calculate visual offset from hex coordinates (dQ, dR)
-			// Convert hex axial coordinates to world offset
-			const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::FlatTop);
-			const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), 1.0f, GridOrientation);
-			FVector2D Off2D = HexOffset * OffsetBaseScale;
+			// Convert hex axial coordinates to world offset using the SAME logic as simulation
+			const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
+			const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
+			FVector2D Off2D = HexOffset * ClusterOffsetScale;
 			
 			// Apply rotation based on GrabFacing to make offsets relative to arm direction
 			if (HeldOrb.GrabFacing >= 0)
@@ -932,6 +936,13 @@ void ABasicArm::AttachHeldOrb()
 
 			HeldClusterComps.Add(SubMesh);
 		}
+
+		// Generate bonded orb meshes for held cluster
+		if (bShowBondedOrbs && BondedOrbMesh && Sim)
+		{
+			GenerateBondedOrbMeshes();
+		}
+
 		//UpdateHeldClusterTransforms(DirToYaw(FacingDir) + BaseYawOffsetDeg);
 		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached cluster Id=%d (#=%d) scale(Offsets)=%.2f Tile=%.1f"),
 			*GetName(), HeldOrb.Id, HeldOrb.Orbs.Num(), OffsetBaseScale, Tile);
@@ -949,7 +960,12 @@ void ABasicArm::AttachHeldOrb()
 
 		UMaterialInterface* Mat = ResolveOrbMaterial(HeldOrb);
 		if (!Mat) Mat = DefaultOrbMaterial;
-		if (Mat) HeldOrbComp->SetMaterial(0, Mat);
+		if (Mat) 
+		{
+			HeldOrbComp->SetMaterial(0, Mat);
+			// Ensure the material renders as opaque (not transparent)
+			HeldOrbComp->SetRenderCustomDepth(false);
+		}
 		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached single orb Id=%d"), *GetName(), HeldOrb.Id);
 	}
 }
@@ -1089,5 +1105,137 @@ FVector ABasicArm::ComputeGripLocalOffset() const
 
 	// Forward = +X (assumed arm mesh forward axis)
 	return FVector(Dist, GripSideOffset, GripZOffset);
+}
+
+void ABasicArm::GenerateBondedOrbMeshes()
+{
+	if (!bHolding || !HeldOrb.bIsCluster || !BondedOrbMesh || !Sim)
+	{
+		return;
+	}
+
+	// Clear existing bonded orb meshes
+	TArray<USceneComponent*> ChildComps;
+	HeldOrbComp->GetChildrenComponents(false, ChildComps);
+	for (USceneComponent* C : ChildComps)
+	{
+		if (C && C->GetName().StartsWith(TEXT("BondedOrb_")))
+		{
+			C->DestroyComponent();
+		}
+	}
+
+	// Get the bonds for this held cluster
+	const TArray<USimWorldHex::FBond>& Bonds = Sim->GetBonds();
+	
+	// Find bonds that involve sub-orbs in this held cluster
+	for (const auto& Bond : Bonds)
+	{
+		if (!Bond.bActive) continue;
+
+		// Check if both items are in this held cluster
+		bool bItemAInCluster = false;
+		bool bItemBInCluster = false;
+		FVector PosA, PosB;
+
+		for (const FOrbData& Sub : HeldOrb.Orbs)
+		{
+			if (Sub.ItemId == Bond.ItemA)
+			{
+				bItemAInCluster = true;
+				// Calculate position using the same logic as sub-orb positioning
+				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
+				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
+				FVector2D Off2D = HexOffset * ClusterOffsetScale;
+				
+				// Apply rotation based on GrabFacing
+				if (HeldOrb.GrabFacing >= 0)
+				{
+					const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
+					const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
+					const float CosA = FMath::Cos(YawRad);
+					const float SinA = FMath::Sin(YawRad);
+					const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
+					const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
+					Off2D = FVector2D(RotX, RotY);
+				}
+				
+				if (bInvertClusterVisualFacing)
+				{
+					Off2D *= -1.f;
+				}
+				
+				PosA = FVector(Off2D.X, Off2D.Y, 0.f);
+			}
+			
+			if (Sub.ItemId == Bond.ItemB)
+			{
+				bItemBInCluster = true;
+				// Calculate position using the same logic as sub-orb positioning
+				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
+				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
+				FVector2D Off2D = HexOffset * ClusterOffsetScale;
+				
+				// Apply rotation based on GrabFacing
+				if (HeldOrb.GrabFacing >= 0)
+				{
+					const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
+					const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
+					const float CosA = FMath::Cos(YawRad);
+					const float SinA = FMath::Sin(YawRad);
+					const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
+					const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
+					Off2D = FVector2D(RotX, RotY);
+				}
+				
+				if (bInvertClusterVisualFacing)
+				{
+					Off2D *= -1.f;
+				}
+				
+				PosB = FVector(Off2D.X, Off2D.Y, 0.f);
+			}
+		}
+
+		// If both items are in this cluster, create a bonded orb mesh
+		if (bItemAInCluster && bItemBInCluster)
+		{
+			UStaticMeshComponent* BondMesh = NewObject<UStaticMeshComponent>(this, *FString::Printf(TEXT("BondedOrb_%d_%d"), Bond.ItemA, Bond.ItemB));
+			BondMesh->RegisterComponent();
+			BondMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
+			BondMesh->SetStaticMesh(BondedOrbMesh);
+			
+			if (BondedOrbMaterial)
+			{
+				BondMesh->SetMaterial(0, BondedOrbMaterial);
+			}
+
+			// Calculate midpoint and direction
+			FVector Midpoint = (PosA + PosB) * 0.5f;
+			FVector Direction = (PosB - PosA).GetSafeNormal();
+			float Distance = FVector::Dist(PosA, PosB);
+
+			// For a cylinder that's standing up by default, rotate it to align with the bond direction
+			FVector Up = Direction;
+			FVector Right = FVector::CrossProduct(Up, FVector::UpVector).GetSafeNormal();
+			if (Right.IsNearlyZero())
+			{
+				Right = FVector::RightVector;
+			}
+			FVector Forward = FVector::CrossProduct(Right, Up).GetSafeNormal();
+			
+			// Create rotation matrix from the three axes
+			FMatrix RotationMatrix = FMatrix(Forward, Right, Up, FVector::ZeroVector);
+			FRotator Rotation = FQuat(RotationMatrix).Rotator();
+
+			// Scale the cylinder to fit the bond length
+			FVector Scale = FVector(BondedOrbScale, BondedOrbScale, 1.f);
+
+			// Set the transform
+			BondMesh->SetRelativeLocation(Midpoint);
+			BondMesh->SetRelativeRotation(Rotation);
+			BondMesh->SetRelativeScale3D(Scale);
+		}
+	}
 }
 

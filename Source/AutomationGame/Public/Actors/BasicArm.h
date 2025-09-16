@@ -286,6 +286,9 @@ private:
 	UStaticMesh* ResolveOrbMesh(const FItem& Item) const;      // NEW
 	UMaterialInterface* ResolveOrbMaterial(const FItem& Item) const; // NEW
 
+	// Bonded orb mesh generation
+	void GenerateBondedOrbMeshes();
+
 
 public:
 	// If > 0 overrides ReachTiles * TileSize for grip distance (UU)
@@ -334,4 +337,17 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugLines = false;
+
+	// Bonded orb mesh properties
+	UPROPERTY(EditAnywhere, Category = "Bonded Orbs")
+	UStaticMesh* BondedOrbMesh = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Bonded Orbs")
+	UMaterialInterface* BondedOrbMaterial = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Bonded Orbs")
+	float BondedOrbScale = 0.15f;
+
+	UPROPERTY(EditAnywhere, Category = "Bonded Orbs")
+	bool bShowBondedOrbs = true;
 };

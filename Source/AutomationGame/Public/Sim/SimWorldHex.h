@@ -65,6 +65,17 @@ public:
 	bool TryTakeItem(const FHex& H, FItem& Out);
 
 public:
+	/** Bond structure for connections between items */
+	struct FBond
+	{
+		int32 ItemA = 0;
+		int32 ItemB = 0;
+		FHex   Root;
+		int8   dQ = 0;
+		int8   dR = 0;
+		bool   bActive = true;
+	};
+
 	FVector HexCenterToWorld(const FHex& H) const;
 	// ----- Visual interpolation (belt smoothing) -----
 	void SetFrameAlpha(float InAlpha) { FrameAlpha = FMath::Clamp(InAlpha, 0.f, 1.f); }
@@ -86,6 +97,9 @@ public:
 	/** Create test bonds for debugging (temporary) */
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void CreateTestBonds();
+
+	/** Get the bonds array for rendering purposes */
+	const TArray<FBond>& GetBonds() const { return Bonds; }
 
 private:
 	float FrameAlpha = 0.f;
@@ -125,16 +139,6 @@ private:
 	float BeltBlockedClamp = 0.98f;
 
 private:
-	struct FBond
-	{
-		int32 ItemA = 0;
-		int32 ItemB = 0;
-		FHex   Root;
-		int8   dQ = 0;
-		int8   dR = 0;
-		bool   bActive = true;
-	};
-
 	TArray<FBond> Bonds;
 
 	// Multi-bond support: each item can appear in many bonds.

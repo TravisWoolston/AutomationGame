@@ -42,6 +42,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Visual") UMaterialInterface* OrbMaterial = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual") float OrbScale = 0.30f;
 
+	/** Bond connection visuals */
+	UPROPERTY(EditAnywhere, Category = "Bonds") UStaticMesh* BondedOrbMesh = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Bonds") UMaterialInterface* BondedOrbMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Bonds") float BondedOrbScale = 0.15f;
+
 	/** If true use sim's belt interpolation (BeltProgress + FrameAlpha) instead of prev/curr hex lerp. */
 	UPROPERTY(EditAnywhere, Category = "Visual")
 	bool bUseSimVisualInterpolation = true;
@@ -50,9 +55,11 @@ private:
 	void EnsureISM();
 	void RebuildCurrPos();
 	void RebuildInstances();
+	void RebuildBondedOrbs();
 	AActor* GetAnchor() const;
 
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* ISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondedOrbISM = nullptr;
 	UPROPERTY(Transient) AOrbSimDriver* Driver = nullptr;
 	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
 

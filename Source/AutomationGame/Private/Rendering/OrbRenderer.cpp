@@ -64,6 +64,10 @@ UOrbRenderer::UOrbRenderer()
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMat(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	if (!OrbMesh && SphereMesh.Succeeded()) OrbMesh = SphereMesh.Object;
 	if (!OrbMaterial && BasicMat.Succeeded()) OrbMaterial = BasicMat.Object;
+	
+	// Initialize bonded orb mesh to a small sphere by default
+	if (!BondedOrbMesh && SphereMesh.Succeeded()) BondedOrbMesh = SphereMesh.Object;
+	if (!BondedOrbMaterial && BasicMat.Succeeded()) BondedOrbMaterial = BasicMat.Object;
 }
 
 void UOrbRenderer::OnRegister()
@@ -97,6 +101,7 @@ void UOrbRenderer::EnsureISM()
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
 
+	// Create main orb ISM
 	ISM = NewObject<UInstancedStaticMeshComponent>(Owner, TEXT("OrbRenderer_ISM"));
 	ISM->RegisterComponent();
 
@@ -106,8 +111,31 @@ void UOrbRenderer::EnsureISM()
 	}
 
 	if (OrbMesh) ISM->SetStaticMesh(OrbMesh);
-	if (OrbMaterial) ISM->SetMaterial(0, OrbMaterial);
+	if (OrbMaterial) 
+	{
+		ISM->SetMaterial(0, OrbMaterial);
+		// Ensure the material renders as opaque (not transparent)
+		ISM->SetRenderCustomDepth(false);
+	}
 	ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Create bonded orb ISM
+	BondedOrbISM = NewObject<UInstancedStaticMeshComponent>(Owner, TEXT("BondedOrbRenderer_ISM"));
+	BondedOrbISM->RegisterComponent();
+
+	if (Owner->GetRootComponent())
+	{
+		BondedOrbISM->AttachToComponent(Owner->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+	}
+
+	if (BondedOrbMesh) BondedOrbISM->SetStaticMesh(BondedOrbMesh);
+	if (BondedOrbMaterial) 
+	{
+		BondedOrbISM->SetMaterial(0, BondedOrbMaterial);
+		// Ensure the material renders as opaque (not transparent)
+		BondedOrbISM->SetRenderCustomDepth(false);
+	}
+	BondedOrbISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 AActor* UOrbRenderer::GetAnchor() const
@@ -170,6 +198,7 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 
 	PrevAlpha = Alpha;
 	RebuildInstances();
+	RebuildBondedOrbs();
 }
 
 
@@ -395,6 +424,87 @@ float UOrbRenderer::DirToYaw(uint8 Dir) const
 {
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
 	return FMath::UnwindDegrees(GridYaw + 60.f * float(Dir % 6));
+}
+
+void UOrbRenderer::RebuildBondedOrbs()
+{
+	// Bonded orb rendering is now handled by BasicArm for held clusters
+	// This function is kept for potential future use with board-only bonds
+	EnsureISM();
+	if (!BondedOrbISM || !Driver || !Sim) return;
+
+	BondedOrbISM->ClearInstances();
+	if (!BondedOrbMesh) return;
+
+	// For now, only render bonds between board items (not held items)
+	// Held cluster bonds are handled by BasicArm
+	const float Alpha = Driver->GetStepAlpha();
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
+	const float Yaw = Driver ? Driver->GetGridYaw() : 0.f;
+	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+
+	// Render bonded orb connections for board items only
+	for (const auto& Bond : Sim->GetBonds())
+	{
+		if (!Bond.bActive) continue;
+
+		// Get positions of both bonded items
+		FVector PosA, PosB;
+		bool bFoundA = false, bFoundB = false;
+
+		// Helper function to get interpolated position for board items only
+		auto GetInterpolatedPosition = [&](int32 ItemId, FVector& OutPos) -> bool
+		{
+			// Only check position maps for board items
+			const FVector* CurrPosItem = CurrPos.Find(ItemId);
+			const FVector* PrevPosItem = PrevPos.Find(ItemId);
+			
+			if (CurrPosItem)
+			{
+				const FVector From = PrevPosItem ? *PrevPosItem : *CurrPosItem;
+				OutPos = FMath::Lerp(From, *CurrPosItem, Alpha);
+				return true;
+			}
+			return false;
+		};
+
+		// Get positions for both bonded items
+		bFoundA = GetInterpolatedPosition(Bond.ItemA, PosA);
+		bFoundB = GetInterpolatedPosition(Bond.ItemB, PosB);
+
+		// If we found both positions, create a connection mesh
+		if (bFoundA && bFoundB)
+		{
+			// Calculate midpoint and direction
+			FVector Midpoint = (PosA + PosB) * 0.5f;
+			FVector Direction = (PosB - PosA).GetSafeNormal();
+			float Distance = FVector::Dist(PosA, PosB);
+
+			// For a cylinder that's standing up by default, we need to rotate it to align with the bond direction
+			// The cylinder's default "up" axis is Z, so we need to rotate it so its Z-axis aligns with the bond direction
+			FVector Up = Direction; // The bond direction becomes the new "up" for the cylinder
+			FVector Right = FVector::CrossProduct(Up, FVector::UpVector).GetSafeNormal();
+			if (Right.IsNearlyZero())
+			{
+				// If the bond is vertical, use a different approach
+				Right = FVector::RightVector;
+			}
+			FVector Forward = FVector::CrossProduct(Right, Up).GetSafeNormal();
+			
+			// Create rotation matrix from the three axes
+			FMatrix RotationMatrix = FMatrix(Forward, Right, Up, FVector::ZeroVector);
+			FRotator Rotation = FQuat(RotationMatrix).Rotator();
+
+			// Scale the cylinder to fit the bond length
+			// The cylinder's length is along its Z-axis, so we scale Z by the distance
+			FVector Scale = FVector(BondedOrbScale, BondedOrbScale, 1.f);
+
+			// Add the bonded orb instance
+			BondedOrbISM->AddInstance(FTransform(Rotation, Midpoint, Scale));
+		}
+	}
 }
 
 
