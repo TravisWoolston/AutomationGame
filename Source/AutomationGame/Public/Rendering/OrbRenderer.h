@@ -83,4 +83,7 @@ protected:
 		float Tile,
 		float GridYaw,
 		EHexOrientation Ori) const;
+
+	// Render animated orbs for input/output effects
+	void RenderAnimatedOrbs();
 };

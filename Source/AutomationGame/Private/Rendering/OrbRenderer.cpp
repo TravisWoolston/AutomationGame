@@ -224,6 +224,10 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 	}
 
 	PrevAlpha = Alpha;
+	
+	// Update animated orbs
+	Sim->UpdateAnimatedOrbs(DeltaTime);
+	
 	RebuildInstances();
 	RebuildBondedOrbs();
 }
@@ -387,6 +391,10 @@ void UOrbRenderer::RebuildInstances()
 				}
 			}
 		}
+		
+		// Render animated orbs (inputs ascending, outputs descending)
+		RenderAnimatedOrbs();
+		
 		return; // done
 	}
 
@@ -583,7 +591,66 @@ void UOrbRenderer::RebuildBondedOrbs()
 	}
 }
 
-
-
-
+void UOrbRenderer::RenderAnimatedOrbs()
+{
+	if (!Sim) return;
+	
+	const TArray<USimWorldHex::FAnimatedOrb>& AnimatedOrbs = Sim->GetAnimatedOrbs();
+	if (AnimatedOrbs.Num() == 0) return;
+	
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
+	const float Yaw = Driver ? Driver->GetGridYaw() : 0.f;
+	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	
+	for (const USimWorldHex::FAnimatedOrb& AnimatedOrb : AnimatedOrbs)
+	{
+		if (!AnimatedOrb.bActive) continue;
+		
+		// Calculate base position at the hex center
+		const FHexAxial A(AnimatedOrb.Hex.Q, AnimatedOrb.Hex.R);
+		const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
+		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
+		const FVector BasePos = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		
+		// Calculate animation progress (0.0 to 1.0)
+		const float Progress = FMath::Clamp(AnimatedOrb.AnimationTime / AnimatedOrb.AnimationDuration, 0.f, 1.f);
+		
+		// Calculate Z offset based on animation type and progress
+		float ZOffset = 0.f;
+		if (AnimatedOrb.bIsInput)
+		{
+			// Input: start below ground, ascend to tile level
+			ZOffset = FMath::Lerp(-50.f, 0.f, Progress);
+		}
+		else
+		{
+			// Output: start at tile level, descend below ground
+			ZOffset = FMath::Lerp(0.f, -50.f, Progress);
+		}
+		
+		const FVector FinalPos = BasePos + FVector(0.f, 0.f, ZOffset);
+		
+		// Get the orb type
+		EOrbType OrbType = EOrbType::BaseA; // Default
+		if (AnimatedOrb.Item.bIsCluster && AnimatedOrb.Item.Orbs.Num() > 0)
+		{
+			OrbType = (EOrbType)AnimatedOrb.Item.Orbs[0].Type;
+		}
+		else if (!AnimatedOrb.Item.bIsCluster)
+		{
+			OrbType = AnimatedOrb.Item.Single.Type;
+		}
+		
+		// Add to the appropriate ISM
+		if (UInstancedStaticMeshComponent** ISMPtr = OrbTypeISMs.Find(OrbType))
+		{
+			if (UInstancedStaticMeshComponent* ISM = *ISMPtr)
+			{
+				ISM->AddInstance(FTransform(FRotator::ZeroRotator, FinalPos, FVector(OrbScale)));
+			}
+		}
+	}
+}
 

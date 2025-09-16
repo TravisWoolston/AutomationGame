@@ -101,7 +101,26 @@ public:
 	/** Get the bonds array for rendering purposes */
 	const TArray<FBond>& GetBonds() const { return Bonds; }
 
+	/** Animated orb structure for input/output animations */
+	struct FAnimatedOrb
+	{
+		FItem Item;
+		FHex Hex;
+		float AnimationTime = 0.f;
+		float AnimationDuration = 1.0f; // seconds
+		bool bIsInput = false; // true for input (ascending), false for output (descending)
+		bool bActive = true;
+	};
+
+	/** Get animated orbs for rendering */
+	const TArray<FAnimatedOrb>& GetAnimatedOrbs() const { return AnimatedOrbs; }
+
+	/** Update animated orbs (call from renderer) */
+	void UpdateAnimatedOrbs(float DeltaTime);
+
 private:
+	/** Helper function to check if an item matches an output's expected orb type */
+	bool DoesItemMatchOutputType(const FItem& Item, const FTile& OutputTile) const;
 	float FrameAlpha = 0.f;
 	int32 StepCounter = 0;
 
@@ -119,6 +138,12 @@ private:
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;
+
+	// Animated orbs for input/output effects
+	TArray<FAnimatedOrb> AnimatedOrbs;
+
+	// Hexes where orbs were newly moved to an output tile this tick
+	TSet<FHex> OrbsNewlyMovedToOutput;
 
 	// Item Id generator
 	int32 NextItemId = 1;

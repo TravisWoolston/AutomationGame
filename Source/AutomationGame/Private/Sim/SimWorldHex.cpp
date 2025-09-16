@@ -231,6 +231,7 @@ void USimWorldHex::StepSim()
 	++StepCounter;
 	SkipInputThisFrame.Reset();
 	SkipOutputThisFrame.Reset();
+	OrbsNewlyMovedToOutput.Reset();
 
 	SpawnInputs();          // pass 1 (empty at start)
 	StepArms();
@@ -1598,6 +1599,8 @@ void USimWorldHex::StepBelts()
 					BeltProgress.Remove(M.ItemId);
 				if (TD->Kind == ETileKind::Input)
 					SkipInputThisFrame.Add(M.To);
+				if (TD->Kind == ETileKind::Output)
+					OrbsNewlyMovedToOutput.Add(M.To);
 			}
 			else
 			{
@@ -1625,6 +1628,8 @@ void USimWorldHex::StepBelts()
 					BeltProgress.Remove(M.ItemId);
 				if (TD->Kind == ETileKind::Input)
 					SkipInputThisFrame.Add(M.To);
+				if (TD->Kind == ETileKind::Output)
+					OrbsNewlyMovedToOutput.Add(M.To);
 			}
 			else
 			{
@@ -1839,6 +1844,13 @@ void USimWorldHex::StepBelts()
 				ItemMap.Add(M.To, *Found);
 				OrbAt.Add(M.To, KindFromItem(*Found));
 
+				// Check if moved to output tile
+				if (const FTile* TD = TileMap.Find(M.To))
+				{
+					if (TD->Kind == ETileKind::Output)
+						OrbsNewlyMovedToOutput.Add(M.To);
+				}
+
 				if (float* P = BeltProgress.Find(M.ItemId))
 				{
 					*P -= 1.f;
@@ -1910,7 +1922,18 @@ void USimWorldHex::SpawnInputs()
 		FOrb O; O.Type = (EOrbType)T.Arg;
 		FItem NewItem = FItem::MakeSingle(O);
 		NewItem.Id = NextItemId++;
-		TryPutItem(H, NewItem);
+
+		// Create animated orb for input (ascending)
+		FAnimatedOrb AnimatedOrb;
+		AnimatedOrb.Item = NewItem;
+		AnimatedOrb.Hex = H;
+		AnimatedOrb.AnimationTime = 0.f;
+		AnimatedOrb.AnimationDuration = 0.5f; // 0.5 seconds to ascend
+		AnimatedOrb.bIsInput = true;
+		AnimatedOrb.bActive = true;
+		AnimatedOrbs.Add(AnimatedOrb);
+		
+		// Don't immediately place the item - it will be placed when animation completes
 	}
 }
 
@@ -1969,9 +1992,44 @@ void USimWorldHex::SpawnInputsAfterBelts()
 		FOrb O; O.Type = (EOrbType)T.Arg;
 		FItem NewItem = FItem::MakeSingle(O);
 		NewItem.Id = NextItemId++;
-		TryPutItem(H, NewItem);
+
+		// Create animated orb for input (ascending)
+		FAnimatedOrb AnimatedOrb;
+		AnimatedOrb.Item = NewItem;
+		AnimatedOrb.Hex = H;
+		AnimatedOrb.AnimationTime = 0.f;
+		AnimatedOrb.AnimationDuration = 0.5f; // 0.5 seconds to ascend
+		AnimatedOrb.bIsInput = true;
+		AnimatedOrb.bActive = true;
+		AnimatedOrbs.Add(AnimatedOrb);
+		
+		// Don't immediately place the item - it will be placed when animation completes
 		// Mark so a second (unexpected) pass this frame wouldn't double spawn
 		SkipInputThisFrame.Add(H);
+	}
+}
+
+// Helper function to check if an item matches an output's expected orb type
+bool USimWorldHex::DoesItemMatchOutputType(const FItem& Item, const FTile& OutputTile) const
+{
+	EOrbType ExpectedType = (EOrbType)OutputTile.Arg;
+	
+	if (Item.bIsCluster)
+	{
+		// For clusters, check if any sub-orb matches the expected type
+		for (const FOrbData& Sub : Item.Orbs)
+		{
+			if ((EOrbType)Sub.Type == ExpectedType)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	else
+	{
+		// For single orbs, check the main orb type
+		return Item.Single.Type == ExpectedType;
 	}
 }
 
@@ -1984,10 +2042,35 @@ void USimWorldHex::ProcessOutputs()
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Output) continue;
 		if (SkipOutputThisFrame.Contains(H)) continue;
+		
+		// Skip orbs that were just moved to this output tile this tick
+		if (OrbsNewlyMovedToOutput.Contains(H)) continue;
 
-		FItem Temp;
-		if (TryTakeItem(H, Temp))
+		// Check if there's an item on this output tile
+		const FItem* ItemPtr = ItemMap.Find(H);
+		if (!ItemPtr) continue;
+
+		// Check if the orb type matches the output's expected type
+		if (DoesItemMatchOutputType(*ItemPtr, T))
+		{
+			// Type matches - remove from simulation and create animated orb
+			FItem Temp = *ItemPtr;
+			ItemMap.Remove(H);
+			OrbAt.Remove(H);
+			
+			// Create animated orb for output (descending)
+			FAnimatedOrb AnimatedOrb;
+			AnimatedOrb.Item = Temp;
+			AnimatedOrb.Hex = H;
+			AnimatedOrb.AnimationTime = 0.f;
+			AnimatedOrb.AnimationDuration = 1.0f; // 1 second to descend
+			AnimatedOrb.bIsInput = false;
+			AnimatedOrb.bActive = true;
+			AnimatedOrbs.Add(AnimatedOrb);
+			
 			++OutputCount;
+		}
+		// If type doesn't match, leave the orb on the tile (no action needed)
 	}
 }
 
@@ -2807,5 +2890,31 @@ void USimWorldHex::CreateTestBonds()
 	
 	UE_LOG(LogTemp, Log, TEXT("Created test bonds: %d-%d and %d-%d"), 
 		Bond1.ItemA, Bond1.ItemB, Bond2.ItemA, Bond2.ItemB);
+}
+
+void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
+{
+	// Update animation time for all active animated orbs
+	for (int32 i = AnimatedOrbs.Num() - 1; i >= 0; --i)
+	{
+		FAnimatedOrb& AnimatedOrb = AnimatedOrbs[i];
+		if (!AnimatedOrb.bActive) continue;
+		
+		AnimatedOrb.AnimationTime += DeltaTime;
+		
+		// Check if animation is complete
+		if (AnimatedOrb.AnimationTime >= AnimatedOrb.AnimationDuration)
+		{
+			if (AnimatedOrb.bIsInput)
+			{
+				// Input animation complete - place the item on the tile
+				TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item);
+			}
+			// Output animation complete - orb disappears (no action needed)
+			
+			// Remove the animated orb
+			AnimatedOrbs.RemoveAt(i);
+		}
+	}
 }
 
