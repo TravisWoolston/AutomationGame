@@ -3,6 +3,8 @@
 #include "GameFramework/Actor.h"
 #include "Sim/HexCoord.h"
 #include "Sim/HexTypes.h"
+#include "Sim/OrbTypes.h"
+#include "Data/OrbMaterialManager.h"
 #include "HexFactoryActor.generated.h"
 
 class UInstancedStaticMeshComponent;
@@ -37,6 +39,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* OutputTileMaterial = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* BeltTileMaterial = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Tiles") UMaterialInterface* BondTileMaterial = nullptr;
+	
 
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UStaticMesh* BeltMesh = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UMaterialInterface* BeltMaterial = nullptr;
@@ -64,6 +67,14 @@ protected:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondTileISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondISM = nullptr;
+	
+	// Type-specific output ISM components
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputNoneISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputBaseAISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputBaseBISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputBaseCISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputMetalAISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputCatalystXISM = nullptr;
 
 	// References
 	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
@@ -79,8 +90,12 @@ protected:
 	void RebuildTiles();
 	void RebuildBelts();
 	void RebuildBonds();          // NEW
+	void RebuildOutputs();        // NEW: Type-specific output rendering
 	void DrawBeltArrow(const FVector& Center, float TileRadiusUU, float YawDeg);
 	void DrawBondArrow(const FVector& A, const FVector& B);
+	
+	// Helper functions for output type management
+	UInstancedStaticMeshComponent* GetOutputISMForType(EOrbType OrbType);
 
 private:
 	FVector HexToWorld(const FHex& H) const;

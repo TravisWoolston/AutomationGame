@@ -45,7 +45,7 @@ private:
 	void RotCW() { if (Placer) Placer->RotateCW(); }
 	void RotCCW() { if (Placer) Placer->RotateCCW(); }
 
-	// Input type cycling
+	// Type cycling (works for both Input and Output based on current placement mode)
 	void CycleInputTypeNext() { if (Placer) Placer->CycleNextType(); }
 	void CycleInputTypePrevious() { if (Placer) Placer->CyclePreviousType(); }
 	

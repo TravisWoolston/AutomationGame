@@ -62,7 +62,7 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	IC->BindAction("Kind4", IE_Pressed, this, &AHexTopDownPawn::SetInputMode4);
 	IC->BindAction("Kind5", IE_Pressed, this, &AHexTopDownPawn::SetInputMode5);
 
-	// Input type cycling (for when in Input mode)
+	// Type cycling (works for both Input and Output based on current placement mode)
 	IC->BindAction("CycleNextType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypeNext);
 	IC->BindAction("CyclePreviousType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypePrevious);
 	

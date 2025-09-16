@@ -5,6 +5,8 @@
 #include "Actors/HexBoardActor.h"
 #include "Sim/SimWorldHex.h"
 #include "Sim/HexCoord.h"
+#include "Sim/OrbTypes.h"
+#include "Data/OrbMaterialManager.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
@@ -43,6 +45,31 @@ AHexFactoryActor::AHexFactoryActor()
 	BondISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BondISM"));
 	BondISM->SetupAttachment(Root);
 	BondISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Create type-specific output ISM components
+	OutputNoneISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputNoneISM"));
+	OutputNoneISM->SetupAttachment(Root);
+	OutputNoneISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	OutputBaseAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputBaseAISM"));
+	OutputBaseAISM->SetupAttachment(Root);
+	OutputBaseAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	OutputBaseBISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputBaseBISM"));
+	OutputBaseBISM->SetupAttachment(Root);
+	OutputBaseBISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	OutputBaseCISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputBaseCISM"));
+	OutputBaseCISM->SetupAttachment(Root);
+	OutputBaseCISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	OutputMetalAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputMetalAISM"));
+	OutputMetalAISM->SetupAttachment(Root);
+	OutputMetalAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	OutputCatalystXISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputCatalystXISM"));
+	OutputCatalystXISM->SetupAttachment(Root);
+	OutputCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 void AHexFactoryActor::EnsureComponents()
@@ -71,6 +98,14 @@ void AHexFactoryActor::EnsureComponents()
 	EnsureISM(BondTileISM, TEXT("BondTileISM_Runtime"));
 	EnsureISM(BeltISM, TEXT("BeltISM_Runtime"));
 	EnsureISM(BondISM, TEXT("BondISM_Runtime"));
+	
+	// Ensure type-specific output ISM components
+	EnsureISM(OutputNoneISM, TEXT("OutputNoneISM_Runtime"));
+	EnsureISM(OutputBaseAISM, TEXT("OutputBaseAISM_Runtime"));
+	EnsureISM(OutputBaseBISM, TEXT("OutputBaseBISM_Runtime"));
+	EnsureISM(OutputBaseCISM, TEXT("OutputBaseCISM_Runtime"));
+	EnsureISM(OutputMetalAISM, TEXT("OutputMetalAISM_Runtime"));
+	EnsureISM(OutputCatalystXISM, TEXT("OutputCatalystXISM_Runtime"));
 }
 
 AActor* AHexFactoryActor::GetAnchor() const
@@ -203,6 +238,7 @@ void AHexFactoryActor::RebuildInternal()
 	RebuildTiles();
 	RebuildBelts();
 	RebuildBonds();   // NEW
+	RebuildOutputs(); // NEW: Type-specific output rendering
 	
 	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildInternal: Rebuild complete"));
 }
@@ -251,7 +287,12 @@ void AHexFactoryActor::RebuildTiles()
 	{
 		const FHex& H = KV.Key;
 		const FTile& T = KV.Value;
-		AddTileInstance(H, T.Kind);
+		
+		// Skip output tiles - they're handled by RebuildOutputs()
+		if (T.Kind != ETileKind::Output)
+		{
+			AddTileInstance(H, T.Kind);
+		}
 	}
 
 	// Also render empty tiles from the board if it exists
@@ -389,3 +430,136 @@ void AHexFactoryActor::RebuildBonds()
 	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildBonds: Found %d bonds, BondMesh=%s, BondISM=%s"), 
 		BondCount, BondMesh ? TEXT("exists") : TEXT("null"), BondISM ? TEXT("exists") : TEXT("null"));
 }
+
+void AHexFactoryActor::RebuildOutputs()
+{
+	if (!Sim) 
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: Sim is null"));
+		return;
+	}
+	
+	// Get material manager
+	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
+	if (!MaterialManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No OrbMaterialManager found in world. Please add an OrbMaterialManagerActor to the level."));
+		return;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found OrbMaterialManager: %s"), MaterialManager ? *MaterialManager->GetName() : TEXT("null"));
+	
+	// Get the base orb mesh from material manager
+	UStaticMesh* BaseOrbMesh = MaterialManager->GetOrbMesh();
+	if (!BaseOrbMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No orb mesh found in material manager. Please assign OrbMesh in the OrbMaterialManager component."));
+		return;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found material manager and orb mesh"));
+	
+	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
+	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	
+	// Set up all output ISM components with the base orb mesh and type-specific materials
+	TArray<EOrbType> AllOrbTypes = {
+		EOrbType::None,
+		EOrbType::BaseA,
+		EOrbType::BaseB,
+		EOrbType::BaseC,
+		EOrbType::MetalA,
+		EOrbType::CatalystX
+	};
+	
+	for (EOrbType OrbType : AllOrbTypes)
+	{
+		UInstancedStaticMeshComponent* OutputISM = GetOutputISMForType(OrbType);
+		if (OutputISM)
+		{
+			// Set the base orb mesh
+			OutputISM->SetStaticMesh(BaseOrbMesh);
+			
+			// Get the material for this orb type
+			UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(OrbType);
+			if (TypeMaterial)
+			{
+				// Create a dynamic material instance for half opacity
+				UMaterialInstanceDynamic* OutputMID = UMaterialInstanceDynamic::Create(TypeMaterial, this);
+				if (OutputMID)
+				{
+					// Set half opacity (0.5 alpha)
+					OutputMID->SetScalarParameterValue(FName("Opacity"), 0.5f);
+					OutputISM->SetMaterial(0, OutputMID);
+				}
+				else
+				{
+					OutputISM->SetMaterial(0, TypeMaterial);
+				}
+			}
+			
+			// Clear instances for this type
+			OutputISM->ClearInstances();
+			
+			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Set up ISM for type %d with mesh %s and material %s"), 
+				(int32)OrbType, 
+				BaseOrbMesh ? TEXT("valid") : TEXT("null"),
+				TypeMaterial ? TEXT("valid") : TEXT("null"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No ISM found for type %d"), (int32)OrbType);
+		}
+	}
+	
+	int32 OutputCount = 0;
+
+	for (const auto& KV : Sim->TileMap)
+	{
+		const FHex& H = KV.Key;
+		const FTile& T = KV.Value;
+		if (T.Kind != ETileKind::Output) continue;
+
+		OutputCount++;
+		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
+		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		const FTransform Transform(FRotator::ZeroRotator, Loc, FVector(1.f));
+
+		// Get the appropriate ISM for this output type
+		EOrbType OutputType = (EOrbType)T.Arg;
+		UInstancedStaticMeshComponent* OutputISM = GetOutputISMForType(OutputType);
+		
+		if (OutputISM)
+		{
+			OutputISM->AddInstance(Transform);
+			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Added output instance at (%d,%d) with type %d"), 
+				H.Q, H.R, (int32)OutputType);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No ISM found for output type %d at (%d,%d)"), 
+				(int32)OutputType, H.Q, H.R);
+		}
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found %d outputs"), OutputCount);
+}
+
+UInstancedStaticMeshComponent* AHexFactoryActor::GetOutputISMForType(EOrbType OrbType)
+{
+	switch (OrbType)
+	{
+	case EOrbType::None: return OutputNoneISM;
+	case EOrbType::BaseA: return OutputBaseAISM;
+	case EOrbType::BaseB: return OutputBaseBISM;
+	case EOrbType::BaseC: return OutputBaseCISM;
+	case EOrbType::MetalA: return OutputMetalAISM;
+	case EOrbType::CatalystX: return OutputCatalystXISM;
+	default: return OutputBaseAISM; // Fallback
+	}
+}
+

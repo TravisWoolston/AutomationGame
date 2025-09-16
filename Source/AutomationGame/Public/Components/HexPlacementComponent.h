@@ -105,15 +105,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Place") void RotateCCW();
 	UFUNCTION(BlueprintCallable, Category = "Place") void SetPlaceKind(EPlaceKind NewKind);
 	
-	// Orb type cycling input handlers
-	UFUNCTION(BlueprintCallable, Category = "Place|Input") void CycleNextType();
-	UFUNCTION(BlueprintCallable, Category = "Place|Input") void CyclePreviousType();
+	// Type cycling (works for both Input and Output based on current placement mode)
+	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CycleNextType();
+	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CyclePreviousType();
 	
 	/** Cycle to next orb type for input placement */
 	UFUNCTION(BlueprintCallable, Category = "Place|Input") void CycleInputOrbType();
 	
 	/** Get the current orb type for input placement */
 	UFUNCTION(BlueprintPure, Category = "Place|Input") EOrbType GetCurrentInputOrbType() const;
+	
+	/** Get the current orb type for output placement */
+	UFUNCTION(BlueprintPure, Category = "Place|Output") EOrbType GetCurrentOutputOrbType() const;
 	
 	FVector HexToWorld(const FHex& H) const;
 protected:
@@ -137,6 +140,10 @@ private:
 	// Input orb type management
 	UPROPERTY(EditAnywhere, Category = "Input", meta = (ClampMin = "0", ClampMax = "5"))
 	int32 CurrentInputOrbTypeIndex = 0;
+	
+	// Output orb type management
+	UPROPERTY(EditAnywhere, Category = "Output", meta = (ClampMin = "0", ClampMax = "5"))
+	int32 CurrentOutputOrbTypeIndex = 0;
 
 	bool HitPlane(FVector& OutWorld) const;
 	void DoPlaceAt(const FVector& World);
@@ -151,6 +158,9 @@ private:
 	UMaterialInterface* GetActualBeltMaterial() const;
 	UStaticMesh* GetActualOrbMesh() const;
 	UMaterialInterface* GetActualOrbMaterial() const;
+	
+	UStaticMesh* GetActualOutputOrbMesh() const;
+	UMaterialInterface* GetActualOutputOrbMaterial() const;
 
 
 	FORCEINLINE AActor* GetAnchor() const;

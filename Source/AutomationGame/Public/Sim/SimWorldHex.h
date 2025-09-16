@@ -154,6 +154,7 @@ private:
 	
 	// Opus Magnum style cluster management
 	void AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex);
+	void AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex);
 	
 	// Debug visualization
 	void DrawBondDebugLines();

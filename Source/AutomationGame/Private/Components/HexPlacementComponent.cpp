@@ -143,7 +143,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	switch (PlaceKind)
 	{
 	case EPlaceKind::Input:  T = FTile{ ETileKind::Input,  (uint8)GetCurrentInputOrbType() }; break;
-	case EPlaceKind::Output: T = FTile{ ETileKind::Output, 0 }; break;
+	case EPlaceKind::Output: T = FTile{ ETileKind::Output, (uint8)GetCurrentOutputOrbType() }; break;
 	case EPlaceKind::Belt:   T = FTile{ ETileKind::Belt,   (uint8)BeltDir }; break;
 	case EPlaceKind::Bond:   T = FTile{ ETileKind::Bond,   (uint8)BeltDir }; break;
 	case EPlaceKind::Arm:
@@ -297,12 +297,28 @@ void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) { PlaceKind = NewK
 
 void UHexPlacementComponent::CycleNextType()
 {
-	CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % 6; // 0-5 for the 6 orb types
+	// Cycle the appropriate type based on current placement mode
+	if (PlaceKind == EPlaceKind::Input)
+	{
+		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % 6; // 0-5 for the 6 orb types
+	}
+	else if (PlaceKind == EPlaceKind::Output)
+	{
+		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex + 1) % 6; // 0-5 for the 6 orb types
+	}
 }
 
 void UHexPlacementComponent::CyclePreviousType()
 {
-	CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + 6) % 6; // Wrap around to 5 if going below 0
+	// Cycle the appropriate type based on current placement mode
+	if (PlaceKind == EPlaceKind::Input)
+	{
+		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + 6) % 6; // Wrap around to 5 if going below 0
+	}
+	else if (PlaceKind == EPlaceKind::Output)
+	{
+		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex - 1 + 6) % 6; // Wrap around to 5 if going below 0
+	}
 }
 
 void UHexPlacementComponent::CycleInputOrbType()
@@ -314,6 +330,22 @@ EOrbType UHexPlacementComponent::GetCurrentInputOrbType() const
 {
 	// Map index to EOrbType enum values
 	switch (CurrentInputOrbTypeIndex)
+	{
+	case 0: return EOrbType::None;
+	case 1: return EOrbType::BaseA;
+	case 2: return EOrbType::BaseB;
+	case 3: return EOrbType::BaseC;
+	case 4: return EOrbType::MetalA;
+	case 5: return EOrbType::CatalystX;
+	default: return EOrbType::BaseA;
+	}
+}
+
+
+EOrbType UHexPlacementComponent::GetCurrentOutputOrbType() const
+{
+	// Map index to EOrbType enum values
+	switch (CurrentOutputOrbTypeIndex)
 	{
 	case 0: return EOrbType::None;
 	case 1: return EOrbType::BaseA;
@@ -352,7 +384,7 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 	case EPlaceKind::Input:
 		return GetActualOrbMesh();
 	case EPlaceKind::Output:
-		return GenericTilePreviewMesh;
+		return GetActualOutputOrbMesh();
 	case EPlaceKind::Belt:
 		return GetActualBeltMesh();
 	case EPlaceKind::Arm:
@@ -590,8 +622,8 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		}
 	}
 
-	// Mesh preview (now also for Input, Belt, Arm, and Bond)
-	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond)
+	// Mesh preview (now also for Input, Output, Belt, Arm, and Bond)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond)
 	{
 		EnsurePreviewComponent();
 		if (!PreviewComp) return;
@@ -641,6 +673,26 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 				PreviewComp->SetMaterial(0, OrbMaterial);
 			}
 		}
+		else if (PlaceKind == EPlaceKind::Output)
+		{
+			// For output tiles, use the actual orb material with half opacity
+			UMaterialInterface* OrbMaterial = GetActualOutputOrbMaterial();
+			if (OrbMaterial)
+			{
+				// Create a dynamic material instance for opacity control
+				UMaterialInstanceDynamic* OutputMID = UMaterialInstanceDynamic::Create(OrbMaterial, this);
+				if (OutputMID)
+				{
+					// Set half opacity (0.5 alpha)
+					OutputMID->SetScalarParameterValue(FName("Opacity"), 0.5f);
+					PreviewComp->SetMaterial(0, OutputMID);
+				}
+				else
+				{
+					PreviewComp->SetMaterial(0, OrbMaterial);
+				}
+			}
+		}
 		else if (PreviewMID)
 		{
 			// For other types, use the tinted material
@@ -654,4 +706,49 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 	{
 		PreviewComp->SetVisibility(false);
 	}
+}
+
+UStaticMesh* UHexPlacementComponent::GetActualOutputOrbMesh() const
+{
+	// Try to find UOrbMaterialManager in the world
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbMaterialManager* MaterialManager = (*It)->FindComponentByClass<UOrbMaterialManager>())
+			{
+				UStaticMesh* OrbMesh = MaterialManager->GetOrbMesh();
+				if (OrbMesh)
+				{
+					return OrbMesh;
+				}
+			}
+		}
+	}
+	
+	// Final fallback
+	return GenericTilePreviewMesh;
+}
+
+UMaterialInterface* UHexPlacementComponent::GetActualOutputOrbMaterial() const
+{
+	// Try to find UOrbMaterialManager in the world
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbMaterialManager* MaterialManager = (*It)->FindComponentByClass<UOrbMaterialManager>())
+			{
+				EOrbType CurrentType = GetCurrentOutputOrbType();
+				UMaterialInterface* OrbMaterial = MaterialManager->GetMaterialForOrbType(CurrentType);
+				if (OrbMaterial)
+				{
+					return OrbMaterial;
+				}
+			}
+		}
+	}
+	
+	// Final fallback
+	return nullptr;
 }
