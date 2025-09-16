@@ -1,5 +1,6 @@
 #include "Framework/TestLevelDirector.h"
 #include "Framework/GameTickManager.h"
+#include "Framework/GameManager.h"
 #include "Actors/OrbSimDriver.h"
 #include "Actors/HexFactoryActor.h"
 #include "Sim/SimWorldHex.h"
@@ -107,6 +108,18 @@ void ATestLevelDirector::DelayedScenarioApplication()
 			{
 				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Forcing HexFactoryActor rebuild"));
 				Factory->Rebuild();
+			}
+		}
+		
+		// Force GameManager to rebuild grid to reflect scenario tiles
+		for (TActorIterator<AGameManager> It(W); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager)
+			{
+				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Forcing GameManager rebuild"));
+				GameManager->Rebuild();
+				break;
 			}
 		}
 	}

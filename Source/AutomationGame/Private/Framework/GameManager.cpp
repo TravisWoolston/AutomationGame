@@ -138,12 +138,30 @@ void AGameManager::BuildGridInstances()
 			return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
 		};
 
+	// Get simulation state to avoid rendering grid tiles where other tiles are placed
+	USimWorldHex* Sim = nullptr;
+	if (OrbSimDriver)
+	{
+		Sim = OrbSimDriver->GetSim();
+	}
+
 	for (int r = -Radius; r <= Radius; ++r)
 	{
 		for (int q = -Radius; q <= Radius; ++q)
 		{
 			const int s = -q - r;
 			if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue;
+			
+			// Skip rendering grid tile only if there's an output tile placed here in the simulation
+			if (Sim && Sim->TileMap.Contains(FHex(q, r)))
+			{
+				const FTile& PlacedTile = Sim->TileMap[FHex(q, r)];
+				if (PlacedTile.Kind == ETileKind::Output)
+				{
+					continue; // Skip grid tile for outputs only
+				}
+			}
+			
 			const FVector P = ToWorld(q, r);
 			ISM->AddInstance(FTransform(FRotator::ZeroRotator, P, FVector(1)));
 		}

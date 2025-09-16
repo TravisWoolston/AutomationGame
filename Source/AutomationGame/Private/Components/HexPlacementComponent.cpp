@@ -177,6 +177,17 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		return;
 	}
 
+	// For outputs, remove any existing tile first to avoid overlap
+	if (T.Kind == ETileKind::Output)
+	{
+		// Check if there's already a tile at this location
+		if (Sim->TileMap.Contains(Root))
+		{
+			// Remove the existing tile first
+			Sim->PlaceTile(Root, FTile{ ETileKind::Empty, 0 });
+		}
+	}
+
 	// Attempt placement
 	const bool bPlaced = Sim->PlaceTile(Root, T);
 	if (!bPlaced)
@@ -205,6 +216,23 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		if (CachedTLD)
 		{
 			CachedTLD->UpsertTileSpec(Root, T.Kind, T.Arg);
+		}
+	}
+
+	// Force GameManager to rebuild grid to reflect tile changes
+	if (bPlaced)
+	{
+		if (UWorld* GameWorld = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(GameWorld); It; ++It)
+			{
+				AGameManager* GameManager = *It;
+				if (GameManager)
+				{
+					GameManager->Rebuild();
+					break;
+				}
+			}
 		}
 	}
 
@@ -645,6 +673,16 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		{
 			FixedYaw = FMath::UnwindDegrees(FixedYaw + ArmPreviewFacingFixDeg);
 		}
+		else if (PlaceKind == EPlaceKind::Output)
+		{
+			// For output tiles, we need to match the grid orientation
+			// If the grid is using FlatTop orientation, rotate the tile mesh 30 degrees
+			const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+			if (Ori == EHexOrientation::FlatTop)
+			{
+				FixedYaw = FMath::UnwindDegrees(FixedYaw + 30.0f);
+			}
+		}
 
 		FVector UseLoc = CenterA;
 		FVector UseScale(PreviewScale);
@@ -710,18 +748,28 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 
 UStaticMesh* UHexPlacementComponent::GetActualOutputOrbMesh() const
 {
-	// Try to find UOrbMaterialManager in the world
+	// Try to find GameManager for tile mesh
 	if (UWorld* World = GetWorld())
 	{
-		for (TActorIterator<AActor> It(World); It; ++It)
+		for (TActorIterator<AGameManager> It(World); It; ++It)
 		{
-			if (UOrbMaterialManager* MaterialManager = (*It)->FindComponentByClass<UOrbMaterialManager>())
+			AGameManager* GameManager = *It;
+			if (GameManager && GameManager->TileMesh)
 			{
-				UStaticMesh* OrbMesh = MaterialManager->GetOrbMesh();
-				if (OrbMesh)
-				{
-					return OrbMesh;
-				}
+				return GameManager->TileMesh;
+			}
+		}
+	}
+	
+	// Fallback to local tile mesh if available
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AHexFactoryActor> It(World); It; ++It)
+		{
+			AHexFactoryActor* FactoryActor = *It;
+			if (FactoryActor && FactoryActor->TileMesh)
+			{
+				return FactoryActor->TileMesh;
 			}
 		}
 	}
