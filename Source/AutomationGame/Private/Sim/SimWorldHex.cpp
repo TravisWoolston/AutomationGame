@@ -890,6 +890,7 @@ void USimWorldHex::StepBonds()
 
 	// Check if any arms are currently moving or rotating
 	bool bAnyArmMoving = false;
+	int32 MovingArmCount = 0;
 	if (UWorld* World = GetWorld())
 	{
 		for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
@@ -901,21 +902,55 @@ void USimWorldHex::StepBonds()
 				if (ArmActor->IsAnimating())
 				{
 					bAnyArmMoving = true;
-					break;
+					MovingArmCount++;
+					if (bDebugLogs && bDevDebugBonds && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Yellow,
+							FString::Printf(TEXT("Arm %d is animating (StepAlpha=%.3f)"), 
+								ArmActor->SimArmIndex, ArmActor->GetStepAlpha()));
+					}
 				}
 			}
 		}
 	}
 	
 	// Only form bonds when no arms are moving to prevent premature bond formation
+	// But be more lenient - only skip if arms are significantly animating
 	if (bAnyArmMoving)
 	{
-		if (bDebugLogs && bDevDebugBonds && GEngine)
+		// Check if any arms are just finishing their animation (StepAlpha > 0.9)
+		bool bAllArmsNearlyFinished = true;
+		if (UWorld* World = GetWorld())
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Yellow,
-				TEXT("Skipping bond formation - arm(s) moving"));
+			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+			{
+				ABasicArm* ArmActor = *ActorItr;
+				if (ArmActor && ArmActor->SimArmIndex >= 0 && ArmActor->SimArmIndex < Arms.Num())
+				{
+					if (ArmActor->IsAnimating() && ArmActor->GetStepAlpha() < 0.9f)
+					{
+						bAllArmsNearlyFinished = false;
+						break;
+					}
+				}
+			}
 		}
-		return;
+		
+		// If arms are nearly finished animating, allow bond formation
+		if (!bAllArmsNearlyFinished)
+		{
+			if (bDebugLogs && bDevDebugBonds && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Yellow,
+					FString::Printf(TEXT("Skipping bond formation - %d arm(s) moving"), MovingArmCount));
+			}
+			return;
+		}
+		else if (bDebugLogs && bDevDebugBonds && GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Green,
+				TEXT("Allowing bond formation - arms nearly finished"));
+		}
 	}
 
 	// Bond formation (world or virtual held)
@@ -952,6 +987,62 @@ void USimWorldHex::StepBonds()
 		{
 			BId = *HeldB;
 			bBIsHeld = true; // Held
+		}
+		
+		// Debug: Log when we expect to find held orbs but don't
+		if (bDevDebugBonds && GEngine)
+		{
+			// Check if there should be held orbs at these positions
+			bool bExpectedHeldAtA = false, bExpectedHeldAtB = false;
+			for (const FArmState& A : Arms)
+			{
+				if (!A.bHolding || !A.Held.bIsCluster) continue;
+				
+				FHex GripHex = A.BaseHex;
+				for (int i = 0; i < A.ArmLen; ++i)
+					GripHex = HexUtil::Neighbor(GripHex, A.Facing);
+				
+				const uint8 cur = (uint8)A.Facing % 6;
+				const int8 grab = (int8)A.Held.GrabFacing;
+				const uint8 facingDelta = (grab >= 0)
+					? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+					: cur;
+				const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+				
+				auto Rot60 = [](FHex D, uint8 StepsCCW)
+				{
+					for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+					{
+						int32 q = D.Q;
+						int32 r = D.R;
+						D.Q = -r;
+						D.R = q + r;
+					}
+					return D;
+				};
+				
+				for (const FOrbData& Sub : A.Held.Orbs)
+				{
+					if (Sub.ItemId <= 0) continue;
+					FHex Local(Sub.dQ, Sub.dR);
+					FHex Rot = Rot60(Local, ccw);
+					FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+					
+					if (World == AHex) bExpectedHeldAtA = true;
+					if (World == BHex) bExpectedHeldAtB = true;
+				}
+			}
+			
+			if (bExpectedHeldAtA && !bAIsHeld)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+					FString::Printf(TEXT("MISSING: Expected held orb at A(%d,%d) but not found in VirtualHeldItemAt"), AHex.Q, AHex.R));
+			}
+			if (bExpectedHeldAtB && !bBIsHeld)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+					FString::Printf(TEXT("MISSING: Expected held orb at B(%d,%d) but not found in VirtualHeldItemAt"), BHex.Q, BHex.R));
+			}
 		}
 
 		if (AId <= 0 || BId <= 0 || AId == BId) continue;

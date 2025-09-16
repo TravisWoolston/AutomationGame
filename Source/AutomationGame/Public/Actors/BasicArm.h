@@ -157,21 +157,25 @@ public:
 	void ResetProgram();
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void SyncFromSim(const FArmState& SimState);  // also sets SimArmIndex
-	
+
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void SyncFromCurrentSim();  // sync from current sim state
-	
+
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void UpdateHeldClusterOnly();  // update only the held cluster visual	
-	
+
 	/** Check if the arm is currently animating (rotating, etc.) */
 	UFUNCTION(BlueprintPure, Category = "Program")
 	bool IsAnimating() const { return StepAlpha < 1.0f; }
 	
+	/** Get the current step alpha for debugging */
+	UFUNCTION(BlueprintPure, Category = "Program")
+	float GetStepAlpha() const { return StepAlpha; }
+
 	/** For debugging: execute current instruction immediately (ignores Wait). */
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void ExecuteCurrent();
-	
+
 	/** Sync debug settings from the OrbSimDriver */
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void SyncDebugSettingsFromDriver();
@@ -240,7 +244,7 @@ private:
 	float StepAlpha = 0.f;        // 0..1 inside current fixed step (local)
 	float LastYawDeg = 0.f;       // snapshot at step start
 	float CurrYawDeg = 0.f;       // target yaw derived from FacingDir
-	
+
 	// Previous hand position for smooth interpolation
 	FVector LastHandWorld = FVector::ZeroVector;
 	FHex LastTargetHex = FHex(0, 0);
@@ -321,13 +325,13 @@ protected:
 public:
 	UPROPERTY(EditAnywhere, Category = "Debug")
 	bool bDebugHandLocation = false;
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugLogs = false;
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugSpheres = false;
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugLines = false;
 };
