@@ -204,7 +204,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
 		if (CachedTLD)
 		{
-			CachedTLD->UpsertTileSpec(Root, T.Kind, (uint8)BeltDir);
+			CachedTLD->UpsertTileSpec(Root, T.Kind, T.Arg);
 		}
 	}
 

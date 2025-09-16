@@ -1855,6 +1855,27 @@ void USimWorldHex::SpawnInputs()
 		if (SkipInputThisFrame.Contains(H)) continue;
 		if (ItemMap.Contains(H)) continue;           // occupied already
 
+		// Check if any arm is already holding an orb that was picked up from this input tile
+		bool bArmHoldingFromThisTile = false;
+		for (const FArmState& S : Arms)
+		{
+			if (!S.bHolding) continue;
+			
+			// Check if the held item was picked up from this input tile
+			if (S.Held.Id > 0 && HeldItemLastHex.Contains(S.Held.Id))
+			{
+				const FHex* LastHex = HeldItemLastHex.Find(S.Held.Id);
+				if (LastHex && LastHex->Q == H.Q && LastHex->R == H.R)
+				{
+					bArmHoldingFromThisTile = true;
+					break;
+				}
+			}
+		}
+		
+		// Don't spawn if an arm is already holding an orb from this tile
+		if (bArmHoldingFromThisTile) continue;
+
 		FOrb O; O.Type = (EOrbType)T.Arg;
 		FItem NewItem = FItem::MakeSingle(O);
 		NewItem.Id = NextItemId++;
@@ -1873,6 +1894,27 @@ void USimWorldHex::SpawnInputsAfterBelts()
 		if (T.Kind != ETileKind::Input) continue;
 		if (SkipInputThisFrame.Contains(H)) continue;
 		if (ItemMap.Contains(H)) continue; // still occupied after belts
+
+		// Check if any arm is already holding an orb that was picked up from this input tile
+		bool bArmHoldingFromThisTile = false;
+		for (const FArmState& S : Arms)
+		{
+			if (!S.bHolding) continue;
+			
+			// Check if the held item was picked up from this input tile
+			if (S.Held.Id > 0 && HeldItemLastHex.Contains(S.Held.Id))
+			{
+				const FHex* LastHex = HeldItemLastHex.Find(S.Held.Id);
+				if (LastHex && LastHex->Q == H.Q && LastHex->R == H.R)
+				{
+					bArmHoldingFromThisTile = true;
+					break;
+				}
+			}
+		}
+		
+		// Don't spawn if an arm is already holding an orb from this tile
+		if (bArmHoldingFromThisTile) continue;
 
 		FOrb O; O.Type = (EOrbType)T.Arg;
 		FItem NewItem = FItem::MakeSingle(O);

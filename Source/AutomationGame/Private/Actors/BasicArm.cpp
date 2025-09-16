@@ -830,6 +830,18 @@ UStaticMesh* ABasicArm::ResolveOrbMesh(const FItem& Item) const
 	// Use centralized material manager
 	if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
 	{
+		// Get the correct orb type from the item
+		EOrbType OrbType = EOrbType::BaseA; // Default
+		if (Item.bIsCluster && Item.Orbs.Num() > 0)
+		{
+			OrbType = (EOrbType)Item.Orbs[0].Type;
+		}
+		else if (!Item.bIsCluster)
+		{
+			OrbType = Item.Single.Type;
+		}
+
+		// For now, all orb types use the same mesh, but this could be extended
 		UStaticMesh* CentralizedMesh = MaterialManager->GetOrbMesh();
 		if (CentralizedMesh)
 		{
@@ -1006,17 +1018,30 @@ void ABasicArm::AttachHeldOrb()
 	}
 	else
 	{
-		UStaticMesh* Mesh = ResolveOrbMesh(HeldOrb);
-		HeldOrbComp->SetStaticMesh(Mesh);
+		// Handle single orbs the same way as clusters - create a sub-orb mesh
+		// This ensures consistent material handling between single orbs and clusters
+		HeldOrbComp->SetStaticMesh(nullptr); // Clear the main component mesh
+		
+		// Create a sub-orb mesh for the single orb
+		UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
+		SubMesh->RegisterComponent();
+		SubMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
+		SubMesh->SetRelativeLocation(FVector::ZeroVector); // Single orb at center
+		SubMesh->SetRelativeScale3D(HeldOrbScale);
 
-		UMaterialInterface* Mat = ResolveOrbMaterial(HeldOrb);
+		UStaticMesh* SM = GetMeshForOrbType((uint8)HeldOrb.Single.Type);
+		SubMesh->SetStaticMesh(SM);
+
+		UMaterialInterface* Mat = GetMaterialForOrbColor((uint8)HeldOrb.Single.Type);
 		if (Mat) 
 		{
-			HeldOrbComp->SetMaterial(0, Mat);
+			SubMesh->SetMaterial(0, Mat);
 			// Ensure the material renders as opaque (not transparent)
-			HeldOrbComp->SetRenderCustomDepth(false);
+			SubMesh->SetRenderCustomDepth(false);
 		}
-		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached single orb Id=%d"), *GetName(), HeldOrb.Id);
+
+		HeldClusterComps.Add(SubMesh);
+		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached single orb Id=%d Type=%d"), *GetName(), HeldOrb.Id, (int32)HeldOrb.Single.Type);
 	}
 }
 

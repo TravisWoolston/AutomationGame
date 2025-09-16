@@ -18,6 +18,11 @@ struct FPlacedTileSpec
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex Hex { 0, 0 };
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) ETileKind Kind = ETileKind::Empty;
+	/** 
+	 * For Belt/Bond tiles: Direction (0-5)
+	 * For Input tiles: Orb Type (EOrbType enum value)
+	 * For Output tiles: Unused (0)
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, ClampMax = 5)) uint8 Dir = 0;
 };
 
