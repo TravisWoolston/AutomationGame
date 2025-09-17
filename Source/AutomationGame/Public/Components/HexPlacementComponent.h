@@ -169,7 +169,9 @@ private:
 	
 	UStaticMesh* GetActualOutputOrbMesh() const;
 	UMaterialInterface* GetActualOutputOrbMaterial() const;
-
+	
+	/** Get the list of orb types that have materials assigned (not using DefaultOrbMaterial) */
+	TArray<EOrbType> GetValidOrbTypes() const;
 
 	FORCEINLINE AActor* GetAnchor() const;
 

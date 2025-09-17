@@ -326,27 +326,35 @@ void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) { PlaceKind = NewK
 
 void UHexPlacementComponent::CycleNextType()
 {
+	// Get the list of valid orb types (those with assigned materials)
+	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
+	if (ValidTypes.Num() == 0) return; // No valid types to cycle through
+	
 	// Cycle the appropriate type based on current placement mode
 	if (PlaceKind == EPlaceKind::Input)
 	{
-		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % 6; // 0-5 for the 6 orb types
+		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
 	else if (PlaceKind == EPlaceKind::Output)
 	{
-		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex + 1) % 6; // 0-5 for the 6 orb types
+		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
 }
 
 void UHexPlacementComponent::CyclePreviousType()
 {
+	// Get the list of valid orb types (those with assigned materials)
+	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
+	if (ValidTypes.Num() == 0) return; // No valid types to cycle through
+	
 	// Cycle the appropriate type based on current placement mode
 	if (PlaceKind == EPlaceKind::Input)
 	{
-		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + 6) % 6; // Wrap around to 5 if going below 0
+		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
 	}
 	else if (PlaceKind == EPlaceKind::Output)
 	{
-		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex - 1 + 6) % 6; // Wrap around to 5 if going below 0
+		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
 	}
 }
 
@@ -372,35 +380,80 @@ void UHexPlacementComponent::CycleInputOrbType()
 	CycleNextType();
 }
 
+TArray<EOrbType> UHexPlacementComponent::GetValidOrbTypes() const
+{
+	TArray<EOrbType> ValidTypes;
+	
+	// Try to find UOrbMaterialManager in the world
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbMaterialManager* MaterialManager = (*It)->FindComponentByClass<UOrbMaterialManager>())
+			{
+				// Check all possible orb types to see which ones have materials assigned
+				TArray<EOrbType> AllOrbTypes = {
+					EOrbType::None,
+					EOrbType::BaseA,
+					EOrbType::BaseB,
+					EOrbType::BaseC,
+					EOrbType::MetalA,
+					EOrbType::CatalystX
+				};
+				
+				for (EOrbType OrbType : AllOrbTypes)
+				{
+					// Check if this orb type has a material assigned in the map
+					if (const UMaterialInterface* const* FoundMaterial = MaterialManager->OrbTypeMaterials.Find(OrbType))
+					{
+						// Only add if the material is not null and not the default material
+						if (*FoundMaterial != nullptr && *FoundMaterial != MaterialManager->DefaultOrbMaterial)
+						{
+							ValidTypes.Add(OrbType);
+						}
+					}
+				}
+				break; // Found the material manager, no need to continue searching
+			}
+		}
+	}
+	
+	// If no valid types found, fallback to at least BaseA (which will use DefaultOrbMaterial)
+	if (ValidTypes.Num() == 0)
+	{
+		ValidTypes.Add(EOrbType::BaseA);
+	}
+	
+	return ValidTypes;
+}
+
 EOrbType UHexPlacementComponent::GetCurrentInputOrbType() const
 {
-	// Map index to EOrbType enum values
-	switch (CurrentInputOrbTypeIndex)
+	// Get the list of valid orb types (those with assigned materials)
+	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
+	if (ValidTypes.Num() == 0)
 	{
-	case 0: return EOrbType::None;
-	case 1: return EOrbType::BaseA;
-	case 2: return EOrbType::BaseB;
-	case 3: return EOrbType::BaseC;
-	case 4: return EOrbType::MetalA;
-	case 5: return EOrbType::CatalystX;
-	default: return EOrbType::BaseA;
+		return EOrbType::BaseA; // Fallback if no valid types
 	}
+	
+	// Clamp the index to valid range
+	int32 ClampedIndex = FMath::Clamp(CurrentInputOrbTypeIndex, 0, ValidTypes.Num() - 1);
+	return ValidTypes[ClampedIndex];
 }
 
 
 EOrbType UHexPlacementComponent::GetCurrentOutputOrbType() const
 {
-	// Map index to EOrbType enum values
-	switch (CurrentOutputOrbTypeIndex)
+	// Get the list of valid orb types (those with assigned materials)
+	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
+	if (ValidTypes.Num() == 0)
 	{
-	case 0: return EOrbType::None;
-	case 1: return EOrbType::BaseA;
-	case 2: return EOrbType::BaseB;
-	case 3: return EOrbType::BaseC;
-	case 4: return EOrbType::MetalA;
-	case 5: return EOrbType::CatalystX;
-	default: return EOrbType::BaseA;
+		return EOrbType::BaseA; // Fallback if no valid types
 	}
+	
+	// Clamp the index to valid range
+	int32 ClampedIndex = FMath::Clamp(CurrentOutputOrbTypeIndex, 0, ValidTypes.Num() - 1);
+	return ValidTypes[ClampedIndex];
 }
 
 void UHexPlacementComponent::EnsurePreviewComponent()
