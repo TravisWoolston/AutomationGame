@@ -5,6 +5,7 @@
 #include "Actors/OrbSimDriver.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
+#include "AGLogChannels.h"
 
 // Near top (after includes) add if not already in header:
 static constexpr float DEFAULT_BELT_SPEED_TILES_PER_SECOND = 1.0f;
@@ -830,6 +831,9 @@ void USimWorldHex::StepBonds()
 		if (Bonds.Num() > 0) CleanupBrokenBonds(TSet<int32>());
 		return;
 	}
+	
+	// DEBUG: Log when StepBonds is called (commented out for production)
+	// UE_LOG(LogAGSim, Warning, TEXT("StepBonds called with %d tiles and %d items"), TileMap.Num(), ItemMap.Num());
 
 	TSet<int32> HeldIds;
 	for (const FArmState& A : Arms)
@@ -1060,6 +1064,11 @@ void USimWorldHex::StepBonds()
 
 		if (AId <= 0 || BId <= 0 || AId == BId) continue;
 		
+		// DEBUG: Log bond detection (commented out for production)
+		// UE_LOG(LogAGSim, Warning, TEXT("Bond detected: AId=%d (held=%s) BId=%d (held=%s) at AHex=(%d,%d) BHex=(%d,%d)"), 
+		//	AId, bAIsHeld ? TEXT("yes") : TEXT("no"), BId, bBIsHeld ? TEXT("yes") : TEXT("no"), 
+		//	AHex.Q, AHex.R, BHex.Q, BHex.R);
+		
 		// Allow bonds between held and board items, but handle them specially
 		// Don't form bonds between two held items from different arms
 		if (bAIsHeld && bBIsHeld) 
@@ -1112,25 +1121,126 @@ void USimWorldHex::StepBonds()
 		}
 
 		// Handle held-to-board bonds: add board orb to held item (cluster or single)
+		// Use async approach - delay until arm finishes visual rotation
 		if (bAIsHeld && !bBIsHeld)
 		{
-			// A is held, B is on board - add B to the held item
-			if (bDebugLogs && bDevDebugBonds && GEngine)
+			// Find which arm is holding A
+			int32 HoldingArmIndex = -1;
+			// DEBUG: Log arm lookup (commented out for production)
+			// UE_LOG(LogAGSim, Warning, TEXT("Looking for arm holding AId=%d"), AId);
+			
+			for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 			{
-				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
-					FString::Printf(TEXT("Adding board orb %d to held item %d"), BId, AId));
+				const FArmState& Arm = Arms[ArmIndex];
+				// UE_LOG(LogAGSim, Warning, TEXT("  Arm %d: bHolding=%s, Held.Id=%d"), 
+				//	ArmIndex, Arm.bHolding ? TEXT("yes") : TEXT("no"), Arm.Held.Id);
+				
+				if (Arm.bHolding)
+				{
+					// Check if this arm is holding the item directly
+					if (Arm.Held.Id == AId)
+					{
+						HoldingArmIndex = ArmIndex;
+						// UE_LOG(LogAGSim, Warning, TEXT("  Found holding arm: %d (direct match)"), ArmIndex);
+						break;
+					}
+					// Check if this arm is holding a cluster that contains the item
+					else if (Arm.Held.bIsCluster)
+					{
+						// Look through the cluster's sub-orbs
+						for (const FOrbData& SubOrb : Arm.Held.Orbs)
+						{
+							if (SubOrb.ItemId == AId)
+							{
+								HoldingArmIndex = ArmIndex;
+								// UE_LOG(LogAGSim, Warning, TEXT("  Found holding arm: %d (cluster sub-orb match)"), ArmIndex);
+								break;
+							}
+						}
+						if (HoldingArmIndex >= 0) break;
+					}
+				}
 			}
-			AddBoardOrbToHeldItem(AId, BId, BHex);
+			
+			if (HoldingArmIndex >= 0)
+			{
+				// Create pending bond formation - will be processed when arm finishes rotating
+				FPendingBondFormation Pending;
+				Pending.HeldItemId = AId;
+				Pending.BoardItemId = BId;
+				Pending.BoardItemHex = BHex;
+				Pending.ArmIndex = HoldingArmIndex;
+				Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
+				PendingBondFormations.Add(Pending);
+				
+				if (bDebugLogs && bDevDebugBonds && GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+						FString::Printf(TEXT("Queued bond formation: board orb %d -> held item %d (arm %d)"), BId, AId, HoldingArmIndex));
+				}
+				
+				// DEBUG: Always log pending formations for debugging (commented out for production)
+				// UE_LOG(LogAGSim, Warning, TEXT("Created pending bond formation: board orb %d -> held item %d (arm %d), total pending: %d"), 
+				//	BId, AId, HoldingArmIndex, PendingBondFormations.Num());
+			}
 		}
 		else if (bBIsHeld && !bAIsHeld)
 		{
-			// B is held, A is on board - add A to the held item
-			if (bDebugLogs && bDevDebugBonds && GEngine)
+			// Find which arm is holding B
+			int32 HoldingArmIndex = -1;
+			// DEBUG: Log arm lookup (commented out for production)
+			// UE_LOG(LogAGSim, Warning, TEXT("Looking for arm holding BId=%d"), BId);
+			
+			for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 			{
-				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
-					FString::Printf(TEXT("Adding board orb %d to held item %d"), AId, BId));
+				const FArmState& Arm = Arms[ArmIndex];
+				// UE_LOG(LogAGSim, Warning, TEXT("  Arm %d: bHolding=%s, Held.Id=%d"), 
+				//	ArmIndex, Arm.bHolding ? TEXT("yes") : TEXT("no"), Arm.Held.Id);
+				
+				if (Arm.bHolding)
+				{
+					// Check if this arm is holding the item directly
+					if (Arm.Held.Id == BId)
+					{
+						HoldingArmIndex = ArmIndex;
+						// UE_LOG(LogAGSim, Warning, TEXT("  Found holding arm: %d (direct match)"), ArmIndex);
+						break;
+					}
+					// Check if this arm is holding a cluster that contains the item
+					else if (Arm.Held.bIsCluster)
+					{
+						// Look through the cluster's sub-orbs
+						for (const FOrbData& SubOrb : Arm.Held.Orbs)
+						{
+							if (SubOrb.ItemId == BId)
+							{
+								HoldingArmIndex = ArmIndex;
+								// UE_LOG(LogAGSim, Warning, TEXT("  Found holding arm: %d (cluster sub-orb match)"), ArmIndex);
+								break;
+							}
+						}
+						if (HoldingArmIndex >= 0) break;
+					}
+				}
 			}
-			AddBoardOrbToHeldItem(BId, AId, AHex);
+			
+			if (HoldingArmIndex >= 0)
+			{
+				// Create pending bond formation - will be processed when arm finishes rotating
+				FPendingBondFormation Pending;
+				Pending.HeldItemId = BId;
+				Pending.BoardItemId = AId;
+				Pending.BoardItemHex = AHex;
+				Pending.ArmIndex = HoldingArmIndex;
+				Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
+				PendingBondFormations.Add(Pending);
+				
+				if (bDebugLogs && bDevDebugBonds && GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+						FString::Printf(TEXT("Queued bond formation: board orb %d -> held item %d (arm %d)"), AId, BId, HoldingArmIndex));
+				}
+			}
 		}
 	}
 
@@ -1879,45 +1989,27 @@ void USimWorldHex::SpawnInputs()
 		if (SkipInputThisFrame.Contains(H)) continue;
 		if (ItemMap.Contains(H)) continue;           // occupied already
 
-		// Check if any arm is already holding an orb that was picked up from this input tile
-		bool bArmHoldingFromThisTile = false;
+		// Check if any held item is currently occupying this input tile's position
+		bool bHeldItemAtThisPosition = false;
 		for (const FArmState& S : Arms)
 		{
 			if (!S.bHolding) continue;
 			
-			// Check if the held item was picked up from this input tile
-			if (S.Held.bIsCluster)
-			{
-				// For clusters, check if any sub-orb was picked up from this tile
-				for (const FOrbData& Sub : S.Held.Orbs)
-				{
-					if (Sub.ItemId > 0 && HeldItemLastHex.Contains(Sub.ItemId))
-					{
-						const FHex* LastHex = HeldItemLastHex.Find(Sub.ItemId);
-						if (LastHex && LastHex->Q == H.Q && LastHex->R == H.R)
-						{
-							bArmHoldingFromThisTile = true;
-							break;
-						}
-					}
-				}
-			}
-			else if (S.Held.Id > 0 && HeldItemLastHex.Contains(S.Held.Id))
-			{
-				// For single orbs, check the main held item
-				const FHex* LastHex = HeldItemLastHex.Find(S.Held.Id);
-				if (LastHex && LastHex->Q == H.Q && LastHex->R == H.R)
-				{
-					bArmHoldingFromThisTile = true;
-					break;
-				}
-			}
+			// Calculate the arm's grip position
+			FHex GripHex = S.BaseHex;
+			for (int i = 0; i < S.ArmLen; ++i)
+				GripHex = HexUtil::Neighbor(GripHex, S.Facing);
 			
-			if (bArmHoldingFromThisTile) break;
+			// Check if the arm's grip position is at this input tile
+			if (GripHex.Q == H.Q && GripHex.R == H.R)
+			{
+				bHeldItemAtThisPosition = true;
+				break;
+			}
 		}
 		
-		// Don't spawn if an arm is already holding an orb from this tile
-		if (bArmHoldingFromThisTile) continue;
+		// Don't spawn if any held item is occupying this position
+		if (bHeldItemAtThisPosition) continue;
 
 		FOrb O; O.Type = (EOrbType)T.Arg;
 		FItem NewItem = FItem::MakeSingle(O);
@@ -1949,45 +2041,27 @@ void USimWorldHex::SpawnInputsAfterBelts()
 		if (SkipInputThisFrame.Contains(H)) continue;
 		if (ItemMap.Contains(H)) continue; // still occupied after belts
 
-		// Check if any arm is already holding an orb that was picked up from this input tile
-		bool bArmHoldingFromThisTile = false;
+		// Check if any held item is currently occupying this input tile's position
+		bool bHeldItemAtThisPosition = false;
 		for (const FArmState& S : Arms)
 		{
 			if (!S.bHolding) continue;
 			
-			// Check if the held item was picked up from this input tile
-			if (S.Held.bIsCluster)
-			{
-				// For clusters, check if any sub-orb was picked up from this tile
-				for (const FOrbData& Sub : S.Held.Orbs)
-				{
-					if (Sub.ItemId > 0 && HeldItemLastHex.Contains(Sub.ItemId))
-					{
-						const FHex* LastHex = HeldItemLastHex.Find(Sub.ItemId);
-						if (LastHex && LastHex->Q == H.Q && LastHex->R == H.R)
-						{
-							bArmHoldingFromThisTile = true;
-							break;
-						}
-					}
-				}
-			}
-			else if (S.Held.Id > 0 && HeldItemLastHex.Contains(S.Held.Id))
-			{
-				// For single orbs, check the main held item
-				const FHex* LastHex = HeldItemLastHex.Find(S.Held.Id);
-				if (LastHex && LastHex->Q == H.Q && LastHex->R == H.R)
-				{
-					bArmHoldingFromThisTile = true;
-					break;
-				}
-			}
+			// Calculate the arm's grip position
+			FHex GripHex = S.BaseHex;
+			for (int i = 0; i < S.ArmLen; ++i)
+				GripHex = HexUtil::Neighbor(GripHex, S.Facing);
 			
-			if (bArmHoldingFromThisTile) break;
+			// Check if the arm's grip position is at this input tile
+			if (GripHex.Q == H.Q && GripHex.R == H.R)
+			{
+				bHeldItemAtThisPosition = true;
+				break;
+			}
 		}
 		
-		// Don't spawn if an arm is already holding an orb from this tile
-		if (bArmHoldingFromThisTile) continue;
+		// Don't spawn if any held item is occupying this position
+		if (bHeldItemAtThisPosition) continue;
 
 		FOrb O; O.Type = (EOrbType)T.Arg;
 		FItem NewItem = FItem::MakeSingle(O);
@@ -2914,6 +2988,119 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 			
 			// Remove the animated orb
 			AnimatedOrbs.RemoveAt(i);
+		}
+	}
+}
+
+void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
+{
+	// DEBUG: Log total pending formations (commented out for production)
+	// if (PendingBondFormations.Num() > 0)
+	// {
+	//	UE_LOG(LogAGSim, Warning, TEXT("Processing %d pending bond formations"), PendingBondFormations.Num());
+	// }
+	
+	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
+	{
+		FPendingBondFormation& Pending = PendingBondFormations[i];
+		
+		// Check if the arm is still valid and holding the item
+		if (Pending.ArmIndex < 0 || Pending.ArmIndex >= Arms.Num())
+		{
+			PendingBondFormations.RemoveAt(i);
+			continue;
+		}
+		
+		const FArmState& Arm = Arms[Pending.ArmIndex];
+		if (!Arm.bHolding)
+		{
+			// Arm is no longer holding anything, cancel the pending formation
+			PendingBondFormations.RemoveAt(i);
+			continue;
+		}
+		
+		// Check if the board item still exists
+		const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
+		if (!BoardItem || BoardItem->Id != Pending.BoardItemId)
+		{
+			// Board item no longer exists, cancel the pending formation
+			PendingBondFormations.RemoveAt(i);
+			continue;
+		}
+		
+		// Decrease time remaining
+		Pending.TimeRemaining -= DeltaTime;
+		
+		if (Pending.TimeRemaining <= 0.f)
+		{
+			// Time to form the bond - use the current held item ID
+			if (bDebugLogs && bDevDebugBonds && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+					FString::Printf(TEXT("Processing pending bond: board orb %d -> held item %d"), Pending.BoardItemId, Arm.Held.Id));
+			}
+			
+			AddBoardOrbToHeldItem(Arm.Held.Id, Pending.BoardItemId, Pending.BoardItemHex);
+			PendingBondFormations.RemoveAt(i);
+		}
+	}
+}
+
+void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
+{
+	// DEBUG: Log arm rotation complete (commented out for production)
+	// UE_LOG(LogAGSim, Warning, TEXT("SIMULATION: OnArmRotationComplete called for arm %d, checking %d pending formations"), ArmIndex, PendingBondFormations.Num());
+	
+	// Process any pending bond formations for this arm immediately
+	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
+	{
+		FPendingBondFormation& Pending = PendingBondFormations[i];
+		
+		if (Pending.ArmIndex == ArmIndex)
+		{
+			// Check if the arm is still valid and holding something
+			if (ArmIndex >= 0 && ArmIndex < Arms.Num())
+			{
+				const FArmState& Arm = Arms[ArmIndex];
+				if (Arm.bHolding)
+				{
+					// Check if the board item still exists
+					const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
+					if (BoardItem && BoardItem->Id == Pending.BoardItemId)
+					{
+						// Form the bond immediately - use the current held item ID
+						if (bDebugLogs && bDevDebugBonds && GEngine)
+						{
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+								FString::Printf(TEXT("Arm rotation complete - forming bond: board orb %d -> held item %d"), Pending.BoardItemId, Arm.Held.Id));
+						}
+						
+						AddBoardOrbToHeldItem(Arm.Held.Id, Pending.BoardItemId, Pending.BoardItemHex);
+					}
+				}
+			}
+			
+			PendingBondFormations.RemoveAt(i);
+		}
+	}
+}
+
+void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
+{
+	// Cancel any pending bond formations for this arm
+	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
+	{
+		FPendingBondFormation& Pending = PendingBondFormations[i];
+		
+		if (Pending.ArmIndex == ArmIndex)
+		{
+			if (bDebugLogs && bDevDebugBonds && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
+					FString::Printf(TEXT("Canceling pending bond formation for arm %d (arm dropped item)"), ArmIndex));
+			}
+			
+			PendingBondFormations.RemoveAt(i);
 		}
 	}
 }

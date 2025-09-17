@@ -118,6 +118,15 @@ public:
 	/** Update animated orbs (call from renderer) */
 	void UpdateAnimatedOrbs(float DeltaTime);
 
+	/** Process pending bond formations (call from renderer) */
+	void ProcessPendingBondFormations(float DeltaTime);
+
+	/** Notify that an arm has finished its visual rotation */
+	void OnArmRotationComplete(int32 ArmIndex);
+
+	/** Cancel pending bond formations for a specific arm (when arm drops item) */
+	void CancelPendingBondFormationsForArm(int32 ArmIndex);
+
 private:
 	/** Helper function to check if an item matches an output's expected orb type */
 	bool DoesItemMatchOutputType(const FItem& Item, const FTile& OutputTile) const;
@@ -144,6 +153,17 @@ private:
 
 	// Hexes where orbs were newly moved to an output tile this tick
 	TSet<FHex> OrbsNewlyMovedToOutput;
+
+	// Pending bond formations waiting for arm rotation to complete
+	struct FPendingBondFormation
+	{
+		int32 HeldItemId = 0;
+		int32 BoardItemId = 0;
+		FHex BoardItemHex;
+		int32 ArmIndex = -1;
+		float TimeRemaining = 0.f; // Time to wait before forming bond
+	};
+	TArray<FPendingBondFormation> PendingBondFormations;
 
 	// Item Id generator
 	int32 NextItemId = 1;

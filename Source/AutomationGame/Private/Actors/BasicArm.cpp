@@ -147,6 +147,7 @@ void ABasicArm::Tick(float DeltaSeconds)
 	}
 
 	// Advance StepAlpha for interpolation
+	float PreviousStepAlpha = StepAlpha;
 	if (StepSecondsCur > 0.f)
 	{
 		StepAlpha = FMath::Clamp(StepAlpha + DeltaSeconds / StepSecondsCur, 0.f, 1.f);
@@ -154,6 +155,17 @@ void ABasicArm::Tick(float DeltaSeconds)
 	else
 	{
 		StepAlpha = 1.f;
+	}
+
+	// Check if rotation is close enough to target (within ~5% range)
+	// This allows bond formation while the arm is still slightly rotating
+	if (StepAlpha >= 0.95f && PreviousStepAlpha < 0.95f)
+	{
+		// Rotation is close enough to target - notify the simulation
+		if (Sim && SimArmIndex >= 0)
+		{
+			Sim->OnArmRotationComplete(SimArmIndex);
+		}
 	}
 
 	RefreshPose(StepAlpha);
