@@ -187,11 +187,8 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 	const float Alpha = Driver->GetStepAlpha();
 	const int32 Step = Sim->GetStepCounter();
 
-	// Feed frame alpha early
-	if (bUseSimVisualInterpolation)
-	{
-		Sim->SetFrameAlpha(Alpha);
-	}
+	// Feed frame alpha early for animated orbs
+	Sim->SetFrameAlpha(Alpha);
 
 	// Detect new fixed step via counter instead of Alpha wrap
 	if (Step != LastSeenStepCounter)
@@ -217,10 +214,7 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 				PrevArmFacing.Add(ArmIdx, CurrArmFacing[ArmIdx]);
 		}
 
-		if (bUseSimVisualInterpolation)
-		{
-			Sim->SetFrameAlpha(0.f);
-		}
+		Sim->SetFrameAlpha(0.f);
 	}
 
 	PrevAlpha = Alpha;
@@ -355,51 +349,8 @@ void UOrbRenderer::RebuildInstances()
 		}
 	}
 
-	if (bUseSimVisualInterpolation)
-	{
-		// Direct per-item query (belt interpolation already applied in sim)
-		for (const auto& KV : Sim->ItemMap)
-		{
-			const int32 Id = KV.Value.Id;
-			if (Id == 0) continue;
-			if (HeldIds.Contains(Id)) continue;
-
-			FVector Pos;
-			if (!Sim->GetItemVisualLocation(Id, Pos))
-			{
-				// Fallback: try current map hex center (already stored in CurrPos if present)
-				if (const FVector* CP = CurrPos.Find(Id))
-					Pos = *CP;
-				else
-					continue;
-			}
-
-			// Get the orb type and find the appropriate ISM
-			EOrbType OrbType = EOrbType::BaseA; // Default
-			if (KV.Value.bIsCluster && KV.Value.Orbs.Num() > 0)
-			{
-				OrbType = (EOrbType)KV.Value.Orbs[0].Type;
-			}
-			else if (!KV.Value.bIsCluster)
-			{
-				OrbType = KV.Value.Single.Type;
-			}
-
-			// Add to the appropriate ISM
-			if (UInstancedStaticMeshComponent** ISMPtr = OrbTypeISMs.Find(OrbType))
-			{
-				if (UInstancedStaticMeshComponent* ISM = *ISMPtr)
-				{
-					ISM->AddInstance(FTransform(FRotator::ZeroRotator, Pos, FVector(OrbScale)));
-				}
-			}
-		}
-		
-		// Render animated orbs (inputs ascending, outputs descending)
-		RenderAnimatedOrbs();
-		
-		return; // done
-	}
+	// Render animated orbs (inputs ascending, outputs descending) - these use sim interpolation
+	RenderAnimatedOrbs();
 
 	// Legacy prev->curr interpolation path
 	TSet<int32> AllIds;
@@ -651,6 +602,17 @@ void UOrbRenderer::RenderAnimatedOrbs()
 		{
 			if (UInstancedStaticMeshComponent* ISM = *ISMPtr)
 			{
+				// Ensure the ISM has the latest material for this orb type
+				UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
+				if (MaterialManager)
+				{
+					UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(OrbType);
+					if (TypeMaterial)
+					{
+						ISM->SetMaterial(0, TypeMaterial);
+					}
+				}
+				
 				ISM->AddInstance(FTransform(FRotator::ZeroRotator, FinalPos, FVector(OrbScale)));
 			}
 		}

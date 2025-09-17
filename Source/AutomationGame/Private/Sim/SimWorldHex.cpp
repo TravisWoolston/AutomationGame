@@ -2469,6 +2469,7 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 	const FVector NextCenter = HexCenterToWorld(NextHex);
 
 	OutWorld = FMath::Lerp(CurCenter, NextCenter, VisualP);
+	
 	return true;
 }
 

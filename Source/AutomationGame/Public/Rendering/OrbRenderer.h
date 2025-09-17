@@ -47,9 +47,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Bonds") UMaterialInterface* BondedOrbMaterial = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Bonds") float BondedOrbScale = 0.15f;
 
-	/** If true use sim's belt interpolation (BeltProgress + FrameAlpha) instead of prev/curr hex lerp. */
-	UPROPERTY(EditAnywhere, Category = "Visual")
-	bool bUseSimVisualInterpolation = true;
 
 private:
 	void EnsureISM();
