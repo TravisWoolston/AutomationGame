@@ -100,6 +100,17 @@ bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 			return false;
 		}
 	}
+	if (T.Kind == ETileKind::Unbond)
+	{
+		const FHex Partner = HexUtil::Neighbor(H, (EHexDir)(T.Arg % 6));
+		if (TileMap.Contains(Partner) &&
+			TileMap[Partner].Kind != ETileKind::Empty &&
+			TileMap[Partner].Kind != ETileKind::Unbond)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Unbond placement blocked: partner hex occupied."));
+			return false;
+		}
+	}
 	if (T.Kind == ETileKind::Empty)
 	{
 		const bool bHad = TileMap.Remove(H) > 0;
@@ -1341,6 +1352,118 @@ void USimWorldHex::StepBonds()
 								GEngine->AddOnScreenDebugMessage(-1, 0.6f, FColor::Cyan,
 									FString::Printf(TEXT("Internal cluster bond formed: %d-%d"), SubA.ItemId, SubB.ItemId));
 							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Unbond processing (world or virtual held)
+	for (const auto& KV : TileMap)
+	{
+		const FTile& T = KV.Value;
+		if (T.Kind != ETileKind::Unbond) continue;
+		const uint8 Dir = (uint8)(T.Arg & 0xFF);
+		const FHex AHex = KV.Key;
+		const FHex BHex = HexUtil::Neighbor(AHex, (EHexDir)(Dir % 6));
+
+		// Resolve item ids at endpoints (world or virtual held)
+		int32 AId = 0, BId = 0;
+		bool bAIsHeld = false, bBIsHeld = false;
+		
+		if (FItem* IA = ItemMap.Find(AHex)) 
+		{
+			AId = IA->Id;
+			bAIsHeld = false; // On board
+		}
+		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) 
+		{
+			AId = *HeldA;
+			bAIsHeld = true; // Held
+		}
+
+		if (FItem* IB = ItemMap.Find(BHex)) 
+		{
+			BId = IB->Id;
+			bBIsHeld = false; // On board
+		}
+		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) 
+		{
+			BId = *HeldB;
+			bBIsHeld = true; // Held
+		}
+
+		// Only process if both items exist
+		if (AId <= 0 || BId <= 0) continue;
+
+		// Remove any existing bonds between these items
+		BreakBondBetween(AId, BId);
+	}
+
+	// Unbond processing for held clusters
+	for (const FArmState& A : Arms)
+	{
+		if (!A.bHolding || !A.Held.bIsCluster) continue;
+
+		// Check if any unbond tiles are adjacent to this held cluster
+		FHex GripHex = A.BaseHex;
+		for (int i = 0; i < A.ArmLen; ++i)
+			GripHex = HexUtil::Neighbor(GripHex, A.Facing);
+
+		const uint8 cur = (uint8)A.Facing % 6;
+		const int8 grab = (int8)A.Held.GrabFacing;
+		const uint8 facingDelta = (grab >= 0)
+			? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+			: cur;
+		const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+		auto Rot60 = [](FHex D, uint8 StepsCCW)
+			{
+				for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+				{
+					int32 q = D.Q;
+					int32 r = D.R;
+					D.Q = -r;
+					D.R = q + r;
+				}
+				return D;
+			};
+
+		// Check each unbond tile to see if it's adjacent to any sub-orbs in this cluster
+		for (const auto& KV : TileMap)
+		{
+			const FTile& T = KV.Value;
+			if (T.Kind != ETileKind::Unbond) continue;
+			const uint8 Dir = (uint8)(T.Arg & 0xFF);
+			const FHex UnbondHex = KV.Key;
+			const FHex UnbondTargetHex = HexUtil::Neighbor(UnbondHex, (EHexDir)(Dir % 6));
+
+			// Check if this unbond tile is adjacent to any sub-orbs in the held cluster
+			for (const FOrbData& SubA : A.Held.Orbs)
+			{
+				if (SubA.ItemId <= 0) continue;
+				
+				FHex LocalA(SubA.dQ, SubA.dR);
+				FHex RotA = Rot60(LocalA, ccw);
+				FHex WorldA(GripHex.Q + RotA.Q, GripHex.R + RotA.R);
+
+				// Check if this sub-orb is at the unbond tile position
+				if (WorldA == UnbondHex)
+				{
+					// Look for another sub-orb at the unbond target position
+					for (const FOrbData& SubB : A.Held.Orbs)
+					{
+						if (SubB.ItemId <= 0 || SubB.ItemId == SubA.ItemId) continue;
+						
+						FHex LocalB(SubB.dQ, SubB.dR);
+						FHex RotB = Rot60(LocalB, ccw);
+						FHex WorldB(GripHex.Q + RotB.Q, GripHex.R + RotB.R);
+
+						if (WorldB == UnbondTargetHex)
+						{
+							// Remove internal cluster bond
+							BreakBondBetween(SubA.ItemId, SubB.ItemId);
 						}
 					}
 				}

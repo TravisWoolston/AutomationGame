@@ -14,7 +14,8 @@ enum class EPlaceKind : uint8
 	Output,
 	Belt,
 	Arm,
-	Bond      // NEW: place a Bond glyph (uses BeltDir for its direction)
+	Bond,     // place a Bond glyph (uses BeltDir for its direction)
+	Unbond    // place an Unbond glyph (uses BeltDir for its direction)
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of truth). */
@@ -60,6 +61,10 @@ public:
 	UStaticMesh* ArmBasePreviewMesh = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	UStaticMesh* BondPreviewMesh = nullptr;
+
+	/** Optional mesh specifically for unbond preview (falls back to GenericTilePreviewMesh). */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	UStaticMesh* UnbondPreviewMesh = nullptr;
 
 	/** Optional material for the fused Bond preview (expects scalar params: TileRadius, Span, PadW, PadH, FlatTop, Tint). */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview|Bond")
@@ -108,6 +113,9 @@ public:
 	// Type cycling (works for both Input and Output based on current placement mode)
 	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CycleNextType();
 	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CyclePreviousType();
+	
+	/** Cycle through glyph types (Belt, Bond, Unbond) */
+	UFUNCTION(BlueprintCallable, Category = "Place|Glyph") void CycleGlyphType();
 	
 	/** Cycle to next orb type for input placement */
 	UFUNCTION(BlueprintCallable, Category = "Place|Input") void CycleInputOrbType();

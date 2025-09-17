@@ -61,10 +61,14 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	IC->BindAction("Kind3", IE_Pressed, this, &AHexTopDownPawn::SetInputMode3);
 	IC->BindAction("Kind4", IE_Pressed, this, &AHexTopDownPawn::SetInputMode4);
 	IC->BindAction("Kind5", IE_Pressed, this, &AHexTopDownPawn::SetInputMode5);
+	IC->BindAction("Kind6", IE_Pressed, this, &AHexTopDownPawn::SetInputMode6);
 
 	// Type cycling (works for both Input and Output based on current placement mode)
 	IC->BindAction("CycleNextType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypeNext);
 	IC->BindAction("CyclePreviousType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypePrevious);
+	
+	// Glyph cycling (Belt, Bond, Unbond)
+	IC->BindAction("CycleGlyphType", IE_Pressed, this, &AHexTopDownPawn::CycleGlyphType);
 	
 	// Selection modifier key (Left Alt)
 	IC->BindAction("SelectionActive", IE_Pressed, this, &AHexTopDownPawn::SelectionActivePressed);
@@ -76,6 +80,7 @@ void AHexTopDownPawn::SetInputMode2() { if (Placer) Placer->SetPlaceKind(EPlaceK
 void AHexTopDownPawn::SetInputMode3() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Belt); }
 void AHexTopDownPawn::SetInputMode4() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Arm); }
 void AHexTopDownPawn::SetInputMode5() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Bond); }
+void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Unbond); }
 
 void AHexTopDownPawn::SelectionActivePressed() { bSelectionActive = true; }
 void AHexTopDownPawn::SelectionActiveReleased() { bSelectionActive = false; }

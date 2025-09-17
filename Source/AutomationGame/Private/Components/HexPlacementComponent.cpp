@@ -146,6 +146,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	case EPlaceKind::Output: T = FTile{ ETileKind::Output, (uint8)GetCurrentOutputOrbType() }; break;
 	case EPlaceKind::Belt:   T = FTile{ ETileKind::Belt,   (uint8)BeltDir }; break;
 	case EPlaceKind::Bond:   T = FTile{ ETileKind::Bond,   (uint8)BeltDir }; break;
+	case EPlaceKind::Unbond: T = FTile{ ETileKind::Unbond, (uint8)BeltDir }; break;
 	case EPlaceKind::Arm:
 	{
 		AActor* GMActor = nullptr;
@@ -349,6 +350,23 @@ void UHexPlacementComponent::CyclePreviousType()
 	}
 }
 
+void UHexPlacementComponent::CycleGlyphType()
+{
+	// Cycle through Belt, Bond, Unbond
+	if (PlaceKind == EPlaceKind::Belt)
+	{
+		PlaceKind = EPlaceKind::Bond;
+	}
+	else if (PlaceKind == EPlaceKind::Bond)
+	{
+		PlaceKind = EPlaceKind::Unbond;
+	}
+	else if (PlaceKind == EPlaceKind::Unbond)
+	{
+		PlaceKind = EPlaceKind::Belt;
+	}
+}
+
 void UHexPlacementComponent::CycleInputOrbType()
 {
 	CycleNextType();
@@ -419,6 +437,8 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 		return ArmBasePreviewMesh ? ArmBasePreviewMesh : GenericTilePreviewMesh;
 	case EPlaceKind::Bond:
 		return BondPreviewMesh ? BondPreviewMesh : GenericTilePreviewMesh;
+	case EPlaceKind::Unbond:
+		return UnbondPreviewMesh ? UnbondPreviewMesh : GenericTilePreviewMesh;
 	default:
 		return GenericTilePreviewMesh;
 	}
@@ -616,8 +636,8 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 
 	const FVector CenterA = HexToWorld(HoverHex) + FVector(0, 0, PreviewZOffset);
 
-	// Outline (keep single hex for non-bond, two for bond)
-	if (PlaceKind != EPlaceKind::Bond)
+	// Outline (keep single hex for non-bond, two for bond/unbond)
+	if (PlaceKind != EPlaceKind::Bond && PlaceKind != EPlaceKind::Unbond)
 	{
 		DrawDebugCircle(GetWorld(), CenterA, Tile * 0.95f, 6,
 			bPlaceOK ? FColor(0, 200, 40) : FColor(200, 20, 20),
@@ -650,8 +670,8 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		}
 	}
 
-	// Mesh preview (now also for Input, Output, Belt, Arm, and Bond)
-	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond)
+	// Mesh preview (now also for Input, Output, Belt, Arm, Bond, and Unbond)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
 	{
 		EnsurePreviewComponent();
 		if (!PreviewComp) return;
@@ -687,7 +707,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		FVector UseLoc = CenterA;
 		FVector UseScale(PreviewScale);
 
-		if (PlaceKind == EPlaceKind::Bond)
+		if (PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
 		{
 			// Midpoint between the two hex centers
 			const FHex NeighborHex = HexUtil::Neighbor(HoverHex, (EHexDir)EffectiveDir);

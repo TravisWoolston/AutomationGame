@@ -39,6 +39,10 @@ AHexFactoryActor::AHexFactoryActor()
 	BondTileISM->SetupAttachment(Root);
 	BondTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	UnbondTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("UnbondTileISM"));
+	UnbondTileISM->SetupAttachment(Root);
+	UnbondTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	BeltISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltISM"));
 	BeltISM->SetupAttachment(Root);
 	BeltISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -46,6 +50,10 @@ AHexFactoryActor::AHexFactoryActor()
 	BondISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BondISM"));
 	BondISM->SetupAttachment(Root);
 	BondISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	UnbondISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("UnbondISM"));
+	UnbondISM->SetupAttachment(Root);
+	UnbondISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// Create type-specific output ISM components
 	OutputNoneISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputNoneISM"));
@@ -97,8 +105,10 @@ void AHexFactoryActor::EnsureComponents()
 	EnsureISM(OutputTileISM, TEXT("OutputTileISM_Runtime"));
 	EnsureISM(BeltTileISM, TEXT("BeltTileISM_Runtime"));
 	EnsureISM(BondTileISM, TEXT("BondTileISM_Runtime"));
+	EnsureISM(UnbondTileISM, TEXT("UnbondTileISM_Runtime"));
 	EnsureISM(BeltISM, TEXT("BeltISM_Runtime"));
 	EnsureISM(BondISM, TEXT("BondISM_Runtime"));
+	EnsureISM(UnbondISM, TEXT("UnbondISM_Runtime"));
 	
 	// Ensure type-specific output ISM components
 	EnsureISM(OutputNoneISM, TEXT("OutputNoneISM_Runtime"));
@@ -226,6 +236,28 @@ void AHexFactoryActor::RebuildInternal()
 	if (BeltMaterial) BeltISM->SetMaterial(0, BeltMaterial);
 	if (BondMesh) BondISM->SetStaticMesh(BondMesh);
 	if (BondMaterial) BondISM->SetMaterial(0, BondMaterial);
+	
+	// Set up unbond mesh - use BondMesh as fallback if UnbondMesh not assigned
+	if (UnbondMesh) 
+	{
+		UnbondISM->SetStaticMesh(UnbondMesh);
+	}
+	else if (BondMesh)
+	{
+		// Fallback to bond mesh if no unbond mesh is set
+		UnbondISM->SetStaticMesh(BondMesh);
+	}
+	
+	// Set up unbond material - use BondMaterial as fallback if UnbondMaterial not assigned
+	if (UnbondMaterial) 
+	{
+		UnbondISM->SetMaterial(0, UnbondMaterial);
+	}
+	else if (BondMaterial)
+	{
+		// Fallback to bond material if no unbond material is set
+		UnbondISM->SetMaterial(0, BondMaterial);
+	}
 
 	// Clear all instances
 	TileISM->ClearInstances();
@@ -233,8 +265,10 @@ void AHexFactoryActor::RebuildInternal()
 	OutputTileISM->ClearInstances();
 	BeltTileISM->ClearInstances();
 	BondTileISM->ClearInstances();
+	UnbondTileISM->ClearInstances();
 	BeltISM->ClearInstances();
 	BondISM->ClearInstances();
+	UnbondISM->ClearInstances();
 
 	RebuildTiles();
 	RebuildBelts();
@@ -275,6 +309,9 @@ void AHexFactoryActor::RebuildTiles()
 			break;
 		case ETileKind::Bond:
 			if (BondTileISM) BondTileISM->AddInstance(Transform);
+			break;
+		case ETileKind::Unbond:
+			if (UnbondTileISM) UnbondTileISM->AddInstance(Transform); // Use separate unbond tile background
 			break;
 		default:
 			// Empty tiles or unknown types go to the default TileISM
@@ -397,7 +434,7 @@ void AHexFactoryActor::RebuildBonds()
 	{
 		const FHex& H = KV.Key;
 		const FTile& T = KV.Value;
-		if (T.Kind != ETileKind::Bond) continue;
+		if (T.Kind != ETileKind::Bond && T.Kind != ETileKind::Unbond) continue;
 
 		BondCount++;
 		const uint8 Dir = (uint8)(T.Arg & 0xFF);
@@ -408,27 +445,45 @@ void AHexFactoryActor::RebuildBonds()
 		const FVector2D BxyLocal = HexCoord::AxialToXY(FHexAxial(N.Q, N.R), Tile, Ori);
 		const FVector2D Axy = HexCoord::Rotate2D(AxyLocal, GridYaw);
 		const FVector2D Bxy = HexCoord::Rotate2D(BxyLocal, GridYaw);
-		const FVector WorldA = AnchorV + FVector(Axy.X, Axy.Y, BondZOffset);
-		const FVector WorldB = AnchorV + FVector(Bxy.X, Bxy.Y, BondZOffset);
+		const FVector WorldA = AnchorV + FVector(Axy.X, Axy.Y, T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset);
+		const FVector WorldB = AnchorV + FVector(Bxy.X, Bxy.Y, T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset);
 		const FVector Mid = (WorldA + WorldB) * 0.5f;
 		const FVector2D Delta2D(Bxy - Axy);
 		const float Yaw = Delta2D.IsNearlyZero()
 			? 0.f
 			: FMath::RadiansToDegrees(FMath::Atan2(Delta2D.Y, Delta2D.X));
 
-		if (BondMesh)
+		if (T.Kind == ETileKind::Bond)
 		{
-			BondISM->AddInstance(FTransform(FRotator(0.f, Yaw, 0.f), Mid, BondScale));
-			if (bDrawBondDebugArrows)
-				DrawBondArrow(WorldA, WorldB);
+			if (BondMesh)
+			{
+				BondISM->AddInstance(FTransform(FRotator(0.f, Yaw, 0.f), Mid, BondScale));
+				if (bDrawBondDebugArrows)
+					DrawBondArrow(WorldA, WorldB);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildBonds: BondMesh is null"));
+			}
 		}
-		else
+		else if (T.Kind == ETileKind::Unbond)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildBonds: BondMesh is null"));
+			// Use UnbondMesh if available, otherwise fallback to BondMesh
+			UStaticMesh* MeshToUse = UnbondMesh ? UnbondMesh : BondMesh;
+			if (MeshToUse)
+			{
+				UnbondISM->AddInstance(FTransform(FRotator(0.f, Yaw, 0.f), Mid, UnbondScale));
+				if (bDrawBondDebugArrows)
+					DrawBondArrow(WorldA, WorldB);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildBonds: Neither UnbondMesh nor BondMesh is available"));
+			}
 		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildBonds: Found %d bonds, BondMesh=%s, BondISM=%s"), 
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildBonds: Found %d bonds/unbonds, BondMesh=%s, BondISM=%s"), 
 		BondCount, BondMesh ? TEXT("exists") : TEXT("null"), BondISM ? TEXT("exists") : TEXT("null"));
 }
 

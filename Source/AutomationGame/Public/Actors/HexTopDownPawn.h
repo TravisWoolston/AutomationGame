@@ -42,12 +42,16 @@ private:
 	void SetInputMode3();
 	void SetInputMode4();
 	void SetInputMode5();
+	void SetInputMode6();
 	void RotCW() { if (Placer) Placer->RotateCW(); }
 	void RotCCW() { if (Placer) Placer->RotateCCW(); }
 
 	// Type cycling (works for both Input and Output based on current placement mode)
 	void CycleInputTypeNext() { if (Placer) Placer->CycleNextType(); }
 	void CycleInputTypePrevious() { if (Placer) Placer->CyclePreviousType(); }
+	
+	// Glyph cycling (Belt, Bond, Unbond)
+	void CycleGlyphType() { if (Placer) Placer->CycleGlyphType(); }
 	
 	// Selection modifier key
 	void SelectionActivePressed();

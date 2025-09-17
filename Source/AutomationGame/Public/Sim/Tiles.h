@@ -9,7 +9,8 @@ enum class ETileKind : uint8
     Input,
     Output,
     Belt,
-    Bond      // NEW: two?hex bonding glyph
+    Bond,     // NEW: two?hex bonding glyph
+    Unbond    // NEW: two?hex unbonding glyph
 };
 
 USTRUCT(BlueprintType)

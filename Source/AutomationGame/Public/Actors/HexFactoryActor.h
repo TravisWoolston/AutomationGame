@@ -55,6 +55,12 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Visual|Bonds") FVector BondScale = FVector(1.f, 1.f, 1.f);
 	UPROPERTY(EditAnywhere, Category = "Visual|Bonds") float BondZOffset = 10.f;
 
+	// Unbond visuals (separate from bonds)
+	UPROPERTY(EditAnywhere, Category = "Visual|Unbonds") UStaticMesh* UnbondMesh = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Unbonds") UMaterialInterface* UnbondMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Unbonds") FVector UnbondScale = FVector(1.f, 1.f, 1.f);
+	UPROPERTY(EditAnywhere, Category = "Visual|Unbonds") float UnbondZOffset = 10.f;
+
 	// Optional debug arrows for bonds
 	UPROPERTY(EditAnywhere, Category = "Visual|Bonds") bool bDrawBondDebugArrows = false;
 
@@ -65,8 +71,10 @@ protected:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputTileISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltTileISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondTileISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* UnbondTileISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* UnbondISM = nullptr;
 	
 	// Type-specific output ISM components
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputNoneISM = nullptr;
