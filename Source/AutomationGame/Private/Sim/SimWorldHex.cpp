@@ -1617,7 +1617,16 @@ void USimWorldHex::StepBelts()
 		if (T && T->Kind == ETileKind::Belt && KV.Value.Id != 0)
 		{
 			LiveIds.Add(KV.Value.Id);
-			BeltProgress.FindOrAdd(KV.Value.Id, 0.f);
+			// Only initialize belt progress if the item was already on a belt (has existing progress)
+			// This prevents newly spawned/disconnected items from immediately moving on belts
+			if (BeltProgress.Contains(KV.Value.Id))
+			{
+				// Item was already on a belt, keep its progress
+			}
+			else
+			{
+				// Item is new to a belt, don't initialize progress yet - let it start fresh next frame
+			}
 		}
 	}
 	for (auto It = BeltProgress.CreateIterator(); It; ++It)
@@ -1638,6 +1647,7 @@ void USimWorldHex::StepBelts()
 	{
 		if (KV.Value.Id == 0) continue;
 		if (!BeltProgress.Contains(KV.Value.Id)) continue;
+		// Only process items that have existing belt progress (were already on belts)
 		BeltItems.Add({ KV.Value.Id, KV.Key });
 	}
 	const float Dt = FMath::Max(0.f, FixedStepSec);
@@ -2181,6 +2191,21 @@ void USimWorldHex::StepBelts()
 	ItemsMovedLastStep = ItemsMovedForward;
 	for (int32 PulledId : PulledThisPass)
 		ItemsMovedLastStep.Add(PulledId);
+	
+	/* ---------- Initialize belt progress for new items on belts ---------- */
+	// After all belt processing is complete, initialize progress for items that are on belts but don't have progress yet
+	for (const auto& KV : ItemMap)
+	{
+		const FTile* T = TileMap.Find(KV.Key);
+		if (T && T->Kind == ETileKind::Belt && KV.Value.Id != 0)
+		{
+			if (!BeltProgress.Contains(KV.Value.Id))
+			{
+				// This is a new item on a belt, initialize its progress to 0 for next frame
+				BeltProgress.Add(KV.Value.Id, 0.f);
+			}
+		}
+	}
 }
 
 // --- NEW: split glyph handling so inputs spawn before belts ---
