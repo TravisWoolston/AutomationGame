@@ -48,6 +48,9 @@ struct AUTOMATIONGAME_API FArmState
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bHolding = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FItem   Held;
+	
+	// Track which orb the arm is directly holding (for unbond processing)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32   DirectlyHeldOrbId = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOp> Tape;
 
