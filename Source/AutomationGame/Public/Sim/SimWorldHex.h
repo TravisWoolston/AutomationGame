@@ -121,6 +121,7 @@ public:
 	/** Process pending bond formations (call from renderer) */
 	void ProcessPendingBondFormations(float DeltaTime);
 
+
 	/** Notify that an arm has finished its visual rotation */
 	void OnArmRotationComplete(int32 ArmIndex);
 
@@ -144,6 +145,9 @@ private:
 	// One-frame skip sets
 	TSet<FHex> SkipInputThisFrame;
 	TSet<FHex> SkipOutputThisFrame;
+	
+	// Track newly placed items that should wait a tick before being moved by belts
+	TSet<int32> NewlyPlacedItems;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;
@@ -164,6 +168,7 @@ private:
 		float TimeRemaining = 0.f; // Time to wait before forming bond
 	};
 	TArray<FPendingBondFormation> PendingBondFormations;
+	
 
 	// Item Id generator
 	int32 NextItemId = 1;
@@ -204,8 +209,6 @@ private:
 	// Check for disconnected orbs in held clusters and remove them
 	void CheckAndRemoveDisconnectedOrbsFromHeldClusters();
 	
-	// Process unbonds for a specific arm's held cluster (called when arm rotation completes)
-	void ProcessUnbondsForHeldCluster(int32 ArmIndex);
 	
 	// Debug visualization
 	void DrawBondDebugLines();

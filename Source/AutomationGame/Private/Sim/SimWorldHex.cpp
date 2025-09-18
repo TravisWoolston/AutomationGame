@@ -1647,6 +1647,7 @@ void USimWorldHex::StepBelts()
 	{
 		if (KV.Value.Id == 0) continue;
 		if (!BeltProgress.Contains(KV.Value.Id)) continue;
+		if (NewlyPlacedItems.Contains(KV.Value.Id)) continue; // Skip newly placed items
 		// Only process items that have existing belt progress (were already on belts)
 		BeltItems.Add({ KV.Value.Id, KV.Key });
 	}
@@ -2055,7 +2056,13 @@ void USimWorldHex::StepBelts()
 				LocalOccupied.Add(ToHex);
 
 				if (const FTile* TD = TileMap.Find(ToHex); TD && TD->Kind == ETileKind::Belt)
-					BeltProgress.Add(Id, 0.f);
+				{
+					// Only add belt progress if this item wasn't just placed
+					if (!NewlyPlacedItems.Contains(Id))
+					{
+						BeltProgress.Add(Id, 0.f);
+					}
+				}
 				else
 					BeltProgress.Remove(Id);
 			}
@@ -2206,6 +2213,9 @@ void USimWorldHex::StepBelts()
 			}
 		}
 	}
+	
+	/* ---------- Clear newly placed items for next frame ---------- */
+	NewlyPlacedItems.Empty();
 }
 
 // --- NEW: split glyph handling so inputs spawn before belts ---
@@ -2953,13 +2963,29 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 		FArmState& Arm = Arms[ArmIndex];
 		if (!Arm.bHolding || !Arm.Held.bIsCluster || Arm.Held.Orbs.Num() <= 1) continue;
 
-		// Calculate the arm's grip position using simulation facing (same as bond processing)
+		// Get the arm's visual rotation from the actor to ensure correct positioning
+		uint8 VisualFacing = (uint8)Arm.Facing; // Default to simulation facing
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+			{
+				ABasicArm* ArmActor = *ActorItr;
+				if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
+				{
+					// Get the visual facing from the arm actor
+					VisualFacing = ArmActor->FacingDir;
+					break;
+				}
+			}
+		}
+
+		// Calculate the arm's grip position using visual facing
 		FHex GripHex = Arm.BaseHex;
 		for (int i = 0; i < Arm.ArmLen; ++i)
-			GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
+			GripHex = HexUtil::Neighbor(GripHex, (EHexDir)VisualFacing);
 
-		// Calculate rotation for held cluster using simulation facing (same as bond processing)
-		const uint8 cur = (uint8)Arm.Facing % 6;
+		// Calculate rotation for held cluster using visual facing
+		const uint8 cur = VisualFacing % 6;
 		const int8 grab = (int8)Arm.Held.GrabFacing;
 		const uint8 facingDelta = (grab >= 0)
 			? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
@@ -3023,8 +3049,11 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 				DisconnectedOrb.Single.Type = (EOrbType)Sub.Type;
 				DisconnectedOrb.Single.Color = (EOrbColor)Sub.Color;
 
-				// Place the orb on the board at its current position
+				// Place the orb immediately in the simulation
 				ItemMap.Add(WorldPos, DisconnectedOrb);
+				
+				// Mark this item as newly placed so it waits a tick before being moved by belts
+				NewlyPlacedItems.Add(Sub.ItemId);
 
 				// Remove the orb from the held cluster
 				Arm.Held.Orbs.RemoveAt(SubIndex);
@@ -3066,128 +3095,6 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 	}
 }
 
-void USimWorldHex::ProcessUnbondsForHeldCluster(int32 ArmIndex)
-{
-	if (ArmIndex < 0 || ArmIndex >= Arms.Num()) return;
-	
-	FArmState& Arm = Arms[ArmIndex];
-	if (!Arm.bHolding || !Arm.Held.bIsCluster || Arm.Held.Orbs.Num() <= 1) return;
-
-	// Calculate the arm's grip position using simulation facing (same as bond processing)
-	FHex GripHex = Arm.BaseHex;
-	for (int i = 0; i < Arm.ArmLen; ++i)
-		GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
-
-	// Calculate rotation for held cluster using simulation facing (same as bond processing)
-	const uint8 cur = (uint8)Arm.Facing % 6;
-	const int8 grab = (int8)Arm.Held.GrabFacing;
-	const uint8 facingDelta = (grab >= 0)
-		? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
-		: cur;
-	const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-
-	auto Rot60 = [](FHex D, uint8 StepsCCW)
-		{
-			for (uint8 i = 0; i < (StepsCCW % 6); ++i)
-			{
-				int32 q = D.Q;
-				int32 r = D.R;
-				D.Q = -r;
-				D.R = q + r;
-			}
-			return D;
-		};
-
-	// Check each orb in the cluster to see if it's still connected
-	// Always keep the directly held orb (dQ=0, dR=0) - only remove secondary orbs
-	for (int32 SubIndex = Arm.Held.Orbs.Num() - 1; SubIndex >= 0; SubIndex--)
-	{
-		const FOrbData& Sub = Arm.Held.Orbs[SubIndex];
-		if (Sub.ItemId <= 0) continue;
-
-		// Skip the directly held orb (the one at offset 0,0) - it should never be removed
-		if (Sub.dQ == 0 && Sub.dR == 0) continue;
-
-		// Check if this secondary orb has any bonds to other orbs in the cluster
-		bool bHasBondsInCluster = false;
-		if (const TArray<int32>* BondList = ItemToBonds.Find(Sub.ItemId))
-		{
-			for (int32 BondIdx : *BondList)
-			{
-				if (!Bonds.IsValidIndex(BondIdx)) continue;
-				const FBond& Bond = Bonds[BondIdx];
-				if (!Bond.bActive) continue;
-
-				// Check if this bond connects to another orb in the same cluster
-				int32 OtherItemId = (Bond.ItemA == Sub.ItemId) ? Bond.ItemB : Bond.ItemA;
-				for (const FOrbData& OtherSub : Arm.Held.Orbs)
-				{
-					if (OtherSub.ItemId == OtherItemId)
-					{
-						bHasBondsInCluster = true;
-						break;
-					}
-				}
-				if (bHasBondsInCluster) break;
-			}
-		}
-
-		// If this secondary orb has no bonds to other orbs in the cluster, remove it
-		if (!bHasBondsInCluster)
-		{
-			// Calculate the world position where this orb should be placed
-			FHex Local(Sub.dQ, Sub.dR);
-			FHex Rot = Rot60(Local, ccw);
-			FHex WorldHex(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
-
-			// Create a single orb item for the removed orb
-			FItem SingleOrb;
-			SingleOrb.bIsCluster = false;
-			SingleOrb.Id = Sub.ItemId;
-			SingleOrb.Single.Type = (EOrbType)Sub.Type;
-			SingleOrb.Single.Color = (EOrbColor)Sub.Color;
-
-			// Place the orb on the board at its current world position
-			if (TryPutItem(WorldHex, SingleOrb))
-			{
-				// Remove the orb from the cluster
-				Arm.Held.Orbs.RemoveAt(SubIndex);
-				
-				// If only the primary orb remains, convert cluster to single orb
-				if (Arm.Held.Orbs.Num() == 1)
-				{
-					const FOrbData& PrimaryOrb = Arm.Held.Orbs[0];
-					if (PrimaryOrb.dQ == 0 && PrimaryOrb.dR == 0) // This should be the primary orb
-					{
-						// Convert cluster to single orb
-						FItem SingleOrbItem;
-						SingleOrbItem.bIsCluster = false;
-						SingleOrbItem.Id = PrimaryOrb.ItemId;
-						SingleOrbItem.Single.Type = (EOrbType)PrimaryOrb.Type;
-						SingleOrbItem.Single.Color = (EOrbColor)PrimaryOrb.Color;
-						
-						// Replace the cluster with the single orb
-						Arm.Held = SingleOrbItem;
-					}
-				}
-				
-				// Update the arm's visual immediately
-				if (UWorld* World = GetWorld())
-				{
-					for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
-					{
-						ABasicArm* ArmActor = *ActorItr;
-						if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
-						{
-							ArmActor->UpdateHeldClusterOnly();
-							break;
-						}
-					}
-				}
-			}
-		}
-	}
-}
 
 void USimWorldHex::DrawBondDebugLines()
 {
@@ -3458,7 +3365,11 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 			if (AnimatedOrb.bIsInput)
 			{
 				// Input animation complete - place the item on the tile
-				TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item);
+				if (TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item))
+				{
+					// Mark this item as newly placed so it waits a tick before being moved by belts
+					NewlyPlacedItems.Add(AnimatedOrb.Item.Id);
+				}
 			}
 			// Output animation complete - orb disappears (no action needed)
 			
@@ -3522,6 +3433,7 @@ void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
 	}
 }
 
+
 void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 {
 	// DEBUG: Log arm rotation complete (commented out for production)
@@ -3560,17 +3472,8 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 		}
 	}
 	
-	// Process unbonds for this arm immediately when rotation completes
-	// This ensures unbonds happen at the correct visual position during continuous rotation
-	if (ArmIndex >= 0 && ArmIndex < Arms.Num())
-	{
-		FArmState& Arm = Arms[ArmIndex];
-		if (Arm.bHolding && Arm.Held.bIsCluster && Arm.Held.Orbs.Num() > 1)
-		{
-			// Process unbonds for this specific arm's held cluster
-			ProcessUnbondsForHeldCluster(ArmIndex);
-		}
-	}
+	// Note: Unbonds are now processed in CheckAndRemoveDisconnectedOrbsFromHeldClusters()
+	// which is called during StepBonds() in the simulation step, ensuring proper timing
 }
 
 void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
