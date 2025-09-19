@@ -125,6 +125,9 @@ public:
 	/** Notify that an arm has finished its visual rotation */
 	void OnArmRotationComplete(int32 ArmIndex);
 
+	/** Notify that an arm has fully completed its visual rotation (100%) */
+	void OnArmRotationFullyComplete(int32 ArmIndex);
+
 	/** Cancel pending bond formations for a specific arm (when arm drops item) */
 	void CancelPendingBondFormationsForArm(int32 ArmIndex);
 

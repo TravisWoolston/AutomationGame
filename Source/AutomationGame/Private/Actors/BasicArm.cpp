@@ -146,26 +146,47 @@ void ABasicArm::Tick(float DeltaSeconds)
 		}
 	}
 
-	// Advance StepAlpha for interpolation
+	// Advance StepAlpha for interpolation with improved robustness
 	float PreviousStepAlpha = StepAlpha;
 	if (StepSecondsCur > 0.f)
 	{
-		StepAlpha = FMath::Clamp(StepAlpha + DeltaSeconds / StepSecondsCur, 0.f, 1.f);
+		// Clamp DeltaSeconds to prevent extreme values during editor pause/focus
+		float ClampedDeltaSeconds = FMath::Clamp(DeltaSeconds, 0.f, StepSecondsCur * 2.f);
+		StepAlpha = FMath::Clamp(StepAlpha + ClampedDeltaSeconds / StepSecondsCur, 0.f, 1.f);
 	}
 	else
 	{
 		StepAlpha = 1.f;
 	}
 
-	// Check if rotation is close enough to target (within ~5% range)
-	// This allows bond formation while the arm is still slightly rotating
+	// Check for rotation completion notifications with improved robustness
+	// This handles editor pause/focus issues by using more reliable detection
 	if (StepAlpha >= 0.95f && PreviousStepAlpha < 0.95f)
 	{
-		// Rotation is close enough to target - notify the simulation
+		// Rotation is close enough to target - notify the simulation for bond formation
 		if (Sim && SimArmIndex >= 0)
 		{
 			Sim->OnArmRotationComplete(SimArmIndex);
 		}
+	}
+	
+	// Check if rotation is truly complete (100%) for unbond processing
+	if (StepAlpha >= 1.0f && PreviousStepAlpha < 1.0f)
+	{
+		// Rotation is fully complete - notify the simulation for unbond processing
+		if (Sim && SimArmIndex >= 0)
+		{
+			Sim->OnArmRotationFullyComplete(SimArmIndex);
+		}
+	}
+	
+	// Additional robustness: If we're at 100% but haven't notified yet, do it now
+	// This handles cases where the editor was paused during the transition
+	if (StepAlpha >= 1.0f && Sim && SimArmIndex >= 0)
+	{
+		// Check if we need to notify for unbond processing
+		// This is idempotent, so it's safe to call multiple times
+		Sim->OnArmRotationFullyComplete(SimArmIndex);
 	}
 
 	RefreshPose(StepAlpha);

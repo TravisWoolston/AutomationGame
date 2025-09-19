@@ -1420,6 +1420,14 @@ void USimWorldHex::StepBonds()
 		for (int i = 0; i < A.ArmLen; ++i)
 			GripHex = HexUtil::Neighbor(GripHex, (EHexDir)VisualFacing);
 
+		// Check if the arm is positioned over an unbond tile before processing unbonds
+		const FTile* UnbondTile = TileMap.Find(GripHex);
+		if (!UnbondTile || UnbondTile->Kind != ETileKind::Unbond)
+		{
+			// Arm is not positioned over an unbond tile, skip unbond processing
+			continue;
+		}
+
 		// Calculate rotation for held cluster using visual facing
 		const uint8 cur = VisualFacing % 6;
 		const int8 grab = (int8)A.Held.GrabFacing;
@@ -1489,11 +1497,17 @@ void USimWorldHex::StepBonds()
 				UnbondedOrb.Single.Type = (EOrbType)SubA.Type;
 				UnbondedOrb.Single.Color = (EOrbColor)SubA.Color;
 				
-				// Place the orb at its current world position
-				ItemMap.Add(WorldA, UnbondedOrb);
+				// Create an animated orb to delay both visibility and simulation availability
+				FAnimatedOrb AnimatedOrb;
+				AnimatedOrb.Item = UnbondedOrb;
+				AnimatedOrb.Hex = WorldA;
+				AnimatedOrb.AnimationTime = 0.f;
+				AnimatedOrb.AnimationDuration = 1.0f; // 1 second to descend (like output orbs)
+				AnimatedOrb.bIsInput = false; // This is an unbonded orb, not an input
+				AnimatedOrb.bActive = true;
+				AnimatedOrbs.Add(AnimatedOrb);
 				
-				// Mark this item as newly placed so it waits a tick before being moved by belts
-				NewlyPlacedItems.Add(UnbondedOrb.Id);
+				// Don't immediately place the item - it will be placed when animation completes
 				
 				// Remove the orb from the held cluster
 				A.Held.Orbs.RemoveAt(SubIndex);
@@ -1536,6 +1550,15 @@ void USimWorldHex::StepBonds()
 	
 	// Clear the arms ready for unbond processing
 	ArmsReadyForUnbond.Empty();
+	
+	// Update previous state for next frame's rotation completion detection
+	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
+	{
+		FArmState& S = Arms[ArmIndex];
+		S.PrevFacing = S.Facing;
+		S.PrevArmLen = S.ArmLen;
+		S.PrevTrackIdx = S.TrackIdx;
+	}
 }
 
 void USimWorldHex::StepBelts()
@@ -3370,6 +3393,15 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 					NewlyPlacedItems.Add(AnimatedOrb.Item.Id);
 				}
 			}
+			else
+			{
+				// Unbonded orb animation complete - place the item on the tile
+				if (TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item))
+				{
+					// Mark this item as newly placed so it waits a tick before being moved by belts
+					NewlyPlacedItems.Add(AnimatedOrb.Item.Id);
+				}
+			}
 			// Output animation complete - orb disappears (no action needed)
 			
 			// Remove the animated orb
@@ -3471,11 +3503,25 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 		}
 	}
 	
+	// Note: Unbond processing is now handled in OnArmRotationFullyComplete()
+	// This function only handles bond formation at 95% rotation completion
+}
+
+void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
+{
 	// Mark this arm as ready for unbond processing with its current facing direction
 	// The actual unbond processing will happen during the next simulation step
+	// This function is idempotent - it can be called multiple times safely
 	if (ArmIndex >= 0 && ArmIndex < Arms.Num())
 	{
-		// Get the arm's visual facing direction when rotation completes
+		// Check if we already have this arm marked for unbond processing
+		// This prevents unnecessary work if called multiple times
+		if (ArmsReadyForUnbond.Contains(ArmIndex))
+		{
+			return; // Already marked, no need to do it again
+		}
+		
+		// Get the arm's visual facing direction when rotation fully completes
 		uint8 VisualFacing = (uint8)Arms[ArmIndex].Facing; // Default to simulation facing
 		if (UWorld* World = GetWorld())
 		{
@@ -3491,7 +3537,7 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 			}
 		}
 		
-		// Store the arm index and the facing direction when rotation completed
+		// Store the arm index and the facing direction when rotation fully completed
 		ArmsReadyForUnbond.Add(ArmIndex, VisualFacing);
 	}
 }
