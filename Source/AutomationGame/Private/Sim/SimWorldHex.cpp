@@ -524,6 +524,21 @@ void USimWorldHex::StepArms()
 
 				if (!S.Held.bIsCluster)
 				{
+					// Clear any ghost tracking for this single orb before placing it
+					HeldItemLastHex.Remove(S.Held.Id);
+					NewlyPlacedItems.Remove(S.Held.Id);
+					RecentlyDroppedByArm.Remove(S.Held.Id);
+					
+					// Also remove any ghost orb from ItemMap that might be causing collision issues
+					for (auto It = ItemMap.CreateIterator(); It; ++It)
+					{
+						if (It.Value().Id == S.Held.Id)
+						{
+							It.RemoveCurrent();
+							break;
+						}
+					}
+					
 					if (TryArmPlaceItem(GripTarget, S.Held))
 					{
 						S.bHolding = false;
@@ -569,6 +584,25 @@ void USimWorldHex::StepArms()
 						break;
 					}
 
+					// Clear any ghost tracking for this arm before placing real orbs
+					// This prevents teleporting behavior from stale HeldItemLastHex entries
+					for (const FOrbData& Sub : S.Held.Orbs)
+					{
+						HeldItemLastHex.Remove(Sub.ItemId);
+						NewlyPlacedItems.Remove(Sub.ItemId);
+						RecentlyDroppedByArm.Remove(Sub.ItemId);
+						
+						// Also remove any ghost orbs from ItemMap that might be causing collision issues
+						for (auto It = ItemMap.CreateIterator(); It; ++It)
+						{
+							if (It.Value().Id == Sub.ItemId)
+							{
+								It.RemoveCurrent();
+								break;
+							}
+						}
+					}
+					
 					// Place each sub‑orb back with its preserved ItemId (or assign if missing)
 					for (int32 idx = 0; idx < S.Held.Orbs.Num(); ++idx)
 					{
@@ -1435,6 +1469,10 @@ void USimWorldHex::StepBonds()
 		
 		FArmState& A = Arms[ArmIndex];
 		if (!A.bHolding || !A.Held.bIsCluster) continue;
+		
+		// Skip if this arm was already processed by the old unbond function
+		// (which runs before this new function and might have converted cluster to single orb)
+		if (A.Held.Orbs.Num() <= 1) continue;
 
 		// Calculate the arm's grip position using visual facing
 		FHex GripHex = A.BaseHex;
