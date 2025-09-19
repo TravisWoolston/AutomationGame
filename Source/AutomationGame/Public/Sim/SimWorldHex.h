@@ -209,6 +209,8 @@ private:
 	// Check for disconnected orbs in held clusters and remove them
 	void CheckAndRemoveDisconnectedOrbsFromHeldClusters();
 	
+	// Process unbonds for a specific arm's held cluster (called when arm rotation completes)
+	void ProcessUnbondsForHeldCluster(int32 ArmIndex);
 	
 	// Debug visualization
 	void DrawBondDebugLines();

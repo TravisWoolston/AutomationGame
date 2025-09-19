@@ -1656,6 +1656,22 @@ void USimWorldHex::StepBelts()
 		: (BeltSpeedTilesPerTick / FMath::Max(KINDA_SMALL_NUMBER, Dt));
 	const float ProgressPerStep = TilesPerSec * Dt;
 
+	// Initialize belt progress for new items on belts
+	for (const auto& KV : ItemMap)
+	{
+		if (KV.Value.Id == 0) continue;
+		if (NewlyPlacedItems.Contains(KV.Value.Id)) continue;
+		if (BeltProgress.Contains(KV.Value.Id)) continue; // Already has progress
+		
+		const FTile* T = TileMap.Find(KV.Key);
+		if (T && T->Kind == ETileKind::Belt)
+		{
+			// New item on belt - start with 0 progress
+			BeltProgress.Add(KV.Value.Id, 0.f);
+		}
+	}
+
+	// Advance progress for all belt items
 	for (FBeltItemRef& Ref : BeltItems)
 	{
 		float& P = BeltProgress[Ref.ItemId];
@@ -2401,7 +2417,7 @@ bool USimWorldHex::TryArmPickItem(const FHex& From, FItem& OutItem)
 	{
 		if (T->Kind == ETileKind::Input)
 		{
-			FOrb O; O.Type = (EOrbType)((uint8)EOrbType::BaseA + (T->Arg % 4));
+			FOrb O; O.Type = (EOrbType)T->Arg;
 			FItem NewItem = FItem::MakeSingle(O);
 			NewItem.Id = NextItemId++;
 			OutItem = NewItem;
