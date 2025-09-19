@@ -148,6 +148,10 @@ private:
 	
 	// Track newly placed items that should wait a tick before being moved by belts
 	TSet<int32> NewlyPlacedItems;
+	
+	// Track arms that are ready for unbond processing (rotation complete)
+	// Maps arm index to the facing direction when rotation completed
+	TMap<int32, uint8> ArmsReadyForUnbond;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;
