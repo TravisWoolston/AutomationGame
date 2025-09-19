@@ -366,6 +366,16 @@ void USimWorldHex::StepArms()
 					FItem Temp;
 					if (TryArmPickItem(Target, Temp))
 					{
+						// Check if this orb was recently dropped by this same arm
+						if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(Temp.Id))
+						{
+							if (*DroppedByArm == ArmIndex)
+							{
+								// This arm just dropped this orb, don't pick it up immediately
+								continue;
+							}
+						}
+						
 						S.Held = Temp;
 						S.bHolding = true;
 						SkipInputThisFrame.Add(Target);
@@ -402,6 +412,16 @@ void USimWorldHex::StepArms()
 						FItem SingleOut;
 						if (TryArmPickItem(Target, SingleOut))
 						{
+							// Check if this orb was recently dropped by this same arm
+							if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(SingleOut.Id))
+							{
+								if (*DroppedByArm == ArmIndex)
+								{
+									// This arm just dropped this orb, don't pick it up immediately
+									continue;
+								}
+							}
+							
 							S.Held = SingleOut;
 							S.bHolding = true;
 							SkipInputThisFrame.Add(Target);
@@ -866,6 +886,7 @@ void USimWorldHex::StepBonds()
 	CleanupBrokenBonds(HeldIds);
 
 	// Check for disconnected orbs in held clusters and remove them immediately
+	// This handles cases where arms aren't rotating or aren't over unbond tiles
 	CheckAndRemoveDisconnectedOrbsFromHeldClusters();
 
 	// Build virtual occupancy for held orbs (both single and cluster)
@@ -1512,12 +1533,24 @@ void USimWorldHex::StepBonds()
 				// Remove the orb from the held cluster
 				A.Held.Orbs.RemoveAt(SubIndex);
 				
-				// Update HeldItemLastHex to track the new position
-				HeldItemLastHex.FindOrAdd(SubA.ItemId, WorldA);
+				// Remove from HeldItemLastHex since this orb is no longer held
+				HeldItemLastHex.Remove(SubA.ItemId);
 				
-				// If this was the last orb in the cluster, stop holding
-				if (A.Held.Orbs.Num() == 0)
+				// If this was the last orb in the cluster, convert to single orb
+				if (A.Held.Orbs.Num() == 1)
 				{
+					// Convert the remaining single orb to a single orb item
+					const FOrbData& RemainingOrb = A.Held.Orbs[0];
+					A.Held.bIsCluster = false;
+					A.Held.Orbs.Empty();
+					A.Held.Single.Type = (EOrbType)RemainingOrb.Type;
+					A.Held.Single.Color = (EOrbColor)RemainingOrb.Color;
+					A.Held.Id = RemainingOrb.ItemId;
+					A.Held.GrabFacing = -1; // Clear grab facing for single orbs
+				}
+				else if (A.Held.Orbs.Num() == 0)
+				{
+					// This should never happen, but just in case
 					A.bHolding = false;
 					A.Held = FItem();
 				}
@@ -2238,6 +2271,9 @@ void USimWorldHex::StepBelts()
 	
 	/* ---------- Clear newly placed items for next frame ---------- */
 	NewlyPlacedItems.Empty();
+	
+	/* ---------- Clear recently dropped by arm tracking for next frame ---------- */
+	RecentlyDroppedByArm.Empty();
 }
 
 // --- NEW: split glyph handling so inputs spawn before belts ---
@@ -2435,16 +2471,8 @@ bool USimWorldHex::TryArmPickItem(const FHex& From, FItem& OutItem)
 
 bool USimWorldHex::TryArmPlaceItem(const FHex& To, const FItem& InItem)
 {
-	if (const FTile* T = TileMap.Find(To))
-	{
-		if (T->Kind == ETileKind::Output)
-		{
-			OrbAt.Remove(To);
-			++OutputCount;
-			HeldItemLastHex.Remove(InItem.Id);
-			return true;
-		}
-	}
+	// Always use the normal placement logic, even for output tiles
+	// This allows ProcessOutputs() to handle type checking and animation properly
 	const bool bPlaced = TryPutItem(To, InItem);
 	if (bPlaced)
 		HeldItemLastHex.Remove(InItem.Id);
@@ -3076,12 +3104,24 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 				
 				// Mark this item as newly placed so it waits a tick before being moved by belts
 				NewlyPlacedItems.Add(Sub.ItemId);
+				
+				// Mark this orb as recently dropped by this arm to prevent immediate re-grabbing
+				RecentlyDroppedByArm.Add(Sub.ItemId, ArmIndex);
+
+				// Check if this will be the last orb in the cluster after removal
+				bool bWillBeLastOrb = (Arm.Held.Orbs.Num() == 1);
+				FOrbData RemainingOrb;
+				if (bWillBeLastOrb)
+				{
+					// Get the remaining orb's data before removing the disconnected one
+					RemainingOrb = Arm.Held.Orbs[0];
+				}
 
 				// Remove the orb from the held cluster
 				Arm.Held.Orbs.RemoveAt(SubIndex);
 
-				// Update HeldItemLastHex to track the new position
-				HeldItemLastHex.FindOrAdd(Sub.ItemId, WorldPos);
+				// Remove from HeldItemLastHex since this orb is no longer held
+				HeldItemLastHex.Remove(Sub.ItemId);
 
 				if (bDebugLogs && bDevDebugBonds && GEngine)
 				{
@@ -3090,11 +3130,24 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 							Sub.ItemId, WorldPos.Q, WorldPos.R));
 				}
 
-				// If this was the last orb in the cluster, stop holding
-				if (Arm.Held.Orbs.Num() == 0)
+				// If this was the last orb in the cluster, convert to single orb
+				if (bWillBeLastOrb)
 				{
+					// Convert the remaining single orb to a single orb item
+					Arm.Held.bIsCluster = false;
+					Arm.Held.Orbs.Empty();
+					Arm.Held.Single.Type = (EOrbType)RemainingOrb.Type;
+					Arm.Held.Single.Color = (EOrbColor)RemainingOrb.Color;
+					Arm.Held.Id = RemainingOrb.ItemId;
+					Arm.Held.GrabFacing = -1; // Clear grab facing for single orbs
+					break; // Exit the loop since we've converted to single orb
+				}
+				else if (Arm.Held.Orbs.Num() == 0)
+				{
+					// This should never happen, but just in case
 					Arm.bHolding = false;
 					Arm.Held = FItem();
+					break; // Exit the loop since we're no longer holding anything
 				}
 				else
 				{

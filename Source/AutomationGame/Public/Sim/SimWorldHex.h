@@ -155,6 +155,10 @@ private:
 	// Track arms that are ready for unbond processing (rotation complete)
 	// Maps arm index to the facing direction when rotation completed
 	TMap<int32, uint8> ArmsReadyForUnbond;
+	
+	// Track orbs recently dropped by arms to prevent immediate re-grabbing
+	// Maps item ID to arm index that dropped it
+	TMap<int32, int32> RecentlyDroppedByArm;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;
