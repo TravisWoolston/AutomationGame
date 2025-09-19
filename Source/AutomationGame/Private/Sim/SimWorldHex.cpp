@@ -3395,14 +3395,23 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 			}
 			else
 			{
-				// Unbonded orb animation complete - place the item on the tile
-				if (TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item))
+				// Check if this is an output tile to determine if it should disappear or be placed
+				const FTile* OutputTile = TileMap.Find(AnimatedOrb.Hex);
+				if (OutputTile && OutputTile->Kind == ETileKind::Output)
 				{
-					// Mark this item as newly placed so it waits a tick before being moved by belts
-					NewlyPlacedItems.Add(AnimatedOrb.Item.Id);
+					// Output animation complete - orb disappears (no action needed)
+					// The orb is consumed by the output tile
+				}
+				else
+				{
+					// Unbonded orb animation complete - place the item on the tile
+					if (TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item))
+					{
+						// Mark this item as newly placed so it waits a tick before being moved by belts
+						NewlyPlacedItems.Add(AnimatedOrb.Item.Id);
+					}
 				}
 			}
-			// Output animation complete - orb disappears (no action needed)
 			
 			// Remove the animated orb
 			AnimatedOrbs.RemoveAt(i);
