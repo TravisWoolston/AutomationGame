@@ -1617,6 +1617,116 @@ void USimWorldHex::StepBonds()
 				break; // Only remove one orb per arm per tick
 			}
 		}
+		
+		// Special case: Check if the unbond tile was triggered on the grabbed orb itself (dQ=0, dR=0)
+		// In this case, we need to place the grabbed orb on the board and continue holding the remaining cluster
+		for (int32 SubIndex = A.Held.Orbs.Num() - 1; SubIndex >= 0; SubIndex--)
+		{
+			const FOrbData& SubA = A.Held.Orbs[SubIndex];
+			if (SubA.ItemId <= 0) continue;
+			
+			// Only process the grabbed orb (the one at the grip position)
+			if (SubA.dQ != 0 || SubA.dR != 0) continue;
+			
+			// Check if this grabbed orb has any bonds to other orbs in the cluster
+			bool bHasBondsInCluster = false;
+			if (const TArray<int32>* BondList = ItemToBonds.Find(SubA.ItemId))
+			{
+				for (int32 BondIdx : *BondList)
+				{
+					if (!Bonds.IsValidIndex(BondIdx)) continue;
+					const FBond& Bond = Bonds[BondIdx];
+					if (!Bond.bActive) continue;
+					
+					// Check if this bond connects to another orb in the same cluster
+					int32 OtherItemId = (Bond.ItemA == SubA.ItemId) ? Bond.ItemB : Bond.ItemA;
+					for (const FOrbData& OtherSub : A.Held.Orbs)
+					{
+						if (OtherSub.ItemId == OtherItemId)
+						{
+							bHasBondsInCluster = true;
+							break;
+						}
+					}
+					if (bHasBondsInCluster) break;
+				}
+			}
+			
+			// If the grabbed orb has no bonds to other orbs in the cluster, place it on the board
+			// and continue holding the remaining cluster
+			if (!bHasBondsInCluster && A.Held.Orbs.Num() > 1)
+			{
+				// Calculate the world position of the grabbed orb (it's at the grip position)
+				FHex WorldA = GripHex;
+				
+				// Create a single orb item for the grabbed orb
+				FItem UnbondedOrb;
+				UnbondedOrb.bIsCluster = false;
+				UnbondedOrb.Id = SubA.ItemId;
+				UnbondedOrb.Single.Type = (EOrbType)SubA.Type;
+				UnbondedOrb.Single.Color = (EOrbColor)SubA.Color;
+				
+				// Create an animated orb to delay both visibility and simulation availability
+				FAnimatedOrb AnimatedOrb;
+				AnimatedOrb.Item = UnbondedOrb;
+				AnimatedOrb.Hex = WorldA;
+				AnimatedOrb.AnimationTime = 0.f;
+				AnimatedOrb.AnimationDuration = 1.0f; // 1 second to descend (like output orbs)
+				AnimatedOrb.bIsInput = false; // This is an unbonded orb, not an input
+				AnimatedOrb.bActive = true;
+				AnimatedOrbs.Add(AnimatedOrb);
+				
+				// Remove the grabbed orb from the held cluster
+				A.Held.Orbs.RemoveAt(SubIndex);
+				
+				// Remove from HeldItemLastHex since this orb is no longer held
+				HeldItemLastHex.Remove(SubA.ItemId);
+				
+				// After removing the grabbed orb, we need to pick a new grabbed orb from the remaining cluster
+				if (A.Held.Orbs.Num() > 0)
+				{
+					// Find the first remaining orb to become the new grabbed orb
+					FOrbData& NewGrabbedOrb = A.Held.Orbs[0];
+					
+					// Adjust all other orbs' positions relative to the new grabbed orb
+					for (FOrbData& Orb : A.Held.Orbs)
+					{
+						Orb.dQ -= NewGrabbedOrb.dQ;
+						Orb.dR -= NewGrabbedOrb.dR;
+					}
+					
+					// The new grabbed orb should be at (0,0)
+					NewGrabbedOrb.dQ = 0;
+					NewGrabbedOrb.dR = 0;
+					
+					// Update the held item's ID to match the new grabbed orb
+					A.Held.Id = NewGrabbedOrb.ItemId;
+				}
+				
+				if (bDebugLogs && bDevDebugBonds && GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+						FString::Printf(TEXT("Unbond: Grabbed orb %d placed at (%d,%d). Remaining cluster orbs: %d"), 
+							SubA.ItemId, WorldA.Q, WorldA.R, A.Held.Orbs.Num()));
+				}
+				
+				// Force the arm to update its visual immediately
+				if (UWorld* World = GetWorld())
+				{
+					for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+					{
+						ABasicArm* ArmActor = *ActorItr;
+						if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
+						{
+							ArmActor->UpdateHeldClusterOnly();
+							break;
+						}
+					}
+				}
+				
+				break; // Only process one grabbed orb per arm per tick
+			}
+		}
 	}
 	
 	// Clear the arms ready for unbond processing
@@ -3125,70 +3235,68 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 			// If this orb has no bonds to other orbs in the cluster, remove it
 			if (!bHasBondsInCluster)
 			{
-				// Calculate the world position of this orb
-				FHex Local(Sub.dQ, Sub.dR);
-				FHex Rot = Rot60(Local, ccw);
-				FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
-
-				// Create a single orb item for the disconnected orb
-				FItem DisconnectedOrb;
-				DisconnectedOrb.bIsCluster = false;
-				DisconnectedOrb.Id = Sub.ItemId;
-				DisconnectedOrb.Single.Type = (EOrbType)Sub.Type;
-				DisconnectedOrb.Single.Color = (EOrbColor)Sub.Color;
-
-				// Place the orb immediately in the simulation
-				ItemMap.Add(WorldPos, DisconnectedOrb);
-				
-				// Mark this item as newly placed so it waits a tick before being moved by belts
-				NewlyPlacedItems.Add(Sub.ItemId);
-				
-				// Mark this orb as recently dropped by this arm to prevent immediate re-grabbing
-				RecentlyDroppedByArm.Add(Sub.ItemId, ArmIndex);
-
-				// Check if this will be the last orb in the cluster after removal
-				bool bWillBeLastOrb = (Arm.Held.Orbs.Num() == 1);
-				FOrbData RemainingOrb;
-				if (bWillBeLastOrb)
+				// Check if this is the held orb (the one at dQ=0, dR=0)
+				if (Sub.dQ == 0 && Sub.dR == 0)
 				{
-					// Get the remaining orb's data before removing the disconnected one
-					RemainingOrb = Arm.Held.Orbs[0];
-				}
+					// This is the held orb - we should disconnect the cluster, not the held orb
+					// Place all remaining orbs in the cluster on the board and keep holding the held orb as a single orb
+					
+					// First, place all other orbs in the cluster on the board
+					for (int32 OtherIndex = Arm.Held.Orbs.Num() - 1; OtherIndex >= 0; OtherIndex--)
+					{
+						const FOrbData& OtherSub = Arm.Held.Orbs[OtherIndex];
+						if (OtherSub.ItemId <= 0) continue;
+						
+						// Skip the held orb itself (dQ=0, dR=0)
+						if (OtherSub.dQ == 0 && OtherSub.dR == 0) continue;
+						
+						// Calculate the world position of this other orb
+						FHex OtherLocal(OtherSub.dQ, OtherSub.dR);
+						FHex OtherRot = Rot60(OtherLocal, ccw);
+						FHex OtherWorldPos(GripHex.Q + OtherRot.Q, GripHex.R + OtherRot.R);
 
-				// Remove the orb from the held cluster
-				Arm.Held.Orbs.RemoveAt(SubIndex);
+						// Create a single orb item for the disconnected orb
+						FItem DisconnectedOrb;
+						DisconnectedOrb.bIsCluster = false;
+						DisconnectedOrb.Id = OtherSub.ItemId;
+						DisconnectedOrb.Single.Type = (EOrbType)OtherSub.Type;
+						DisconnectedOrb.Single.Color = (EOrbColor)OtherSub.Color;
 
-				// Remove from HeldItemLastHex since this orb is no longer held
-				HeldItemLastHex.Remove(Sub.ItemId);
-
-				if (bDebugLogs && bDevDebugBonds && GEngine)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
-						FString::Printf(TEXT("Disconnected orb %d removed from held cluster and placed at (%d,%d)"), 
-							Sub.ItemId, WorldPos.Q, WorldPos.R));
-				}
-
-				// If this was the last orb in the cluster, convert to single orb
-				if (bWillBeLastOrb)
-				{
-					// Convert the remaining single orb to a single orb item
+						// Place the orb immediately in the simulation
+						ItemMap.Add(OtherWorldPos, DisconnectedOrb);
+						
+						// Mark this item as newly placed so it waits a tick before being moved by belts
+						NewlyPlacedItems.Add(OtherSub.ItemId);
+						
+						// Mark this orb as recently dropped by this arm to prevent immediate re-grabbing
+						RecentlyDroppedByArm.Add(OtherSub.ItemId, ArmIndex);
+						
+						// Remove from HeldItemLastHex since this orb is no longer held
+						HeldItemLastHex.Remove(OtherSub.ItemId);
+						
+						if (bDebugLogs && bDevDebugBonds && GEngine)
+						{
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+								FString::Printf(TEXT("Disconnected cluster orb %d removed from held cluster and placed at (%d,%d)"), 
+									OtherSub.ItemId, OtherWorldPos.Q, OtherWorldPos.R));
+						}
+					}
+					
+					// Convert the held cluster to a single orb (keeping the held orb)
+					FOrbData HeldOrb = Sub; // The held orb (dQ=0, dR=0)
 					Arm.Held.bIsCluster = false;
 					Arm.Held.Orbs.Empty();
-					Arm.Held.Single.Type = (EOrbType)RemainingOrb.Type;
-					Arm.Held.Single.Color = (EOrbColor)RemainingOrb.Color;
-					Arm.Held.Id = RemainingOrb.ItemId;
+					Arm.Held.Single.Type = (EOrbType)HeldOrb.Type;
+					Arm.Held.Single.Color = (EOrbColor)HeldOrb.Color;
+					Arm.Held.Id = HeldOrb.ItemId;
 					Arm.Held.GrabFacing = -1; // Clear grab facing for single orbs
-					break; // Exit the loop since we've converted to single orb
-				}
-				else if (Arm.Held.Orbs.Num() == 0)
-				{
-					// This should never happen, but just in case
-					Arm.bHolding = false;
-					Arm.Held = FItem();
-					break; // Exit the loop since we're no longer holding anything
-				}
-				else
-				{
+					
+					if (bDebugLogs && bDevDebugBonds && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
+							FString::Printf(TEXT("Held orb %d converted to single orb after cluster disconnection"), HeldOrb.ItemId));
+					}
+					
 					// Force the arm to update its visual immediately
 					if (UWorld* World = GetWorld())
 					{
@@ -3201,6 +3309,74 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 								break;
 							}
 						}
+					}
+					
+					break; // Exit the orb loop since we've processed the entire cluster
+				}
+				else
+				{
+					// This is not the held orb - proceed with normal disconnection
+					// Calculate the world position of this orb
+					FHex Local(Sub.dQ, Sub.dR);
+					FHex Rot = Rot60(Local, ccw);
+					FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+
+					// Create a single orb item for the disconnected orb
+					FItem DisconnectedOrb;
+					DisconnectedOrb.bIsCluster = false;
+					DisconnectedOrb.Id = Sub.ItemId;
+					DisconnectedOrb.Single.Type = (EOrbType)Sub.Type;
+					DisconnectedOrb.Single.Color = (EOrbColor)Sub.Color;
+
+					// Place the orb immediately in the simulation
+					ItemMap.Add(WorldPos, DisconnectedOrb);
+					
+					// Mark this item as newly placed so it waits a tick before being moved by belts
+					NewlyPlacedItems.Add(Sub.ItemId);
+					
+					// Mark this orb as recently dropped by this arm to prevent immediate re-grabbing
+					RecentlyDroppedByArm.Add(Sub.ItemId, ArmIndex);
+
+					// Check if this will be the last orb in the cluster after removal
+					bool bWillBeLastOrb = (Arm.Held.Orbs.Num() == 1);
+					FOrbData RemainingOrb;
+					if (bWillBeLastOrb)
+					{
+						// Get the remaining orb's data before removing the disconnected one
+						RemainingOrb = Arm.Held.Orbs[0];
+					}
+
+					// Remove the orb from the held cluster
+					Arm.Held.Orbs.RemoveAt(SubIndex);
+
+					// Remove from HeldItemLastHex since this orb is no longer held
+					HeldItemLastHex.Remove(Sub.ItemId);
+
+					if (bDebugLogs && bDevDebugBonds && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+							FString::Printf(TEXT("Disconnected orb %d removed from held cluster and placed at (%d,%d)"), 
+								Sub.ItemId, WorldPos.Q, WorldPos.R));
+					}
+
+					// If this was the last orb in the cluster, convert to single orb
+					if (bWillBeLastOrb)
+					{
+						// Convert the remaining single orb to a single orb item
+						Arm.Held.bIsCluster = false;
+						Arm.Held.Orbs.Empty();
+						Arm.Held.Single.Type = (EOrbType)RemainingOrb.Type;
+						Arm.Held.Single.Color = (EOrbColor)RemainingOrb.Color;
+						Arm.Held.Id = RemainingOrb.ItemId;
+						Arm.Held.GrabFacing = -1; // Clear grab facing for single orbs
+						break; // Exit the loop since we've converted to single orb
+					}
+					else if (Arm.Held.Orbs.Num() == 0)
+					{
+						// This should never happen, but just in case
+						Arm.bHolding = false;
+						Arm.Held = FItem();
+						break; // Exit the loop since we're no longer holding anything
 					}
 				}
 			}
