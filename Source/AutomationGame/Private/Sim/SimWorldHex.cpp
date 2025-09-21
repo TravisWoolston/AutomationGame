@@ -531,9 +531,18 @@ void USimWorldHex::StepArms()
 					}
 				}
 
-				// NEW: If grab failed (nothing there), do NOT advance PC; retry next tick.
+				// If grab failed (nothing there), wait for next tick (retry)
 				if (!bGrabSucceeded)
-					continue;
+				{
+					continue; // Wait for next tick to retry grab
+				}
+				
+				// If grab succeeded, let normal flow advance PC (allows next command in same tick)
+				if (bDebugLogs && GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+						FString::Printf(TEXT("Arm %d: Grab succeeded, will advance to next instruction"), ArmIndex));
+				}
 			}
 			break;
 
