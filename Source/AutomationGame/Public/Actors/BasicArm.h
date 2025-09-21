@@ -99,6 +99,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", meta = (ClampMin = 1))
 	int32 ReachTiles = 1;
 
+	/** Starting reach distance for this arm's commands. Used to initialize ReachTiles. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Program", meta = (ClampMin = 1))
+	int32 StartingReach = 1;
+
 	/** (Legacy) scalar reach fraction — kept for compatibility with old placements. */
 	// UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", AdvancedDisplay)
 	// float HandReachUU = 0.6f;
@@ -156,6 +160,14 @@ public:
 	/** Get the current step alpha for debugging */
 	UFUNCTION(BlueprintPure, Category = "Program")
 	float GetStepAlpha() const { return StepAlpha; }
+
+	/** Get whether the arm is currently holding something */
+	UFUNCTION(BlueprintPure, Category = "Program")
+	bool IsHolding() const { return bHolding; }
+
+	/** Get the starting facing direction */
+	UFUNCTION(BlueprintPure, Category = "Program")
+	uint8 GetStartFacingDir() const { return StartFacingDir; }
 
 	/** For debugging: execute current instruction immediately (ignores Wait). */
 	UFUNCTION(BlueprintCallable, Category = "Program")

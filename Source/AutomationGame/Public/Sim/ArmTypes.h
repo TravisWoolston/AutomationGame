@@ -58,4 +58,8 @@ struct AUTOMATIONGAME_API FArmState
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) EHexDir PrevFacing = (EHexDir)0;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32   PrevArmLen = 1;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32   PrevTrackIdx = 0;
+	
+	// --- NEW: robust rotation completion tracking ---
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) bool    bRotationCompleted = false;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32   RotationCompletionStep = -1;
 };

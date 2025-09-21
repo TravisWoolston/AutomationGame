@@ -21,8 +21,19 @@ UMaterialInterface* UOrbMaterialManager::GetMaterialForOrbType(EOrbType OrbType)
 {
 	if (const UMaterialInterface* const* FoundMaterial = OrbTypeMaterials.Find(OrbType))
 	{
+		// Only log occasionally to reduce spam
+		static int32 LogCounter = 0;
+		if (++LogCounter % 100 == 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("MaterialManager: Found material for type %d: %s"), 
+				(int32)OrbType, *(*FoundMaterial)->GetName());
+		}
 		return const_cast<UMaterialInterface*>(*FoundMaterial);
 	}
+	
+	// Only log when using default material (this is more important to track)
+	UE_LOG(LogTemp, Log, TEXT("MaterialManager: Using default material for type %d: %s"), 
+		(int32)OrbType, DefaultOrbMaterial ? *DefaultOrbMaterial->GetName() : TEXT("NULL"));
 	return DefaultOrbMaterial;
 }
 

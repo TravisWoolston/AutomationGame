@@ -196,7 +196,7 @@ FVector AHexFactoryActor::HexToWorld(const FHex& H) const
 
 void AHexFactoryActor::RebuildInternal()
 {
-	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildInternal: Starting rebuild"));
+	// Note: Debug logging removed for performance
 	
 	EnsureComponents();
 	
@@ -204,7 +204,7 @@ void AHexFactoryActor::RebuildInternal()
 	if (!Sim && Driver)
 	{
 		Sim = Driver->GetSim();
-		UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildInternal: Reacquired Sim=%s"), Sim ? TEXT("found") : TEXT("null"));
+		// Note: Debug logging removed for performance
 	}
 	
 	if (!Sim) 
@@ -275,7 +275,7 @@ void AHexFactoryActor::RebuildInternal()
 	RebuildBonds();   // NEW
 	RebuildOutputs(); // NEW: Type-specific output rendering
 	
-	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildInternal: Rebuild complete"));
+	// Note: Debug logging removed for performance
 }
 
 void AHexFactoryActor::RebuildTiles()
@@ -503,7 +503,7 @@ void AHexFactoryActor::RebuildOutputs()
 		return;
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found OrbMaterialManager: %s"), MaterialManager ? *MaterialManager->GetName() : TEXT("null"));
+	// Note: Debug logging removed for performance
 	
 	// Get the tile mesh from GameManager instead of orb mesh
 	UStaticMesh* BaseTileMesh = nullptr;
@@ -515,7 +515,7 @@ void AHexFactoryActor::RebuildOutputs()
 			if (GameManager && GameManager->TileMesh)
 			{
 				BaseTileMesh = GameManager->TileMesh;
-				UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found tile mesh from GameManager: %s"), *BaseTileMesh->GetName());
+				// Note: Debug logging removed for performance
 				break;
 			}
 		}
@@ -528,7 +528,7 @@ void AHexFactoryActor::RebuildOutputs()
 		if (TileMesh)
 		{
 			BaseTileMesh = TileMesh;
-			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Using local TileMesh as fallback"));
+			// Note: Debug logging removed for performance
 		}
 		else
 		{

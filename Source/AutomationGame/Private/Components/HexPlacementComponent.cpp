@@ -278,7 +278,10 @@ void UHexPlacementComponent::DoRemoveAt(const FVector& World)
 	const FHexAxial A = HexCoord::XYToAxialRound(Local, Tile, Ori);
 
 	Sim->PlaceTile(FHex{ A.Q, A.R }, FTile{ ETileKind::Empty, 0 });
-	UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Removed tile at Hex(%d,%d)"), A.Q, A.R);
+	if (bDebug)
+	{
+		UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Removed tile at Hex(%d,%d)"), A.Q, A.R);
+	}
 
 	if (bDebug && GEngine)
 	{

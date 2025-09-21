@@ -170,10 +170,11 @@ void ABasicArm::Tick(float DeltaSeconds)
 		}
 	}
 	
-	// Check if rotation is truly complete (100%) for unbond processing
-	if (StepAlpha >= 1.0f && PreviousStepAlpha < 1.0f)
+	// Robust rotation completion detection - use a more reliable threshold
+	// This prevents issues during performance dips where StepAlpha might not reach exactly 1.0f
+	if (StepAlpha >= 0.99f && PreviousStepAlpha < 0.99f)
 	{
-		// Rotation is fully complete - notify the simulation for unbond processing
+		// Rotation is effectively complete - notify the simulation for unbond processing
 		if (Sim && SimArmIndex >= 0)
 		{
 			Sim->OnArmRotationFullyComplete(SimArmIndex);
@@ -591,7 +592,10 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent& Event)
 			// If FArmState has something like bLoopTape, assign it here:
 			// Sim->Arms[SimArmIndex].bLoopTape = bLoopProgram;
 		}
-		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Loop flag changed=%d"), *GetName(), bLoopProgram ? 1 : 0);
+		if (bDebugLogs)
+		{
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Loop flag changed=%d"), *GetName(), bLoopProgram ? 1 : 0);
+		}
 	}
 	else if (bReachOrFacingChanged)
 	{
@@ -773,7 +777,10 @@ void ABasicArm::ShowHeldOrb(bool bShow)
 
 	if (bShow && HeldOrb.Orbs.Num() > 0)
 	{
-		UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Showing held orb with %d sub-orbs."), *GetName(), HeldOrb.Orbs.Num());
+		if (bDebugLogs)
+		{
+			UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Showing held orb with %d sub-orbs."), *GetName(), HeldOrb.Orbs.Num());
+		}
 		HeldOrbComp->AttachToComponent(BaseComp, FAttachmentTransformRules::SnapToTargetIncludingScale, TEXT("GripSocket"));
 
 		for (const FOrbData& Orb : HeldOrb.Orbs)
@@ -785,7 +792,10 @@ void ABasicArm::ShowHeldOrb(bool bShow)
 			OrbMesh->SetMaterial(0, GetMaterialForOrbColor(Orb.Type));
 			OrbMesh->SetRelativeScale3D(HeldOrbScale);
 
-			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Created orb mesh for type=%d color=%d offset=(%.2f, %.2f)"), *GetName(), Orb.Type, Orb.Color, Orb.Offset.X, Orb.Offset.Y);
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Created orb mesh for type=%d color=%d offset=(%.2f, %.2f)"), *GetName(), Orb.Type, Orb.Color, Orb.Offset.X, Orb.Offset.Y);
+			}
 		}
 		//HeldOrbComp->SetVisibility(true, true);
 	}
@@ -1074,7 +1084,10 @@ void ABasicArm::AttachHeldOrb()
 		}
 
 		HeldClusterComps.Add(SubMesh);
-		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached single orb Id=%d Type=%d"), *GetName(), HeldOrb.Id, (int32)HeldOrb.Single.Type);
+		if (bDebugLogs)
+		{
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached single orb Id=%d Type=%d"), *GetName(), HeldOrb.Id, (int32)HeldOrb.Single.Type);
+		}
 	}
 }
 

@@ -96,6 +96,8 @@ void UOrbRenderer::EnsureISM()
 {
 	AActor* Owner = GetOwner();
 	if (!Owner) return;
+	
+	// Note: Debug logging removed for performance
 
 	// Get material manager
 	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
@@ -118,12 +120,18 @@ void UOrbRenderer::EnsureISM()
 	for (EOrbType OrbType : AllOrbTypes)
 	{
 		// Skip if already created
-		if (OrbTypeISMs.Contains(OrbType)) continue;
+		if (OrbTypeISMs.Contains(OrbType)) 
+		{
+			// Note: Debug logging removed for performance
+			continue;
+		}
 
 		// Create ISM component for this orb type
 		FString ComponentName = FString::Printf(TEXT("OrbRenderer_ISM_%d"), (int32)OrbType);
 		UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(Owner, *ComponentName);
 		ISM->RegisterComponent();
+		
+		// Note: Debug logging removed for performance
 
 		if (Owner->GetRootComponent())
 		{
@@ -136,8 +144,19 @@ void UOrbRenderer::EnsureISM()
 		UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(OrbType);
 		if (TypeMaterial)
 		{
+			UE_LOG(LogTemp, Log, TEXT("EnsureISM: Setting material for orb type %d to %s"), 
+				(int32)OrbType, *TypeMaterial->GetName());
 			ISM->SetMaterial(0, TypeMaterial);
 			ISM->SetRenderCustomDepth(false);
+			
+			// Verify the material was set correctly
+			UMaterialInterface* VerifyMaterial = ISM->GetMaterial(0);
+			UE_LOG(LogTemp, Log, TEXT("EnsureISM: Verified material for orb type %d is %s"), 
+				(int32)OrbType, VerifyMaterial ? *VerifyMaterial->GetName() : TEXT("NULL"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("EnsureISM: No material found for orb type %d"), (int32)OrbType);
 		}
 		
 		ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -597,22 +616,16 @@ void UOrbRenderer::RenderAnimatedOrbs()
 			OrbType = AnimatedOrb.Item.Single.Type;
 		}
 		
+		// Note: Output orb material logging removed for performance
+		
 		// Add to the appropriate ISM
 		if (UInstancedStaticMeshComponent** ISMPtr = OrbTypeISMs.Find(OrbType))
 		{
 			if (UInstancedStaticMeshComponent* ISM = *ISMPtr)
 			{
-				// Ensure the ISM has the latest material for this orb type
-				UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
-				if (MaterialManager)
-				{
-					UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(OrbType);
-					if (TypeMaterial)
-					{
-						ISM->SetMaterial(0, TypeMaterial);
-					}
-				}
+				// Note: Material logging removed for performance
 				
+				// Materials are already set correctly in EnsureISM() - no need to set them again
 				ISM->AddInstance(FTransform(FRotator::ZeroRotator, FinalPos, FVector(OrbScale)));
 			}
 		}
