@@ -125,6 +125,10 @@ void ABasicArm::Tick(float DeltaSeconds)
 			ReachTiles = SimState.ArmLen;
 		}
 		
+		// Sync wait state and program counter from simulation
+		WaitLeft = SimState.WaitCounter;
+		PC = SimState.PC;
+		
 		// Update holding state + item payload immediately when simulation state changes
 		bool bWasHolding = bHolding;
 		bHolding = SimState.bHolding;
@@ -525,6 +529,30 @@ void ABasicArm::PushProgramToSim()
 	S.Tape = BuildOpsFromProgram(Program);
 	S.PC = 0;
 	S.Facing = static_cast<EHexDir>(FacingDir);
+	
+	// Debug: Log the converted program
+	if (bDebugLogs)
+	{
+		UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Program pushed (TapeLen=%d)"), *GetName(), S.Tape.Num());
+		for (int32 i = 0; i < S.Tape.Num(); i++)
+		{
+			const FOp& Op = S.Tape[i];
+			FString CmdName = TEXT("Unknown");
+			switch (Op.Cmd)
+			{
+			case ECmd::Wait: CmdName = TEXT("Wait"); break;
+			case ECmd::Grab: CmdName = TEXT("Grab"); break;
+			case ECmd::Drop: CmdName = TEXT("Drop"); break;
+			case ECmd::RotateR: CmdName = TEXT("RotateR"); break;
+			case ECmd::RotateL: CmdName = TEXT("RotateL"); break;
+			case ECmd::Extend: CmdName = TEXT("Extend"); break;
+			case ECmd::Retract: CmdName = TEXT("Retract"); break;
+			case ECmd::Reset: CmdName = TEXT("Reset"); break;
+			}
+			UE_LOG(LogAGArm, Log, TEXT("  [%d]: %s %d"), i, *CmdName, Op.Arg);
+		}
+	}
+	
 	UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Program pushed (TapeLen=%d Holding(sim)=%d)"),
 		*GetName(), S.Tape.Num(), S.bHolding ? 1 : 0);
 }
@@ -1129,6 +1157,12 @@ void ABasicArm::SyncFromSim(const FArmState& SimState)
 	{
 		ReachTiles = SimState.ArmLen;
 	}
+
+	// Sync wait state from simulation
+	WaitLeft = SimState.WaitCounter;
+
+	// Sync program counter from simulation
+	PC = SimState.PC;
 
 	// Holding state + item payload
 	bHolding = SimState.bHolding;
