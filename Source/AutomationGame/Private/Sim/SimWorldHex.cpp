@@ -33,7 +33,7 @@ void USimWorldHex::Initialize(int32 /*Radius*/)
 
 // (add near other file‑scope statics)
 static constexpr int32 MAX_ARM_LEN = 6;
-static bool bDevDebugArms = false; // set true to see arm/hand debug messages
+static bool bDevDebugArms = true; // set true to see arm/hand debug messages
 // ---------- NEW: Add missing definitions ----------
 
 int32 USimWorldHex::AddArm(const FArmState& Arm)
@@ -165,6 +165,7 @@ int32 USimWorldHex::BreakAllBondsForItem(int32 ItemId)
 	}
 	return Removed;
 }
+
 
 // --- CleanupBrokenBonds: only remove if an item vanished; otherwise update offsets ---
 void USimWorldHex::CleanupBrokenBonds(const TSet<int32>& HeldIds)
@@ -340,6 +341,18 @@ void USimWorldHex::StepArms()
 		FArmState& S = Arms[ArmIndex];
 		if (S.Tape.Num() == 0) continue;
 		const FOp& Op = S.Tape[S.PC];
+		
+		// Clean up any stale pending grabs for this arm (if it's not trying to grab anymore)
+		if (Op.Cmd != ECmd::Grab)
+		{
+			for (int32 i = PendingGrabs.Num() - 1; i >= 0; i--)
+			{
+				if (PendingGrabs[i].ArmIndex == ArmIndex)
+				{
+					PendingGrabs.RemoveAt(i);
+				}
+			}
+		}
 
 		switch (Op.Cmd)
 		{
@@ -383,6 +396,34 @@ void USimWorldHex::StepArms()
 					Target = HexUtil::Neighbor(Target, S.Facing);
 
 				FItem* Found = ItemMap.Find(Target);
+				
+				// Check if another arm is already trying to grab this cluster
+				bool bAnotherArmGrabbing = false;
+				if (Found)
+				{
+					// Check if any other arm is pending a grab of this cluster
+					for (const FPendingGrab& PendingGrab : PendingGrabs)
+					{
+						if (PendingGrab.ArmIndex != ArmIndex && 
+							PendingGrab.TargetHex == Target && 
+							PendingGrab.ClusterId == Found->Id)
+						{
+							bAnotherArmGrabbing = true;
+							break;
+						}
+					}
+				}
+				
+				// If another arm is grabbing this cluster, wait
+				if (bAnotherArmGrabbing)
+				{
+					if (bDebugLogs && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
+							FString::Printf(TEXT("Arm %d: Another arm is grabbing cluster at (%d,%d), waiting"), ArmIndex, Target.Q, Target.R));
+					}
+					continue; // Wait for next tick
+				}
 				if (!Found)
 				{
 					FItem Temp;
@@ -537,11 +578,29 @@ void USimWorldHex::StepArms()
 					continue; // Wait for next tick to retry grab
 				}
 				
-				// If grab succeeded, let normal flow advance PC (allows next command in same tick)
-				if (bDebugLogs && GEngine)
+				// If grab succeeded, register pending grab and let normal flow advance PC
+				if (bGrabSucceeded && Found)
 				{
-					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-						FString::Printf(TEXT("Arm %d: Grab succeeded, will advance to next instruction"), ArmIndex));
+					// Register this arm as grabbing this cluster
+					FPendingGrab PendingGrab;
+					PendingGrab.ArmIndex = ArmIndex;
+					PendingGrab.TargetHex = Target;
+					PendingGrab.ClusterId = Found->Id;
+					PendingGrabs.Add(PendingGrab);
+					
+					if (bDebugLogs && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+							FString::Printf(TEXT("Arm %d: Grab succeeded, registered pending grab for cluster %d"), ArmIndex, Found->Id));
+					}
+				}
+				else if (bGrabSucceeded)
+				{
+					if (bDebugLogs && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+							FString::Printf(TEXT("Arm %d: Grab succeeded, will advance to next instruction"), ArmIndex));
+					}
 				}
 			}
 			break;
@@ -662,6 +721,15 @@ void USimWorldHex::StepArms()
 					// Bonds referencing these Ids were never removed; offsets will self‑heal in CleanupBrokenBonds next tick.
 					S.bHolding = false;
 					S.Held = FItem();
+				}
+				
+				// Clean up any pending grabs for this arm
+				for (int32 i = PendingGrabs.Num() - 1; i >= 0; i--)
+				{
+					if (PendingGrabs[i].ArmIndex == ArmIndex)
+					{
+						PendingGrabs.RemoveAt(i);
+					}
 				}
 			}
 			break;
@@ -927,8 +995,11 @@ void USimWorldHex::StepBonds()
 		return;
 	}
 	
-	// DEBUG: Log when StepBonds is called (commented out for production)
-	// UE_LOG(LogAGSim, Warning, TEXT("StepBonds called with %d tiles and %d items"), TileMap.Num(), ItemMap.Num());
+	// DEBUG: Log when StepBonds is called
+	if (bDevDebugBonds)
+	{
+		UE_LOG(LogAGSim, Log, TEXT("StepBonds: %d tiles, %d items"), TileMap.Num(), ItemMap.Num());
+	}
 
 	TSet<int32> HeldIds;
 	for (const FArmState& A : Arms)
@@ -955,8 +1026,9 @@ void USimWorldHex::StepBonds()
 
 	// Build virtual occupancy for held orbs (both single and cluster)
 	TMap<FHex, int32> VirtualHeldItemAt;
-	for (const FArmState& A : Arms)
+	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 	{
+		const FArmState& A = Arms[ArmIndex];
 		if (!A.bHolding) continue;
 
 		FHex GripHex = A.BaseHex;
@@ -1030,12 +1102,11 @@ void USimWorldHex::StepBonds()
 		}
 	}
 	
-	// Only form bonds when no arms are moving to prevent premature bond formation
-	// But be more lenient - only skip if arms are significantly animating
+	// Only form bonds when arms are not actively rotating to prevent premature bond formation
 	if (bAnyArmMoving)
 	{
-		// Check if any arms are just finishing their animation (StepAlpha > 0.9)
-		bool bAllArmsNearlyFinished = true;
+		// Check if any arms are still actively rotating (StepAlpha < 0.95)
+		bool bAnyArmActivelyRotating = false;
 		if (UWorld* World = GetWorld())
 		{
 			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
@@ -1043,38 +1114,38 @@ void USimWorldHex::StepBonds()
 				ABasicArm* ArmActor = *ActorItr;
 				if (ArmActor && ArmActor->SimArmIndex >= 0 && ArmActor->SimArmIndex < Arms.Num())
 				{
-					if (ArmActor->IsAnimating() && ArmActor->GetStepAlpha() < 0.9f)
+					if (ArmActor->IsAnimating() && ArmActor->GetStepAlpha() < 0.95f)
 					{
-						bAllArmsNearlyFinished = false;
+						bAnyArmActivelyRotating = true;
 						break;
 					}
 				}
 			}
 		}
 		
-		// If arms are nearly finished animating, allow bond formation
-		if (!bAllArmsNearlyFinished)
+		// If any arm is actively rotating, skip bond formation
+		if (bAnyArmActivelyRotating)
 		{
-			if (bDebugLogs && bDevDebugBonds && GEngine)
+			if (bDevDebugBonds)
 			{
-				GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Yellow,
-					FString::Printf(TEXT("Skipping bond formation - %d arm(s) moving"), MovingArmCount));
+				UE_LOG(LogAGSim, Log, TEXT("Skipping bond formation - %d arm(s) actively rotating"), MovingArmCount);
 			}
 			return;
 		}
-		else if (bDebugLogs && bDevDebugBonds && GEngine)
+		else if (bDevDebugBonds)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Green,
-				TEXT("Allowing bond formation - arms nearly finished"));
+			UE_LOG(LogAGSim, Log, TEXT("Allowing bond formation - arms nearly finished rotating"));
 		}
 	}
 
 	// Bond formation (world or virtual held)
 	TSet<int32> Newly;
+	int32 BondTileCount = 0;
 	for (const auto& KV : TileMap)
 	{
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Bond) continue;
+		BondTileCount++;
 		const uint8 Dir = (uint8)(T.Arg & 0xFF);
 		const FHex AHex = KV.Key;
 		const FHex BHex = HexUtil::Neighbor(AHex, (EHexDir)(Dir % 6));
@@ -1168,19 +1239,20 @@ void USimWorldHex::StepBonds()
 		//	AId, bAIsHeld ? TEXT("yes") : TEXT("no"), BId, bBIsHeld ? TEXT("yes") : TEXT("no"), 
 		//	AHex.Q, AHex.R, BHex.Q, BHex.R);
 		
-		// Allow bonds between held and board items, but handle them specially
-		// Don't form bonds between two held items from different arms
-		if (bAIsHeld && bBIsHeld) 
+		// Debug logging
+		
+		// Debug: Log what we're trying to bond
+		if (bDevDebugBonds)
 		{
-			if (bDebugLogs && bDevDebugBonds && GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Orange,
-					FString::Printf(TEXT("Skipping bond formation - both items %d and %d are held"), AId, BId));
-			}
-			continue;
+			FString ArmInfoA = bAIsHeld ? TEXT("(Held)") : TEXT("(Board)");
+			FString ArmInfoB = bBIsHeld ? TEXT("(Held)") : TEXT("(Board)");
+			UE_LOG(LogAGSim, Log, TEXT("Attempting bond: %d%s-%d%s"), AId, *ArmInfoA, BId, *ArmInfoB);
 		}
+		
+		// Allow bonds between items held by different arms or between held and board items
+		if (Newly.Contains(AId) || Newly.Contains(BId)) { /* allow multiple bonds same tick but avoid duplication */ }
 
-		// Prevent duplicates
+		// Prevent duplicate bond between same two items (order-agnostic)
 		bool bDup = false;
 		if (const TArray<int32>* AList = ItemToBonds.Find(AId))
 		{
@@ -1215,8 +1287,10 @@ void USimWorldHex::StepBonds()
 
 		if (bDebugLogs && bDevDebugBonds && GEngine)
 		{
+			FString ArmInfoA = bAIsHeld ? TEXT("(Held)") : TEXT("(Board)");
+			FString ArmInfoB = bBIsHeld ? TEXT("(Held)") : TEXT("(Board)");
 			GEngine->AddOnScreenDebugMessage(-1, 0.6f, FColor::Purple,
-				FString::Printf(TEXT("Bond formed: %d-%d"), AId, BId));
+				FString::Printf(TEXT("Bond formed: %d%s-%d%s"), AId, *ArmInfoA, BId, *ArmInfoB));
 		}
 
 		// Handle held-to-board bonds: add board orb to held item (cluster or single)
@@ -1325,22 +1399,87 @@ void USimWorldHex::StepBonds()
 			
 			if (HoldingArmIndex >= 0)
 			{
-				// Create pending bond formation - will be processed when arm finishes rotating
-				FPendingBondFormation Pending;
-				Pending.HeldItemId = BId;
-				Pending.BoardItemId = AId;
-				Pending.BoardItemHex = AHex;
-				Pending.ArmIndex = HoldingArmIndex;
-				Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
-				PendingBondFormations.Add(Pending);
+				// Check if this board item is part of a dropped cluster
+				// Look for other board items that might be part of the same dropped cluster
+				TArray<FItem*> ClusterItems;
+				TArray<FHex> ClusterHexes;
 				
-				if (bDebugLogs && bDevDebugBonds && GEngine)
+				// Start with the current board item
+				FItem* CurrentItem = ItemMap.Find(AHex);
+				if (CurrentItem && CurrentItem->Id == AId)
 				{
-					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
-						FString::Printf(TEXT("Queued bond formation: board orb %d -> held item %d (arm %d)"), AId, BId, HoldingArmIndex));
+					ClusterItems.Add(CurrentItem);
+					ClusterHexes.Add(AHex);
+					
+					// Look for other board items that might be part of the same cluster
+					// We'll check adjacent hexes for items that might be part of the dropped cluster
+					for (int32 NeighborDir = 0; NeighborDir < 6; NeighborDir++)
+					{
+						FHex NeighborHex = HexUtil::Neighbor(AHex, (EHexDir)NeighborDir);
+						FItem* NeighborItem = ItemMap.Find(NeighborHex);
+						if (NeighborItem && NeighborItem->Id > 0)
+						{
+							// Check if this item was recently dropped (part of a cluster)
+							// We can use the RecentlyDroppedByArm map to detect this
+							if (RecentlyDroppedByArm.Contains(NeighborItem->Id))
+							{
+								ClusterItems.Add(NeighborItem);
+								ClusterHexes.Add(NeighborHex);
+							}
+						}
+					}
+				}
+				
+				if (ClusterItems.Num() > 1)
+				{
+					// This is a dropped cluster - add all items to the held item
+					if (bDevDebugBonds)
+					{
+						UE_LOG(LogAGSim, Log, TEXT("Detected dropped cluster with %d items, adding to held item %d"), 
+							ClusterItems.Num(), BId);
+					}
+					
+					// Add all cluster items to the held item
+					for (int32 i = 0; i < ClusterItems.Num(); i++)
+					{
+						AddBoardOrbToHeldItem(BId, ClusterItems[i]->Id, ClusterHexes[i]);
+					}
+				}
+				else
+				{
+					// Single board item - use the existing pending bond formation
+					FPendingBondFormation Pending;
+					Pending.HeldItemId = BId;
+					Pending.BoardItemId = AId;
+					Pending.BoardItemHex = AHex;
+					Pending.ArmIndex = HoldingArmIndex;
+					Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
+					PendingBondFormations.Add(Pending);
+					
+					if (bDebugLogs && bDevDebugBonds && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+							FString::Printf(TEXT("Queued bond formation: board orb %d -> held item %d (arm %d)"), AId, BId, HoldingArmIndex));
+					}
 				}
 			}
 		}
+		else if (bAIsHeld && bBIsHeld)
+		{
+			// Both items are held - skip bond formation
+			// The donating arm should drop its cluster, then the receiving arm can bond with the dropped cluster
+			if (bDevDebugBonds)
+			{
+				UE_LOG(LogAGSim, Log, TEXT("Skipping held-to-held bond: both items are held"));
+			}
+			continue;
+		}
+	}
+	
+	// Debug: Log bond tile processing results
+	if (bDevDebugBonds)
+	{
+		UE_LOG(LogAGSim, Log, TEXT("Processed %d bond tiles"), BondTileCount);
 	}
 
 	// Opus Magnum style: Form bonds between sub-orbs within held clusters

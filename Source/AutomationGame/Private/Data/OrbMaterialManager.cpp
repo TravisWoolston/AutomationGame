@@ -23,11 +23,11 @@ UMaterialInterface* UOrbMaterialManager::GetMaterialForOrbType(EOrbType OrbType)
 	{
 		// Only log occasionally to reduce spam
 		static int32 LogCounter = 0;
-		if (++LogCounter % 100 == 0)
-		{
-			UE_LOG(LogTemp, Log, TEXT("MaterialManager: Found material for type %d: %s"), 
-				(int32)OrbType, *(*FoundMaterial)->GetName());
-		}
+		// if (++LogCounter % 100 == 0)
+		// {
+		// 	UE_LOG(LogTemp, Log, TEXT("MaterialManager: Found material for type %d: %s"), 
+		// 		(int32)OrbType, *(*FoundMaterial)->GetName());
+		// }
 		return const_cast<UMaterialInterface*>(*FoundMaterial);
 	}
 	

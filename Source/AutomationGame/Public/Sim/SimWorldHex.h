@@ -180,6 +180,14 @@ private:
 	};
 	TArray<FPendingBondFormation> PendingBondFormations;
 	
+	// Pending grab tracking to prevent multiple arms from grabbing the same cluster
+	struct FPendingGrab
+	{
+		int32 ArmIndex = -1;
+		FHex TargetHex;
+		int32 ClusterId = 0;
+	};
+	TArray<FPendingGrab> PendingGrabs;
 
 	// Item Id generator
 	int32 NextItemId = 1;
