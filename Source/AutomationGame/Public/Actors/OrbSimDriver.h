@@ -54,6 +54,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugLogs = false;
 	
+	/** Draw debug spheres at all orb simulation locations every frame. 
+	 * Shows: Board orbs (colored by type), held orbs (yellow/orange), cluster sub-orbs with offsets */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugSpheres = false;
 	
@@ -62,6 +64,10 @@ public:
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugBonds = false;
+	
+	/** Size of debug spheres for all orb types */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug", meta = (ClampMin = "1.0", ClampMax = "50.0"))
+	float DebugSphereSize = 8.0f;
 
 	/** Optional reference to a manager if you want to sync knobs externally (not required). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Framework")
@@ -99,6 +105,21 @@ public:
 	/** Create test bonds for debugging (temporary) */
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void CreateTestBonds();
+
+	/** Draw debug spheres for all orbs in the simulation.
+	 * Called every frame when bDebugSpheres is enabled.
+	 * Draws spheres for:
+	 * - Board items (single orbs and clusters) with type-based colors
+	 * - Held items by arms (yellow/orange) with proper arm rotation
+	 * - Cluster sub-orbs with hex coordinate offsets
+	 * - Debug text showing item IDs and cluster information */
+	void DrawAllOrbDebugSpheres();
+
+	/** Get debug color for orb type */
+	FColor GetDebugColorForOrbType(uint8 OrbType) const;
+
+	/** Get debug sphere size (uses DebugSphereSize variable for all orbs) */
+	float GetDebugSizeForOrbType(uint8 OrbType, bool bIsSubOrb) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Belts") int32 GetBeltVisualOffset() const { return BeltVisualDirOffset; }
 	UFUNCTION(BlueprintCallable, Category = "Belts") bool  IsBeltYawClockwise() const { return bBeltYawClockwise; }
