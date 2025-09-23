@@ -51,6 +51,9 @@ struct AUTOMATIONGAME_API FArmState
 	
 	// Track which orb the arm is directly holding (for unbond processing)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32   DirectlyHeldOrbId = 0;
+	
+	// Pause flag for bonded arm management
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bPausedForBonding = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOp> Tape;
 

@@ -189,6 +189,16 @@ private:
 	};
 	TArray<FPendingGrab> PendingGrabs;
 
+	// Bonded arm pair tracking for cross-arm cluster management
+	struct FBondedArmPair
+	{
+		int32 ArmIndexA = -1;
+		int32 ArmIndexB = -1;
+		int32 BondIndex = -1;
+		bool bActive = false;
+	};
+	TArray<FBondedArmPair> BondedArmPairs;
+
 	// Item Id generator
 	int32 NextItemId = 1;
 
@@ -263,4 +273,10 @@ private:
 	void SpawnInputs();
 	void ProcessOutputs();
 	void SpawnInputsAfterBelts();
+
+	// Bonded arm management functions
+	void CheckForNewBondedArmPairs();
+	void PauseBondedArms();
+	void ResumeArmsWhenBondsBroken();
+	bool IsArmBonded(int32 ArmIndex) const;
 };
