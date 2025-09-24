@@ -114,6 +114,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CycleNextType();
 	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CyclePreviousType();
 	
+	// Blueprint mode support
+	UFUNCTION(BlueprintCallable, Category = "Place|Blueprint") void SetBlueprintMode(bool bInBlueprintMode) { bDisablePreview = bInBlueprintMode; }
+	
+	// Hover detection support
+	UFUNCTION(BlueprintPure, Category = "Place") bool IsHoverValid() const { return bHoverValid; }
+	UFUNCTION(BlueprintPure, Category = "Place") FHex GetHoverHex() const { return HoverHex; }
+	
 	/** Cycle through glyph types (Belt, Bond, Unbond) */
 	UFUNCTION(BlueprintCallable, Category = "Place|Glyph") void CycleGlyphType();
 	
@@ -178,4 +185,7 @@ private:
 public:
 	UPROPERTY(EditAnywhere, Category = "Scenario") bool bAutoScenarioCapture = true;
 	UPROPERTY(Transient) ATestLevelDirector* CachedTLD = nullptr;
+	
+	// Blueprint mode flag to disable preview
+	bool bDisablePreview = false;
 };

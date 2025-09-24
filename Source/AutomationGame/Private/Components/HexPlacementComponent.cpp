@@ -685,6 +685,16 @@ void UHexPlacementComponent::UpdateHoverHex()
 
 void UHexPlacementComponent::UpdatePreviewVisual()
 {
+	// Disable preview if in blueprint mode
+	if (bDisablePreview)
+	{
+		if (PreviewComp)
+		{
+			PreviewComp->SetVisibility(false);
+		}
+		return;
+	}
+	
 	if (!bHoverValid || !GetWorld()) return;
 
 	const bool bPlaceOK = CanPlaceAt(HoverHex);
