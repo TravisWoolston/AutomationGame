@@ -229,18 +229,7 @@ void AOrbSimDriver::ForceSyncDebugSettings()
 		bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0, bDebugBonds ? 1 : 0);
 }
 
-void AOrbSimDriver::CreateTestBonds()
-{
-	if (Sim)
-	{
-		Sim->CreateTestBonds();
-		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Created test bonds"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: No Sim found, cannot create test bonds"));
-	}
-}
+
 
 void AOrbSimDriver::DrawAllOrbDebugSpheres()
 {

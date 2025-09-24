@@ -1069,38 +1069,6 @@ void USimWorldHex::TryFormBondAt(const FHex& Root, uint8 Dir, const TSet<int32>&
 	}
 }
 
-//void USimWorldHex::CleanupBrokenBonds(const TSet<int32>& /*HeldIds*/)
-//{
-//	if (Bonds.Num() == 0) return;
-//
-//	TMap<int32, FHex> ItemPos;
-//	for (const auto& KV : ItemMap)
-//		if (KV.Value.Id != 0)
-//			ItemPos.Add(KV.Value.Id, KV.Key);
-//
-//	for (int32 i = Bonds.Num() - 1; i >= 0; --i)
-//	{
-//		const FBond& B = Bonds[i];
-//		bool bRemove = false;
-//
-//		const FHex* AHex = ItemPos.Find(B.ItemA);
-//		const FHex* BHex = ItemPos.Find(B.ItemB);
-//		if (!AHex || !BHex)
-//		{
-//			bRemove = true;
-//		}
-//		else
-//		{
-//			const int32 dq = BHex->Q - AHex->Q;
-//			const int32 dr = BHex->R - AHex->R;
-//			if (dq != B.dQ || dr != B.dR)
-//				bRemove = true;
-//		}
-//
-//		if (bRemove)
-//			RemoveBondIndex(i);
-//	}
-//}
 
 void USimWorldHex::RemoveBondIndex(int32 Index)
 {
@@ -1441,67 +1409,7 @@ void USimWorldHex::DrawBondDebugLines()
 	}
 }
 
-void USimWorldHex::CreateTestBonds()
-{
-	// Create some test bonds for debugging
-	// This is a temporary function to test bond visualization
-	
-	// Clear existing bonds
-	Bonds.Empty();
-	ItemToBonds.Empty();
-	
-	// Create test items at specific hexes
-	FHex TestHex1(0, 0);
-	FHex TestHex2(1, 0);
-	FHex TestHex3(0, 1);
-	
-	// Create test orbs
-	FOrb Orb1; Orb1.Type = EOrbType::BaseA; Orb1.Color = EOrbColor::Red;
-	FOrb Orb2; Orb2.Type = EOrbType::BaseB; Orb2.Color = EOrbColor::Blue;
-	FOrb Orb3; Orb3.Type = EOrbType::BaseA; Orb3.Color = EOrbColor::Green;
-	
-	FItem Item1 = FItem::MakeSingle(Orb1);
-	FItem Item2 = FItem::MakeSingle(Orb2);
-	FItem Item3 = FItem::MakeSingle(Orb3);
-	
-	Item1.Id = NextItemId++;
-	Item2.Id = NextItemId++;
-	Item3.Id = NextItemId++;
-	
-	// Place items
-	ItemMap.Add(TestHex1, Item1);
-	ItemMap.Add(TestHex2, Item2);
-	ItemMap.Add(TestHex3, Item3);
-	
-	// Create bonds between them
-	FBond Bond1;
-	Bond1.ItemA = Item1.Id;
-	Bond1.ItemB = Item2.Id;
-	Bond1.Root = TestHex1;
-	Bond1.dQ = 1;
-	Bond1.dR = 0;
-	Bond1.bActive = true;
-	
-	FBond Bond2;
-	Bond2.ItemA = Item1.Id;
-	Bond2.ItemB = Item3.Id;
-	Bond2.Root = TestHex1;
-	Bond2.dQ = 0;
-	Bond2.dR = 1;
-	Bond2.bActive = true;
-	
-	// Add bonds
-	const int32 Bond1Idx = Bonds.Add(Bond1);
-	const int32 Bond2Idx = Bonds.Add(Bond2);
-	
-	AddItemBondLink(Bond1.ItemA, Bond1Idx);
-	AddItemBondLink(Bond1.ItemB, Bond1Idx);
-	AddItemBondLink(Bond2.ItemA, Bond2Idx);
-	AddItemBondLink(Bond2.ItemB, Bond2Idx);
-	
-	UE_LOG(LogTemp, Log, TEXT("Created test bonds: %d-%d and %d-%d"), 
-		Bond1.ItemA, Bond1.ItemB, Bond2.ItemA, Bond2.ItemB);
-}
+
 
 
 void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
@@ -1561,9 +1469,7 @@ void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
 
 void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 {
-	// DEBUG: Log arm rotation complete (commented out for production)
-	// UE_LOG(LogAGSim, Warning, TEXT("SIMULATION: OnArmRotationComplete called for arm %d, checking %d pending formations"), ArmIndex, PendingBondFormations.Num());
-	
+
 	// Process any pending bond formations for this arm immediately
 	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
 	{

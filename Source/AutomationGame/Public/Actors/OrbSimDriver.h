@@ -102,9 +102,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void ForceSyncDebugSettings();
 	
-	/** Create test bonds for debugging (temporary) */
-	UFUNCTION(BlueprintCallable, Category = "Debug")
-	void CreateTestBonds();
+
 
 	/** Draw debug spheres for all orbs in the simulation.
 	 * Called every frame when bDebugSpheres is enabled.

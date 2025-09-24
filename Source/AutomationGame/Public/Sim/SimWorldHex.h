@@ -94,9 +94,7 @@ public:
 		GridOrientation = InOrientation;
 	}
 
-	/** Create test bonds for debugging (temporary) */
-	UFUNCTION(BlueprintCallable, Category = "Debug")
-	void CreateTestBonds();
+
 
 	/** Get the bonds array for rendering purposes */
 	const TArray<FBond>& GetBonds() const { return Bonds; }
