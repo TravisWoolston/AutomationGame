@@ -706,11 +706,29 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Preserved original facing %d for arm at (%d,%d)"), 
 					NewArmSpec.Facing, Arm->Q, Arm->R);
 			}
+			else if (!bCaptureRuntimeFacingEdits)
+			{
+				// For new arms (including blueprint-placed), use their HomeFacing from simulation (starting rotation)
+				if (Sim && Arm->SimArmIndex >= 0 && Arm->SimArmIndex < Sim->Arms.Num())
+				{
+					const FArmState& ArmState = Sim->Arms[Arm->SimArmIndex];
+					NewArmSpec.Facing = (uint8)ArmState.HomeFacing;
+					UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Used HomeFacing %d from simulation for new arm at (%d,%d)"), 
+						NewArmSpec.Facing, Arm->Q, Arm->R);
+				}
+				else
+				{
+					// Fallback to current facing if simulation not available
+					NewArmSpec.Facing = Arm->FacingDir;
+					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Fallback to current facing %d for arm at (%d,%d) (no sim state)"), 
+						NewArmSpec.Facing, Arm->Q, Arm->R);
+				}
+			}
 			else
 			{
-				// Use current facing (for new arms or when capturing runtime edits)
+				// Use current facing when explicitly capturing runtime edits
 				NewArmSpec.Facing = Arm->FacingDir;
-				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured current facing %d for arm at (%d,%d)"), 
+				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured current facing %d for arm at (%d,%d) (runtime capture enabled)"), 
 					NewArmSpec.Facing, Arm->Q, Arm->R);
 			}
 			
