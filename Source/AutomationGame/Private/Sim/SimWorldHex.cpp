@@ -19,6 +19,7 @@ struct FHeldOrbRef
 float BeltSpeedTilesPerSecond = DEFAULT_BELT_SPEED_TILES_PER_SECOND;
 void USimWorldHex::Initialize(int32 /*Radius*/)
 {
+	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::Initialize() clearing %d arms from simulation"), Arms.Num());
 	TileMap.Empty();
 	ItemMap.Empty();
 	Arms.Empty();
@@ -48,6 +49,10 @@ int32 USimWorldHex::AddArm(const FArmState& Arm)
 	S.HomeFacing = (EHexDir)((uint8)S.HomeFacing % 6);
 	S.ArmLen = FMath::Clamp<int32>(S.ArmLen <= 0 ? 1 : S.ArmLen, 1, 6);
 	S.HomeArmLen = FMath::Clamp<int32>(S.HomeArmLen <= 0 ? 1 : S.HomeArmLen, 1, 6);
+	
+	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::AddArm - Added arm at (%d,%d) facing=%d assigned SimIndex=%d (total arms: %d)"), 
+		Arm.BaseHex.Q, Arm.BaseHex.R, (int32)Arm.Facing, NewIndex, Arms.Num());
+	
 	return NewIndex;
 }
 

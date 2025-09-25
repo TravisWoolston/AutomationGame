@@ -33,19 +33,22 @@ struct AUTOMATIONGAME_API FBlueprintTile
 	uint8 ArmFacing = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 ArmReach = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TArray<FArmInstr> ArmProgram;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bArmLoopProgram = true;
 
 	FBlueprintTile()
-		: LocalHex(0, 0), TileType(ETileKind::Input), TileDirection(0), bIsArm(false), ArmFacing(0), bArmLoopProgram(true) {}
+		: LocalHex(0, 0), TileType(ETileKind::Input), TileDirection(0), bIsArm(false), ArmFacing(0), ArmReach(1), bArmLoopProgram(true) {}
 
 	FBlueprintTile(FHex InLocalHex, ETileKind InTileType, uint8 InDirection)
-		: LocalHex(InLocalHex), TileType(InTileType), TileDirection(InDirection), bIsArm(false), ArmFacing(0), bArmLoopProgram(true) {}
+		: LocalHex(InLocalHex), TileType(InTileType), TileDirection(InDirection), bIsArm(false), ArmFacing(0), ArmReach(1), bArmLoopProgram(true) {}
 
-	FBlueprintTile(FHex InLocalHex, uint8 InArmFacing, const TArray<FArmInstr>& InArmProgram, bool bInLoopProgram)
-		: LocalHex(InLocalHex), TileType(ETileKind::Empty), TileDirection(0), bIsArm(true), ArmFacing(InArmFacing), ArmProgram(InArmProgram), bArmLoopProgram(bInLoopProgram) {}
+	FBlueprintTile(FHex InLocalHex, uint8 InArmFacing, int32 InArmReach, const TArray<FArmInstr>& InArmProgram, bool bInLoopProgram)
+		: LocalHex(InLocalHex), TileType(ETileKind::Empty), TileDirection(0), bIsArm(true), ArmFacing(InArmFacing), ArmReach(InArmReach), ArmProgram(InArmProgram), bArmLoopProgram(bInLoopProgram) {}
 };
 
 UCLASS()
@@ -141,6 +144,9 @@ private:
 	void RotateBlueprintCW();
 	void RotateBlueprintCCW();
 	void UpdateBlueprintPreview();
+	
+	// Helper function to convert simulation ops to arm instructions
+	TArray<FArmInstr> ConvertOpsToProgram(const TArray<FOp>& Ops);
 
 	void SetInputMode1();
 	void SetInputMode2();

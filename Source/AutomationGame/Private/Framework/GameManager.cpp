@@ -260,7 +260,7 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 		Arm->SimArmIndex = ArmIndex;
 		Arm->Start();
 
-		UE_LOG(LogTemp, Log, TEXT("GameManager: Spawned + registered arm at Hex(%d,%d) Facing=%d SimIndex=%d TapeLen=%d"),
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered arm at Hex(%d,%d) Facing=%d SimIndex=%d TapeLen=%d"),
 			Hex.Q, Hex.R, (int32)ArmState.Facing, ArmIndex, ArmState.Tape.Num());
 	}
 	else

@@ -11,6 +11,7 @@
 #include "Sim/ArmTypes.h"
 #include "DrawDebugHelpers.h"
 #include "UI/AutomationGameHUD.h"
+#include "Framework/GameManager.h"
 #include "EngineUtils.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
@@ -132,7 +133,7 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 				{
 					PreviewColor = FColor::Green;
 					SphereSize = 60.f;
-					TileTypeText = FString::Printf(TEXT("ARM (F:%d)"), BlueprintTile.ArmFacing);
+					TileTypeText = FString::Printf(TEXT("ARM (F:%d R:%d)"), BlueprintTile.ArmFacing, BlueprintTile.ArmReach);
 				}
 				else
 				{
@@ -460,15 +461,16 @@ void AHexTopDownPawn::CreateBlueprint()
 			const FArmState& ArmState = Sim->Arms[ArmIndex];
 			if (ArmState.BaseHex.Q == Hex.Q && ArmState.BaseHex.R == Hex.R)
 			{
-				// Found the arm - capture its program and facing
-				// Note: Converting FOp to FArmInstr would require a conversion function
-				// For now, store empty program - this can be enhanced later
-				TArray<FArmInstr> EmptyProgram;
-				FBlueprintTile BlueprintTile(LocalHex, (uint8)ArmState.Facing, EmptyProgram, true); // Assume looping for now
+				// Found the arm - capture its program and HOME facing/reach (reset position)
+				// Convert simulation ops (FOp) back to arm instructions (FArmInstr)
+				TArray<FArmInstr> CapturedProgram = ConvertOpsToProgram(ArmState.Tape);
+				
+				// Create blueprint tile with captured program and HOME facing/reach (so it starts at reset position)
+				FBlueprintTile BlueprintTile(LocalHex, (uint8)ArmState.HomeFacing, ArmState.HomeArmLen, CapturedProgram, true); // Assume looping for now
 				BlueprintTiles.Add(BlueprintTile);
 				
-				UE_LOG(LogTemp, Warning, TEXT("Found and captured arm at (%d,%d) with %d instructions"), 
-					Hex.Q, Hex.R, (int32)ArmState.Tape.Num());
+				UE_LOG(LogTemp, Warning, TEXT("Blueprint: Captured arm at (%d,%d) - CurrentFacing=%d HomeFacing=%d (using HomeFacing for blueprint)"), 
+					Hex.Q, Hex.R, (int32)ArmState.Facing, (int32)ArmState.HomeFacing);
 				bFoundArm = true;
 				break;
 			}
@@ -607,24 +609,55 @@ void AHexTopDownPawn::PlaceBlueprint()
 		
 		if (BlueprintTile.bIsArm)
 		{
-			// Create the arm state
-			FArmState NewArm;
-			NewArm.BaseHex = FinalHex;
-			NewArm.Facing = (EHexDir)BlueprintTile.ArmFacing;
-			// Note: ArmProgram is empty for now since we're not converting FOp to FArmInstr yet
-			// This would need a conversion function to be fully functional
-			NewArm.Tape.Empty(); // Empty for now
-			NewArm.ArmLen = 1; // Default arm length
-			NewArm.HomeArmLen = 1;
-			NewArm.PC = 0;
-			NewArm.WaitCounter = 0;
-			NewArm.bHolding = false;
+			// Use GameManager to spawn arm (same as HexPlacementComponent does)
+			// Find GameManager and let it handle both spawning and simulation
+			AGameManager* GameManager = nullptr;
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<AGameManager> It(World); It; ++It)
+				{
+					GameManager = *It;
+					break;
+				}
+			}
 			
-			// Add the arm to the simulation
-			int32 ArmIndex = Sim->AddArm(NewArm);
-			
-			UE_LOG(LogTemp, Log, TEXT("Placed arm at (%d,%d) with %d instructions"), 
-				FinalHex.Q, FinalHex.R, (int32)BlueprintTile.ArmProgram.Num());
+			if (GameManager)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Blueprint: Placing arm at (%d,%d) with facing=%d reach=%d"), 
+					FinalHex.Q, FinalHex.R, BlueprintTile.ArmFacing, BlueprintTile.ArmReach);
+				
+				// Use GameManager to spawn the arm with the captured program
+				ABasicArm* SpawnedArm = GameManager->SpawnBasicArmAt(
+					FinalHex, BlueprintTile.ArmFacing, BlueprintTile.ArmProgram, BlueprintTile.bArmLoopProgram);
+				
+				if (SpawnedArm)
+				{
+					// Set the captured reach distance (reset position)
+					SpawnedArm->ReachTiles = BlueprintTile.ArmReach;
+					
+					// Also update the simulation to match the captured reset reach
+					if (SpawnedArm->SimArmIndex >= 0 && SpawnedArm->SimArmIndex < Sim->Arms.Num())
+					{
+						FArmState& ArmState = Sim->Arms[SpawnedArm->SimArmIndex];
+						ArmState.ArmLen = BlueprintTile.ArmReach;
+						ArmState.HomeArmLen = BlueprintTile.ArmReach;
+						
+						UE_LOG(LogTemp, Warning, TEXT("Blueprint: Sim state for spawned arm - Facing=%d HomeFacing=%d"), 
+							(int32)ArmState.Facing, (int32)ArmState.HomeFacing);
+					}
+					
+					UE_LOG(LogTemp, Warning, TEXT("Blueprint: Spawned arm at (%d,%d) - FacingDir=%d StartFacingDir=%d SimIndex=%d"), 
+						FinalHex.Q, FinalHex.R, SpawnedArm->FacingDir, SpawnedArm->GetStartFacingDir(), SpawnedArm->SimArmIndex);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("GameManager failed to spawn arm at (%d,%d)"), FinalHex.Q, FinalHex.R);
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("No GameManager found - cannot spawn arm at (%d,%d)"), FinalHex.Q, FinalHex.R);
+			}
 		}
 		else
 		{
@@ -677,6 +710,56 @@ void AHexTopDownPawn::UpdateBlueprintPreview()
 	// This would show a ghost/preview of where the blueprint would be placed
 }
 
+TArray<FArmInstr> AHexTopDownPawn::ConvertOpsToProgram(const TArray<FOp>& Ops)
+{
+	TArray<FArmInstr> Out;
+	for (const FOp& Op : Ops)
+	{
+		FArmInstr Instr;
+		switch (Op.Cmd)
+		{
+		case ECmd::Wait:     
+			Instr.Cmd = EArmCmd::Wait; 
+			Instr.Arg = FMath::Max(1, Op.Arg); 
+			break;
+		case ECmd::Grab:     
+			Instr.Cmd = EArmCmd::Grab; 
+			Instr.Arg = 0; 
+			break;
+		case ECmd::Drop:     
+			Instr.Cmd = EArmCmd::Drop; 
+			Instr.Arg = 0; 
+			break;
+		case ECmd::RotateR:  
+			Instr.Cmd = EArmCmd::RotateCW; 
+			Instr.Arg = FMath::Max(1, Op.Arg); 
+			break;
+		case ECmd::RotateL:  
+			Instr.Cmd = EArmCmd::RotateCCW; 
+			Instr.Arg = FMath::Max(1, Op.Arg); 
+			break;
+		case ECmd::Extend:   
+			Instr.Cmd = EArmCmd::Extend; 
+			Instr.Arg = FMath::Max(1, Op.Arg); 
+			break;
+		case ECmd::Retract:  
+			Instr.Cmd = EArmCmd::Retract; 
+			Instr.Arg = FMath::Max(1, Op.Arg); 
+			break;
+		case ECmd::Reset:    
+			Instr.Cmd = EArmCmd::Reset; 
+			Instr.Arg = 0; 
+			break;
+		default:             
+			Instr.Cmd = EArmCmd::Wait; 
+			Instr.Arg = 1; 
+			break;
+		}
+		Out.Add(Instr);
+	}
+	return Out;
+}
+
 void AHexTopDownPawn::DeletionModePressed()
 {
 	UE_LOG(LogTemp, Warning, TEXT("DeletionMode pressed - entering deletion selection mode"));
@@ -718,14 +801,36 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 	
 	// 2. Remove any arms at this hex (check both simulation and world actors)
 	// First remove from simulation
+	int32 RemovedArmIndex = -1;
 	for (int32 ArmIndex = Sim->Arms.Num() - 1; ArmIndex >= 0; ArmIndex--)
 	{
 		const FArmState& ArmState = Sim->Arms[ArmIndex];
 		if (ArmState.BaseHex.Q == Hex.Q && ArmState.BaseHex.R == Hex.R)
 		{
-			UE_LOG(LogTemp, Log, TEXT("Removing arm from simulation at (%d,%d)"), Hex.Q, Hex.R);
+			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Removing arm from simulation at (%d,%d) SimIndex=%d (total arms before: %d)"), 
+				Hex.Q, Hex.R, ArmIndex, Sim->Arms.Num());
+			RemovedArmIndex = ArmIndex;
 			Sim->Arms.RemoveAt(ArmIndex);
+			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - After removal, total arms: %d"), Sim->Arms.Num());
 			break;
+		}
+	}
+	
+	// CRITICAL: Update SimArmIndex for all arms that were shifted down by the removal
+	if (RemovedArmIndex >= 0)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ABasicArm> It(World); It; ++It)
+			{
+				ABasicArm* Arm = *It;
+				if (Arm && Arm->SimArmIndex > RemovedArmIndex)
+				{
+					Arm->SimArmIndex--; // Shift down by 1
+					UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Updated arm at (%d,%d) SimIndex: %d -> %d"), 
+						Arm->Q, Arm->R, Arm->SimArmIndex + 1, Arm->SimArmIndex);
+				}
+			}
 		}
 	}
 	

@@ -156,6 +156,15 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
 
+	// FIRST: Save current simulation state (including manual arms/tiles) to the active scenario
+	// This preserves any manually placed content as part of the scenario
+	if (Driver && Driver->GetSim() && Scenarios.IsValidIndex(ActiveScenarioIndex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Saving current simulation state to scenario %d before reset"), ActiveScenarioIndex);
+		SyncAllRuntimeArmEdits();  // Capture any program/facing changes from visual arms
+		SyncPreviewEditsIntoScenarioFiltered(Scenarios[ActiveScenarioIndex]); // Capture tiles and arm positions
+	}
+
 	// Stop ticking while we rebuild (optional safeguard)
 	if (TickManager)
 	{
@@ -178,7 +187,12 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 			}
 			for (ABasicArm* Arm : ToDestroy)
 			{
-				if (Arm) DestroyActorNow(Arm);
+				if (Arm) 
+				{
+					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying arm at (%d,%d) SimIndex=%d during scenario reset"), 
+						Arm->Q, Arm->R, Arm->SimArmIndex);
+					DestroyActorNow(Arm);
+				}
 			}
 		}
 	}
@@ -212,8 +226,8 @@ void ATestLevelDirector::ClearArms()
 
 void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 {
-	FScenarioSpec& MutableScenario = const_cast<FScenarioSpec&>(S);
-	SyncPreviewEditsIntoScenarioFiltered(MutableScenario);
+	// Note: We already synced current state to scenario in ResetSimForActiveScenario()
+	// Don't sync here as it would overwrite the scenario we're trying to load
 	ClearArms();
 
 	UWorld* W = GetWorld();
@@ -260,6 +274,8 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 
 			ArmIndex = Sim->AddArm(ArmState);
 			A.Spawned->SimArmIndex = ArmIndex;
+			UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Added scenario arm at (%d,%d) SimIndex=%d"), 
+				A.Q, A.R, ArmIndex);
 		}
 
 		// Finish spawn now that SimArmIndex is valid
@@ -622,6 +638,7 @@ void ATestLevelDirector::CommitRuntimeFacingEdits()
 
 void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Scenario)
 {
+	// First, update existing arms from spawned actors
 	for (FArmSpawnSpec& ArmSpec : Scenario.Arms)
 	{
 		if (!ArmSpec.Spawned) continue;
@@ -635,5 +652,84 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 		{
 			ArmSpec.Facing = ArmSpec.Spawned->FacingDir;
 		}
+	}
+
+	// NEW: Capture ALL current simulation state (including manually placed arms/tiles)
+	if (Driver && Driver->GetSim())
+	{
+		USimWorldHex* Sim = Driver->GetSim();
+		UWorld* W = GetWorld();
+		if (!W) return;
+
+		// Clear and rebuild tile specs from current simulation
+		Scenario.Tiles.Empty();
+		for (const auto& KV : Sim->TileMap)
+		{
+			const FHex& Hex = KV.Key;
+			const FTile& Tile = KV.Value;
+			
+			FPlacedTileSpec TileSpec;
+			TileSpec.Hex = Hex;
+			TileSpec.Kind = Tile.Kind;
+			TileSpec.Dir = Tile.Arg;
+			Scenario.Tiles.Add(TileSpec);
+			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured tile at (%d,%d) type %d"), Hex.Q, Hex.R, (int32)Tile.Kind);
+		}
+
+		// Build a map of existing arm specs to preserve their original facing (if not capturing runtime edits)
+		TMap<FHex, FArmSpawnSpec> ExistingArmSpecs;
+		for (const FArmSpawnSpec& ExistingSpec : Scenario.Arms)
+		{
+			ExistingArmSpecs.Add(FHex(ExistingSpec.Q, ExistingSpec.R), ExistingSpec);
+		}
+		
+		// Completely rebuild arm specs from current world state
+		// This ensures removed arms are properly deleted from the scenario
+		Scenario.Arms.Empty();
+		
+		for (TActorIterator<ABasicArm> It(W); It; ++It)
+		{
+			ABasicArm* Arm = *It;
+			if (!Arm) continue;
+
+			// Create new arm spec for every arm currently in the world
+			FArmSpawnSpec NewArmSpec;
+			NewArmSpec.Q = Arm->Q;
+			NewArmSpec.R = Arm->R;
+			
+			// Preserve original facing unless we're explicitly capturing runtime facing edits
+			FHex ArmHex(Arm->Q, Arm->R);
+			if (!bCaptureRuntimeFacingEdits && ExistingArmSpecs.Contains(ArmHex))
+			{
+				// Use original facing from scenario to avoid rotation drift
+				NewArmSpec.Facing = ExistingArmSpecs[ArmHex].Facing;
+				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Preserved original facing %d for arm at (%d,%d)"), 
+					NewArmSpec.Facing, Arm->Q, Arm->R);
+			}
+			else
+			{
+				// Use current facing (for new arms or when capturing runtime edits)
+				NewArmSpec.Facing = Arm->FacingDir;
+				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured current facing %d for arm at (%d,%d)"), 
+					NewArmSpec.Facing, Arm->Q, Arm->R);
+			}
+			
+			NewArmSpec.Program = Arm->Program;
+			NewArmSpec.bLoopProgram = Arm->bLoopProgram;
+			NewArmSpec.Spawned = Arm; // Keep reference
+			Scenario.Arms.Add(NewArmSpec);
+			
+			// Enhanced logging to debug program capture
+			UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Captured arm at (%d,%d) SimIndex=%d with %d instructions"), 
+				Arm->Q, Arm->R, Arm->SimArmIndex, Arm->Program.Num());
+			for (int32 i = 0; i < FMath::Min(3, Arm->Program.Num()); i++)
+			{
+				const FArmInstr& Instr = Arm->Program[i];
+				UE_LOG(LogTemp, Log, TEXT("  [%d]: Cmd=%d Arg=%d"), i, (int32)Instr.Cmd, Instr.Arg);
+			}
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Captured %d tiles and %d arms to scenario"), 
+			Scenario.Tiles.Num(), Scenario.Arms.Num());
 	}
 }
