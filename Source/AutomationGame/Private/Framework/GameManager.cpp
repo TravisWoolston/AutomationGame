@@ -238,6 +238,8 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 	Arm->Q = Hex.Q;
 	Arm->R = Hex.R;
 	Arm->FacingDir = Facing % 6;
+	Arm->StartingRotation = Facing % 6;
+	Arm->StartingReach = Arm->ReachTiles; // Use current ReachTiles as starting reach
 	Arm->SetProgram(Program, bLoop);
 
 	// --- Add to simulation so it actually runs ---

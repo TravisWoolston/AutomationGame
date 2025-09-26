@@ -465,8 +465,33 @@ void AHexTopDownPawn::CreateBlueprint()
 				// Convert simulation ops (FOp) back to arm instructions (FArmInstr)
 				TArray<FArmInstr> CapturedProgram = ConvertOpsToProgram(ArmState.Tape);
 				
-				// Create blueprint tile with captured program and HOME facing/reach (so it starts at reset position)
-				FBlueprintTile BlueprintTile(LocalHex, (uint8)ArmState.HomeFacing, ArmState.HomeArmLen, CapturedProgram, true); // Assume looping for now
+				// Create blueprint tile with captured program and starting facing/reach
+				// Get the starting values from the arm actor
+				uint8 StartingRot = (uint8)ArmState.HomeFacing; // Default to HomeFacing
+				int32 StartingRch = ArmState.HomeArmLen;        // Default to HomeArmLen
+
+				// Find the arm actor to get its StartingRotation and StartingReach
+				ABasicArm* ArmActor = nullptr;
+				if (UWorld* World = GetWorld())
+				{
+					for (TActorIterator<ABasicArm> It(World); It; ++It)
+					{
+						ABasicArm* TestArm = *It;
+						if (TestArm && TestArm->SimArmIndex == ArmIndex)
+						{
+							ArmActor = TestArm;
+							break;
+						}
+					}
+				}
+
+				if (ArmActor)
+				{
+					StartingRot = ArmActor->StartingRotation;
+					StartingRch = ArmActor->StartingReach;
+				}
+
+				FBlueprintTile BlueprintTile(LocalHex, (uint8)ArmState.HomeFacing, ArmState.HomeArmLen, StartingRot, StartingRch, CapturedProgram, true); // Assume looping for now
 				BlueprintTiles.Add(BlueprintTile);
 				
 				UE_LOG(LogTemp, Warning, TEXT("Blueprint: Captured arm at (%d,%d) - CurrentFacing=%d HomeFacing=%d (using HomeFacing for blueprint)"), 
@@ -633,15 +658,22 @@ void AHexTopDownPawn::PlaceBlueprint()
 				if (SpawnedArm)
 				{
 					// Set the captured reach distance (reset position)
-					SpawnedArm->ReachTiles = BlueprintTile.ArmReach;
-					
-					// Also update the simulation to match the captured reset reach
+					SpawnedArm->ReachTiles = BlueprintTile.StartingReach;
+					SpawnedArm->StartingReach = BlueprintTile.StartingReach;
+
+					// Set the captured rotation (reset position)
+					SpawnedArm->FacingDir = BlueprintTile.StartingRotation % 6;
+					SpawnedArm->StartingRotation = BlueprintTile.StartingRotation % 6;
+
+					// Also update the simulation to match the captured reset reach and rotation
 					if (SpawnedArm->SimArmIndex >= 0 && SpawnedArm->SimArmIndex < Sim->Arms.Num())
 					{
 						FArmState& ArmState = Sim->Arms[SpawnedArm->SimArmIndex];
-						ArmState.ArmLen = BlueprintTile.ArmReach;
-						ArmState.HomeArmLen = BlueprintTile.ArmReach;
-						
+						ArmState.Facing = (EHexDir)(BlueprintTile.StartingRotation % 6);
+						ArmState.HomeFacing = (EHexDir)(BlueprintTile.StartingRotation % 6);
+						ArmState.ArmLen = BlueprintTile.StartingReach;
+						ArmState.HomeArmLen = BlueprintTile.StartingReach;
+
 						UE_LOG(LogTemp, Warning, TEXT("Blueprint: Sim state for spawned arm - Facing=%d HomeFacing=%d"), 
 							(int32)ArmState.Facing, (int32)ArmState.HomeFacing);
 					}

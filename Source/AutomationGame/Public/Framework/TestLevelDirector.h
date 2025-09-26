@@ -34,6 +34,8 @@ struct FArmSpawnSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Q = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 R = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, ClampMax = 5)) uint8 Facing = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 1)) int32 StartingReach = 1;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, ClampMax = 5)) uint8 StartingRotation = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FArmInstr> Program;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bLoopProgram = true;
 	UPROPERTY(Transient) ABasicArm* Spawned = nullptr;

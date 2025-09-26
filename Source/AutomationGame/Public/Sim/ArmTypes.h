@@ -19,7 +19,9 @@ enum class ECmd : uint8
 	PivotL,
 	PivotR,
 	Reset,
-	Repeat
+	Repeat,
+	RotateHeldL,
+	RotateHeldR
 };
 
 USTRUCT(BlueprintType)

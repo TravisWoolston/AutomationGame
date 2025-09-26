@@ -16,15 +16,17 @@ class USimWorldHex;
 UENUM(BlueprintType)
 enum class EArmCmd : uint8
 {
-	NoOp      UMETA(DisplayName = "NoOp"),
-	Grab      UMETA(DisplayName = "Grab"),
-	Drop      UMETA(DisplayName = "Drop"),
-	RotateCW  UMETA(DisplayName = "Rotate CW (60° * Arg)"),
-	RotateCCW UMETA(DisplayName = "Rotate CCW (60° * Arg)"),
-	Wait      UMETA(DisplayName = "Wait (ticks = Arg)"),
-	Reset     UMETA(DisplayName = "Reset to Start (macro)"),
-	Extend    UMETA(DisplayName = "Extend (+Arg, default 1)"),   // NEW
-	Retract   UMETA(DisplayName = "Retract (-Arg, default 1)")   // NEW
+	NoOp         UMETA(DisplayName = "NoOp"),
+	Grab         UMETA(DisplayName = "Grab"),
+	Drop         UMETA(DisplayName = "Drop"),
+	RotateCW     UMETA(DisplayName = "Rotate CW (60° * Arg)"),
+	RotateCCW    UMETA(DisplayName = "Rotate CCW (60° * Arg)"),
+	Wait         UMETA(DisplayName = "Wait (ticks = Arg)"),
+	Reset        UMETA(DisplayName = "Reset to Start (macro)"),
+	Extend       UMETA(DisplayName = "Extend (+Arg, default 1)"),   // NEW
+	Retract      UMETA(DisplayName = "Retract (-Arg, default 1)"),   // NEW
+	RotateHeldCW UMETA(DisplayName = "Rotate Held CW (60° * Arg)"), // NEW
+	RotateHeldCCW UMETA(DisplayName = "Rotate Held CCW (60° * Arg)") // NEW
 };
 
 /** One instruction + small integer argument (dir steps, wait ticks, etc.) */
@@ -102,6 +104,10 @@ public:
 	/** Starting reach distance for this arm's commands. Used to initialize ReachTiles. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Program", meta = (ClampMin = 1))
 	int32 StartingReach = 1;
+
+	/** Starting rotation (facing direction) for this arm's commands. Used to initialize FacingDir. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Program", meta = (ClampMin = 0, ClampMax = 5))
+	uint8 StartingRotation = 0;
 
 	/** (Legacy) scalar reach fraction — kept for compatibility with old placements. */
 	// UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", AdvancedDisplay)

@@ -23,8 +23,10 @@ static const TCHAR* CmdName(EArmCmd C)
 	case EArmCmd::RotateCW:  return TEXT("RotateCW");
 	case EArmCmd::RotateCCW: return TEXT("RotateCCW");
 	case EArmCmd::Wait:      return TEXT("Wait");
-	case EArmCmd::Reset:     return TEXT("Reset");
-	default:                 return TEXT("<?>");
+	case EArmCmd::Reset:         return TEXT("Reset");
+	case EArmCmd::RotateHeldCW:  return TEXT("RotateHeldCW");
+	case EArmCmd::RotateHeldCCW: return TEXT("RotateHeldCCW");
+	default:                     return TEXT("<?>");
 	}
 }
 
@@ -513,9 +515,11 @@ static TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& Program)
 		case EArmCmd::RotateCCW: Out.Add({ ECmd::RotateL, (uint8)FMath::Max(1, I.Arg) }); break;
 		case EArmCmd::Wait:      Out.Add({ ECmd::Wait, (uint8)FMath::Clamp(I.Arg, 0, 255) }); break;
 		case EArmCmd::Reset:     Out.Add({ ECmd::Reset, 0 }); break;
-		case EArmCmd::Extend:    Out.Add({ ECmd::Extend,  (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
-		case EArmCmd::Retract:   Out.Add({ ECmd::Retract, (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
-		default:                 Out.Add({ ECmd::Wait, 1 }); break;
+		case EArmCmd::Extend:        Out.Add({ ECmd::Extend,  (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
+		case EArmCmd::Retract:       Out.Add({ ECmd::Retract, (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
+		case EArmCmd::RotateHeldCW:  Out.Add({ ECmd::RotateHeldR, (uint8)FMath::Max(1, I.Arg) }); break;   // NEW
+		case EArmCmd::RotateHeldCCW: Out.Add({ ECmd::RotateHeldL, (uint8)FMath::Max(1, I.Arg) }); break;   // NEW
+		default:                     Out.Add({ ECmd::Wait, 1 }); break;
 		}
 	}
 	return Out;
@@ -548,6 +552,8 @@ void ABasicArm::PushProgramToSim()
 			case ECmd::Extend: CmdName = TEXT("Extend"); break;
 			case ECmd::Retract: CmdName = TEXT("Retract"); break;
 			case ECmd::Reset: CmdName = TEXT("Reset"); break;
+			case ECmd::RotateHeldL: CmdName = TEXT("RotateHeldL"); break;
+			case ECmd::RotateHeldR: CmdName = TEXT("RotateHeldR"); break;
 			}
 			UE_LOG(LogAGArm, Log, TEXT("  [%d]: %s %d"), i, *CmdName, Op.Arg);
 		}
@@ -597,6 +603,12 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent& Event)
 		(MemberName == GET_MEMBER_NAME_CHECKED(ABasicArm, ReachTiles)) ||
 		(MemberName == GET_MEMBER_NAME_CHECKED(ABasicArm, FacingDir));
 
+	const bool bStartingRotationChanged =
+		(MemberName == GET_MEMBER_NAME_CHECKED(ABasicArm, StartingRotation));
+
+	const bool bStartingReachChanged =
+		(MemberName == GET_MEMBER_NAME_CHECKED(ABasicArm, StartingReach));
+
 	// Any structural change to the array (add/remove/duplicate/clear) also fires MemberProperty == Program
 	const bool bArrayStructuralChange =
 		bProgramMemberChanged &&
@@ -629,6 +641,37 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent& Event)
 	{
 		CurrYawDeg = DirToYaw(FacingDir);
 		PushRuntimePropertiesToSim();
+	}
+	else if (bStartingRotationChanged || bStartingReachChanged)
+	{
+		// When starting values change, immediately update current values and restart program
+		if (bStartingRotationChanged)
+		{
+			FacingDir = StartingRotation % 6;
+			CurrYawDeg = DirToYaw(FacingDir);
+		}
+
+		if (bStartingReachChanged)
+		{
+			ReachTiles = FMath::Clamp(StartingReach, 1, 6);
+		}
+
+		// Update simulation state to match new starting values
+		PushRuntimePropertiesToSim();
+
+		// Reset program counter to restart the program
+		if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
+		{
+			FArmState& S = Sim->Arms[SimArmIndex];
+			S.PC = 0; // Reset to beginning of program
+			S.WaitCounter = 0; // Clear any wait state
+		}
+
+		// Refresh visuals immediately
+		RefreshPose(1.f);
+
+		UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Starting values changed - Rotation=%d Reach=%d, program restarted"),
+			*GetName(), StartingRotation, StartingReach);
 	}
 
 	// For safety, if Program became empty we still ensure a minimal idle op
@@ -845,6 +888,11 @@ void ABasicArm::InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, 
 	R = InR;
 	FacingDir = InFacing % 6;
 	StartFacingDir = FacingDir;
+
+	// Initialize starting values for Reset command
+	// These will be the values the arm resets to
+	StartingRotation = InFacing % 6;
+	StartingReach = ReachTiles;
 
 	Sim = (Driver ? Driver->GetSim() : nullptr);
 

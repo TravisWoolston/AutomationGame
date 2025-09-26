@@ -149,14 +149,21 @@ private:
 	
 	// Track newly placed items that should wait a tick before being moved by belts
 	TSet<int32> NewlyPlacedItems;
-	
+
 	// Track arms that are ready for unbond processing (rotation complete)
 	// Maps arm index to the facing direction when rotation completed
 	TMap<int32, uint8> ArmsReadyForUnbond;
-	
+
+	// Track arms that need unbond processing after a 1-tick delay
+	// Maps arm index to the facing direction when rotation completed
+	TMap<int32, uint8> PendingUnbonds;
+
 	// Track orbs recently dropped by arms to prevent immediate re-grabbing
 	// Maps item ID to arm index that dropped it
 	TMap<int32, int32> RecentlyDroppedByArm;
+
+	// Hexes where orbs were newly moved to an output tile this tick
+	TSet<FHex> OrbsNewlyMovedToOutput;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;
@@ -164,8 +171,8 @@ private:
 	// Animated orbs for input/output effects
 	TArray<FAnimatedOrb> AnimatedOrbs;
 
-	// Hexes where orbs were newly moved to an output tile this tick
-	TSet<FHex> OrbsNewlyMovedToOutput;
+	// Held items last board position (for future bond persistence if needed)
+	TMap<int32, FHex> HeldItemLastHex;
 
 	// Pending bond formations waiting for arm rotation to complete
 	struct FPendingBondFormation
@@ -204,7 +211,7 @@ private:
 	void StepArms();
 	void StepBelts();
 	void StepGlyphs();
-	void StepBonds();
+
 
 	static uint8 KindFromItem(const FItem& /*Item*/) { return (uint8)EOrbType::BaseA; }
 
@@ -235,9 +242,15 @@ private:
 	
 	// Check for disconnected orbs in held clusters and remove them
 	void CheckAndRemoveDisconnectedOrbsFromHeldClusters();
-	
+
 	// Process unbonds for a specific arm's held cluster (called when arm rotation completes)
 	void ProcessUnbondsForHeldCluster(int32 ArmIndex);
+
+	// Process held cluster unbonds for arms that completed rotation
+	void ProcessHeldClusterUnbonds();
+
+	// Helper to calculate arm grip position
+	FHex CalculateArmGripPosition(const FArmState& ArmState) const;
 	
 	// Debug visualization
 	void DrawBondDebugLines();
@@ -245,10 +258,20 @@ private:
 	UPROPERTY(EditAnywhere, Category = "Debug")
 	bool bDevDebugBonds = false;
 
-	// Held items last board position (for future bond persistence if needed)
-	TMap<int32, FHex> HeldItemLastHex;
+	// === SIMPLIFIED SPATIAL SYSTEM ===
+
+	/** Spatial manager - single source of truth for orb positions */
+	UPROPERTY(VisibleAnywhere, Category = "Spatial")
+	TObjectPtr<class UOrbSpatialManager> SpatialManager;
+
+	/** Bond resolver - unified bond formation system */
+	UPROPERTY(VisibleAnywhere, Category = "Spatial")
+	TObjectPtr<class UBondResolver> BondResolver;
 
 private:
+	// Track items moved by belts this step (for spatial system bond timing)
+	TSet<int32>   ItemsMovedLastStep;
+
 	// ---- Bond control (glyphs will call these later) ----
 	UFUNCTION(BlueprintCallable, Category = "Sim|Bond")
 	bool BreakBondBetween(int32 ItemA, int32 ItemB);
@@ -264,8 +287,10 @@ private:
 	}
 
 private:
-	TSet<int32>   ItemsMovedLastStep;
 	TMap<int32, FHex> PrevItemHex;
+
+public:
+	void StepBonds(); // Made public for BondResolver
 
 private:
 	void SpawnInputs();

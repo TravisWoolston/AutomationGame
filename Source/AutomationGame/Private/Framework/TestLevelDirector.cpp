@@ -256,6 +256,20 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		// Basic spatial init (does not start execution)
 		A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.Facing);
 
+		// Set starting rotation and reach for Reset command
+		// If scenario has explicit starting values, use them; otherwise use placement values
+		if (A.StartingRotation != 0 || A.StartingReach != 1) // Check if non-default values are set
+		{
+			A.Spawned->StartingRotation = A.StartingRotation;
+			A.Spawned->StartingReach = A.StartingReach;
+		}
+		else
+		{
+			// Use placement values as starting values for new scenarios
+			A.Spawned->StartingRotation = A.Facing % 6;
+			A.Spawned->StartingReach = 1; // Default reach
+		}
+
 		int32 ArmIndex = INDEX_NONE;
 		if (USimWorldHex* Sim = Driver->GetSim())
 		{
@@ -473,6 +487,8 @@ void ATestLevelDirector::UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TAr
 	NewA.Q = Q;
 	NewA.R = R;
 	NewA.Facing = Facing % 6;
+	NewA.StartingRotation = Facing % 6;  // Initialize to placement direction
+	NewA.StartingReach = 1;              // Default reach
 	NewA.Program = Program;
 	NewA.bLoopProgram = bLoop;
 	NewA.Spawned = FindRuntimeArmAt(Q, R);   // capture runtime actor if already spawned
@@ -696,6 +712,8 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			FArmSpawnSpec NewArmSpec;
 			NewArmSpec.Q = Arm->Q;
 			NewArmSpec.R = Arm->R;
+			NewArmSpec.StartingRotation = Arm->StartingRotation;
+			NewArmSpec.StartingReach = Arm->StartingReach;
 			
 			// Preserve original facing unless we're explicitly capturing runtime facing edits
 			FHex ArmHex(Arm->Q, Arm->R);
@@ -734,6 +752,8 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			
 			NewArmSpec.Program = Arm->Program;
 			NewArmSpec.bLoopProgram = Arm->bLoopProgram;
+			NewArmSpec.StartingRotation = Arm->StartingRotation;
+			NewArmSpec.StartingReach = Arm->StartingReach;
 			NewArmSpec.Spawned = Arm; // Keep reference
 			Scenario.Arms.Add(NewArmSpec);
 			
