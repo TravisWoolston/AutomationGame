@@ -241,9 +241,6 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 	// Update animated orbs
 	Sim->UpdateAnimatedOrbs(DeltaTime);
 	
-	// Process pending bond formations
-	Sim->ProcessPendingBondFormations(DeltaTime);
-	
 	RebuildInstances();
 	RebuildBondedOrbs();
 }

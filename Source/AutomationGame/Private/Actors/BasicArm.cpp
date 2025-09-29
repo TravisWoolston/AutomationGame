@@ -165,37 +165,6 @@ void ABasicArm::Tick(float DeltaSeconds)
 		StepAlpha = 1.f;
 	}
 
-	// Check for rotation completion notifications with improved robustness
-	// This handles editor pause/focus issues by using more reliable detection
-	if (StepAlpha >= 0.95f && PreviousStepAlpha < 0.95f)
-	{
-		// Rotation is close enough to target - notify the simulation for bond formation
-		if (Sim && SimArmIndex >= 0)
-		{
-			Sim->OnArmRotationComplete(SimArmIndex);
-		}
-	}
-	
-	// Robust rotation completion detection - use a more reliable threshold
-	// This prevents issues during performance dips where StepAlpha might not reach exactly 1.0f
-	if (StepAlpha >= 0.99f && PreviousStepAlpha < 0.99f)
-	{
-		// Rotation is effectively complete - notify the simulation for unbond processing
-		if (Sim && SimArmIndex >= 0)
-		{
-			Sim->OnArmRotationFullyComplete(SimArmIndex);
-		}
-	}
-	
-	// Additional robustness: If we're at 100% but haven't notified yet, do it now
-	// This handles cases where the editor was paused during the transition
-	if (StepAlpha >= 1.0f && Sim && SimArmIndex >= 0)
-	{
-		// Check if we need to notify for unbond processing
-		// This is idempotent, so it's safe to call multiple times
-		Sim->OnArmRotationFullyComplete(SimArmIndex);
-	}
-
 	RefreshPose(StepAlpha);
 }
 
