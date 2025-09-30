@@ -251,9 +251,14 @@ void USimWorldHex::StepSim()
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
 	StepBonds();
 	ProcessOutputs();
+<<<<<<< HEAD
 	PendingRotations.Reset();
 
 	// Debug visualization - draw bond cylinders when DebugSpheres is enabled
+=======
+	
+	// Debug visualization
+>>>>>>> parent of cb643d4 (Debug sphere bonds.)
 	DrawBondDebugLines();
 }
 void USimWorldHex::StepGlyphs()
@@ -1182,8 +1187,7 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 
 void USimWorldHex::DrawBondDebugLines()
 {
-	// Draw bond cylinders when DebugSpheres is enabled
-	if (!bDebugSpheres || Bonds.Num() == 0)
+	if (!bDebugLines || !bDebugBonds || Bonds.Num() == 0)
 	{
 		return;
 	}
@@ -1357,41 +1361,19 @@ void USimWorldHex::DrawBondDebugLines()
 		PosA.Z += 15.f;
 		PosB.Z += 15.f;
 		
-		// Calculate bond direction and distance
-		FVector BondDirection = (PosB - PosA).GetSafeNormal();
-		float BondLength = FVector::Dist(PosA, PosB);
-		FVector BondMidpoint = (PosA + PosB) * 0.5f;
+		// Draw the bond line (persistent for 1 second to avoid flickering)
+		DrawDebugLine(World, PosA, PosB, FColor::Cyan, false, 1.0f, 0, 2.f);
 		
-		// Draw cylinder to represent the bond
-		if (BondLength > 0.f)
-		{
-			// Calculate rotation to align cylinder with bond direction
-			FVector Up = FVector::UpVector;
-			FVector Right = FVector::CrossProduct(BondDirection, Up).GetSafeNormal();
-			if (Right.IsNearlyZero())
-			{
-				Right = FVector::RightVector;
-			}
-			FVector Forward = FVector::CrossProduct(Right, BondDirection).GetSafeNormal();
-			
-			// Create rotation matrix from the three axes
-			FMatrix RotationMatrix = FMatrix(Forward, Right, BondDirection, FVector::ZeroVector);
-			FRotator BondRotation = FQuat(RotationMatrix).Rotator();
-			
-			// Draw the cylinder (persistent for 1 second to avoid flickering)
-			DrawDebugCylinder(World, PosA, PosB, 2.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
-			
-			// Draw small spheres at bond endpoints (persistent for 1 second)
-			DrawDebugSphere(World, PosA, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
-			DrawDebugSphere(World, PosB, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
-			
-			// Draw bond ID text at midpoint (persistent for 1 second)
-			FVector TextPosition = BondMidpoint;
-			TextPosition.Z += 10.f;
-			DrawDebugString(World, TextPosition, 
-				FString::Printf(TEXT("Bond: %d-%d"), Bond.ItemA, Bond.ItemB), 
-				nullptr, FColor::Cyan, 1.0f, true, 0.8f);
-		}
+		// Draw small spheres at bond endpoints (persistent for 1 second)
+		DrawDebugSphere(World, PosA, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
+		DrawDebugSphere(World, PosB, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
+		
+		// Draw bond ID text at midpoint (persistent for 1 second)
+		FVector Midpoint = (PosA + PosB) * 0.5f;
+		Midpoint.Z += 10.f;
+		DrawDebugString(World, Midpoint, 
+			FString::Printf(TEXT("Bond: %d-%d"), Bond.ItemA, Bond.ItemB), 
+			nullptr, FColor::Cyan, 1.0f, true, 0.8f);
 	}
 }
 
