@@ -1042,7 +1042,8 @@ void USimWorldHex::StepArms()
 					{
 						S.bWaitingForBond = false;
 						S.WaitForBondInitialCount = 0;
-						// Let PC advance normally
+						// Enable immediate execution of next command
+						bContinueProcessing = true;
 						break;
 					}
 				}
@@ -1053,7 +1054,8 @@ void USimWorldHex::StepArms()
 					// Bond detected, clear wait state and continue
 					S.bWaitingForBond = false;
 					S.WaitForBondInitialCount = 0;
-					// Let PC advance normally
+					// Enable immediate execution of next command
+					bContinueProcessing = true;
 				}
 				else
 				{
