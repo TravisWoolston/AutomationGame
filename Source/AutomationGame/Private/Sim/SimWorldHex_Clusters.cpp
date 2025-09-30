@@ -1,6 +1,7 @@
 #include "Sim/SimWorldHex.h"
 #include "Actors/BasicArm.h"
 #include "EngineUtils.h"
+#include "Engine/Engine.h"
 
 // Cluster management functions
 void USimWorldHex::AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex)
@@ -473,4 +474,130 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 			}
 		}
 	}
+}
+
+void USimWorldHex::ProcessHeldToHeldMerge(int32 ReceiverArmIndex, int32 DonorArmIndex)
+{
+	if (ReceiverArmIndex < 0 || ReceiverArmIndex >= Arms.Num() ||
+	    DonorArmIndex < 0 || DonorArmIndex >= Arms.Num())
+	{
+		return;
+	}
+	
+	FArmState& ReceiverArm = Arms[ReceiverArmIndex];
+	FArmState& DonorArm = Arms[DonorArmIndex];
+	
+	if (!ReceiverArm.bHolding || !DonorArm.bHolding)
+	{
+		return;
+	}
+	
+	// Convert single held items to clusters if needed
+	if (!ReceiverArm.Held.bIsCluster)
+	{
+		FItem NewCluster;
+		NewCluster.bIsCluster = true;
+		NewCluster.Id = ReceiverArm.Held.Id;
+		NewCluster.GrabFacing = (int8)ReceiverArm.Facing;
+		
+		FOrbData SingleOrb;
+		SingleOrb.Type = (uint8)ReceiverArm.Held.Single.Type;
+		SingleOrb.Color = (uint8)ReceiverArm.Held.Single.Color;
+		SingleOrb.ItemId = ReceiverArm.Held.Id;
+		SingleOrb.dQ = 0;
+		SingleOrb.dR = 0;
+		SingleOrb.Offset = FVector2D::ZeroVector;
+		NewCluster.Orbs.Add(SingleOrb);
+		
+		ReceiverArm.Held = NewCluster;
+	}
+	
+	if (!DonorArm.Held.bIsCluster)
+	{
+		FItem NewCluster;
+		NewCluster.bIsCluster = true;
+		NewCluster.Id = DonorArm.Held.Id;
+		NewCluster.GrabFacing = (int8)DonorArm.Facing;
+		
+		FOrbData SingleOrb;
+		SingleOrb.Type = (uint8)DonorArm.Held.Single.Type;
+		SingleOrb.Color = (uint8)DonorArm.Held.Single.Color;
+		SingleOrb.ItemId = DonorArm.Held.Id;
+		SingleOrb.dQ = 0;
+		SingleOrb.dR = 0;
+		SingleOrb.Offset = FVector2D::ZeroVector;
+		NewCluster.Orbs.Add(SingleOrb);
+		
+		DonorArm.Held = NewCluster;
+	}
+	
+	// Calculate relative positions between the two arms' grips
+	FHex ReceiverGrip = ReceiverArm.BaseHex;
+	for (int i = 0; i < ReceiverArm.ArmLen; ++i)
+		ReceiverGrip = HexUtil::Neighbor(ReceiverGrip, ReceiverArm.Facing);
+	
+	FHex DonorGrip = DonorArm.BaseHex;
+	for (int i = 0; i < DonorArm.ArmLen; ++i)
+		DonorGrip = HexUtil::Neighbor(DonorGrip, DonorArm.Facing);
+	
+	// Calculate the offset from receiver's grip to donor's grip
+	FHex GripOffset(DonorGrip.Q - ReceiverGrip.Q, DonorGrip.R - ReceiverGrip.R);
+	
+	// Helper lambda to rotate hex coordinates
+	auto Rot60 = [](FHex D, uint8 StepsCCW)
+	{
+		for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+		{
+			const int32 q = D.Q;
+			const int32 r = D.R;
+			D.Q = -r;
+			D.R = q + r;
+		}
+		return D;
+	};
+	
+	// Calculate how the donor's cluster is currently rotated relative to its grab facing
+	const uint8 DonorCurrentFacing = (uint8)DonorArm.Facing % 6;
+	const int8 DonorGrabFacing = (int8)DonorArm.Held.GrabFacing;
+	const uint8 DonorFacingDelta = (DonorGrabFacing >= 0)
+		? (uint8)(((int32)DonorCurrentFacing - (int32)(DonorGrabFacing % 6) + 6) % 6)
+		: DonorCurrentFacing;
+	const uint8 DonorCCWSteps = (uint8)((6 - DonorFacingDelta) % 6);
+	
+	// Add all orbs from donor to receiver, adjusting their positions
+	int32 DonorOrbCount = DonorArm.Held.Orbs.Num();
+	for (const FOrbData& DonorOrb : DonorArm.Held.Orbs)
+	{
+		FOrbData NewOrb = DonorOrb;
+		
+		// First, get the donor orb's position in world space (relative to donor's grip)
+		FHex DonorOrbLocal(DonorOrb.dQ, DonorOrb.dR);
+		FHex DonorOrbRotated = Rot60(DonorOrbLocal, DonorCCWSteps);
+		
+		// Now the orb is at DonorGrip + DonorOrbRotated in world space
+		// We need to express this relative to ReceiverGrip
+		NewOrb.dQ = GripOffset.Q + DonorOrbRotated.Q;
+		NewOrb.dR = GripOffset.R + DonorOrbRotated.R;
+		
+		// Recalculate the offset
+		const FVector2D NewOffset = HexCoord::AxialToXY(FHexAxial(NewOrb.dQ, NewOrb.dR), 1.f, GridOrientation);
+		NewOrb.Offset = NewOffset;
+		
+		// Add to receiver's cluster
+		ReceiverArm.Held.Orbs.Add(NewOrb);
+	}
+	
+	if (bDebugLogs && bDevDebugBonds && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green,
+			FString::Printf(TEXT("ProcessHeldToHeldMerge: Arm %d absorbed %d orbs from Arm %d"), 
+				ReceiverArmIndex, DonorOrbCount, DonorArmIndex));
+	}
+	
+	// Clear donor's held item
+	DonorArm.bHolding = false;
+	DonorArm.Held = FItem();
+	DonorArm.bWaitingForBond = false;
+	DonorArm.WaitForBondInitialCount = 0;
+	DonorArm.PrevHeldOrbCount = 0;
 }

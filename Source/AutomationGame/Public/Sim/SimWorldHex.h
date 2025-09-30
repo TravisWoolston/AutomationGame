@@ -203,6 +203,16 @@ private:
 		bool bActive = false;
 	};
 	TArray<FBondedArmPair> BondedArmPairs;
+	
+	// Pending held-to-held cluster merges (processed when arms finish rotating)
+	struct FPendingHeldMerge
+	{
+		int32 ReceiverArmIndex = -1;  // Arm that will receive the items
+		int32 DonorArmIndex = -1;     // Arm that will lose its items
+		int32 ItemIdA = -1;           // Item in receiver arm
+		int32 ItemIdB = -1;           // Item in donor arm
+	};
+	TArray<FPendingHeldMerge> PendingHeldMerges;
 
 	// Item Id generator
 	int32 NextItemId = 1;
@@ -248,6 +258,9 @@ private:
 
 	// Process held cluster unbonds for arms that completed rotation
 	void ProcessHeldClusterUnbonds();
+	
+	// Process held-to-held cluster merge
+	void ProcessHeldToHeldMerge(int32 ReceiverArmIndex, int32 DonorArmIndex);
 
 	// Helper to calculate arm grip position
 	FHex CalculateArmGripPosition(const FArmState& ArmState) const;

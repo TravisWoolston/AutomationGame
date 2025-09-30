@@ -483,13 +483,66 @@ void USimWorldHex::StepBonds()
 		}
 		else if (bAIsHeld && bBIsHeld)
 		{
-			// Both items are held - skip bond formation
-			// The donating arm should drop its cluster, then the receiving arm can bond with the dropped cluster
-			if (bDevDebugBonds)
+			// Both items are held - find which arms are holding them
+			int32 ArmHoldingA = -1;
+			int32 ArmHoldingB = -1;
+			
+			for (int32 ArmIdx = 0; ArmIdx < Arms.Num(); ArmIdx++)
 			{
-				UE_LOG(LogAGSim, Log, TEXT("Skipping held-to-held bond: both items are held"));
+				const FArmState& Arm = Arms[ArmIdx];
+				if (!Arm.bHolding) continue;
+				
+				if (Arm.Held.bIsCluster)
+				{
+					for (const FOrbData& Sub : Arm.Held.Orbs)
+					{
+						if (Sub.ItemId == AId) ArmHoldingA = ArmIdx;
+						if (Sub.ItemId == BId) ArmHoldingB = ArmIdx;
+					}
+				}
+				else
+				{
+					if (Arm.Held.Id == AId) ArmHoldingA = ArmIdx;
+					if (Arm.Held.Id == BId) ArmHoldingB = ArmIdx;
+				}
 			}
-			continue;
+			
+			// If both arms found and they're different arms, create a pending merge
+			if (ArmHoldingA >= 0 && ArmHoldingB >= 0 && ArmHoldingA != ArmHoldingB)
+			{
+				// Decide which arm receives and which donates
+				// For now, the lower index arm receives (arbitrary but consistent)
+				int32 ReceiverArm = FMath::Min(ArmHoldingA, ArmHoldingB);
+				int32 DonorArm = FMath::Max(ArmHoldingA, ArmHoldingB);
+				
+				// Check if we already have a pending merge for these arms
+				bool bAlreadyPending = false;
+				for (const FPendingHeldMerge& Existing : PendingHeldMerges)
+				{
+					if ((Existing.ReceiverArmIndex == ReceiverArm && Existing.DonorArmIndex == DonorArm) ||
+					    (Existing.ReceiverArmIndex == DonorArm && Existing.DonorArmIndex == ReceiverArm))
+					{
+						bAlreadyPending = true;
+						break;
+					}
+				}
+				
+				if (!bAlreadyPending)
+				{
+					FPendingHeldMerge PendingMerge;
+					PendingMerge.ReceiverArmIndex = ReceiverArm;
+					PendingMerge.DonorArmIndex = DonorArm;
+					PendingMerge.ItemIdA = (ReceiverArm == ArmHoldingA) ? AId : BId;
+					PendingMerge.ItemIdB = (DonorArm == ArmHoldingA) ? AId : BId;
+					PendingHeldMerges.Add(PendingMerge);
+					
+					if (bDevDebugBonds)
+					{
+						UE_LOG(LogAGSim, Log, TEXT("Created pending held-to-held merge: Arm %d will receive from Arm %d"), 
+							ReceiverArm, DonorArm);
+					}
+				}
+			}
 		}
 	}
 	

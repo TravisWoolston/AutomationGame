@@ -1596,6 +1596,46 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 		}
 	}
 	
+	// Process any pending held-to-held merges for this arm
+	for (int32 i = PendingHeldMerges.Num() - 1; i >= 0; i--)
+	{
+		FPendingHeldMerge& PendingMerge = PendingHeldMerges[i];
+		
+		// Check if this arm is involved in the merge
+		if (PendingMerge.ReceiverArmIndex == ArmIndex || PendingMerge.DonorArmIndex == ArmIndex)
+		{
+			// Check if both arms have completed their rotation
+			bool bBothArmsReady = true;
+			
+			// For simplicity, we'll process the merge when either arm completes rotation
+			// This works because both arms should be rotating to form the bond
+			
+			if (PendingMerge.ReceiverArmIndex >= 0 && PendingMerge.ReceiverArmIndex < Arms.Num() &&
+			    PendingMerge.DonorArmIndex >= 0 && PendingMerge.DonorArmIndex < Arms.Num())
+			{
+				FArmState& ReceiverArm = Arms[PendingMerge.ReceiverArmIndex];
+				FArmState& DonorArm = Arms[PendingMerge.DonorArmIndex];
+				
+				// Make sure both arms are still holding their items
+				if (ReceiverArm.bHolding && DonorArm.bHolding)
+				{
+					// Perform the merge - copy all orbs from donor to receiver
+					ProcessHeldToHeldMerge(PendingMerge.ReceiverArmIndex, PendingMerge.DonorArmIndex);
+					
+					if (bDebugLogs && bDevDebugBonds && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+							FString::Printf(TEXT("Arm rotation complete - merged held clusters: Arm %d absorbed Arm %d's items"), 
+								PendingMerge.ReceiverArmIndex, PendingMerge.DonorArmIndex));
+					}
+				}
+			}
+			
+			// Remove the pending merge
+			PendingHeldMerges.RemoveAt(i);
+		}
+	}
+	
 	// Note: Unbond processing is now handled in OnArmRotationFullyComplete()
 	// This function only handles bond formation at 95% rotation completion
 }
