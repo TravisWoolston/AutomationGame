@@ -116,9 +116,18 @@ public:
 	/** Update animated orbs (call from renderer) */
 	void UpdateAnimatedOrbs(float DeltaTime);
 
+	/** Process pending bond formations (call from renderer) */
+	void ProcessPendingBondFormations(float DeltaTime);
+
+
+	/** Notify that an arm has finished its visual rotation */
+	void OnArmRotationComplete(int32 ArmIndex);
+
 	/** Notify that an arm has fully completed its visual rotation (100%) */
 	void OnArmRotationFullyComplete(int32 ArmIndex);
-	void NotifyArmRotationCompleteSim(int32 ArmIndex, EHexDir NewFacing);
+
+	/** Cancel pending bond formations for a specific arm (when arm drops item) */
+	void CancelPendingBondFormationsForArm(int32 ArmIndex);
 
 private:
 	/** Helper function to check if an item matches an output's expected orb type */
@@ -138,6 +147,17 @@ private:
 	TSet<FHex> SkipInputThisFrame;
 	TSet<FHex> SkipOutputThisFrame;
 	
+	// Track newly placed items that should wait a tick before being moved by belts
+	TSet<int32> NewlyPlacedItems;
+
+	// Track arms that are ready for unbond processing (rotation complete)
+	// Maps arm index to the facing direction when rotation completed
+	TMap<int32, uint8> ArmsReadyForUnbond;
+
+	// Track arms that need unbond processing after a 1-tick delay
+	// Maps arm index to the facing direction when rotation completed
+	TMap<int32, uint8> PendingUnbonds;
+
 	// Track orbs recently dropped by arms to prevent immediate re-grabbing
 	// Maps item ID to arm index that dropped it
 	TMap<int32, int32> RecentlyDroppedByArm;
@@ -154,6 +174,17 @@ private:
 	// Held items last board position (for future bond persistence if needed)
 	TMap<int32, FHex> HeldItemLastHex;
 
+	// Pending bond formations waiting for arm rotation to complete
+	struct FPendingBondFormation
+	{
+		int32 HeldItemId = 0;
+		int32 BoardItemId = 0;
+		FHex BoardItemHex;
+		int32 ArmIndex = -1;
+		float TimeRemaining = 0.f; // Time to wait before forming bond
+	};
+	TArray<FPendingBondFormation> PendingBondFormations;
+	
 	// Pending grab tracking to prevent multiple arms from grabbing the same cluster
 	struct FPendingGrab
 	{
@@ -220,7 +251,6 @@ private:
 
 	// Helper to calculate arm grip position
 	FHex CalculateArmGripPosition(const FArmState& ArmState) const;
-	void GatherDroppedCluster(int32 RootItemId, TArray<int32>& OutItemIds, TArray<FHex>& OutHexes);
 	
 	// Debug visualization
 	void DrawBondDebugLines();
@@ -272,11 +302,4 @@ private:
 	void PauseBondedArms();
 	void ResumeArmsWhenBondsBroken();
 	bool IsArmBonded(int32 ArmIndex) const;
-
-    struct FCompletedRotation
-    {
-        int32 ArmIndex = -1;
-        EHexDir Facing = EHexDir::D0;
-    };
-    TArray<FCompletedRotation> PendingRotations;
 };

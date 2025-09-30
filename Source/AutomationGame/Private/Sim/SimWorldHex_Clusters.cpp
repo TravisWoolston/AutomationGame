@@ -356,6 +356,9 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 						// Place the orb immediately in the simulation
 						ItemMap.Add(OtherWorldPos, DisconnectedOrb);
 						
+						// Mark this item as newly placed so it waits a tick before being moved by belts
+						NewlyPlacedItems.Add(OtherSub.ItemId);
+						
 						// Mark this orb as recently dropped by this arm to prevent immediate re-grabbing
 						RecentlyDroppedByArm.Add(OtherSub.ItemId, ArmIndex);
 						
@@ -418,6 +421,9 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 
 					// Place the orb immediately in the simulation
 					ItemMap.Add(WorldPos, DisconnectedOrb);
+					
+					// Mark this item as newly placed so it waits a tick before being moved by belts
+					NewlyPlacedItems.Add(Sub.ItemId);
 					
 					// Mark this orb as recently dropped by this arm to prevent immediate re-grabbing
 					RecentlyDroppedByArm.Add(Sub.ItemId, ArmIndex);

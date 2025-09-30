@@ -217,6 +217,12 @@ void USimWorldHex::CleanupBrokenBonds(const TSet<int32>& HeldIds)
 			B.dQ = (int8)dq;
 			B.dR = (int8)dr;
 			B.Root = *AHex; // keep root near first item for debug
+			if (bDevDebugBonds && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 0.3f, FColor::Silver,
+					FString::Printf(TEXT("Bond offset updated (held ok): %d-%d dq=%d dr=%d"),
+						B.ItemA, B.ItemB, dq, dr));
+			}
 		}
 		
 		// Update HeldItemLastHex for held items to their current virtual positions
@@ -251,8 +257,7 @@ void USimWorldHex::StepSim()
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
 	StepBonds();
 	ProcessOutputs();
-	PendingRotations.Reset();
-
+	
 	// Debug visualization - draw bond cylinders when DebugSpheres is enabled
 	DrawBondDebugLines();
 }
@@ -345,7 +350,7 @@ void USimWorldHex::StepArms()
 		// Clean up any stale pending grabs for this arm (if it's not trying to grab anymore)
 		if (Op.Cmd != ECmd::Grab)
 		{
-			for (int32 i = PendingGrabs.Num() - 1; i >= 0; --i)
+			for (int32 i = PendingGrabs.Num() - 1; i >= 0; i--)
 			{
 				if (PendingGrabs[i].ArmIndex == ArmIndex)
 				{
@@ -358,16 +363,32 @@ void USimWorldHex::StepArms()
 		{
 		case ECmd::Wait:
 		{
-			if (S.WaitCounter == 0)
+			if (S.WaitCounter == 0) 
 			{
 				S.WaitCounter = (Op.Arg == 0 ? 1 : Op.Arg);
+				if (bDebugLogs && GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
+						FString::Printf(TEXT("Arm %d: Starting wait for %d ticks"), ArmIndex, S.WaitCounter));
+				}
 			}
 			--S.WaitCounter;
-			if (S.WaitCounter > 0)
+			if (S.WaitCounter > 0) 
 			{
+				// Still waiting - don't advance PC, just continue to next arm
+				if (bDebugLogs && GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 0.1f, FColor::Cyan,
+						FString::Printf(TEXT("Arm %d: Waiting... %d ticks left"), ArmIndex, S.WaitCounter));
+				}
 				continue;
 			}
 			S.WaitCounter = 0;
+			if (bDebugLogs && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+					FString::Printf(TEXT("Arm %d: Wait complete, advancing to next instruction"), ArmIndex));
+			}
 		} break;
 
 		case ECmd::Grab:
@@ -381,21 +402,32 @@ void USimWorldHex::StepArms()
 
 				FItem* Found = ItemMap.Find(Target);
 				
+				// Check if another arm is already trying to grab this cluster
+				bool bAnotherArmGrabbing = false;
 				if (Found)
 				{
-					bool bAnotherArmGrabbing = false;
+					// Check if any other arm is pending a grab of this cluster
 					for (const FPendingGrab& PendingGrab : PendingGrabs)
 					{
-						if (PendingGrab.ArmIndex != ArmIndex && PendingGrab.TargetHex == Target && PendingGrab.ClusterId == Found->Id)
+						if (PendingGrab.ArmIndex != ArmIndex && 
+							PendingGrab.TargetHex == Target && 
+							PendingGrab.ClusterId == Found->Id)
 						{
 							bAnotherArmGrabbing = true;
 							break;
 						}
 					}
-					if (bAnotherArmGrabbing)
+				}
+				
+				// If another arm is grabbing this cluster, wait
+				if (bAnotherArmGrabbing)
+				{
+					if (bDebugLogs && GEngine)
 					{
-						continue;
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
+							FString::Printf(TEXT("Arm %d: Another arm is grabbing cluster at (%d,%d), waiting"), ArmIndex, Target.Q, Target.R));
 					}
+					continue; // Wait for next tick
 				}
 				if (!Found)
 				{
@@ -561,14 +593,19 @@ void USimWorldHex::StepArms()
 					PendingGrab.ClusterId = Found->Id;
 					PendingGrabs.Add(PendingGrab);
 					
-					if (bDevDebugBonds)
+					if (bDebugLogs && GEngine)
 					{
-						UE_LOG(LogAGSim, Verbose, TEXT("Arm %d reserved cluster %d for grab"), ArmIndex, Found->Id);
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+							FString::Printf(TEXT("Arm %d: Grab succeeded, registered pending grab for cluster %d"), ArmIndex, Found->Id));
 					}
 				}
-				else if (bGrabSucceeded && bDevDebugBonds)
+				else if (bGrabSucceeded)
 				{
-					UE_LOG(LogAGSim, Verbose, TEXT("Arm %d grabbed single orb"), ArmIndex);
+					if (bDebugLogs && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+							FString::Printf(TEXT("Arm %d: Grab succeeded, will advance to next instruction"), ArmIndex));
+					}
 				}
 			}
 			break;
@@ -580,11 +617,12 @@ void USimWorldHex::StepArms()
 				for (int i = 0; i < S.ArmLen; ++i)
 					GripTarget = HexUtil::Neighbor(GripTarget, S.Facing);
 
-	if (!S.Held.bIsCluster)
-	{
-		// Clear any ghost tracking for this single orb before placing it
-		HeldItemLastHex.Remove(S.Held.Id);
-		RecentlyDroppedByArm.Remove(S.Held.Id);
+				if (!S.Held.bIsCluster)
+				{
+					// Clear any ghost tracking for this single orb before placing it
+					HeldItemLastHex.Remove(S.Held.Id);
+					NewlyPlacedItems.Remove(S.Held.Id);
+					RecentlyDroppedByArm.Remove(S.Held.Id);
 					
 					// Also remove any ghost orb from ItemMap that might be causing collision issues
 					for (auto It = ItemMap.CreateIterator(); It; ++It)
@@ -643,10 +681,11 @@ void USimWorldHex::StepArms()
 
 					// Clear any ghost tracking for this arm before placing real orbs
 					// This prevents teleporting behavior from stale HeldItemLastHex entries
-		for (const FOrbData& Sub : S.Held.Orbs)
-		{
-			HeldItemLastHex.Remove(Sub.ItemId);
-			RecentlyDroppedByArm.Remove(Sub.ItemId);
+					for (const FOrbData& Sub : S.Held.Orbs)
+					{
+						HeldItemLastHex.Remove(Sub.ItemId);
+						NewlyPlacedItems.Remove(Sub.ItemId);
+						RecentlyDroppedByArm.Remove(Sub.ItemId);
 						
 						// Also remove any ghost orbs from ItemMap that might be causing collision issues
 						for (auto It = ItemMap.CreateIterator(); It; ++It)
@@ -677,11 +716,11 @@ void USimWorldHex::StepArms()
 							NewItem.Id = NextItemId++;        // legacy fallback
 						}
 
-		if (TryPutItem(TargetHexes[idx], NewItem))
-		{
-			SkipOutputThisFrame.Add(TargetHexes[idx]);
-			HeldItemLastHex.Remove(NewItem.Id);
-		}
+						if (TryPutItem(TargetHexes[idx], NewItem))
+						{
+							SkipOutputThisFrame.Add(TargetHexes[idx]);
+							HeldItemLastHex.Remove(NewItem.Id);
+						}
 					}
 
 					// Bonds referencing these Ids were never removed; offsets will self‑heal in CleanupBrokenBonds next tick.
@@ -919,7 +958,6 @@ void USimWorldHex::StepArms()
 
 			// Commit rotation
 			S.Facing = NewFacing;
-	NotifyArmRotationCompleteSim(ArmIndex, NewFacing);
 		}
 		break;
 
@@ -929,12 +967,15 @@ void USimWorldHex::StepArms()
 			const int32 OldLen = S.ArmLen;
 			S.ArmLen = FMath::Clamp<int32>(S.ArmLen - Delta, 1, MAX_ARM_LEN);
 
-			if (bDevDebugArms && S.ArmLen != OldLen)
+			if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
 			{
 				FHex Hand = S.BaseHex;
 				for (int i = 0; i < S.ArmLen; ++i)
 					Hand = HexUtil::Neighbor(Hand, S.Facing);
-				UE_LOG(LogAGSim, Verbose, TEXT("[Arm %d] RETRACT (Δ=%d) Len=%d Hand=(%d,%d)"), ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R);
+				GEngine->AddOnScreenDebugMessage(
+					-1, 1.5f, FColor::Orange,
+					FString::Printf(TEXT("[Arm %d] RETRACT (Δ=%d) Len=%d Hand=(%d,%d)"),
+						ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
 			}
 		}
 		break;
@@ -1026,9 +1067,10 @@ void USimWorldHex::TryFormBondAt(const FHex& Root, uint8 Dir, const TSet<int32>&
 	Newly.Add(NewB.ItemA);
 	Newly.Add(NewB.ItemB);
 
-	if (bDevDebugBonds)
+	if (GEngine && bDevDebugBonds)
 	{
-		UE_LOG(LogAGSim, Verbose, TEXT("Bond formed: %d-%d (%d)"), NewB.ItemA, NewB.ItemB, Index);
+		GEngine->AddOnScreenDebugMessage(-1, 0.75f, FColor::Green,
+			FString::Printf(TEXT("Bond formed: %d-%d (%d)"), NewB.ItemA, NewB.ItemB, Index));
 	}
 }
 
@@ -1072,9 +1114,10 @@ void USimWorldHex::RemoveBondIndex(int32 Index)
 		Bonds.RemoveAt(Index);
 	}
 
-	if (bDevDebugBonds)
+	if (GEngine && bDevDebugBonds)
 	{
-		UE_LOG(LogAGSim, Verbose, TEXT("Bond removed: %d-%d"), Dead.ItemA, Dead.ItemB);
+		GEngine->AddOnScreenDebugMessage(-1, 0.75f, FColor::Red,
+			FString::Printf(TEXT("Bond removed: %d-%d"), Dead.ItemA, Dead.ItemB));
 	}
 }
 
@@ -1230,8 +1273,7 @@ void USimWorldHex::DrawBondDebugLines()
 		}
 		
 		// Find the actual positions of the bonded items
-		FVector PosA = FVector::ZeroVector;
-		FVector PosB = FVector::ZeroVector;
+		FVector PosA, PosB;
 		bool bFoundA = false, bFoundB = false;
 		
 		// Check if items are on the board
@@ -1398,6 +1440,101 @@ void USimWorldHex::DrawBondDebugLines()
 
 
 
+void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
+{
+	// DEBUG: Log total pending formations (commented out for production)
+	// if (PendingBondFormations.Num() > 0)
+	// {
+	//	UE_LOG(LogAGSim, Warning, TEXT("Processing %d pending bond formations"), PendingBondFormations.Num());
+	// }
+	
+	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
+	{
+		FPendingBondFormation& Pending = PendingBondFormations[i];
+		
+		// Check if the arm is still valid and holding the item
+		if (Pending.ArmIndex < 0 || Pending.ArmIndex >= Arms.Num())
+		{
+			PendingBondFormations.RemoveAt(i);
+			continue;
+		}
+		
+		const FArmState& Arm = Arms[Pending.ArmIndex];
+		if (!Arm.bHolding)
+		{
+			// Arm is no longer holding anything, cancel the pending formation
+			PendingBondFormations.RemoveAt(i);
+			continue;
+		}
+		
+		// Check if the board item still exists
+		const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
+		if (!BoardItem || BoardItem->Id != Pending.BoardItemId)
+		{
+			// Board item no longer exists, cancel the pending formation
+			PendingBondFormations.RemoveAt(i);
+			continue;
+		}
+		
+		// Decrease time remaining
+		Pending.TimeRemaining -= DeltaTime;
+		
+		if (Pending.TimeRemaining <= 0.f)
+		{
+			// Time to form the bond - use the current held item ID
+			if (bDebugLogs && bDevDebugBonds && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+					FString::Printf(TEXT("Processing pending bond: board orb %d -> held item %d"), Pending.BoardItemId, Arm.Held.Id));
+			}
+			
+			AddBoardOrbToHeldItem(Arm.Held.Id, Pending.BoardItemId, Pending.BoardItemHex);
+			PendingBondFormations.RemoveAt(i);
+		}
+	}
+}
+
+
+void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
+{
+
+	// Process any pending bond formations for this arm immediately
+	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
+	{
+		FPendingBondFormation& Pending = PendingBondFormations[i];
+		
+		if (Pending.ArmIndex == ArmIndex)
+		{
+			// Check if the arm is still valid and holding something
+			if (ArmIndex >= 0 && ArmIndex < Arms.Num())
+			{
+				const FArmState& Arm = Arms[ArmIndex];
+				if (Arm.bHolding)
+				{
+					// Check if the board item still exists
+					const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
+					if (BoardItem && BoardItem->Id == Pending.BoardItemId)
+					{
+						// Form the bond immediately - use the current held item ID
+						if (bDebugLogs && bDevDebugBonds && GEngine)
+						{
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+								FString::Printf(TEXT("Arm rotation complete - forming bond: board orb %d -> held item %d"), Pending.BoardItemId, Arm.Held.Id));
+						}
+						
+						AddBoardOrbToHeldItem(Arm.Held.Id, Pending.BoardItemId, Pending.BoardItemHex);
+					}
+				}
+			}
+			
+			PendingBondFormations.RemoveAt(i);
+		}
+	}
+	
+	// Note: Unbond processing is now handled in OnArmRotationFullyComplete()
+	// This function only handles bond formation at 95% rotation completion
+}
+
 void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 {
 	// Mark this arm as ready for unbond processing with its current facing direction
@@ -1405,14 +1542,51 @@ void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 	// This function is idempotent - it can be called multiple times safely
 	if (ArmIndex >= 0 && ArmIndex < Arms.Num())
 	{
-		NotifyArmRotationCompleteSim(ArmIndex, Arms[ArmIndex].Facing);
+		// Check if we already have this arm marked for unbond processing
+		// This prevents unnecessary work if called multiple times
+		if (ArmsReadyForUnbond.Contains(ArmIndex))
+		{
+			return; // Already marked, no need to do it again
+		}
+		
+		// Get the arm's visual facing direction when rotation fully completes
+		uint8 VisualFacing = (uint8)Arms[ArmIndex].Facing; // Default to simulation facing
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+			{
+				ABasicArm* ArmActor = *ActorItr;
+				if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
+				{
+					// Get the visual facing from the arm actor
+					VisualFacing = ArmActor->FacingDir;
+					break;
+				}
+			}
+		}
+		
+		// Store the arm index and the facing direction when rotation fully completed
+		ArmsReadyForUnbond.Add(ArmIndex, VisualFacing);
 	}
 }
 
-void USimWorldHex::NotifyArmRotationCompleteSim(int32 ArmIndex, EHexDir NewFacing)
+void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
 {
-	FCompletedRotation& Entry = PendingRotations.Emplace_GetRef();
-	Entry.ArmIndex = ArmIndex;
-	Entry.Facing = NewFacing;
+	// Cancel any pending bond formations for this arm
+	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
+	{
+		FPendingBondFormation& Pending = PendingBondFormations[i];
+		
+		if (Pending.ArmIndex == ArmIndex)
+		{
+			if (bDebugLogs && bDevDebugBonds && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
+					FString::Printf(TEXT("Canceling pending bond formation for arm %d (arm dropped item)"), ArmIndex));
+			}
+			
+			PendingBondFormations.RemoveAt(i);
+		}
+	}
 }
 

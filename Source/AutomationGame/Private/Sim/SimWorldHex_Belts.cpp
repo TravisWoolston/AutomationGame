@@ -93,7 +93,7 @@ void USimWorldHex::StepBelts()
 	{
 		if (KV.Value.Id == 0) continue;
 		if (!BeltProgress.Contains(KV.Value.Id)) continue;
-	// Items dropped earlier this tick should still be eligible for belt motion.
+		if (NewlyPlacedItems.Contains(KV.Value.Id)) continue; // Skip newly placed items
 		// Only process items that have existing belt progress (were already on belts)
 		BeltItems.Add({ KV.Value.Id, KV.Key });
 	}
@@ -105,7 +105,7 @@ void USimWorldHex::StepBelts()
 	for (const auto& KV : ItemMap)
 	{
 		if (KV.Value.Id == 0) continue;
-	// Items dropped earlier this tick should still be eligible for belt motion.
+		if (NewlyPlacedItems.Contains(KV.Value.Id)) continue;
 		if (BeltProgress.Contains(KV.Value.Id)) continue; // Already has progress
 		
 		const FTile* T = TileMap.Find(KV.Key);
@@ -519,7 +519,10 @@ void USimWorldHex::StepBelts()
 				if (const FTile* TD = TileMap.Find(ToHex); TD && TD->Kind == ETileKind::Belt)
 				{
 					// Only add belt progress if this item wasn't just placed
-			BeltProgress.Add(Id, 0.f);
+					if (!NewlyPlacedItems.Contains(Id))
+					{
+						BeltProgress.Add(Id, 0.f);
+					}
 				}
 				else
 					BeltProgress.Remove(Id);
@@ -664,12 +667,16 @@ void USimWorldHex::StepBelts()
 		const FTile* T = TileMap.Find(KV.Key);
 		if (T && T->Kind == ETileKind::Belt && KV.Value.Id != 0)
 		{
-			if (!BeltProgress.Contains(KV.Value.Id))
+			if (!BeltProgress.Contains(KV.Value.Id) && !NewlyPlacedItems.Contains(KV.Value.Id))
 			{
+				// This is a new item on a belt, initialize its progress to 0 for next frame
 				BeltProgress.Add(KV.Value.Id, 0.f);
 			}
 		}
 	}
+	
+	/* ---------- Clear newly placed items for next frame ---------- */
+	NewlyPlacedItems.Empty();
 	
 	/* ---------- Clear recently dropped by arm tracking for next frame ---------- */
 	RecentlyDroppedByArm.Empty();
