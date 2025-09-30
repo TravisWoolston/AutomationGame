@@ -345,22 +345,33 @@ void USimWorldHex::StepArms()
 	{
 		FArmState& S = Arms[ArmIndex];
 		if (S.Tape.Num() == 0) continue;
-		const FOp& Op = S.Tape[S.PC];
 		
-		// Clean up any stale pending grabs for this arm (if it's not trying to grab anymore)
-		if (Op.Cmd != ECmd::Grab)
+		// Allow multiple operations per tick for immediate execution
+		int32 OpsExecutedThisTick = 0;
+		const int32 MaxOpsPerTick = 3; // Safety limit to prevent infinite loops
+		bool bContinueProcessing = true;
+		
+		while (bContinueProcessing && OpsExecutedThisTick < MaxOpsPerTick)
 		{
-			for (int32 i = PendingGrabs.Num() - 1; i >= 0; i--)
+			bContinueProcessing = false; // Default to stopping after one op
+			OpsExecutedThisTick++;
+			
+			const FOp& Op = S.Tape[S.PC];
+			
+			// Clean up any stale pending grabs for this arm (if it's not trying to grab anymore)
+			if (Op.Cmd != ECmd::Grab)
 			{
-				if (PendingGrabs[i].ArmIndex == ArmIndex)
+				for (int32 i = PendingGrabs.Num() - 1; i >= 0; i--)
 				{
-					PendingGrabs.RemoveAt(i);
+					if (PendingGrabs[i].ArmIndex == ArmIndex)
+					{
+						PendingGrabs.RemoveAt(i);
+					}
 				}
 			}
-		}
 
-		switch (Op.Cmd)
-		{
+			switch (Op.Cmd)
+			{
 		case ECmd::Wait:
 		{
 			if (S.WaitCounter == 0) 
@@ -381,7 +392,7 @@ void USimWorldHex::StepArms()
 					GEngine->AddOnScreenDebugMessage(-1, 0.1f, FColor::Cyan,
 						FString::Printf(TEXT("Arm %d: Waiting... %d ticks left"), ArmIndex, S.WaitCounter));
 				}
-				continue;
+				break; // Exit switch without advancing PC
 			}
 			S.WaitCounter = 0;
 			if (bDebugLogs && GEngine)
@@ -583,7 +594,7 @@ void USimWorldHex::StepArms()
 				// If grab failed (nothing there), wait for next tick (retry)
 				if (!bGrabSucceeded)
 				{
-					continue; // Wait for next tick to retry grab
+					break; // Exit switch, don't advance PC, retry next tick
 				}
 				
 				// If grab succeeded, register pending grab and let normal flow advance PC
@@ -609,6 +620,12 @@ void USimWorldHex::StepArms()
 						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
 							FString::Printf(TEXT("Arm %d: Grab succeeded, will advance to next instruction"), ArmIndex));
 					}
+				}
+				
+				// Enable immediate execution of next command after successful grab
+				if (bGrabSucceeded)
+				{
+					bContinueProcessing = true;
 				}
 			}
 			break;
@@ -1041,13 +1058,38 @@ void USimWorldHex::StepArms()
 				else
 				{
 					// Still waiting, don't advance PC
-					continue;
+					break; // Exit switch without advancing PC
 				}
 			}
 			break;
-		}
-
-		S.PC = (S.PC + 1) % S.Tape.Num();
+			}
+			
+			// Handle PC advancement based on command execution result
+			// Some commands (like failed grabs or waiting) shouldn't advance PC
+			bool bShouldAdvancePC = true;
+			switch (Op.Cmd)
+			{
+			case ECmd::Wait:
+				if (S.WaitCounter > 0) bShouldAdvancePC = false;
+				break;
+			case ECmd::Grab:
+				// Check if we're still trying to grab (failed grab)
+				// In the grab case above, if grab fails we break without setting bContinueProcessing
+				// So if we get here and bContinueProcessing is false, it means grab failed
+				if (!bContinueProcessing) bShouldAdvancePC = false;
+				break;
+			case ECmd::WaitForBond:
+				if (S.bWaitingForBond) bShouldAdvancePC = false;
+				break;
+			default:
+				break;
+			}
+			
+			if (bShouldAdvancePC)
+			{
+				S.PC = (S.PC + 1) % S.Tape.Num();
+			}
+		} // End of while loop for immediate execution
 	}
 	
 	// Update previous orb counts for next tick's WaitForBond checks
