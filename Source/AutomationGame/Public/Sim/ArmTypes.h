@@ -21,7 +21,8 @@ enum class ECmd : uint8
 	Reset,
 	Repeat,
 	RotateHeldL,
-	RotateHeldR
+	RotateHeldR,
+	WaitForBond
 };
 
 USTRUCT(BlueprintType)
@@ -56,6 +57,11 @@ struct AUTOMATIONGAME_API FArmState
 	
 	// Pause flag for bonded arm management
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bPausedForBonding = false;
+	
+	// WaitForBond state tracking
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32   WaitForBondInitialCount = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bWaitingForBond = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32   PrevHeldOrbCount = 0; // Track count from previous tick
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FOp> Tape;
 

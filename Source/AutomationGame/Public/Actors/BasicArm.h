@@ -26,7 +26,8 @@ enum class EArmCmd : uint8
 	Extend       UMETA(DisplayName = "Extend (+Arg, default 1)"),   // NEW
 	Retract      UMETA(DisplayName = "Retract (-Arg, default 1)"),   // NEW
 	RotateHeldCW UMETA(DisplayName = "Rotate Held CW (60° * Arg)"), // NEW
-	RotateHeldCCW UMETA(DisplayName = "Rotate Held CCW (60° * Arg)") // NEW
+	RotateHeldCCW UMETA(DisplayName = "Rotate Held CCW (60° * Arg)"), // NEW
+	WaitForBond  UMETA(DisplayName = "Wait For Bond") // NEW
 };
 
 /** One instruction + small integer argument (dir steps, wait ticks, etc.) */

@@ -26,6 +26,7 @@ static const TCHAR* CmdName(EArmCmd C)
 	case EArmCmd::Reset:         return TEXT("Reset");
 	case EArmCmd::RotateHeldCW:  return TEXT("RotateHeldCW");
 	case EArmCmd::RotateHeldCCW: return TEXT("RotateHeldCCW");
+	case EArmCmd::WaitForBond:   return TEXT("WaitForBond");
 	default:                     return TEXT("<?>");
 	}
 }
@@ -519,6 +520,7 @@ static TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& Program)
 		case EArmCmd::Retract:       Out.Add({ ECmd::Retract, (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
 		case EArmCmd::RotateHeldCW:  Out.Add({ ECmd::RotateHeldR, (uint8)FMath::Max(1, I.Arg) }); break;   // NEW
 		case EArmCmd::RotateHeldCCW: Out.Add({ ECmd::RotateHeldL, (uint8)FMath::Max(1, I.Arg) }); break;   // NEW
+		case EArmCmd::WaitForBond:   Out.Add({ ECmd::WaitForBond, 0 }); break;   // NEW
 		default:                     Out.Add({ ECmd::Wait, 1 }); break;
 		}
 	}
@@ -554,6 +556,7 @@ void ABasicArm::PushProgramToSim()
 			case ECmd::Reset: CmdName = TEXT("Reset"); break;
 			case ECmd::RotateHeldL: CmdName = TEXT("RotateHeldL"); break;
 			case ECmd::RotateHeldR: CmdName = TEXT("RotateHeldR"); break;
+			case ECmd::WaitForBond: CmdName = TEXT("WaitForBond"); break;
 			}
 			UE_LOG(LogAGArm, Log, TEXT("  [%d]: %s %d"), i, *CmdName, Op.Arg);
 		}

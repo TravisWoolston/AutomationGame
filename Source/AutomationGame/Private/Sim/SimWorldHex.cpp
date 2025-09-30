@@ -446,6 +446,7 @@ void USimWorldHex::StepArms()
 						
 						S.Held = Temp;
 						S.bHolding = true;
+						S.PrevHeldOrbCount = 1; // Single orb
 						SkipInputThisFrame.Add(Target);
 						bGrabSucceeded = true;        // NEW
 					}
@@ -492,6 +493,7 @@ void USimWorldHex::StepArms()
 							
 							S.Held = SingleOut;
 							S.bHolding = true;
+							S.PrevHeldOrbCount = 1; // Single orb
 							SkipInputThisFrame.Add(Target);
 							bGrabSucceeded = true;    // NEW
 						}
@@ -571,6 +573,7 @@ void USimWorldHex::StepArms()
 						{
 							S.Held = Cluster;
 							S.bHolding = true;
+							S.PrevHeldOrbCount = Cluster.Orbs.Num(); // Initial cluster size
 							SkipInputThisFrame.Add(Target);
 							bGrabSucceeded = true;
 						}
@@ -638,6 +641,9 @@ void USimWorldHex::StepArms()
 					{
 						S.bHolding = false;
 						S.Held = FItem();
+						S.bWaitingForBond = false;
+						S.WaitForBondInitialCount = 0;
+						S.PrevHeldOrbCount = 0;
 						SkipOutputThisFrame.Add(GripTarget);
 					}
 				}
@@ -726,6 +732,9 @@ void USimWorldHex::StepArms()
 					// Bonds referencing these Ids were never removed; offsets will self‑heal in CleanupBrokenBonds next tick.
 					S.bHolding = false;
 					S.Held = FItem();
+					S.bWaitingForBond = false;
+					S.WaitForBondInitialCount = 0;
+					S.PrevHeldOrbCount = 0;
 				}
 				
 				// Clean up any pending grabs for this arm
@@ -986,9 +995,65 @@ void USimWorldHex::StepArms()
 		case ECmd::Reset:
 			S.Facing = S.HomeFacing; S.ArmLen = S.HomeArmLen; S.TrackIdx = S.HomeTrackIdx; break;
 		case ECmd::Repeat:  break;
+		case ECmd::RotateHeldL:
+			if (S.bHolding && S.Held.bIsCluster)
+			{
+				S.Held.GrabFacing = (S.Held.GrabFacing + 1) % 6;
+			}
+			break;
+		case ECmd::RotateHeldR:
+			if (S.bHolding && S.Held.bIsCluster)
+			{
+				S.Held.GrabFacing = (S.Held.GrabFacing + 5) % 6;
+			}
+			break;
+		case ECmd::WaitForBond:
+			if (S.bHolding)
+			{
+				int32 CurrentCount = S.Held.bIsCluster ? S.Held.Orbs.Num() : 1;
+				
+				// Initialize wait state if just starting
+				if (!S.bWaitingForBond)
+				{
+					S.bWaitingForBond = true;
+					// Use the count from the previous tick as baseline
+					S.WaitForBondInitialCount = S.PrevHeldOrbCount;
+					
+					// If a bond was already formed this tick (current > previous),
+					// don't wait - proceed immediately
+					if (CurrentCount > S.PrevHeldOrbCount)
+					{
+						S.bWaitingForBond = false;
+						S.WaitForBondInitialCount = 0;
+						// Let PC advance normally
+						break;
+					}
+				}
+				
+				// Check if a bond has been added since we started waiting
+				if (CurrentCount > S.WaitForBondInitialCount)
+				{
+					// Bond detected, clear wait state and continue
+					S.bWaitingForBond = false;
+					S.WaitForBondInitialCount = 0;
+					// Let PC advance normally
+				}
+				else
+				{
+					// Still waiting, don't advance PC
+					continue;
+				}
+			}
+			break;
 		}
 
 		S.PC = (S.PC + 1) % S.Tape.Num();
+	}
+	
+	// Update previous orb counts for next tick's WaitForBond checks
+	for (FArmState& S : Arms)
+	{
+		S.PrevHeldOrbCount = S.bHolding ? (S.Held.bIsCluster ? S.Held.Orbs.Num() : 1) : 0;
 	}
 }
 
