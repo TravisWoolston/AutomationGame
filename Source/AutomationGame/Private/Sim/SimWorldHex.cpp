@@ -1624,14 +1624,84 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 					const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
 					if (BoardItem && BoardItem->Id == Pending.BoardItemId)
 					{
-						// Form the bond immediately - use the current held item ID
+						// Check if this board item is part of a bonded cluster
+						TSet<int32> ClusterIds;
+						if (ItemToBonds.Contains(Pending.BoardItemId))
+						{
+							// Gather all items in the bonded cluster
+							TArray<int32> Stack;
+							Stack.Add(Pending.BoardItemId);
+							ClusterIds.Add(Pending.BoardItemId);
+							
+							while (Stack.Num() > 0)
+							{
+								int32 CurrentId = Stack.Pop();
+								if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
+								{
+									for (int32 BondIdx : *BondList)
+									{
+										if (!Bonds.IsValidIndex(BondIdx)) continue;
+										const FBond& Bond = Bonds[BondIdx];
+										if (!Bond.bActive) continue;
+										
+										int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
+										if (OtherId > 0 && !ClusterIds.Contains(OtherId))
+										{
+											// Check if this other item is on the board (not held)
+											bool bOtherOnBoard = false;
+											for (const auto& ItemKV : ItemMap)
+											{
+												if (ItemKV.Value.Id == OtherId)
+												{
+													bOtherOnBoard = true;
+													break;
+												}
+											}
+											
+											if (bOtherOnBoard)
+											{
+												ClusterIds.Add(OtherId);
+												Stack.Add(OtherId);
+											}
+										}
+									}
+								}
+							}
+						}
+						else
+						{
+							// Single item, not part of a cluster
+							ClusterIds.Add(Pending.BoardItemId);
+						}
+						
 						if (bDebugLogs && bDevDebugBonds && GEngine)
 						{
 							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-								FString::Printf(TEXT("Arm rotation complete - forming bond: board orb %d -> held item %d"), Pending.BoardItemId, Arm.Held.Id));
+								FString::Printf(TEXT("Arm rotation complete - adding %d board orb(s) to held item %d"), 
+									ClusterIds.Num(), Arm.Held.Id));
 						}
 						
-						AddBoardOrbToHeldItem(Arm.Held.Id, Pending.BoardItemId, Pending.BoardItemHex);
+						// Add all cluster items to the held item
+						for (int32 BoardId : ClusterIds)
+						{
+							// Find the hex position of this board item
+							FHex BoardHex;
+							bool bFound = false;
+							for (const auto& ItemKV : ItemMap)
+							{
+								if (ItemKV.Value.Id == BoardId)
+								{
+									BoardHex = ItemKV.Key;
+									bFound = true;
+									break;
+								}
+							}
+							
+							if (bFound)
+							{
+								AddBoardOrbToHeldItem(Arm.Held.Id, BoardId, BoardHex);
+							}
+						}
 					}
 				}
 			}

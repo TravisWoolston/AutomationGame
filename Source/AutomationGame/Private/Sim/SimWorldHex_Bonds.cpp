@@ -447,37 +447,20 @@ void USimWorldHex::StepBonds()
 					}
 				}
 				
-				if (ClusterItems.Num() > 1)
+				// Always use the pending bond formation system to ensure WaitForBond works correctly
+				// This applies to both single items and clusters
+				FPendingBondFormation Pending;
+				Pending.HeldItemId = BId;
+				Pending.BoardItemId = AId;
+				Pending.BoardItemHex = AHex;
+				Pending.ArmIndex = HoldingArmIndex;
+				Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
+				PendingBondFormations.Add(Pending);
+				
+				if (bDebugLogs && bDevDebugBonds && GEngine)
 				{
-					// This is a dropped cluster - add all items to the held item
-					if (bDevDebugBonds)
-					{
-						UE_LOG(LogAGSim, Log, TEXT("Detected dropped cluster with %d items, adding to held item %d"), 
-							ClusterItems.Num(), BId);
-					}
-					
-					// Add all cluster items to the held item
-					for (int32 i = 0; i < ClusterItems.Num(); i++)
-					{
-						AddBoardOrbToHeldItem(BId, ClusterItems[i]->Id, ClusterHexes[i]);
-					}
-				}
-				else
-				{
-					// Single board item - use the existing pending bond formation
-					FPendingBondFormation Pending;
-					Pending.HeldItemId = BId;
-					Pending.BoardItemId = AId;
-					Pending.BoardItemHex = AHex;
-					Pending.ArmIndex = HoldingArmIndex;
-					Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
-					PendingBondFormations.Add(Pending);
-					
-					if (bDebugLogs && bDevDebugBonds && GEngine)
-					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
-							FString::Printf(TEXT("Queued bond formation: board orb %d -> held item %d (arm %d)"), AId, BId, HoldingArmIndex));
-					}
+					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+						FString::Printf(TEXT("Queued bond formation: board orb %d -> held item %d (arm %d)"), AId, BId, HoldingArmIndex));
 				}
 			}
 		}
