@@ -219,6 +219,7 @@ private:
 
 	// Core step pieces
 	void StepArms();
+	void StepArmsSecondPass();  // Second pass for immediate grab after unbonding
 	void StepBelts();
 	void StepGlyphs();
 

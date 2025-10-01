@@ -257,18 +257,9 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.Facing);
 
 		// Set starting rotation and reach for Reset command
-		// If scenario has explicit starting values, use them; otherwise use placement values
-		if (A.StartingRotation != 0 || A.StartingReach != 1) // Check if non-default values are set
-		{
-			A.Spawned->StartingRotation = A.StartingRotation;
-			A.Spawned->StartingReach = A.StartingReach;
-		}
-		else
-		{
-			// Use placement values as starting values for new scenarios
-			A.Spawned->StartingRotation = A.Facing % 6;
-			A.Spawned->StartingReach = 1; // Default reach
-		}
+		// Always set these values to ensure proper initialization
+		A.Spawned->StartingRotation = A.StartingRotation;
+		A.Spawned->StartingReach = A.StartingReach;
 
 		int32 ArmIndex = INDEX_NONE;
 		if (USimWorldHex* Sim = Driver->GetSim())
@@ -277,10 +268,10 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			FArmState ArmState;
 			ArmState.BaseHex = FHex(A.Q, A.R);
 			ArmState.Facing = (EHexDir)(A.Facing % 6);
-			ArmState.HomeFacing = ArmState.Facing;
-			ArmState.HomeArmLen = 1;
+			ArmState.HomeFacing = (EHexDir)(A.StartingRotation % 6);
+			ArmState.HomeArmLen = A.StartingReach;
 			ArmState.HomeTrackIdx = 0;
-			ArmState.ArmLen = 1;
+			ArmState.ArmLen = A.StartingReach;
 			ArmState.TrackIdx = 0;
 			ArmState.PC = 0;
 			ArmState.bHolding = false;

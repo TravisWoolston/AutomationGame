@@ -240,7 +240,7 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 	Arm->FacingDir = Facing % 6;
 	Arm->StartingRotation = Facing % 6;
 	Arm->StartingReach = Arm->ReachTiles; // Use current ReachTiles as starting reach
-	Arm->SetProgram(Program, bLoop);
+	// Don't call SetProgram yet - need SimArmIndex first
 
 	// --- Add to simulation so it actually runs ---
 	if (USimWorldHex* Sim = OrbSimDriver->GetSim())
@@ -248,18 +248,22 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 		FArmState ArmState;
 		ArmState.BaseHex = Hex;
 		ArmState.Facing = static_cast<EHexDir>(Facing % 6);
-		ArmState.HomeFacing = ArmState.Facing;
-		ArmState.HomeArmLen = FMath::Clamp(Arm->ReachTiles, 1, 3);        // NEW
+		ArmState.HomeFacing = static_cast<EHexDir>(Arm->StartingRotation % 6);
+		ArmState.HomeArmLen = FMath::Clamp(Arm->StartingReach, 1, 6);
 		ArmState.HomeTrackIdx = 0;
-		ArmState.ArmLen = ArmState.HomeArmLen;                            // NEW
+		ArmState.ArmLen = FMath::Clamp(Arm->ReachTiles, 1, 6);
 		ArmState.TrackIdx = 0;
 		ArmState.PC = 0;
 		ArmState.bHolding = false;
 		ArmState.WaitCounter = 0;                                         // (if field exists) NEW
-		ArmState.Tape = ConvertProgramToOps(Program);
+		// Don't convert program here - let SetProgram handle it after SimArmIndex is assigned
+		ArmState.Tape.Add({ ECmd::Wait, 1 }); // Just add a default wait
 
 		const int32 ArmIndex = Sim->AddArm(ArmState);
 		Arm->SimArmIndex = ArmIndex;
+		
+		// Now that SimArmIndex is set, we can call SetProgram which will properly expand Reset commands
+		Arm->SetProgram(Program, bLoop);
 		Arm->Start();
 
 		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered arm at Hex(%d,%d) Facing=%d SimIndex=%d TapeLen=%d"),

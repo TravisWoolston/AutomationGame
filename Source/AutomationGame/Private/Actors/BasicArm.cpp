@@ -35,6 +35,7 @@ ABasicArm::ABasicArm()
 {
 	PrimaryActorTick.bCanEverTick = true;   // we interpolate visuals in Tick
 
+	SimArmIndex = -1;                // Initialize to invalid index to prevent accidental overwrites
 	LastHeldItemId = 0;              // NEW
 
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("ArmRoot"));
@@ -72,6 +73,12 @@ void ABasicArm::BeginPlay()
 	RefreshMeshes();
 
 	StartFacingDir = FacingDir;
+	
+	// Initialize ReachTiles from StartingReach if not already set
+	if (StartingReach > 0)
+	{
+		ReachTiles = FMath::Clamp(StartingReach, 1, 6);
+	}
 
 	// auto-find driver if not set
 	if (!Driver)
@@ -490,6 +497,9 @@ void ABasicArm::RefreshPose(float InAlpha)
 
 void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= true*/)
 {
+	UE_LOG(LogAGArm, Warning, TEXT("SetProgram called on Arm '%s' (SimIndex=%d) with %d instructions"), 
+		*GetName(), SimArmIndex, InProgram.Num());
+	
 	Program = InProgram;
 	bLoopProgram = bLoop;
 	PC = 0;
@@ -497,15 +507,15 @@ void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= tr
 	PushProgramToSim(); // NEW
 }
 
-static TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& Program)
+TArray<FOp> ABasicArm::BuildOpsFromProgram(const TArray<FArmInstr>& InProgram) const
 {
 	TArray<FOp> Out;
-	if (Program.Num() == 0)
+	if (InProgram.Num() == 0)
 	{
 		Out.Add({ ECmd::Wait, 1 }); // harmless idle
 		return Out;
 	}
-	for (const FArmInstr& I : Program)
+	for (const FArmInstr& I : InProgram)
 	{
 		switch (I.Cmd)
 		{
@@ -530,36 +540,60 @@ static TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& Program)
 // NEW: push actor-side program / facing into sim
 void ABasicArm::PushProgramToSim()
 {
-	if (!Sim || SimArmIndex < 0 || SimArmIndex >= Sim->Arms.Num()) return;
+	if (!Sim || SimArmIndex < 0 || SimArmIndex >= Sim->Arms.Num()) 
+	{
+		UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' has invalid SimArmIndex=%d (Sim has %d arms)"), 
+			*GetName(), SimArmIndex, Sim ? Sim->Arms.Num() : -1);
+		return;
+	}
+	
 	FArmState& S = Sim->Arms[SimArmIndex];
-	S.Tape = BuildOpsFromProgram(Program);
+	
+	// Check if we're in the middle of executing temporary Reset operations
+	// If the tape has more operations than what BuildOpsFromProgram would generate,
+	// it means we have temporary operations that shouldn't be overwritten
+	TArray<FOp> NewTape = BuildOpsFromProgram(Program);
+	if (S.Tape.Num() > NewTape.Num() && S.PC > 0)
+	{
+		// We're likely executing temporary Reset operations - don't overwrite!
+		UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' (SimIndex=%d) skipping update - temporary ops in progress (Tape=%d, Expected=%d)"), 
+			*GetName(), SimArmIndex, S.Tape.Num(), NewTape.Num());
+		return;
+	}
+	
+	// Log what we're about to replace
+	UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' (SimIndex=%d) updating tape from %d ops to %d ops"), 
+		*GetName(), SimArmIndex, S.Tape.Num(), NewTape.Num());
+	
+	S.Tape = NewTape;
 	S.PC = 0;
 	S.Facing = static_cast<EHexDir>(FacingDir);
 	
 	// Debug: Log the converted program
-	if (bDebugLogs)
+	UE_LOG(LogAGArm, Log, TEXT("Arm '%s': PushProgramToSim called - Converting %d instructions to %d ops"), 
+		*GetName(), Program.Num(), S.Tape.Num());
+	
+	// Always log tape contents after Reset expansion for debugging
+	UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Program pushed (TapeLen=%d)"), *GetName(), S.Tape.Num());
+	for (int32 i = 0; i < S.Tape.Num(); i++)
 	{
-		UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Program pushed (TapeLen=%d)"), *GetName(), S.Tape.Num());
-		for (int32 i = 0; i < S.Tape.Num(); i++)
+		const FOp& Op = S.Tape[i];
+		FString CmdName = TEXT("Unknown");
+		switch (Op.Cmd)
 		{
-			const FOp& Op = S.Tape[i];
-			FString CmdName = TEXT("Unknown");
-			switch (Op.Cmd)
-			{
-			case ECmd::Wait: CmdName = TEXT("Wait"); break;
-			case ECmd::Grab: CmdName = TEXT("Grab"); break;
-			case ECmd::Drop: CmdName = TEXT("Drop"); break;
-			case ECmd::RotateR: CmdName = TEXT("RotateR"); break;
-			case ECmd::RotateL: CmdName = TEXT("RotateL"); break;
-			case ECmd::Extend: CmdName = TEXT("Extend"); break;
-			case ECmd::Retract: CmdName = TEXT("Retract"); break;
-			case ECmd::Reset: CmdName = TEXT("Reset"); break;
-			case ECmd::RotateHeldL: CmdName = TEXT("RotateHeldL"); break;
-			case ECmd::RotateHeldR: CmdName = TEXT("RotateHeldR"); break;
-			case ECmd::WaitForBond: CmdName = TEXT("WaitForBond"); break;
-			}
-			UE_LOG(LogAGArm, Log, TEXT("  [%d]: %s %d"), i, *CmdName, Op.Arg);
+		case ECmd::Wait: CmdName = TEXT("Wait"); break;
+		case ECmd::Grab: CmdName = TEXT("Grab"); break;
+		case ECmd::Drop: CmdName = TEXT("Drop"); break;
+		case ECmd::RotateR: CmdName = TEXT("RotateR"); break;
+		case ECmd::RotateL: CmdName = TEXT("RotateL"); break;
+		case ECmd::Extend: CmdName = TEXT("Extend"); break;
+		case ECmd::Retract: CmdName = TEXT("Retract"); break;
+		case ECmd::Reset: CmdName = TEXT("Reset"); break;
+		case ECmd::RotateHeldL: CmdName = TEXT("RotateHeldL"); break;
+		case ECmd::RotateHeldR: CmdName = TEXT("RotateHeldR"); break;
+		case ECmd::WaitForBond: CmdName = TEXT("WaitForBond"); break;
 		}
+		UE_LOG(LogAGArm, Log, TEXT("  [%d]: %s %d"), i, *CmdName, Op.Arg);
 	}
 	
 	UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Program pushed (TapeLen=%d Holding(sim)=%d)"),
@@ -784,31 +818,64 @@ FHex ABasicArm::ComputeTargetHex() const
 
 void ABasicArm::ExpandResetAtPC()
 {
-	// Expand “Reset” into: (Drop if holding) + the shortest sequence of Rotate steps back to StartFacingDir.
+	// Expand "Reset" into: (Drop if holding) + Reach adjustments + Rotation adjustments back to starting values
 	TArray<FArmInstr> Expansion;
+	
+	// Always drop first if holding
 	if (bHolding)
 	{
 		Expansion.Add({ EArmCmd::Drop, 0 });
 	}
 
-	const int32 DiffCW = Mod6(int32(StartFacingDir) - int32(FacingDir)); // 0..5 steps CW
-	const int32 DiffCCW = Mod6(int32(FacingDir) - int32(StartFacingDir)); // 0..5 steps CCW
-	const bool bUseCW = (DiffCW <= DiffCCW);
-	const int32 Steps = bUseCW ? DiffCW : DiffCCW;
+	// Handle reach reset: calculate difference between current and starting reach
+	const int32 CurrentReach = ReachTiles;
+	const int32 TargetReach = FMath::Clamp(StartingReach, 1, 6);
+	const int32 ReachDiff = TargetReach - CurrentReach;
+	
+	if (ReachDiff > 0)
+	{
+		// Need to extend
+		for (int32 i = 0; i < ReachDiff; ++i)
+		{
+			Expansion.Add({ EArmCmd::Extend, 1 });
+		}
+	}
+	else if (ReachDiff < 0)
+	{
+		// Need to retract
+		for (int32 i = 0; i < -ReachDiff; ++i)
+		{
+			Expansion.Add({ EArmCmd::Retract, 1 });
+		}
+	}
 
-	for (int32 i = 0; i < Steps; ++i)
+	// Handle rotation reset: find shortest path to StartingRotation
+	const uint8 CurrentRotation = FacingDir;
+	const uint8 TargetRotation = StartingRotation % 6;
+	const int32 DiffCW = Mod6(int32(TargetRotation) - int32(CurrentRotation)); // 0..5 steps CW
+	const int32 DiffCCW = Mod6(int32(CurrentRotation) - int32(TargetRotation)); // 0..5 steps CCW
+	const bool bUseCW = (DiffCW <= DiffCCW);
+	const int32 RotationSteps = bUseCW ? DiffCW : DiffCCW;
+
+	for (int32 i = 0; i < RotationSteps; ++i)
 	{
 		Expansion.Add({ bUseCW ? EArmCmd::RotateCW : EArmCmd::RotateCCW, 1 });
 	}
 
+	// Remove the Reset command and insert the expansion
 	Program.RemoveAt(PC);
 	if (Expansion.Num() > 0)
 	{
 		Program.Insert(Expansion, PC);
 	}
-	// next fixed tick will execute the first inserted op
-	UE_LOG(LogAGArm, Verbose, TEXT("BasicArm '%s' Reset expanded: From=%d To=%d Dir=%s Steps=%d Holding=%d"),
-		*GetName(), int32(FacingDir), int32(StartFacingDir), bUseCW ? TEXT("CW") : TEXT("CCW"), Steps, bHolding ? 1 : 0);
+	
+	// Log the expansion for debugging
+	UE_LOG(LogAGArm, Verbose, TEXT("BasicArm '%s' Reset expanded: Rotation(%d->%d) Reach(%d->%d) Holding=%d ExpansionSteps=%d"),
+		*GetName(), 
+		int32(CurrentRotation), int32(TargetRotation), 
+		CurrentReach, TargetReach,
+		bHolding ? 1 : 0,
+		Expansion.Num());
 }
 
 void ABasicArm::StepProgram()

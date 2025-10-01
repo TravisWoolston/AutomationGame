@@ -5,6 +5,7 @@
 #include "Sim/HexTypes.h"     // FHex
 #include "Sim/HexCoord.h"     // Axial<->XY helpers
 #include "Sim/OrbTypes.h"    // FOrb
+#include "Sim/ArmTypes.h"    // FOp, ECmd
 #include "BasicArm.generated.h"
 
 class AOrbSimDriver;
@@ -185,12 +186,12 @@ public:
 	void SyncDebugSettingsFromDriver();
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
 	int32 SimArmIndex;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
-	bool bAffectSim = false;   // default false: sim is authoritative
+
 
 public:
 	void PushProgramToSim();
 	void PushRuntimePropertiesToSim();   // NEW
+	TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& InProgram) const; // Made member function for Reset expansion
 	/** If true, cluster sub-orb offsets are multiplied by TileSize (grid units -> UU). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
 	bool bScaleClusterOffsetsByTile = true;
