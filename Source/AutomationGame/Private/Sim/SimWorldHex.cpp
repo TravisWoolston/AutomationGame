@@ -350,25 +350,6 @@ void USimWorldHex::StepArms()
 		FArmState& S = Arms[ArmIndex];
 		if (S.Tape.Num() == 0) continue;
 		
-		// Debug: Log tape state for Arm 0
-		if (ArmIndex == 0 && S.PC < S.Tape.Num())
-		{
-			FString CmdName = TEXT("Unknown");
-			switch (S.Tape[S.PC].Cmd)
-			{
-			case ECmd::Reset: CmdName = TEXT("Reset"); break;
-			case ECmd::Drop: CmdName = TEXT("Drop"); break;
-			case ECmd::Extend: CmdName = TEXT("Extend"); break;
-			case ECmd::Retract: CmdName = TEXT("Retract"); break;
-			case ECmd::RotateR: CmdName = TEXT("RotateR"); break;
-			case ECmd::RotateL: CmdName = TEXT("RotateL"); break;
-			case ECmd::Wait: CmdName = TEXT("Wait"); break;
-			case ECmd::Grab: CmdName = TEXT("Grab"); break;
-			default: break;
-			}
-			UE_LOG(LogTemp, Warning, TEXT("Arm 0: StepArms starting - PC=%d/%d, Current cmd=%s, Facing=%d"), 
-				S.PC, S.Tape.Num(), *CmdName, (uint8)S.Facing);
-		}
 		
 		// Allow multiple operations per tick for immediate execution
 		int32 OpsExecutedThisTick = 0;
@@ -380,11 +361,6 @@ void USimWorldHex::StepArms()
 			bContinueProcessing = false; // Default to stopping after one op
 			OpsExecutedThisTick++;
 			
-			// Debug for Arm 0
-			if (ArmIndex == 0)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("Arm 0: Op %d/%d this tick"), OpsExecutedThisTick, MaxOpsPerTick);
-			}
 			
 			const FOp& Op = S.Tape[S.PC];
 			bool bResetCommandExpanded = false; // Track if Reset expanded the tape
@@ -662,8 +638,6 @@ void USimWorldHex::StepArms()
 			break;
 
 		case ECmd::Drop:
-			UE_LOG(LogTemp, Warning, TEXT("Arm %d: Executing Drop command - bHolding=%d, HeldItemId=%d"), 
-				ArmIndex, S.bHolding ? 1 : 0, S.bHolding ? S.Held.Id : -1);
 			if (S.bHolding)
 			{
 				FHex GripTarget = S.BaseHex;
@@ -689,19 +663,19 @@ void USimWorldHex::StepArms()
 					
 					if (TryArmPlaceItem(GripTarget, S.Held))
 					{
-						UE_LOG(LogTemp, Warning, TEXT("Arm %d: Drop successful - placed item ID %d at (%d,%d)"), 
-							ArmIndex, S.Held.Id, GripTarget.Q, GripTarget.R);
 						S.bHolding = false;
 						S.Held = FItem();
 						S.bWaitingForBond = false;
 						S.WaitForBondInitialCount = 0;
 						S.PrevHeldOrbCount = 0;
 						SkipOutputThisFrame.Add(GripTarget);
+						
+						// Enable immediate execution of next command after successful drop
+						bContinueProcessing = true;
 					}
 					else
 					{
-						UE_LOG(LogTemp, Warning, TEXT("Arm %d: Drop failed - could not place item at (%d,%d)"), 
-							ArmIndex, GripTarget.Q, GripTarget.R);
+						// Drop failed - location occupied
 					}
 				}
 				else
@@ -792,6 +766,9 @@ void USimWorldHex::StepArms()
 					S.bWaitingForBond = false;
 					S.WaitForBondInitialCount = 0;
 					S.PrevHeldOrbCount = 0;
+					
+					// Enable immediate execution of next command after successful drop
+					bContinueProcessing = true;
 				}
 				
 				// Clean up any pending grabs for this arm
@@ -808,14 +785,6 @@ void USimWorldHex::StepArms()
 		case ECmd::RotateL:
 		case ECmd::RotateR:
 		{
-			// Debug logging for Arm 0
-			if (ArmIndex == 0)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("Arm 0: Executing %s - Current Facing=%d, bHolding=%s"), 
-					Op.Cmd == ECmd::RotateL ? TEXT("RotateL") : TEXT("RotateR"), 
-					(uint8)S.Facing,
-					S.bHolding ? TEXT("Yes") : TEXT("No"));
-			}
 			
 			// If we were told to wait (from a previously blocked rotate) count it down and retry next tick.
 			if (S.WaitCounter > 0)
@@ -837,13 +806,6 @@ void USimWorldHex::StepArms()
 			FHex NewHand = S.BaseHex;
 			for (int i = 0; i < S.ArmLen; ++i)
 				NewHand = HexUtil::Neighbor(NewHand, NewFacing);
-				
-			// Debug for Arm 0
-			if (ArmIndex == 0)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("Arm 0: Base=(%d,%d) OldHand=(%d,%d) NewHand=(%d,%d)"), 
-					S.BaseHex.Q, S.BaseHex.R, OldHand.Q, OldHand.R, NewHand.Q, NewHand.R);
-			}
 
 			const int32 dQ = NewHand.Q - OldHand.Q;
 			const int32 dR = NewHand.R - OldHand.R;
@@ -1014,10 +976,6 @@ void USimWorldHex::StepArms()
 				{
 					if (OverlapsAny(H)) 
 					{ 
-						if (ArmIndex == 0)
-						{
-							UE_LOG(LogTemp, Warning, TEXT("Arm 0: Blocked by end position at (%d,%d)"), H.Q, H.R);
-						}
 						bBlocked = true; 
 						break; 
 					}
@@ -1040,13 +998,6 @@ void USimWorldHex::StepArms()
 
 			if (bBlocked)
 			{
-				// Debug for Arm 0
-				if (ArmIndex == 0)
-				{
-					UE_LOG(LogTemp, Warning, TEXT("Arm 0: Rotation BLOCKED! Cannot rotate from %d to %d"), 
-						(uint8)S.Facing, (uint8)NewFacing);
-				}
-				
 				// Arm cannot rotate this tick; set a 1‑tick wait and retry SAME instruction.
 				if (S.WaitCounter == 0)
 				{
@@ -1058,12 +1009,6 @@ void USimWorldHex::StepArms()
 
 			// Commit rotation
 			S.Facing = NewFacing;
-			
-			// Debug logging for Arm 0
-			if (ArmIndex == 0)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("Arm 0: Rotation complete - New Facing=%d"), (uint8)S.Facing);
-			}
 		}
 		break;
 
@@ -1117,8 +1062,6 @@ void USimWorldHex::StepArms()
 				const uint8 CurrentRotation = static_cast<uint8>(S.Facing);
 				const uint8 TargetRotation = static_cast<uint8>(S.HomeFacing);
 				
-				UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset command - Current(Reach=%d, Rot=%d) Target(Reach=%d, Rot=%d) Holding=%s"), 
-					ArmIndex, CurrentReach, CurrentRotation, TargetReach, TargetRotation, S.bHolding ? TEXT("Yes") : TEXT("No"));
 				
 			// Create a temporary program to return to home
 			TArray<FOp> ResetOps;
@@ -1127,7 +1070,6 @@ void USimWorldHex::StepArms()
 			if (S.bHolding)
 			{
 				ResetOps.Add({ ECmd::Drop, 0 });
-				UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset - Adding Drop command"), ArmIndex);
 			}
 				
 				// Add reach adjustments
@@ -1139,7 +1081,6 @@ void USimWorldHex::StepArms()
 					{
 						ResetOps.Add({ ECmd::Extend, 1 });
 					}
-					UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset - Adding %d Extend commands"), ArmIndex, ReachDiff);
 				}
 				else if (ReachDiff < 0)
 				{
@@ -1148,7 +1089,6 @@ void USimWorldHex::StepArms()
 					{
 						ResetOps.Add({ ECmd::Retract, 1 });
 					}
-					UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset - Adding %d Retract commands"), ArmIndex, -ReachDiff);
 				}
 				
 				// Add rotation adjustments - find shortest path
@@ -1170,8 +1110,6 @@ void USimWorldHex::StepArms()
 					if (StepsClockwise <= StepsCounterClockwise)
 					{
 						// Use clockwise rotation (RotateR)
-						UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset rotation - Current=%d Target=%d, using %d clockwise steps (RotateR)"), 
-							ArmIndex, CurrentRotation, TargetRotation, StepsClockwise);
 						for (int32 i = 0; i < StepsClockwise; ++i)
 						{
 							ResetOps.Add({ ECmd::RotateR, 1 });
@@ -1180,8 +1118,6 @@ void USimWorldHex::StepArms()
 					else
 					{
 						// Use counter-clockwise rotation (RotateL)
-						UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset rotation - Current=%d Target=%d, using %d counter-clockwise steps (RotateL)"), 
-							ArmIndex, CurrentRotation, TargetRotation, StepsCounterClockwise);
 						for (int32 i = 0; i < StepsCounterClockwise; ++i)
 						{
 							ResetOps.Add({ ECmd::RotateL, 1 });
@@ -1193,68 +1129,15 @@ void USimWorldHex::StepArms()
 				if (ResetOps.Num() > 0)
 				{
 					// Insert the reset operations after the current PC
-					UE_LOG(LogTemp, Warning, TEXT("Arm %d: Before insert - PC=%d, Tape.Num=%d"), ArmIndex, S.PC, S.Tape.Num());
 					S.Tape.Insert(ResetOps, S.PC + 1);
-					UE_LOG(LogTemp, Warning, TEXT("Arm %d: After insert - PC=%d, Tape.Num=%d"), ArmIndex, S.PC, S.Tape.Num());
 					bResetCommandExpanded = true;
-					UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset expanded to %d operations total"), 
-						ArmIndex, ResetOps.Num());
 					
-					// Log all operations being inserted
-					for (int32 i = 0; i < ResetOps.Num(); ++i)
-					{
-						FString OpName;
-						switch (ResetOps[i].Cmd)
-						{
-						case ECmd::Drop: OpName = TEXT("Drop"); break;
-						case ECmd::Extend: OpName = TEXT("Extend"); break;
-						case ECmd::Retract: OpName = TEXT("Retract"); break;
-						case ECmd::RotateR: OpName = TEXT("RotateR"); break;
-						case ECmd::RotateL: OpName = TEXT("RotateL"); break;
-						default: OpName = TEXT("Unknown"); break;
-						}
-						UE_LOG(LogTemp, Warning, TEXT("  [%d]: %s"), i, *OpName);
-					}
-					
-					// Log what's at PC and PC+1 after insertion
-					if (S.PC < S.Tape.Num())
-					{
-						FString CurrentOpName = TEXT("Unknown");
-						if (S.Tape.IsValidIndex(S.PC))
-						{
-							switch (S.Tape[S.PC].Cmd)
-							{
-							case ECmd::Reset: CurrentOpName = TEXT("Reset"); break;
-							case ECmd::Drop: CurrentOpName = TEXT("Drop"); break;
-							case ECmd::Extend: CurrentOpName = TEXT("Extend"); break;
-							case ECmd::Retract: CurrentOpName = TEXT("Retract"); break;
-							case ECmd::RotateR: CurrentOpName = TEXT("RotateR"); break;
-							case ECmd::RotateL: CurrentOpName = TEXT("RotateL"); break;
-							default: break;
-							}
-						}
-						FString NextOpName = TEXT("Unknown");
-						if (S.Tape.IsValidIndex(S.PC + 1))
-						{
-							switch (S.Tape[S.PC + 1].Cmd)
-							{
-							case ECmd::Reset: NextOpName = TEXT("Reset"); break;
-							case ECmd::Drop: NextOpName = TEXT("Drop"); break;
-							case ECmd::Extend: NextOpName = TEXT("Extend"); break;
-							case ECmd::Retract: NextOpName = TEXT("Retract"); break;
-							case ECmd::RotateR: NextOpName = TEXT("RotateR"); break;
-							case ECmd::RotateL: NextOpName = TEXT("RotateL"); break;
-							default: break;
-							}
-						}
-						UE_LOG(LogTemp, Warning, TEXT("Arm %d: Current op at PC[%d] = %s, Next op at PC[%d] = %s"), 
-							ArmIndex, S.PC, *CurrentOpName, S.PC + 1, *NextOpName);
-					}
+					// Enable immediate execution of the first reset operation
+					bContinueProcessing = true;
 				}
 				else
 				{
 					// Already at home position
-					UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset - Already at home position, no operations needed"), ArmIndex);
 				}
 			}
 			break;
@@ -1343,7 +1226,6 @@ void USimWorldHex::StepArms()
 					// PC stays where it is - it's now pointing at the Reset command
 					// We need to advance it to the first inserted operation
 					S.PC = (S.PC + 1) % S.Tape.Num();
-					UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset command expanded tape, PC advanced to %d/%d"), ArmIndex, S.PC, S.Tape.Num());
 				}
 				else
 				{
@@ -1355,10 +1237,6 @@ void USimWorldHex::StepArms()
 					{
 						// We've looped! Check if the tape has been expanded by Reset commands
 						// If so, we need to rebuild it from the original program
-						if (ArmIndex == 0)
-						{
-							UE_LOG(LogTemp, Warning, TEXT("Arm %d: Program looped, checking for Reset expansions"), ArmIndex);
-						}
 						
 						// Find the corresponding actor and rebuild the tape
 						ABasicArm* ArmActor = nullptr;
@@ -1381,41 +1259,16 @@ void USimWorldHex::StepArms()
 							TArray<FOp> OriginalTape = ArmActor->BuildOpsFromProgram(ArmActor->Program);
 							if (S.Tape.Num() != OriginalTape.Num())
 							{
-								UE_LOG(LogTemp, Warning, TEXT("Arm %d: Restoring tape from %d ops to original %d ops"), 
-									ArmIndex, S.Tape.Num(), OriginalTape.Num());
+								// Restore original tape to remove temporary Reset operations
 								S.Tape = OriginalTape;
 							}
 						}
 					}
 					
-					// Debug for Arm 0
-					if (ArmIndex == 0)
-					{
-						UE_LOG(LogTemp, Warning, TEXT("Arm 0: PC advanced to %d/%d"), S.PC, S.Tape.Num());
-					}
 				}
 			}
 		} // End of while loop for immediate execution
 		
-		// Debug: Log final state for Arm 0 after this tick
-		if (ArmIndex == 0 && S.PC < S.Tape.Num())
-		{
-			FString CmdName = TEXT("Unknown");
-			switch (S.Tape[S.PC].Cmd)
-			{
-			case ECmd::Reset: CmdName = TEXT("Reset"); break;
-			case ECmd::Drop: CmdName = TEXT("Drop"); break;
-			case ECmd::Extend: CmdName = TEXT("Extend"); break;
-			case ECmd::Retract: CmdName = TEXT("Retract"); break;
-			case ECmd::RotateR: CmdName = TEXT("RotateR"); break;
-			case ECmd::RotateL: CmdName = TEXT("RotateL"); break;
-			case ECmd::Wait: CmdName = TEXT("Wait"); break;
-			case ECmd::Grab: CmdName = TEXT("Grab"); break;
-			default: break;
-			}
-			UE_LOG(LogTemp, Warning, TEXT("Arm 0: End of tick - PC=%d/%d, Next cmd=%s, Facing=%d"), 
-				S.PC, S.Tape.Num(), *CmdName, (uint8)S.Facing);
-		}
 	}
 	
 	// Update previous orb counts for next tick's WaitForBond checks
