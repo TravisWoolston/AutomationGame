@@ -811,9 +811,10 @@ void USimWorldHex::StepArms()
 			// Debug logging for Arm 0
 			if (ArmIndex == 0)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("Arm 0: Executing %s - Current Facing=%d"), 
+				UE_LOG(LogTemp, Warning, TEXT("Arm 0: Executing %s - Current Facing=%d, bHolding=%s"), 
 					Op.Cmd == ECmd::RotateL ? TEXT("RotateL") : TEXT("RotateR"), 
-					(uint8)S.Facing);
+					(uint8)S.Facing,
+					S.bHolding ? TEXT("Yes") : TEXT("No"));
 			}
 			
 			// If we were told to wait (from a previously blocked rotate) count it down and retry next tick.
@@ -836,6 +837,13 @@ void USimWorldHex::StepArms()
 			FHex NewHand = S.BaseHex;
 			for (int i = 0; i < S.ArmLen; ++i)
 				NewHand = HexUtil::Neighbor(NewHand, NewFacing);
+				
+			// Debug for Arm 0
+			if (ArmIndex == 0)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Arm 0: Base=(%d,%d) OldHand=(%d,%d) NewHand=(%d,%d)"), 
+					S.BaseHex.Q, S.BaseHex.R, OldHand.Q, OldHand.R, NewHand.Q, NewHand.R);
+			}
 
 			const int32 dQ = NewHand.Q - OldHand.Q;
 			const int32 dR = NewHand.R - OldHand.R;
@@ -993,7 +1001,8 @@ void USimWorldHex::StepArms()
 			bool bBlocked = false;
 
 			// 1) Destination hand cannot contain foreign item/held orb (covers single held-orb too)
-			if (OverlapsAny(NewHand))
+			// Only check this if the arm is holding something
+			if (S.bHolding && OverlapsAny(NewHand))
 			{
 				bBlocked = true;
 			}
@@ -1002,7 +1011,17 @@ void USimWorldHex::StepArms()
 			if (!bBlocked)
 			{
 				for (const FHex& H : EndLocals)
-					if (OverlapsAny(H)) { bBlocked = true; break; }
+				{
+					if (OverlapsAny(H)) 
+					{ 
+						if (ArmIndex == 0)
+						{
+							UE_LOG(LogTemp, Warning, TEXT("Arm 0: Blocked by end position at (%d,%d)"), H.Q, H.R);
+						}
+						bBlocked = true; 
+						break; 
+					}
+				}
 			}
 
 			// 3) Mid A: translate first (hand moves; orientation unchanged)
@@ -1021,6 +1040,13 @@ void USimWorldHex::StepArms()
 
 			if (bBlocked)
 			{
+				// Debug for Arm 0
+				if (ArmIndex == 0)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Arm 0: Rotation BLOCKED! Cannot rotate from %d to %d"), 
+						(uint8)S.Facing, (uint8)NewFacing);
+				}
+				
 				// Arm cannot rotate this tick; set a 1‑tick wait and retry SAME instruction.
 				if (S.WaitCounter == 0)
 				{
@@ -1082,11 +1108,11 @@ void USimWorldHex::StepArms()
 		case ECmd::MoveNeg: S.TrackIdx = FMath::Clamp<int32>(S.TrackIdx - 1, -4, 4); break;
 		case ECmd::PivotL:  break;
 		case ECmd::PivotR:  break;
-		case ECmd::Reset:
+			case ECmd::Reset:
 			{
 				// Reset command implementation: Generate commands to drop and return to home position
 				// Calculate movements needed to return to home position
-				const int32 CurrentReach = S.ArmLen;
+				int32 CurrentReach = S.ArmLen;  // Not const, as we may update it after extend/drop
 				const int32 TargetReach = S.HomeArmLen;
 				const uint8 CurrentRotation = static_cast<uint8>(S.Facing);
 				const uint8 TargetRotation = static_cast<uint8>(S.HomeFacing);
@@ -1094,15 +1120,15 @@ void USimWorldHex::StepArms()
 				UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset command - Current(Reach=%d, Rot=%d) Target(Reach=%d, Rot=%d) Holding=%s"), 
 					ArmIndex, CurrentReach, CurrentRotation, TargetReach, TargetRotation, S.bHolding ? TEXT("Yes") : TEXT("No"));
 				
-				// Create a temporary program to return to home
-				TArray<FOp> ResetOps;
-				
-				// Always add drop command first if holding
-				if (S.bHolding)
-				{
-					ResetOps.Add({ ECmd::Drop, 0 });
-					UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset - Adding Drop command"), ArmIndex);
-				}
+			// Create a temporary program to return to home
+			TArray<FOp> ResetOps;
+			
+			// Handle drop if holding
+			if (S.bHolding)
+			{
+				ResetOps.Add({ ECmd::Drop, 0 });
+				UE_LOG(LogTemp, Warning, TEXT("Arm %d: Reset - Adding Drop command"), ArmIndex);
+			}
 				
 				// Add reach adjustments
 				const int32 ReachDiff = TargetReach - CurrentReach;
@@ -1321,7 +1347,46 @@ void USimWorldHex::StepArms()
 				}
 				else
 				{
+					int32 OldPC = S.PC;
 					S.PC = (S.PC + 1) % S.Tape.Num();
+					
+					// Check if we wrapped around (looped)
+					if (S.PC == 0 && OldPC > 0)
+					{
+						// We've looped! Check if the tape has been expanded by Reset commands
+						// If so, we need to rebuild it from the original program
+						if (ArmIndex == 0)
+						{
+							UE_LOG(LogTemp, Warning, TEXT("Arm %d: Program looped, checking for Reset expansions"), ArmIndex);
+						}
+						
+						// Find the corresponding actor and rebuild the tape
+						ABasicArm* ArmActor = nullptr;
+						if (UWorld* World = GetWorld())
+						{
+							for (TActorIterator<ABasicArm> It(World); It; ++It)
+							{
+								ABasicArm* TestArm = *It;
+								if (TestArm && TestArm->SimArmIndex == ArmIndex)
+								{
+									ArmActor = TestArm;
+									break;
+								}
+							}
+						}
+						
+						if (ArmActor)
+						{
+							// Rebuild the tape from the original program
+							TArray<FOp> OriginalTape = ArmActor->BuildOpsFromProgram(ArmActor->Program);
+							if (S.Tape.Num() != OriginalTape.Num())
+							{
+								UE_LOG(LogTemp, Warning, TEXT("Arm %d: Restoring tape from %d ops to original %d ops"), 
+									ArmIndex, S.Tape.Num(), OriginalTape.Num());
+								S.Tape = OriginalTape;
+							}
+						}
+					}
 					
 					// Debug for Arm 0
 					if (ArmIndex == 0)
