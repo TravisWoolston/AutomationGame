@@ -251,9 +251,38 @@ void USimWorldHex::StepBelts()
 	{
 		FHex MoveOffset(MoveOp.ToHex.Q - MoveOp.FromHex.Q, MoveOp.ToHex.R - MoveOp.FromHex.R);
 
-		// Check if moving to bond/unbond tiles - set bIsReady to false
+		// Check if moving to bond/unbond tiles or their partner areas - set bIsReady to false
 		const FTile* DestTile = TileMap.Find(MoveOp.ToHex);
 		bool bMovingToBondTile = (DestTile && (DestTile->Kind == ETileKind::Bond || DestTile->Kind == ETileKind::Unbond));
+		
+		// Also check if moving to a partner hex of a bond/unbond glyph
+		bool bMovingToPartnerArea = false;
+		if (!bMovingToBondTile) // Only check for partner area if not already a primary bond/unbond tile
+		{
+			for (const auto& TileKV : TileMap)
+			{
+				const FTile& CheckTile = TileKV.Value;
+				if (CheckTile.Kind != ETileKind::Bond && CheckTile.Kind != ETileKind::Unbond) continue;
+
+				// Calculate this glyph's partner hex
+				const uint8 CheckGlyphDir = (uint8)(CheckTile.Arg & 0xFF);
+				const FHex CheckPartnerHex = HexUtil::Neighbor(TileKV.Key, (EHexDir)(CheckGlyphDir % 6));
+
+				// If our destination hex is this glyph's partner hex
+				if (CheckPartnerHex == MoveOp.ToHex)
+				{
+					bMovingToPartnerArea = true;
+					UE_LOG(LogTemp, Log, TEXT("Item moving to partner area (%d,%d) of %s glyph at (%d,%d)"),
+						MoveOp.ToHex.Q, MoveOp.ToHex.R,
+						CheckTile.Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+						TileKV.Key.Q, TileKV.Key.R);
+					break;
+				}
+			}
+		}
+
+		// Set flag if moving to either primary tile or partner area of a bond/unbond glyph
+		bool bMovingToBondArea = bMovingToBondTile || bMovingToPartnerArea;
 
 		// Snapshot all items that will move
 		TMap<int32, FItem> MovingItems;
@@ -289,10 +318,12 @@ void USimWorldHex::StepBelts()
 
 			if (FItem* MovingItem = MovingItems.Find(ItemId))
 			{
-				// If moving to a bond/unbond tile, mark as not ready
-				if (bMovingToBondTile)
+				// If moving to a bond/unbond area (primary tile or partner area), mark as not ready
+				if (bMovingToBondArea)
 				{
 					MovingItem->bIsReady = false;
+					UE_LOG(LogTemp, Log, TEXT("Item ID %d moved to bond/unbond area at (%d,%d), marked as not ready"),
+						ItemId, NewHex.Q, NewHex.R);
 				}
 
 				ItemMap.Add(NewHex, *MovingItem);
@@ -350,6 +381,7 @@ void USimWorldHex::StepBelts()
 			}
 		}
 	}
+
 	// Record moved items for cleanup
 	ItemsMovedLastStep.Empty();
 	for (const FMoveOperation& MoveOp : MoveOperations)
@@ -360,44 +392,27 @@ void USimWorldHex::StepBelts()
 		}
 	}
 
-	// Input Tile Pull Pass - pull from inputs opposite to belt direction
-	for (const auto& KV : TileMap)
+	// Helper function to try pulling from a specific hex
+	auto TryPullFromHex = [&](const FHex& BeltHex, const FHex& SourceHex, const FTile* SourceTile) -> bool
 	{
-		const FHex& BeltHex = KV.Key;
-		const FTile& BeltTile = KV.Value;
+		if (!SourceTile) return false;
 
-		// Only process belt tiles
-		if (BeltTile.Kind != ETileKind::Belt) continue;
-
-		// Skip if this belt already has an item
-		if (ItemMap.Contains(BeltHex)) continue;
-
-		// Skip if a held orb is blocking this belt
-		if (HeldOrbHexes.Contains(BeltHex)) continue;
-
-		// Calculate the hex opposite to the belt's direction
-		const uint8 BeltDir = (uint8)(BeltTile.Arg & 0xFF);
-		const EHexDir OppositeDir = (EHexDir)(((int32)BeltDir + 3) % 6); // Opposite direction
-		const FHex InputHex = HexUtil::Neighbor(BeltHex, OppositeDir);
-
-		// Check if there's an input tile at the opposite hex
-		const FTile* InputTile = TileMap.Find(InputHex);
-		if (InputTile && InputTile->Kind == ETileKind::Input)
+		// Handle input tiles (existing logic)
+		if (SourceTile->Kind == ETileKind::Input)
 		{
-			// Check if the input tile has an item to pull
-			const FItem* InputItem = ItemMap.Find(InputHex);
+			const FItem* InputItem = ItemMap.Find(SourceHex);
 			if (InputItem && InputItem->Id > 0 &&
 				!NewlyPlacedItems.Contains(InputItem->Id))
 			{
 				UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) pulling orb ID %d from input at (%d,%d)"),
-					BeltHex.Q, BeltHex.R, InputItem->Id, InputHex.Q, InputHex.R);
+					BeltHex.Q, BeltHex.R, InputItem->Id, SourceHex.Q, SourceHex.R);
 
 				// Move the item from input to belt
 				FItem MovingItem = *InputItem;
 
 				// Remove from input
-				ItemMap.Remove(InputHex);
-				OrbAt.Remove(InputHex);
+				ItemMap.Remove(SourceHex);
+				OrbAt.Remove(SourceHex);
 
 				// Add to belt
 				ItemMap.Add(BeltHex, MovingItem);
@@ -410,21 +425,20 @@ void USimWorldHex::StepBelts()
 				ItemsMovedLastStep.Add(MovingItem.Id);
 
 				UE_LOG(LogTemp, Log, TEXT("Successfully pulled orb ID %d from input (%d,%d) to belt (%d,%d)"),
-					MovingItem.Id, InputHex.Q, InputHex.R, BeltHex.Q, BeltHex.R);
-				continue; // Only pull one item per belt per tick
+					MovingItem.Id, SourceHex.Q, SourceHex.R, BeltHex.Q, BeltHex.R);
+				return true;
 			}
 		}
 
-		// Check for bond/unbond tiles at the opposite hex - IMPROVED VERSION WITH DEFERRED IsReady CHECK
-		if (InputTile && (InputTile->Kind == ETileKind::Bond || InputTile->Kind == ETileKind::Unbond))
+		// Handle bond/unbond tiles (enhanced logic for both sides)
+		if (SourceTile->Kind == ETileKind::Bond || SourceTile->Kind == ETileKind::Unbond)
 		{
-			// Check if the bond/unbond tile has an item to pull
-			FItem* BondItem = ItemMap.Find(InputHex);
+			FItem* BondItem = ItemMap.Find(SourceHex);
 			if (BondItem && BondItem->Id > 0 &&
 				!NewlyPlacedItems.Contains(BondItem->Id) &&
 				!RecentlyDroppedByArm.Contains(BondItem->Id))
 			{
-				// Check the IsReady flag - this is the key improvement
+				// Check the IsReady flag
 				if (!BondItem->bIsReady)
 				{
 					// Orb is not ready to be pulled yet - mark it to be set ready at the end of this tick
@@ -432,15 +446,15 @@ void USimWorldHex::StepBelts()
 					ItemsToSetReady.Add(BondItem->Id);
 					UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d): Orb ID %d at %s (%d,%d) not ready, marking for ready next tick"),
 						BeltHex.Q, BeltHex.R, BondItem->Id,
-						InputTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
-						InputHex.Q, InputHex.R);
-					continue; // Skip pulling this tick, but the orb will be ready for next tick
+						SourceTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+						SourceHex.Q, SourceHex.R);
+					return false; // Not pulled this tick, but marked for next tick
 				}
 
 				UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) pulling orb ID %d from %s at (%d,%d)"),
 					BeltHex.Q, BeltHex.R, BondItem->Id,
-					InputTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
-					InputHex.Q, InputHex.R);
+					SourceTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+					SourceHex.Q, SourceHex.R);
 
 				// Use the same bonded cluster logic as regular belt movement
 				TArray<int32> ConnectedItemIds;
@@ -450,13 +464,12 @@ void USimWorldHex::StepBelts()
 				ToProcess.Add(BondItem->Id);
 				InCluster.Add(BondItem->Id);
 
-				// Find all bonded items using flood fill (same as belt movement logic)
+				// Find all bonded items using flood fill
 				while (ToProcess.Num() > 0)
 				{
 					int32 CurrentId = ToProcess.Pop();
 					ConnectedItemIds.Add(CurrentId);
 
-					// Find all items bonded to this one
 					if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
 					{
 						for (int32 BondIdx : *BondList)
@@ -491,7 +504,7 @@ void USimWorldHex::StepBelts()
 
 				// Validate that entire cluster can move to the belt
 				bool bCanMoveCluster = true;
-				FHex ClusterMoveOffset(BeltHex.Q - InputHex.Q, BeltHex.R - InputHex.R);
+				FHex ClusterMoveOffset(BeltHex.Q - SourceHex.Q, BeltHex.R - SourceHex.R);
 
 				// Build snapshot of cluster positions
 				TMap<int32, FHex> ClusterPositions;
@@ -542,8 +555,8 @@ void USimWorldHex::StepBelts()
 				{
 					UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) pulling bonded cluster (seed ID %d) from %s at (%d,%d)"),
 						BeltHex.Q, BeltHex.R, BondItem->Id,
-						InputTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
-						InputHex.Q, InputHex.R);
+						SourceTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+						SourceHex.Q, SourceHex.R);
 
 					// Snapshot all moving items
 					TMap<int32, FItem> MovingItems;
@@ -592,7 +605,7 @@ void USimWorldHex::StepBelts()
 						}
 					}
 
-					// Update bond positions to maintain cluster integrity (same as belt movement)
+					// Update bond positions to maintain cluster integrity
 					for (int32 ItemId : ConnectedItemIds)
 					{
 						if (const TArray<int32>* BondIndices = ItemToBonds.Find(ItemId))
@@ -622,11 +635,104 @@ void USimWorldHex::StepBelts()
 					}
 
 					UE_LOG(LogTemp, Log, TEXT("Successfully pulled bonded cluster (%d items) from %s (%d,%d) to belt (%d,%d)"),
-						ConnectedItemIds.Num(), InputTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
-						InputHex.Q, InputHex.R, BeltHex.Q, BeltHex.R);
+						ConnectedItemIds.Num(), SourceTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+						SourceHex.Q, SourceHex.R, BeltHex.Q, BeltHex.R);
 
-					continue; // Only pull one item per belt per tick
+					return true;
 				}
+			}
+		}
+
+		return false;
+	};
+
+	// Input Tile Pull Pass - Enhanced to handle bond/unbond glyph areas correctly
+	for (const auto& KV : TileMap)
+	{
+		const FHex& BeltHex = KV.Key;
+		const FTile& BeltTile = KV.Value;
+
+		// Only process belt tiles
+		if (BeltTile.Kind != ETileKind::Belt) continue;
+
+		// Skip if this belt already has an item
+		if (ItemMap.Contains(BeltHex)) continue;
+
+		// Skip if a held orb is blocking this belt
+		if (HeldOrbHexes.Contains(BeltHex)) continue;
+
+		// Calculate the hex opposite to the belt's direction
+		const uint8 BeltDir = (uint8)(BeltTile.Arg & 0xFF);
+		const EHexDir OppositeDir = (EHexDir)(((int32)BeltDir + 3) % 6); // Opposite direction
+		const FHex InputHex = HexUtil::Neighbor(BeltHex, OppositeDir);
+
+		// Get the tile at the input hex
+		const FTile* InputTile = TileMap.Find(InputHex);
+
+			// CASE 1: Input hex has a tile - use normal logic (including bond/unbond primary hex)
+		if (InputTile)
+		{
+			if (TryPullFromHex(BeltHex, InputHex, InputTile))
+			{
+				continue; // Successfully pulled, move to next belt
+			}
+		}
+		// CASE 2: Input hex has no tile - check if it's a partner hex of a bond/unbond glyph
+		else
+		{
+			// Check all bond/unbond tiles to see if our InputHex is their partner hex
+			bool bFoundGlyphPartner = false;
+			for (const auto& TileKV : TileMap)
+			{
+				const FTile& CheckTile = TileKV.Value;
+				if (CheckTile.Kind != ETileKind::Bond && CheckTile.Kind != ETileKind::Unbond) continue;
+
+				// Calculate this glyph's partner hex
+				const uint8 CheckGlyphDir = (uint8)(CheckTile.Arg & 0xFF);
+				const FHex CheckPartnerHex = HexUtil::Neighbor(TileKV.Key, (EHexDir)(CheckGlyphDir % 6));
+
+				// If our input hex is this glyph's partner hex
+				if (CheckPartnerHex == InputHex)
+				{
+					UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) input hex (%d,%d) is partner area of %s glyph at (%d,%d)"),
+						BeltHex.Q, BeltHex.R, InputHex.Q, InputHex.R,
+						CheckTile.Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+						TileKV.Key.Q, TileKV.Key.R);
+
+					// Check if there's an item at the partner hex (InputHex)
+					const FItem* PartnerItem = ItemMap.Find(InputHex);
+					if (PartnerItem && PartnerItem->Id > 0 &&
+						!NewlyPlacedItems.Contains(PartnerItem->Id) &&
+						!RecentlyDroppedByArm.Contains(PartnerItem->Id))
+					{
+						UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) found item at partner area (%d,%d), treating as %s tile"),
+							BeltHex.Q, BeltHex.R, InputHex.Q, InputHex.R,
+							CheckTile.Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"));
+
+						// Create a virtual tile for the TryPullFromHex call
+						// Use the same properties as the primary glyph hex
+						FTile VirtualPartnerTile = CheckTile;
+
+						if (TryPullFromHex(BeltHex, InputHex, &VirtualPartnerTile))
+						{
+							UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) successfully pulled from partner area at (%d,%d)"),
+								BeltHex.Q, BeltHex.R, InputHex.Q, InputHex.R);
+							bFoundGlyphPartner = true;
+							break; // Successfully pulled, stop checking other glyphs
+						}
+					}
+					else
+						{
+						UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) partner area (%d,%d) has no pullable item"),
+							BeltHex.Q, BeltHex.R, InputHex.Q, InputHex.R);
+					}
+				}
+			}
+
+			if (!bFoundGlyphPartner)
+			{
+				UE_LOG(LogTemp, VeryVerbose, TEXT("Belt at (%d,%d) input hex (%d,%d) has no tile and is not a glyph partner area"),
+					BeltHex.Q, BeltHex.R, InputHex.Q, InputHex.R);
 			}
 		}
 	}
