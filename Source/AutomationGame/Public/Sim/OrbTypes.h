@@ -64,5 +64,15 @@ struct AUTOMATIONGAME_API FItem
 	UPROPERTY()
 	int8 GrabFacing = -1;
 
+	// NEW: flag to track if this item has been moved by belts this tick (prevents double-movement)
+	UPROPERTY()
+	bool LocationUpdatedThisTick = false;
+
+	// NEW: flag to track if this item is ready to be pulled from bond/unbond tiles
+	// Set to false when an orb is pushed onto a bond/unbond tile by a belt
+	// Set to true when a belt tries to pull but the orb isn't ready (allowing one tick on the tile)
+	UPROPERTY()
+	bool bIsReady = true;
+
 	static FItem MakeSingle(const FOrb& O) { FItem I; I.bIsCluster = false; I.Single = O; return I; }
 };

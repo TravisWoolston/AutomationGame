@@ -296,7 +296,16 @@ private:
 	bool IsItemBonded(int32 ItemId) const
 	{
 		if (const TArray<int32>* L = ItemToBonds.Find(ItemId))
-			return L->Num() > 0;
+		{
+			// Check if any of the bonds are actually active
+			for (int32 BondIdx : *L)
+			{
+				if (Bonds.IsValidIndex(BondIdx) && Bonds[BondIdx].bActive)
+				{
+					return true;
+				}
+			}
+		}
 		return false;
 	}
 
@@ -310,6 +319,8 @@ private:
 	void SpawnInputs();
 	void ProcessOutputs();
 	void SpawnInputsAfterBelts();
+	void MoveBondedClusterOnBelt(int32 SeedItemId, const FHex& FromHex, const FHex& ToHex, const FTile& BeltTile, TMap<int32, FHex>& ItemHex);
+	void MoveBondedItemRecursive(int32 ItemId, const FHex& FromHex, int32 dQ, int32 dR, TMap<int32, FHex>& ItemHex);
 
 	// Bonded arm management functions
 	void CheckForNewBondedArmPairs();

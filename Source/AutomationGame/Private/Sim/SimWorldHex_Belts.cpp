@@ -1,6 +1,6 @@
 #include "Sim/SimWorldHex.h"
 
-// Belt processing functions
+// Simplified belt processing - more reliable approach
 void USimWorldHex::StepBelts()
 {
 	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return;
@@ -8,43 +8,41 @@ void USimWorldHex::StepBelts()
 	const float Speed = FMath::Max(0.f, BeltSpeedTilesPerTick);
 	const float BlockClamp = BeltBlockedClamp;
 
-	// --- NEW: gather all hexes occupied by held orbs (hand hex + cluster sub-orbs) ---
+	// Gather all hexes occupied by held orbs
 	TSet<FHex> HeldOrbHexes;
 	for (const FArmState& A : Arms)
 	{
 		if (!A.bHolding) continue;
-		
+
 		FHex GripHex = A.BaseHex;
 		for (int i = 0; i < A.ArmLen; ++i)
 			GripHex = HexUtil::Neighbor(GripHex, A.Facing);
-		
+
 		if (!A.Held.bIsCluster)
 		{
-			// Single held orb occupies the hand hex
 			HeldOrbHexes.Add(GripHex);
 		}
 		else
 		{
-			// Held cluster: calculate positions of all sub-orbs
 			const uint8 cur = (uint8)A.Facing % 6;
 			const int8 grab = (int8)A.Held.GrabFacing;
 			const uint8 facingDelta = (grab >= 0)
 				? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
 				: cur;
 			const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-			
+
 			auto Rot60 = [](FHex D, uint8 StepsCCW)
-			{
-				for (uint8 i = 0; i < (StepsCCW % 6); ++i)
 				{
-					int32 q = D.Q;
-					int32 r = D.R;
-					D.Q = -r;
-					D.R = q + r;
-				}
-				return D;
-			};
-			
+					for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+					{
+						int32 q = D.Q;
+						int32 r = D.R;
+						D.Q = -r;
+						D.R = q + r;
+					}
+					return D;
+				};
+
 			for (const FOrbData& Sub : A.Held.Orbs)
 			{
 				FHex Local(Sub.dQ, Sub.dR);
@@ -55,629 +53,600 @@ void USimWorldHex::StepBelts()
 		}
 	}
 
-	/* ---------- Maintain BeltProgress for items currently on belts ---------- */
-	TSet<int32> LiveIds;
-	for (const auto& KV : ItemMap)
-	{
-		const FTile* T = TileMap.Find(KV.Key);
-		if (T && T->Kind == ETileKind::Belt && KV.Value.Id != 0)
-		{
-			LiveIds.Add(KV.Value.Id);
-			// Only initialize belt progress if the item was already on a belt (has existing progress)
-			// This prevents newly spawned/disconnected items from immediately moving on belts
-			if (BeltProgress.Contains(KV.Value.Id))
-			{
-				// Item was already on a belt, keep its progress
-			}
-			else
-			{
-				// Item is new to a belt, don't initialize progress yet - let it start fresh next frame
-			}
-		}
-	}
-	for (auto It = BeltProgress.CreateIterator(); It; ++It)
-		if (!LiveIds.Contains(It.Key()))
-			It.RemoveCurrent();
+	// Track items that need their bIsReady flag set to true at the end of this tick
+	// This prevents multiple belts from competing for the same orb in the same tick
+	TSet<int32> ItemsToSetReady;
 
-	/* ---------- Snapshot occupancy (excluding held items which we add via HeldOrbHexes) ---------- */
-	TSet<FHex> Occupied;
-	Occupied.Reserve(ItemMap.Num() + HeldOrbHexes.Num());
-	for (const auto& KV : ItemMap) Occupied.Add(KV.Key);
-	for (const FHex& HH : HeldOrbHexes) Occupied.Add(HH); // NEW
-
-	/* ---------- Collect belt items & advance raw progress ---------- */
-	struct FBeltItemRef { int32 ItemId; FHex Hex; };
-	TArray<FBeltItemRef> BeltItems;
-	BeltItems.Reserve(BeltProgress.Num());
-	for (const auto& KV : ItemMap)
+	// Simple approach: Build a comprehensive move plan first, then execute atomically
+	struct FMoveOperation
 	{
-		if (KV.Value.Id == 0) continue;
-		if (!BeltProgress.Contains(KV.Value.Id)) continue;
-		if (NewlyPlacedItems.Contains(KV.Value.Id)) continue; // Skip newly placed items
-		// Only process items that have existing belt progress (were already on belts)
-		BeltItems.Add({ KV.Value.Id, KV.Key });
-	}
+		int32 ItemId;
+		FHex FromHex;
+		FHex ToHex;
+		TArray<int32> ConnectedItemIds; // All items that must move together as a unit
+	};
+
+	TArray<FMoveOperation> MoveOperations;
+	TSet<int32> ProcessedItems;
+
+	// Advance belt progress for all items
 	const float Dt = FMath::Max(0.f, FixedStepSec);
 	const float TilesPerSec = (Speed / FMath::Max(KINDA_SMALL_NUMBER, Dt));
 	const float ProgressPerStep = TilesPerSec * Dt;
 
-	// Initialize belt progress for new items on belts
 	for (const auto& KV : ItemMap)
 	{
 		if (KV.Value.Id == 0) continue;
 		if (NewlyPlacedItems.Contains(KV.Value.Id)) continue;
-		if (BeltProgress.Contains(KV.Value.Id)) continue; // Already has progress
-		
+
 		const FTile* T = TileMap.Find(KV.Key);
 		if (T && T->Kind == ETileKind::Belt)
 		{
-			// New item on belt - start with 0 progress
-			BeltProgress.Add(KV.Value.Id, 0.f);
+			float& Progress = BeltProgress.FindOrAdd(KV.Value.Id, 0.f);
+			Progress += ProgressPerStep;
 		}
 	}
 
-	// Advance progress for all belt items
-	for (FBeltItemRef& Ref : BeltItems)
-	{
-		float& P = BeltProgress[Ref.ItemId];
-		P += ProgressPerStep;
-	}
-
-	/* ---------- Build bond connectivity (clusters) ---------- */
-	TMap<int32, TArray<int32>> Adj;
-	Adj.Reserve(Bonds.Num() * 2 + 8);
-	for (const FBond& B : Bonds)
-	{
-		if (B.ItemA == 0 || B.ItemB == 0) continue;
-		TArray<int32>& LA = Adj.FindOrAdd(B.ItemA);
-		TArray<int32>& LB = Adj.FindOrAdd(B.ItemB);
-		LA.Add(B.ItemB);
-		LB.Add(B.ItemA);
-	}
-
-	TMap<int32, FHex> ItemHex;
-	ItemHex.Reserve(ItemMap.Num());
+	// Process each item that's ready to move
 	for (const auto& KV : ItemMap)
-		if (KV.Value.Id != 0)
-			ItemHex.Add(KV.Value.Id, KV.Key);
-
-	TSet<int32> Visited;
-	struct FCluster { TArray<int32> Items; TSet<int32> ItemSet; };
-	TArray<FCluster> Clusters;
-
-	for (const auto& KV : Adj)
 	{
-		int32 Start = KV.Key;
-		if (Visited.Contains(Start)) continue;
+		if (KV.Value.Id == 0) continue;
+		if (ProcessedItems.Contains(KV.Value.Id)) continue;
+		if (NewlyPlacedItems.Contains(KV.Value.Id)) continue;
 
-		FCluster C;
-		TArray<int32> Stack;
-		Stack.Add(Start);
-		Visited.Add(Start);
+		const FHex& CurrentHex = KV.Key;
+		const FItem& Item = KV.Value;
+		const FTile* T = TileMap.Find(CurrentHex);
 
-		while (Stack.Num())
+		if (!T || T->Kind != ETileKind::Belt) continue;
+
+		float* Progress = BeltProgress.Find(Item.Id);
+		if (!Progress || *Progress < 1.f) continue;
+
+		// Calculate destination
+		const uint8 Dir = (uint8)(T->Arg & 0xFF);
+		const FHex ToHex = HexUtil::Neighbor(CurrentHex, (EHexDir)(Dir % 6));
+
+		// Check if destination is blocked
+		if (HeldOrbHexes.Contains(ToHex) ||
+			(ItemMap.Contains(ToHex) && !ProcessedItems.Contains(ItemMap[ToHex].Id)))
 		{
-			int32 Cur = Stack.Pop(EAllowShrinking::No);
-			C.Items.Add(Cur);
-			C.ItemSet.Add(Cur);
-			if (const TArray<int32>* Neigh = Adj.Find(Cur))
-				for (int32 N : *Neigh)
-					if (!Visited.Contains(N)) { Visited.Add(N); Stack.Add(N); }
+			*Progress = FMath::Min(*Progress, BlockClamp);
+			continue;
 		}
-		if (C.Items.Num() > 1) { C.Items.Sort(); Clusters.Add(MoveTemp(C)); }
-	}
 
-	// Helper lambdas
-	auto IsBelt = [&](const FHex& H) -> bool
+		// Check if destination is a bond/unbond tile - orbs MUST stop on these tiles for interaction
+		// Orbs should always spend at least one tick on bond/unbond tiles before being pulled off
+		const FTile* DestTile = TileMap.Find(ToHex);
+		if (DestTile && (DestTile->Kind == ETileKind::Bond || DestTile->Kind == ETileKind::Unbond))
 		{
-			if (const FTile* T = TileMap.Find(H))
-				return T->Kind == ETileKind::Belt;
-			return false;
-		};
-	auto BeltDir = [&](const FHex& H) -> uint8
-		{
-			if (const FTile* T = TileMap.Find(H))
-				return (uint8)(T->Arg & 0xFF);
-			return 0;
-		};
+			// If the destination is a bond/unbond tile that's not already occupied, 
+			// the orb should stop there (not skip over it)
+			if (!ItemMap.Contains(ToHex))
+			{
+				// Allow the orb to move onto the bond/unbond tile, but it will stop there
+				// The bond/unbond interaction will happen in StepBonds() during the tick it spends there
+			}
+			else
+			{
+				// Bond/unbond tile is occupied, block the move
+				*Progress = FMath::Min(*Progress, BlockClamp);
+				continue;
+			}
+		}
 
-	// Record moves: item -> new hex
-	struct FMove { int32 ItemId; FHex From; FHex To; };
-	TArray<FMove> ClusterMoves;
-	TSet<int32>   ItemsMovedForward; // to block double scheduling later
+		// Build connected component (all bonded items that must move together)
+		FMoveOperation MoveOp;
+		MoveOp.ItemId = Item.Id;
+		MoveOp.FromHex = CurrentHex;
+		MoveOp.ToHex = ToHex;
 
-	/* ---------- Attempt cluster rigid translation ---------- */
-	// Sort clusters deterministically by smallest (Q,R) among their items
-	Clusters.Sort([&](const FCluster& A, const FCluster& B)
+		// Simple flood fill to find all connected items
+		TArray<int32> ToProcess;
+		TSet<int32> InCluster;
+		ToProcess.Add(Item.Id);
+		InCluster.Add(Item.Id);
+
+		while (ToProcess.Num() > 0)
 		{
-			auto MinHex = [&](const FCluster& C)
+			int32 CurrentId = ToProcess.Pop();
+			MoveOp.ConnectedItemIds.Add(CurrentId);
+
+			// Find all items bonded to this one
+			if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
+			{
+				for (int32 BondIdx : *BondList)
 				{
-					FHex Min(INT_MAX, INT_MAX);
-					for (int32 Id : C.Items)
+					if (!Bonds.IsValidIndex(BondIdx)) continue;
+					const FBond& Bond = Bonds[BondIdx];
+					if (!Bond.bActive) continue;
+
+					int32 OtherItemId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
+					if (!InCluster.Contains(OtherItemId))
 					{
-						if (const FHex* H = ItemHex.Find(Id))
+						// Check if the other item is also on the board (not held)
+						bool bFoundOnBoard = false;
+						for (const auto& BoardKV : ItemMap)
 						{
-							if (H->Q < Min.Q || (H->Q == Min.Q && H->R < Min.R))
-								Min = *H;
+							if (BoardKV.Value.Id == OtherItemId)
+							{
+								bFoundOnBoard = true;
+								break;
+							}
+						}
+
+						if (bFoundOnBoard)
+						{
+							ToProcess.Add(OtherItemId);
+							InCluster.Add(OtherItemId);
 						}
 					}
-					return Min;
-				};
-			FHex HA = MinHex(A);
-			FHex HB = MinHex(B);
-			if (HA.Q != HB.Q) return HA.Q < HB.Q;
-			return HA.R < HB.R;
-		});
-
-	for (FCluster& C : Clusters)
-	{
-		// Gather controllers (cluster items currently on belts with progress >=1)
-		struct FController { int32 ItemId; uint8 Dir; FHex Hex; FHex ForwardHex; int32 dQ; int32 dR; };
-		TArray<FController> Controllers;
-
-		for (int32 Id : C.Items)
-		{
-			const FHex* HexPtr = ItemHex.Find(Id);
-			if (!HexPtr) continue;
-			if (!IsBelt(*HexPtr)) continue;
-			if (float* Prog = BeltProgress.Find(Id); Prog && *Prog >= 1.f)
-			{
-				uint8 Dir = BeltDir(*HexPtr) % 6;
-				FHex Fwd = HexUtil::Neighbor(*HexPtr, (EHexDir)Dir);
-				FController Ctrl;
-				Ctrl.ItemId = Id;
-				Ctrl.Dir = Dir;
-				Ctrl.Hex = *HexPtr;
-				Ctrl.ForwardHex = Fwd;
-				Ctrl.dQ = Fwd.Q - HexPtr->Q;
-				Ctrl.dR = Fwd.R - HexPtr->R;
-				Controllers.Add(Ctrl);
+				}
 			}
 		}
 
-		if (Controllers.Num() == 0)
-			continue; // no impetus this tick
+		// Validate that entire cluster can move as a unit
+		bool bCanMoveCluster = true;
+		FHex ClusterMoveOffset(ToHex.Q - CurrentHex.Q, ToHex.R - CurrentHex.R);
 
-		// Ensure all controllers agree on translation delta (dQ,dR)
-		int32 dQ = Controllers[0].dQ;
-		int32 dR = Controllers[0].dR;
-		bool bConsistent = true;
-		for (int32 i = 1; i < Controllers.Num(); ++i)
+		for (int32 ConnectedId : MoveOp.ConnectedItemIds)
 		{
-			if (Controllers[i].dQ != dQ || Controllers[i].dR != dR)
+			// Find current position of this connected item
+			FHex ConnectedCurrentHex;
+			bool bFoundConnected = false;
+			for (const auto& BoardKV : ItemMap)
 			{
-				bConsistent = false;
+				if (BoardKV.Value.Id == ConnectedId)
+				{
+					ConnectedCurrentHex = BoardKV.Key;
+					bFoundConnected = true;
+					break;
+				}
+			}
+
+			if (!bFoundConnected)
+			{
+				bCanMoveCluster = false;
 				break;
 			}
-		}
-		if (!bConsistent)
-		{
-			// Block: clamp controller progress so they don't overflow forever
-			for (FController& Ctrl : Controllers)
+
+			// Calculate where this connected item would move to
+			FHex ConnectedToHex(ConnectedCurrentHex.Q + ClusterMoveOffset.Q,
+				ConnectedCurrentHex.R + ClusterMoveOffset.R);
+
+			// Check if destination is valid
+			if (HeldOrbHexes.Contains(ConnectedToHex))
 			{
-				if (float* P = BeltProgress.Find(Ctrl.ItemId))
-					*P = FMath::Min(*P, BlockClamp);
+				bCanMoveCluster = false;
+				break;
 			}
-			continue;
-		}
 
-		// Validate that every destination hex is either inside cluster or empty
-		bool bBlocked = false;
-		for (int32 Id : C.Items)
-		{
-			const FHex* H = ItemHex.Find(Id);
-			if (!H) { bBlocked = true; break; }
-			FHex Dest(H->Q + dQ, H->R + dR);
-
-			// NEW: block if destination overlaps a held orb hex
-			if (HeldOrbHexes.Contains(Dest)) { bBlocked = true; break; }
-
-			if (Occupied.Contains(Dest))
+			// Check if destination is occupied by something not in our cluster
+			if (const FItem* DestItem = ItemMap.Find(ConnectedToHex))
 			{
-				const FItem* Other = ItemMap.Find(Dest);
-				if (!Other || !C.ItemSet.Contains(Other->Id))
+				if (!InCluster.Contains(DestItem->Id))
 				{
-					// Could also be a held hand hex (already checked)
-					if (!Other) { bBlocked = true; break; }
-					if (!C.ItemSet.Contains(Other->Id)) { bBlocked = true; break; }
+					bCanMoveCluster = false;
+					break;
 				}
 			}
 		}
 
-		if (bBlocked)
+		if (bCanMoveCluster)
 		{
-			for (FController& Ctrl : Controllers)
-				if (float* P = BeltProgress.Find(Ctrl.ItemId))
-					*P = FMath::Min(*P, BlockClamp);
-			continue;
-		}
-
-		for (int32 Id : C.Items)
-		{
-			const FHex* H = ItemHex.Find(Id);
-			if (!H) continue;
-			FHex Dest(H->Q + dQ, H->R + dR);
-			Occupied.Remove(*H);
-			Occupied.Add(Dest);
-			ClusterMoves.Add({ Id, *H, Dest });
-			ItemHex[Id] = Dest;
-			ItemsMovedForward.Add(Id);
-		}
-		for (FController& Ctrl : Controllers)
-			if (float* P = BeltProgress.Find(Ctrl.ItemId))
+			MoveOperations.Add(MoveOp);
+			for (int32 ConnectedId : MoveOp.ConnectedItemIds)
 			{
-				*P -= 1.f;
-				if (*P < 0.f) *P = 0.f;
+				ProcessedItems.Add(ConnectedId);
 			}
+		}
+		else
+		{
+			*Progress = FMath::Min(*Progress, BlockClamp);
+		}
 	}
 
-	/* ---------- Single-item forward scheduling ---------- */
-	struct FForwardTry { int32 ItemId; FHex From; FHex To; };
-	TArray<FForwardTry> Singles;
-	Singles.Reserve(BeltItems.Num());
-
-	for (const FBeltItemRef& Ref : BeltItems)
+	// Execute all moves atomically
+	for (const FMoveOperation& MoveOp : MoveOperations)
 	{
-		if (ItemsMovedForward.Contains(Ref.ItemId)) continue;
-		if (IsItemBonded(Ref.ItemId)) continue;
-		float& P = BeltProgress[Ref.ItemId];
-		if (P < 1.f) continue;
+		FHex MoveOffset(MoveOp.ToHex.Q - MoveOp.FromHex.Q, MoveOp.ToHex.R - MoveOp.FromHex.R);
 
-		const FTile* TFrom = TileMap.Find(Ref.Hex);
-		if (!TFrom || TFrom->Kind != ETileKind::Belt)
+		// Check if moving to bond/unbond tiles - set bIsReady to false
+		const FTile* DestTile = TileMap.Find(MoveOp.ToHex);
+		bool bMovingToBondTile = (DestTile && (DestTile->Kind == ETileKind::Bond || DestTile->Kind == ETileKind::Unbond));
+
+		// Snapshot all items that will move
+		TMap<int32, FItem> MovingItems;
+		TMap<int32, FHex> OldPositions;
+		TMap<int32, FHex> NewPositions;
+
+		for (int32 ItemId : MoveOp.ConnectedItemIds)
 		{
-			P = 0.f;
-			continue;
-		}
-
-		const uint8 Dir = (uint8)(TFrom->Arg & 0xFF);
-		const FHex To = HexUtil::Neighbor(Ref.Hex, (EHexDir)(Dir % 6));
-
-		// NEW: allow simultaneous chain advancement.
-		auto WillVacateThisTick = [&](const FHex& Dest) -> bool
+			for (const auto& KV : ItemMap)
 			{
-				const FItem* DestItem = ItemMap.Find(Dest);
-				if (!DestItem) return false;
-				if (DestItem->Id == Ref.ItemId) return true;
-				if (ItemsMovedForward.Contains(DestItem->Id)) return false; // already scheduled elsewhere
-				if (IsItemBonded(DestItem->Id)) return false;               // clusters handled earlier
-				if (float* DP = BeltProgress.Find(DestItem->Id))
+				if (KV.Value.Id == ItemId)
 				{
-					return (*DP >= 1.f); // it will also move forward this tick
-				}
-				return false;
-			};
-
-		bool bDestBlockedNow =
-			(HeldOrbHexes.Contains(To)) ||                                // NEW
-			(ItemMap.Contains(To) && !WillVacateThisTick(To));
-
-		if (bDestBlockedNow)
-		{
-			P = FMath::Min(P, BlockClamp);
-			continue;
-		}
-
-		// Treat destination as reserved; even if occupied it is assumed to vacate
-		Singles.Add({ Ref.ItemId, Ref.Hex, To });
-		Occupied.Remove(Ref.Hex);
-		Occupied.Add(To);
-		P -= 1.f;
-		ItemsMovedForward.Add(Ref.ItemId);
-	}
-
-	/* ---------- Apply moves ---------- */
-	if (ClusterMoves.Num() || Singles.Num())
-	{
-		TMap<FHex, FItem> Original = ItemMap;
-
-		for (const FMove& M : ClusterMoves)
-		{
-			const FItem* Found = Original.Find(M.From);
-			if (!Found || Found->Id != M.ItemId) continue;
-
-			ItemMap.Remove(M.From);
-			OrbAt.Remove(M.From);
-			ItemMap.Add(M.To, *Found);
-			OrbAt.Add(M.To, KindFromItem(*Found));
-
-			if (const FTile* TD = TileMap.Find(M.To))
-			{
-				if (TD->Kind != ETileKind::Belt)
-					BeltProgress.Remove(M.ItemId);
-				if (TD->Kind == ETileKind::Input)
-					SkipInputThisFrame.Add(M.To);
-				if (TD->Kind == ETileKind::Output)
-					OrbsNewlyMovedToOutput.Add(M.To);
-			}
-			else
-			{
-				BeltProgress.Remove(M.ItemId);
-			}
-		}
-
-		for (const FForwardTry& M : Singles)
-		{
-			// Re-check against held orb hex (in case arm grabbed during same tick earlier logic)
-			if (HeldOrbHexes.Contains(M.To)) continue;
-
-			const FItem* Found = Original.Find(M.From);
-			if (!Found || Found->Id != M.ItemId) continue;
-			if (ItemMap.Contains(M.To)) continue;
-
-			ItemMap.Remove(M.From);
-			OrbAt.Remove(M.From);
-			ItemMap.Add(M.To, *Found);
-			OrbAt.Add(M.To, KindFromItem(*Found));
-
-			if (const FTile* TD = TileMap.Find(M.To))
-			{
-				if (TD->Kind != ETileKind::Belt)
-					BeltProgress.Remove(M.ItemId);
-				if (TD->Kind == ETileKind::Input)
-					SkipInputThisFrame.Add(M.To);
-				if (TD->Kind == ETileKind::Output)
-					OrbsNewlyMovedToOutput.Add(M.To);
-			}
-			else
-			{
-				BeltProgress.Remove(M.ItemId);
-			}
-		}
-	}
-
-	// Rebuild ItemHex for pull
-	ItemHex.Empty();
-	for (const auto& KV : ItemMap)
-		if (KV.Value.Id != 0)
-			ItemHex.Add(KV.Value.Id, KV.Key);
-
-	/* ---------- Pull pass (treat held orb hexes as blocked targets) ---------- */
-	TSet<FHex> LocalOccupied;
-	for (const auto& KV : ItemMap) LocalOccupied.Add(KV.Key);
-	for (const FHex& HH : HeldOrbHexes) LocalOccupied.Add(HH); // NEW
-
-	TSet<int32> PulledThisPass;
-
-	auto TryTranslateClusterPull = [&](int32 SeedItemId, const FHex& DestHex, uint8, TSet<int32>& OutMovedIds) -> bool
-		{
-			// If destination is a held orb hex, block
-			if (HeldOrbHexes.Contains(DestHex)) return false; // NEW
-
-			TSet<int32> ClusterItemIds;
-			if (const TArray<int32>* BondIdxList = ItemToBonds.Find(SeedItemId))
-			{
-				TArray<int32> Stack;
-				Stack.Add(SeedItemId);
-				ClusterItemIds.Add(SeedItemId);
-				while (Stack.Num())
-				{
-					int32 Cur = Stack.Pop(EAllowShrinking::No);
-					if (const TArray<int32>* Neigh = Adj.Find(Cur))
-						for (int32 N : *Neigh)
-							if (!ClusterItemIds.Contains(N))
-							{
-								ClusterItemIds.Add(N);
-								Stack.Add(N);
-							}
+					MovingItems.Add(ItemId, KV.Value);
+					OldPositions.Add(ItemId, KV.Key);
+					NewPositions.Add(ItemId, FHex(KV.Key.Q + MoveOffset.Q, KV.Key.R + MoveOffset.R));
+					break;
 				}
 			}
-			else ClusterItemIds.Add(SeedItemId);
+		}
 
-			for (int32 Id : ClusterItemIds)
-				if (OutMovedIds.Contains(Id)) return false;
+		// Remove all items from their old positions
+		for (const auto& KV : OldPositions)
+		{
+			ItemMap.Remove(KV.Value);
+			OrbAt.Remove(KV.Value);
+		}
 
-			const FHex* SeedFrom = ItemHex.Find(SeedItemId);
-			if (!SeedFrom) return false;
-			const int32 dQ = DestHex.Q - SeedFrom->Q;
-			const int32 dR = DestHex.R - SeedFrom->R;
+		// Place all items at their new positions
+		for (const auto& KV : NewPositions)
+		{
+			int32 ItemId = KV.Key;
+			FHex NewHex = KV.Value;
 
-			for (int32 Id : ClusterItemIds)
+			if (FItem* MovingItem = MovingItems.Find(ItemId))
 			{
-				const FHex* FromHex = ItemHex.Find(Id);
-				if (!FromHex) return false;
-				FHex ToHex(FromHex->Q + dQ, FromHex->R + dR);
-
-				if (HeldOrbHexes.Contains(ToHex)) return false; // NEW
-				if (LocalOccupied.Contains(ToHex))
+				// If moving to a bond/unbond tile, mark as not ready
+				if (bMovingToBondTile)
 				{
-					// Allow landing on a hex currently occupied by another member of the same cluster;
-					// the whole cluster translates atomically. Block only if it's a foreign occupant.
-					if (const FItem* Occ = ItemMap.Find(ToHex))
+					MovingItem->bIsReady = false;
+				}
+
+				ItemMap.Add(NewHex, *MovingItem);
+				OrbAt.Add(NewHex, KindFromItem(*MovingItem));
+
+				// Update belt progress
+				if (float* Progress = BeltProgress.Find(ItemId))
+				{
+					*Progress -= 1.f;
+					if (*Progress < 0.f) *Progress = 0.f;
+				}
+
+				// Check if moved to special tiles
+				if (const FTile* TD = TileMap.Find(NewHex))
+				{
+					if (TD->Kind != ETileKind::Belt)
+						BeltProgress.Remove(ItemId);
+					if (TD->Kind == ETileKind::Output)
+						OrbsNewlyMovedToOutput.Add(NewHex);
+				}
+				else
+				{
+					BeltProgress.Remove(ItemId);
+				}
+			}
+		}
+
+		// Update bond positions to maintain cluster integrity
+		for (int32 ItemId : MoveOp.ConnectedItemIds)
+		{
+			if (const TArray<int32>* BondIndices = ItemToBonds.Find(ItemId))
+			{
+				for (int32 BondIdx : *BondIndices)
+				{
+					if (!Bonds.IsValidIndex(BondIdx)) continue;
+					FBond& Bond = Bonds[BondIdx];
+					if (!Bond.bActive) continue;
+
+					// Only update bonds between items in our moving cluster
+					bool bBothInCluster = MoveOp.ConnectedItemIds.Contains(Bond.ItemA) &&
+						MoveOp.ConnectedItemIds.Contains(Bond.ItemB);
+
+					if (bBothInCluster)
 					{
-						if (!ClusterItemIds.Contains(Occ->Id))
-							return false; // foreign item blocks
+						// Update bond root to new position
+						if (Bond.ItemA == ItemId)
+						{
+							if (FHex* NewPos = NewPositions.Find(ItemId))
+							{
+								Bond.Root = *NewPos;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	// Record moved items for cleanup
+	ItemsMovedLastStep.Empty();
+	for (const FMoveOperation& MoveOp : MoveOperations)
+	{
+		for (int32 ItemId : MoveOp.ConnectedItemIds)
+		{
+			ItemsMovedLastStep.Add(ItemId);
+		}
+	}
+
+	// Input Tile Pull Pass - pull from inputs opposite to belt direction
+	for (const auto& KV : TileMap)
+	{
+		const FHex& BeltHex = KV.Key;
+		const FTile& BeltTile = KV.Value;
+
+		// Only process belt tiles
+		if (BeltTile.Kind != ETileKind::Belt) continue;
+
+		// Skip if this belt already has an item
+		if (ItemMap.Contains(BeltHex)) continue;
+
+		// Skip if a held orb is blocking this belt
+		if (HeldOrbHexes.Contains(BeltHex)) continue;
+
+		// Calculate the hex opposite to the belt's direction
+		const uint8 BeltDir = (uint8)(BeltTile.Arg & 0xFF);
+		const EHexDir OppositeDir = (EHexDir)(((int32)BeltDir + 3) % 6); // Opposite direction
+		const FHex InputHex = HexUtil::Neighbor(BeltHex, OppositeDir);
+
+		// Check if there's an input tile at the opposite hex
+		const FTile* InputTile = TileMap.Find(InputHex);
+		if (InputTile && InputTile->Kind == ETileKind::Input)
+		{
+			// Check if the input tile has an item to pull
+			const FItem* InputItem = ItemMap.Find(InputHex);
+			if (InputItem && InputItem->Id > 0 &&
+				!NewlyPlacedItems.Contains(InputItem->Id))
+			{
+				UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) pulling orb ID %d from input at (%d,%d)"),
+					BeltHex.Q, BeltHex.R, InputItem->Id, InputHex.Q, InputHex.R);
+
+				// Move the item from input to belt
+				FItem MovingItem = *InputItem;
+
+				// Remove from input
+				ItemMap.Remove(InputHex);
+				OrbAt.Remove(InputHex);
+
+				// Add to belt
+				ItemMap.Add(BeltHex, MovingItem);
+				OrbAt.Add(BeltHex, KindFromItem(MovingItem));
+
+				// Initialize belt progress for the pulled item
+				BeltProgress.Add(MovingItem.Id, 0.f);
+
+				// Record this item as moved for interpolation
+				ItemsMovedLastStep.Add(MovingItem.Id);
+
+				UE_LOG(LogTemp, Log, TEXT("Successfully pulled orb ID %d from input (%d,%d) to belt (%d,%d)"),
+					MovingItem.Id, InputHex.Q, InputHex.R, BeltHex.Q, BeltHex.R);
+				continue; // Only pull one item per belt per tick
+			}
+		}
+
+		// Check for bond/unbond tiles at the opposite hex - IMPROVED VERSION WITH DEFERRED IsReady CHECK
+		if (InputTile && (InputTile->Kind == ETileKind::Bond || InputTile->Kind == ETileKind::Unbond))
+		{
+			// Check if the bond/unbond tile has an item to pull
+			FItem* BondItem = ItemMap.Find(InputHex);
+			if (BondItem && BondItem->Id > 0 &&
+				!NewlyPlacedItems.Contains(BondItem->Id) &&
+				!RecentlyDroppedByArm.Contains(BondItem->Id))
+			{
+				// Check the IsReady flag - this is the key improvement
+				if (!BondItem->bIsReady)
+				{
+					// Orb is not ready to be pulled yet - mark it to be set ready at the end of this tick
+					// This prevents multiple belts from competing for the same orb in the same tick
+					ItemsToSetReady.Add(BondItem->Id);
+					UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d): Orb ID %d at %s (%d,%d) not ready, marking for ready next tick"),
+						BeltHex.Q, BeltHex.R, BondItem->Id,
+						InputTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+						InputHex.Q, InputHex.R);
+					continue; // Skip pulling this tick, but the orb will be ready for next tick
+				}
+
+				UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) pulling orb ID %d from %s at (%d,%d)"),
+					BeltHex.Q, BeltHex.R, BondItem->Id,
+					InputTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+					InputHex.Q, InputHex.R);
+
+				// Use the same bonded cluster logic as regular belt movement
+				TArray<int32> ConnectedItemIds;
+				TSet<int32> InCluster;
+				TArray<int32> ToProcess;
+
+				ToProcess.Add(BondItem->Id);
+				InCluster.Add(BondItem->Id);
+
+				// Find all bonded items using flood fill (same as belt movement logic)
+				while (ToProcess.Num() > 0)
+				{
+					int32 CurrentId = ToProcess.Pop();
+					ConnectedItemIds.Add(CurrentId);
+
+					// Find all items bonded to this one
+					if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
+					{
+						for (int32 BondIdx : *BondList)
+						{
+							if (!Bonds.IsValidIndex(BondIdx)) continue;
+							const FBond& Bond = Bonds[BondIdx];
+							if (!Bond.bActive) continue;
+
+							int32 OtherItemId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
+							if (!InCluster.Contains(OtherItemId))
+							{
+								// Check if the other item is also on the board (not held)
+								bool bFoundOnBoard = false;
+								for (const auto& BoardKV : ItemMap)
+								{
+									if (BoardKV.Value.Id == OtherItemId)
+									{
+										bFoundOnBoard = true;
+										break;
+									}
+								}
+
+								if (bFoundOnBoard)
+								{
+									ToProcess.Add(OtherItemId);
+									InCluster.Add(OtherItemId);
+								}
+							}
+						}
+					}
+				}
+
+				// Validate that entire cluster can move to the belt
+				bool bCanMoveCluster = true;
+				FHex ClusterMoveOffset(BeltHex.Q - InputHex.Q, BeltHex.R - InputHex.R);
+
+				// Build snapshot of cluster positions
+				TMap<int32, FHex> ClusterPositions;
+				for (int32 ConnectedId : ConnectedItemIds)
+				{
+					for (const auto& BoardKV : ItemMap)
+					{
+						if (BoardKV.Value.Id == ConnectedId)
+						{
+							ClusterPositions.Add(ConnectedId, BoardKV.Key);
+							break;
+						}
+					}
+				}
+
+				// Check if all cluster items can move to their new positions
+				for (int32 ConnectedId : ConnectedItemIds)
+				{
+					if (FHex* CurrentPos = ClusterPositions.Find(ConnectedId))
+					{
+						FHex NewPos(CurrentPos->Q + ClusterMoveOffset.Q, CurrentPos->R + ClusterMoveOffset.R);
+
+						// Check if destination is occupied by something not in our cluster
+						if (const FItem* DestItem = ItemMap.Find(NewPos))
+						{
+							if (!InCluster.Contains(DestItem->Id))
+							{
+								bCanMoveCluster = false;
+								break;
+							}
+						}
+
+						// Check if destination is blocked by held orbs
+						if (HeldOrbHexes.Contains(NewPos))
+						{
+							bCanMoveCluster = false;
+							break;
+						}
 					}
 					else
 					{
-						// Occupied by something non-item (e.g. held hand hex); treat as blocked
-						return false;
+						bCanMoveCluster = false;
+						break;
 					}
 				}
-			}
 
-			TMap<FHex, FItem> Snapshot = ItemMap;
-			for (int32 Id : ClusterItemIds)
-			{
-				const FHex* FromHex = ItemHex.Find(Id);
-				if (!FromHex) continue;
-				FHex ToHex(FromHex->Q + dQ, FromHex->R + dR);
-				if (HeldOrbHexes.Contains(ToHex)) continue; // safety
-
-				const FItem* Found = Snapshot.Find(*FromHex);
-				if (!Found || Found->Id != Id) continue;
-
-				ItemMap.Remove(*FromHex);
-				OrbAt.Remove(*FromHex);
-				ItemMap.Add(ToHex, *Found);
-				OrbAt.Add(ToHex, KindFromItem(*Found));
-
-				ItemHex[Id] = ToHex;
-				LocalOccupied.Remove(*FromHex);
-				LocalOccupied.Add(ToHex);
-
-				if (const FTile* TD = TileMap.Find(ToHex); TD && TD->Kind == ETileKind::Belt)
+				if (bCanMoveCluster)
 				{
-					// Only add belt progress if this item wasn't just placed
-					if (!NewlyPlacedItems.Contains(Id))
+					UE_LOG(LogTemp, Log, TEXT("Belt at (%d,%d) pulling bonded cluster (seed ID %d) from %s at (%d,%d)"),
+						BeltHex.Q, BeltHex.R, BondItem->Id,
+						InputTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+						InputHex.Q, InputHex.R);
+
+					// Snapshot all moving items
+					TMap<int32, FItem> MovingItems;
+					TMap<int32, FHex> OldPositions;
+					TMap<int32, FHex> NewPositions;
+
+					for (int32 ItemId : ConnectedItemIds)
 					{
-						BeltProgress.Add(Id, 0.f);
+						if (FHex* CurrentPos = ClusterPositions.Find(ItemId))
+						{
+							if (FItem* MovingItem = ItemMap.Find(*CurrentPos))
+							{
+								MovingItems.Add(ItemId, *MovingItem);
+								OldPositions.Add(ItemId, *CurrentPos);
+								NewPositions.Add(ItemId, FHex(CurrentPos->Q + ClusterMoveOffset.Q, CurrentPos->R + ClusterMoveOffset.R));
+							}
+						}
 					}
+
+					// Remove all items from their old positions
+					for (const auto& OldPosKV : OldPositions)
+					{
+						ItemMap.Remove(OldPosKV.Value);
+						OrbAt.Remove(OldPosKV.Value);
+					}
+
+					// Place all items at their new positions
+					for (const auto& NewPosKV : NewPositions)
+					{
+						int32 ItemId = NewPosKV.Key;
+						FHex NewHex = NewPosKV.Value;
+
+						if (FItem* MovingItem = MovingItems.Find(ItemId))
+						{
+							// Reset bIsReady when moving from bond/unbond tiles to belts
+							MovingItem->bIsReady = true;
+
+							ItemMap.Add(NewHex, *MovingItem);
+							OrbAt.Add(NewHex, KindFromItem(*MovingItem));
+
+							// Initialize belt progress for pulled items
+							BeltProgress.Add(MovingItem->Id, 0.f);
+
+							// Record this item as moved for interpolation
+							ItemsMovedLastStep.Add(MovingItem->Id);
+						}
+					}
+
+					// Update bond positions to maintain cluster integrity (same as belt movement)
+					for (int32 ItemId : ConnectedItemIds)
+					{
+						if (const TArray<int32>* BondIndices = ItemToBonds.Find(ItemId))
+						{
+							for (int32 BondIdx : *BondIndices)
+							{
+								if (!Bonds.IsValidIndex(BondIdx)) continue;
+								FBond& Bond = Bonds[BondIdx];
+								if (!Bond.bActive) continue;
+
+								// Only update bonds between items in our moving cluster
+								bool bBothInCluster = InCluster.Contains(Bond.ItemA) && InCluster.Contains(Bond.ItemB);
+
+								if (bBothInCluster)
+								{
+									// Update bond root to new position
+									if (Bond.ItemA == ItemId)
+									{
+										if (FHex* NewPos = NewPositions.Find(ItemId))
+										{
+											Bond.Root = *NewPos;
+										}
+									}
+								}
+							}
+						}
+					}
+
+					UE_LOG(LogTemp, Log, TEXT("Successfully pulled bonded cluster (%d items) from %s (%d,%d) to belt (%d,%d)"),
+						ConnectedItemIds.Num(), InputTile->Kind == ETileKind::Bond ? TEXT("bond") : TEXT("unbond"),
+						InputHex.Q, InputHex.R, BeltHex.Q, BeltHex.R);
+
+					continue; // Only pull one item per belt per tick
 				}
-				else
-					BeltProgress.Remove(Id);
-			}
-			for (int32 Id : ClusterItemIds) OutMovedIds.Add(Id);
-			return true;
-		};
-
-	for (const auto& KV : TileMap)
-	{
-		if (KV.Value.Kind != ETileKind::Belt) continue;
-		const FHex BeltHex = KV.Key;
-
-		// NEW: blocked if a held orb is here
-		if (HeldOrbHexes.Contains(BeltHex)) continue;
-
-		if (ItemMap.Contains(BeltHex)) continue;
-
-		const uint8 Dir = (uint8)(KV.Value.Arg & 0xFF);
-		const auto Opp = [](EHexDir D) { return (EHexDir)(((uint8)D + 3) % 6); };
-		const FHex Behind = HexUtil::Neighbor(BeltHex, Opp((EHexDir)(Dir % 6)));
-
-		if (FItem* BehindItem = ItemMap.Find(Behind))
-		{
-			// Do not pull twice within the same belt step or the same tick
-			if (ItemsMovedForward.Contains(BehindItem->Id)) continue;
-			if (PulledThisPass.Contains(BehindItem->Id)) continue;
-
-			// NEW: prevent instant pull of freshly spawned/dropped items (not present at this hex last tick)
-			const FHex* Prev = PrevItemHex.Find(BehindItem->Id);
-			if (!Prev || *Prev != Behind) continue;
-
-			bool bAllowPull = true;
-			if (const FTile* BehindTile = TileMap.Find(Behind); BehindTile && BehindTile->Kind == ETileKind::Belt)
-			{
-				const uint8 BehindDir = (uint8)(BehindTile->Arg & 0xFF) % 6;
-				const FHex BehindForward = HexUtil::Neighbor(Behind, (EHexDir)BehindDir);
-				const bool bFeedsThisBelt = (BehindForward == BeltHex);
-				if (!bFeedsThisBelt)
-				{
-					const FTile* ForwardTile = TileMap.Find(BehindForward);
-					const bool bForwardIsEmptyBelt =
-						(ForwardTile && ForwardTile->Kind == ETileKind::Belt && !ItemMap.Contains(BehindForward) && !HeldOrbHexes.Contains(BehindForward));
-					if (bForwardIsEmptyBelt)
-						bAllowPull = false;
-				}
-			}
-			if (!bAllowPull) continue;
-
-			TryTranslateClusterPull(BehindItem->Id, BeltHex, Dir, PulledThisPass);
-		}
-	}
-
-	/* ---------- Immediate forward pass AFTER pulls (late moves) ---------- */
-	{
-		TSet<FHex> OccupiedNow;
-		for (const auto& KV : ItemMap) OccupiedNow.Add(KV.Key);
-		for (const FHex& HH : HeldOrbHexes) OccupiedNow.Add(HH); // NEW
-
-		struct FLateMove { int32 ItemId; FHex From; FHex To; };
-		TArray<FLateMove> LateMoves;
-
-		for (const auto& KV : ItemMap)
-		{
-			const FHex& Hex = KV.Key;
-			const FItem& It = KV.Value;
-			if (It.Id == 0) continue;
-			if (ItemsMovedForward.Contains(It.Id)) continue;
-
-			const FTile* T = TileMap.Find(Hex);
-			if (!T || T->Kind != ETileKind::Belt) continue;
-			if (IsItemBonded(It.Id)) continue;
-
-			float* Prog = BeltProgress.Find(It.Id);
-			if (!Prog) continue;
-
-			if (*Prog >= 1.f)
-			{
-				const uint8 Dir = (uint8)(T->Arg & 0xFF) % 6;
-				const FHex To = HexUtil::Neighbor(Hex, (EHexDir)Dir);
-
-				if (HeldOrbHexes.Contains(To)) // NEW: blocked by held orb
-				{
-					*Prog = FMath::Min(*Prog, BeltBlockedClamp);
-					continue;
-				}
-
-				if (!OccupiedNow.Contains(To) && !ItemMap.Contains(To))
-				{
-					LateMoves.Add({ It.Id, Hex, To });
-					OccupiedNow.Remove(Hex);
-					OccupiedNow.Add(To);
-				}
-				else
-				{
-					*Prog = FMath::Min(*Prog, BeltBlockedClamp);
-				}
-			}
-		}
-
-		if (LateMoves.Num())
-		{
-			TMap<FHex, FItem> Snap = ItemMap;
-			for (const FLateMove& M : LateMoves)
-			{
-				if (HeldOrbHexes.Contains(M.To)) continue; // safety
-				const FItem* Found = Snap.Find(M.From);
-				if (!Found || Found->Id != M.ItemId) continue;
-				if (ItemMap.Contains(M.To)) continue;
-
-				ItemMap.Remove(M.From);
-				OrbAt.Remove(M.From);
-				ItemMap.Add(M.To, *Found);
-				OrbAt.Add(M.To, KindFromItem(*Found));
-
-				// Check if moved to output tile
-				if (const FTile* TD = TileMap.Find(M.To))
-				{
-					if (TD->Kind == ETileKind::Output)
-						OrbsNewlyMovedToOutput.Add(M.To);
-				}
-
-				if (float* P = BeltProgress.Find(M.ItemId))
-				{
-					*P -= 1.f;
-					if (*P < 0.f) *P = 0.f;
-				}
-				ItemsMovedForward.Add(M.ItemId);
 			}
 		}
 	}
 
-	/* ---------- Record movement for interpolation ---------- */
-	ItemsMovedLastStep = ItemsMovedForward;
-	for (int32 PulledId : PulledThisPass)
-		ItemsMovedLastStep.Add(PulledId);
-	
-	/* ---------- Initialize belt progress for new items on belts ---------- */
-	// After all belt processing is complete, initialize progress for items that are on belts but don't have progress yet
-	for (const auto& KV : ItemMap)
+	// Apply deferred bIsReady changes at the end of the tick
+	// This ensures that multiple belts can't compete for the same orb in the same tick
+	for (int32 ItemId : ItemsToSetReady)
 	{
-		const FTile* T = TileMap.Find(KV.Key);
-		if (T && T->Kind == ETileKind::Belt && KV.Value.Id != 0)
+		// Find the item in the map and set it ready
+		for (auto& KV : ItemMap)
 		{
-			if (!BeltProgress.Contains(KV.Value.Id) && !NewlyPlacedItems.Contains(KV.Value.Id))
+			if (KV.Value.Id == ItemId)
 			{
-				// This is a new item on a belt, initialize its progress to 0 for next frame
-				BeltProgress.Add(KV.Value.Id, 0.f);
+				KV.Value.bIsReady = true;
+				break;
 			}
 		}
 	}
-	
-	/* ---------- Clear newly placed items for next frame ---------- */
+
+	// Clear newly placed items and recently dropped tracking
 	NewlyPlacedItems.Empty();
-	
-	/* ---------- Clear recently dropped by arm tracking for next frame ---------- */
 	RecentlyDroppedByArm.Empty();
 }

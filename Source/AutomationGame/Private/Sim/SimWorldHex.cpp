@@ -68,6 +68,16 @@ bool USimWorldHex::TryPutItem(const FHex& H, const FItem& I)
 	{
 		Copy.Id = NextItemId++;
 	}
+	
+	// Check if placing on a bond/unbond tile - if so, set bIsReady appropriately
+	const FTile* Tile = TileMap.Find(H);
+	if (Tile && (Tile->Kind == ETileKind::Bond || Tile->Kind == ETileKind::Unbond))
+	{
+		// When placing an item on a bond/unbond tile, it should not be ready immediately
+		// This ensures it spends at least one tick on the tile before belts can pull it
+		Copy.bIsReady = false;
+	}
+	
 	ItemMap.Add(H, Copy);
 	OrbAt.Add(H, KindFromItem(Copy));
 	return true;
@@ -238,6 +248,164 @@ void USimWorldHex::CleanupBrokenBonds(const TSet<int32>& HeldIds)
 	}
 }
 
+void USimWorldHex::MoveBondedClusterOnBelt(int32 SeedItemId, const FHex& FromHex, const FHex& ToHex, const FTile& BeltTile, TMap<int32, FHex>& ItemHex)
+{
+	// Recursively move all bonded items when one item in a cluster moves on a belt
+	// This ensures the entire cluster moves as a cohesive unit
+	
+	// Check if the seed item has already been moved this tick (prevents infinite loops)
+	FItem* SeedItem = ItemMap.Find(FromHex);
+	if (!SeedItem || SeedItem->Id != SeedItemId)
+	{
+		return; // Item doesn't exist at expected location
+	}
+	
+	// If the item was already moved this tick, check if it's at the target location
+	if (SeedItem->LocationUpdatedThisTick)
+	{
+		// Verify if the item is already at the destination - if so, we're done
+		if (FItem* DestItem = ItemMap.Find(ToHex))
+		{
+			if (DestItem->Id == SeedItemId)
+			{
+				return; // Already moved to destination successfully
+			}
+		}
+		return; // Already moved but not to our destination, let other movement handle it
+	}
+	
+	// Calculate the movement vector
+	const int32 dQ = ToHex.Q - FromHex.Q;
+	const int32 dR = ToHex.R - FromHex.R;
+	
+	// First, gather all bonded items that need to be moved as part of this cluster
+	TSet<int32> ClusterItemIds;
+	TArray<int32> Stack;
+	Stack.Add(SeedItemId);
+	ClusterItemIds.Add(SeedItemId);
+	
+	// Use BFS to find all connected items through bonds
+	while (Stack.Num() > 0)
+	{
+		int32 CurrentId = Stack.Pop();
+		if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
+		{
+			for (int32 BondIdx : *BondList)
+			{
+				if (!Bonds.IsValidIndex(BondIdx)) continue;
+				const FBond& Bond = Bonds[BondIdx];
+				if (!Bond.bActive) continue;
+				
+				int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
+				if (OtherId > 0 && !ClusterItemIds.Contains(OtherId))
+				{
+					// Check if this item is on the board and on a belt
+					const FHex* OtherHex = ItemHex.Find(OtherId);
+					if (OtherHex)
+					{
+						const FTile* OtherTile = TileMap.Find(*OtherHex);
+						if (OtherTile && OtherTile->Kind == ETileKind::Belt)
+						{
+							FItem* OtherItem = ItemMap.Find(*OtherHex);
+							if (OtherItem && OtherItem->Id == OtherId && !OtherItem->LocationUpdatedThisTick)
+							{
+								ClusterItemIds.Add(OtherId);
+								Stack.Add(OtherId);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Check if all destination hexes are available
+	bool bCanMoveCluster = true;
+	TArray<TPair<int32, FHex>> MovePairs; // ItemId -> destination hex
+	
+	for (int32 ItemId : ClusterItemIds)
+	{
+		const FHex* CurrentHex = ItemHex.Find(ItemId);
+		if (!CurrentHex) 
+		{
+			bCanMoveCluster = false;
+			break;
+		}
+		
+		FHex DestHex(CurrentHex->Q + dQ, CurrentHex->R + dR);
+		
+		// Check if destination is blocked by non-cluster items
+		if (ItemMap.Contains(DestHex))
+		{
+			FItem* DestItem = ItemMap.Find(DestHex);
+			if (DestItem && !ClusterItemIds.Contains(DestItem->Id))
+			{
+				bCanMoveCluster = false;
+				break;
+			}
+		}
+		
+		MovePairs.Add(TPair<int32, FHex>(ItemId, DestHex));
+	}
+	
+	if (!bCanMoveCluster)
+	{
+		// Cannot move the entire cluster, abort
+		return;
+	}
+	
+	// Now move all items in the cluster atomically
+	TMap<FHex, FItem> TempStorage; // Store items temporarily to avoid conflicts
+	
+	// First pass: remove all items from their current positions
+	for (const TPair<int32, FHex>& MovePair : MovePairs)
+	{
+		int32 ItemId = MovePair.Key;
+		const FHex* CurrentHex = ItemHex.Find(ItemId);
+		if (!CurrentHex) continue;
+		
+		FItem* Item = ItemMap.Find(*CurrentHex);
+		if (!Item || Item->Id != ItemId) continue;
+		
+		// Store item temporarily
+		FItem MovedItem = *Item;
+		MovedItem.LocationUpdatedThisTick = true;
+		TempStorage.Add(MovePair.Value, MovedItem);
+		
+		// Remove from current position
+		ItemMap.Remove(*CurrentHex);
+		OrbAt.Remove(*CurrentHex);
+	}
+	
+	// Second pass: place all items at their new positions
+	for (const TPair<FHex, FItem>& TempPair : TempStorage)
+	{
+		const FHex& DestHex = TempPair.Key;
+		const FItem& Item = TempPair.Value;
+		
+		// Place item at destination
+		ItemMap.Add(DestHex, Item);
+		OrbAt.Add(DestHex, KindFromItem(Item));
+		
+		// Update ItemHex lookup
+		ItemHex[Item.Id] = DestHex;
+		
+		// Update belt progress
+		if (float* Progress = BeltProgress.Find(Item.Id))
+		{
+			*Progress -= 1.f;
+			if (*Progress < 0.f) *Progress = 0.f;
+		}
+	}
+}
+
+void USimWorldHex::MoveBondedItemRecursive(int32 ItemId, const FHex& FromHex, int32 dQ, int32 dR, TMap<int32, FHex>& ItemHex)
+{
+	// This function is now deprecated in favor of the atomic cluster movement in MoveBondedClusterOnBelt
+	// Keep it for compatibility but make it do nothing to avoid conflicts
+	return;
+}
+
 void USimWorldHex::StepSim()
 {
 	PrevItemHex.Empty();
@@ -245,6 +413,12 @@ void USimWorldHex::StepSim()
 		if (KV.Value.Id != 0)
 			PrevItemHex.Add(KV.Value.Id, KV.Key);
 	ItemsMovedLastStep.Reset();
+
+	// Reset LocationUpdatedThisTick flag for all items at the start of each tick
+	for (auto& KV : ItemMap)
+	{
+		KV.Value.LocationUpdatedThisTick = false;
+	}
 
 	++StepCounter;
 	SkipInputThisFrame.Reset();
@@ -281,6 +455,13 @@ void USimWorldHex::StepArms()
 			ItemIdToHex.Add(KV.Value.Id, KV.Key);
 	}
 
+	// Reset rotation completion flags at the start of each step
+	// This ensures the flag is only true for arms that completed rotation this tick
+	for (FArmState& S : Arms)
+	{
+		S.bRotationCompleted = false;
+	}
+	
 	// --- Local helpers (can access private FBond type through this) ---
 	auto GatherBondedClusterFn = [&](int32 RootId, TSet<int32>& OutIds)
 		{
@@ -412,6 +593,22 @@ void USimWorldHex::StepArms()
 		case ECmd::Grab:
 			if (!S.bHolding)
 			{
+				// Check if we need to wait for rotation completion
+				// Look at the previous command to see if it was a rotation
+				if (S.PC > 0)
+				{
+					const FOp& PrevOp = S.Tape[(S.PC - 1 + S.Tape.Num()) % S.Tape.Num()];
+					if ((PrevOp.Cmd == ECmd::RotateL || PrevOp.Cmd == ECmd::RotateR))
+					{
+						// Previous command was a rotation - check if it completed this tick
+						// If not, we need to wait for the rotation to complete
+						if (!S.bRotationCompleted)
+						{
+							continue;
+						}
+					}
+				}
+				
 				bool bGrabSucceeded = false;            // NEW
 
 				FHex Target = S.BaseHex;
@@ -785,6 +982,8 @@ void USimWorldHex::StepArms()
 		case ECmd::RotateL:
 		case ECmd::RotateR:
 		{
+			// Mark that rotation is starting
+			S.bRotationCompleted = false;
 			
 			// If we were told to wait (from a previously blocked rotate) count it down and retry next tick.
 			if (S.WaitCounter > 0)
@@ -2132,6 +2331,12 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 
 void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 {
+	// Mark rotation as completed for this arm
+	if (ArmIndex >= 0 && ArmIndex < Arms.Num())
+	{
+		Arms[ArmIndex].bRotationCompleted = true;
+	}
+	
 	// Mark this arm as ready for unbond processing with its current facing direction
 	// The actual unbond processing will happen during the next simulation step
 	// This function is idempotent - it can be called multiple times safely
@@ -2184,4 +2389,6 @@ void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
 		}
 	}
 }
+
+
 

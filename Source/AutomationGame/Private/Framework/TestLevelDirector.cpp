@@ -82,7 +82,7 @@ void ATestLevelDirector::BeginPlay()
 {
 	Super::BeginPlay();
 	AutoFindOrSpawn();
-	
+
 	// Wait one frame to ensure GameManager has completed its initialization and synced parameters
 	GetWorld()->GetTimerManager().SetTimerForNextTick(this, &ATestLevelDirector::DelayedScenarioApplication);
 }
@@ -97,7 +97,7 @@ void ATestLevelDirector::DelayedScenarioApplication()
 	{
 		Driver->GetSim()->StepSim();
 	}
-	
+
 	// Force any HexFactoryActor instances to rebuild their visuals
 	if (UWorld* W = GetWorld())
 	{
@@ -110,7 +110,7 @@ void ATestLevelDirector::DelayedScenarioApplication()
 				Factory->Rebuild();
 			}
 		}
-		
+
 		// Force GameManager to rebuild grid to reflect scenario tiles
 		for (TActorIterator<AGameManager> It(W); It; ++It)
 		{
@@ -187,9 +187,9 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 			}
 			for (ABasicArm* Arm : ToDestroy)
 			{
-				if (Arm) 
+				if (Arm)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying arm at (%d,%d) SimIndex=%d during scenario reset"), 
+					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying arm at (%d,%d) SimIndex=%d during scenario reset"),
 						Arm->Q, Arm->R, Arm->SimArmIndex);
 					DestroyActorNow(Arm);
 				}
@@ -205,7 +205,7 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 		// Reinitialize simulation (clears tiles, items, arms, bonds, etc.)
 		Sim->Initialize(Spec.GridRadius);
 		Sim->TileSizeUU = Spec.TileSizeUU;
-		
+
 		// Ensure sim gets the correct grid parameters from OrbSimDriver
 		const FVector AnchorLoc = Driver->GetGridAnchor() ? Driver->GetGridAnchor()->GetActorLocation() : FVector::ZeroVector;
 		Sim->SetWorldTransform(AnchorLoc, Driver->GetGridYaw(), Driver->GetGridOrientation());
@@ -253,11 +253,10 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		A.Spawned = W->SpawnActorDeferred<ABasicArm>(ArmClass, Tm, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (!A.Spawned) continue;
 
-		// Basic spatial init (does not start execution)
-		A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.Facing);
+		// Basic spatial init - use StartingRotation for initial facing
+		A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.StartingRotation);
 
 		// Set starting rotation and reach for Reset command
-		// Always set these values to ensure proper initialization
 		A.Spawned->StartingRotation = A.StartingRotation;
 		A.Spawned->StartingReach = A.StartingReach;
 
@@ -267,7 +266,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			// Build initial sim-side arm state (tape comes from scenario program)
 			FArmState ArmState;
 			ArmState.BaseHex = FHex(A.Q, A.R);
-			ArmState.Facing = (EHexDir)(A.Facing % 6);
+			ArmState.Facing = (EHexDir)(A.StartingRotation % 6);  // Use StartingRotation for initial facing
 			ArmState.HomeFacing = (EHexDir)(A.StartingRotation % 6);
 			ArmState.HomeArmLen = A.StartingReach;
 			ArmState.HomeTrackIdx = 0;
@@ -279,8 +278,8 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 
 			ArmIndex = Sim->AddArm(ArmState);
 			A.Spawned->SimArmIndex = ArmIndex;
-			UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Added scenario arm at (%d,%d) SimIndex=%d"), 
-				A.Q, A.R, ArmIndex);
+			UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Added scenario arm at (%d,%d) SimIndex=%d StartingRot=%d"),
+				A.Q, A.R, ArmIndex, A.StartingRotation);
 		}
 
 		// Finish spawn now that SimArmIndex is valid
@@ -674,7 +673,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 		{
 			const FHex& Hex = KV.Key;
 			const FTile& Tile = KV.Value;
-			
+
 			FPlacedTileSpec TileSpec;
 			TileSpec.Hex = Hex;
 			TileSpec.Kind = Tile.Kind;
@@ -689,11 +688,11 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 		{
 			ExistingArmSpecs.Add(FHex(ExistingSpec.Q, ExistingSpec.R), ExistingSpec);
 		}
-		
+
 		// Completely rebuild arm specs from current world state
 		// This ensures removed arms are properly deleted from the scenario
 		Scenario.Arms.Empty();
-		
+
 		for (TActorIterator<ABasicArm> It(W); It; ++It)
 		{
 			ABasicArm* Arm = *It;
@@ -705,14 +704,14 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			NewArmSpec.R = Arm->R;
 			NewArmSpec.StartingRotation = Arm->StartingRotation;
 			NewArmSpec.StartingReach = Arm->StartingReach;
-			
+
 			// Preserve original facing unless we're explicitly capturing runtime facing edits
 			FHex ArmHex(Arm->Q, Arm->R);
 			if (!bCaptureRuntimeFacingEdits && ExistingArmSpecs.Contains(ArmHex))
 			{
 				// Use original facing from scenario to avoid rotation drift
 				NewArmSpec.Facing = ExistingArmSpecs[ArmHex].Facing;
-				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Preserved original facing %d for arm at (%d,%d)"), 
+				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Preserved original facing %d for arm at (%d,%d)"),
 					NewArmSpec.Facing, Arm->Q, Arm->R);
 			}
 			else if (!bCaptureRuntimeFacingEdits)
@@ -722,14 +721,14 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 				{
 					const FArmState& ArmState = Sim->Arms[Arm->SimArmIndex];
 					NewArmSpec.Facing = (uint8)ArmState.HomeFacing;
-					UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Used HomeFacing %d from simulation for new arm at (%d,%d)"), 
+					UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Used HomeFacing %d from simulation for new arm at (%d,%d)"),
 						NewArmSpec.Facing, Arm->Q, Arm->R);
 				}
 				else
 				{
 					// Fallback to current facing if simulation not available
 					NewArmSpec.Facing = Arm->FacingDir;
-					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Fallback to current facing %d for arm at (%d,%d) (no sim state)"), 
+					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Fallback to current facing %d for arm at (%d,%d) (no sim state)"),
 						NewArmSpec.Facing, Arm->Q, Arm->R);
 				}
 			}
@@ -737,19 +736,19 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			{
 				// Use current facing when explicitly capturing runtime edits
 				NewArmSpec.Facing = Arm->FacingDir;
-				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured current facing %d for arm at (%d,%d) (runtime capture enabled)"), 
+				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured current facing %d for arm at (%d,%d) (runtime capture enabled)"),
 					NewArmSpec.Facing, Arm->Q, Arm->R);
 			}
-			
+
 			NewArmSpec.Program = Arm->Program;
 			NewArmSpec.bLoopProgram = Arm->bLoopProgram;
 			NewArmSpec.StartingRotation = Arm->StartingRotation;
 			NewArmSpec.StartingReach = Arm->StartingReach;
 			NewArmSpec.Spawned = Arm; // Keep reference
 			Scenario.Arms.Add(NewArmSpec);
-			
+
 			// Enhanced logging to debug program capture
-			UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Captured arm at (%d,%d) SimIndex=%d with %d instructions"), 
+			UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Captured arm at (%d,%d) SimIndex=%d with %d instructions"),
 				Arm->Q, Arm->R, Arm->SimArmIndex, Arm->Program.Num());
 			for (int32 i = 0; i < FMath::Min(3, Arm->Program.Num()); i++)
 			{
@@ -758,7 +757,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			}
 		}
 
-		UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Captured %d tiles and %d arms to scenario"), 
+		UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Captured %d tiles and %d arms to scenario"),
 			Scenario.Tiles.Num(), Scenario.Arms.Num());
 	}
 }

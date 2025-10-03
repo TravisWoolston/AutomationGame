@@ -73,7 +73,7 @@ void ABasicArm::BeginPlay()
 	RefreshMeshes();
 
 	StartFacingDir = FacingDir;
-	
+
 	// Initialize ReachTiles from StartingReach if not already set
 	if (StartingReach > 0)
 	{
@@ -125,24 +125,24 @@ void ABasicArm::Tick(float DeltaSeconds)
 	if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
 	{
 		const FArmState& SimState = Sim->Arms[SimArmIndex];
-		
+
 		// Update orientation and reach immediately
 		FacingDir = static_cast<uint8>(SimState.Facing);
 		CurrYawDeg = DirToYaw(FacingDir);
-		
+
 		if (ReachTiles != SimState.ArmLen)
 		{
 			ReachTiles = SimState.ArmLen;
 		}
-		
+
 		// Sync wait state and program counter from simulation
 		WaitLeft = SimState.WaitCounter;
 		PC = SimState.PC;
-		
+
 		// Update holding state + item payload immediately when simulation state changes
 		bool bWasHolding = bHolding;
 		bHolding = SimState.bHolding;
-		
+
 		if (bHolding)
 		{
 			HeldOrb = SimState.Held;
@@ -151,7 +151,7 @@ void ABasicArm::Tick(float DeltaSeconds)
 		{
 			HeldOrb = FItem();
 		}
-		
+
 		// Update visual immediately when holding state or cluster composition changes
 		if (bWasHolding != bHolding || (bHolding && HeldOrb.Orbs.Num() != LastHeldOrbCount))
 		{
@@ -183,7 +183,7 @@ void ABasicArm::Tick(float DeltaSeconds)
 			Sim->OnArmRotationComplete(SimArmIndex);
 		}
 	}
-	
+
 	// Robust rotation completion detection - use a more reliable threshold
 	// This prevents issues during performance dips where StepAlpha might not reach exactly 1.0f
 	if (StepAlpha >= 0.99f && PreviousStepAlpha < 0.99f)
@@ -194,7 +194,7 @@ void ABasicArm::Tick(float DeltaSeconds)
 			Sim->OnArmRotationFullyComplete(SimArmIndex);
 		}
 	}
-	
+
 	// Additional robustness: If we're at 100% but haven't notified yet, do it now
 	// This handles cases where the editor was paused during the transition
 	if (StepAlpha >= 1.0f && Sim && SimArmIndex >= 0)
@@ -264,7 +264,7 @@ void ABasicArm::RefreshMeshes()
 		{
 			CentralizedMesh = MaterialManager->GetOrbMesh();
 		}
-		
+
 		HeldOrbComp->SetStaticMesh(CentralizedMesh);
 		HeldOrbComp->SetRelativeScale3D(HeldOrbScale);
 		HeldOrbComp->SetVisibility(bHolding && CentralizedMesh != nullptr, true);
@@ -323,25 +323,25 @@ void ABasicArm::RefreshPose(float InAlpha)
 		// Calculate the arm's target hex (where it's reaching)
 		const FHex TargetHex = ComputeTargetHex();
 		const FVector TargetWorld = HexToWorld(TargetHex);
-		
+
 		// Use the arm's interpolated rotation to calculate grip direction
 		const float GripYawRad = FMath::DegreesToRadians(Yaw);
 		const FVector GripDirection = FVector(FMath::Cos(GripYawRad), FMath::Sin(GripYawRad), 0.f);
-		
+
 		// Use the arm's reach distance (based on ReachTiles) instead of actual distance
 		const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
 		const float ReachDistance = Tile * ReachTiles;
-		
+
 		// Use the arm's rotation with its configured reach distance
 		const FVector BaseGripPos = BaseWorld + GripDirection * ReachDistance + FVector(0, 0, GripZOffset);
-		
+
 		// Apply grip location offset relative to the hand's orientation
 		const FVector HandForward = GripDirection;
 		const FVector HandRight = FVector(-HandForward.Y, HandForward.X, 0.f);
 		const FVector HandUp = FVector(0.f, 0.f, 1.f);
 		const FVector RelativeOffset = HandForward * GripLocationOffset.X + HandRight * GripLocationOffset.Y + HandUp * GripLocationOffset.Z;
 		const FVector FinalGripPos = BaseGripPos + RelativeOffset;
-		
+
 		// If holding a cluster, adjust grip position to account for which orb was grabbed
 		if (bHolding && HeldOrb.bIsCluster && HeldOrb.Orbs.Num() > 0)
 		{
@@ -355,14 +355,14 @@ void ABasicArm::RefreshPose(float InAlpha)
 					break;
 				}
 			}
-			
+
 			if (GrabbedOrb)
 			{
 				// Calculate the offset of the grabbed orb from the cluster center
 				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
 				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(GrabbedOrb->dQ, GrabbedOrb->dR), Tile, GridOrientation);
 				FVector2D OrbOffset = HexOffset * ClusterOffsetScale;
-				
+
 				// Apply rotation based on GrabFacing to make offset relative to arm direction
 				if (HeldOrb.GrabFacing >= 0)
 				{
@@ -374,7 +374,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 					const float RotY = OrbOffset.X * SinA + OrbOffset.Y * CosA;
 					OrbOffset = FVector2D(RotX, RotY);
 				}
-				
+
 				// Adjust grip position so the grabbed orb is at the grip point
 				InterpolatedHandWorld = FinalGripPos - FVector(OrbOffset.X, OrbOffset.Y, 0.f);
 			}
@@ -387,7 +387,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 		{
 			InterpolatedHandWorld = FinalGripPos;
 		}
-		
+
 		HandWorld = InterpolatedHandWorld;
 	}
 
@@ -396,7 +396,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 	{
 		// Use the interpolated hand world position for smooth movement
 		GripPivotComp->SetWorldLocation(InterpolatedHandWorld);
-		
+
 		// Apply the full rotation to match the arm
 		const FRotator WorldRotation = FRotator(0.f, Yaw + BaseYawOffsetDeg, 0.f) + GripPivotLocalRotation;
 		GripPivotComp->SetWorldRotation(WorldRotation);
@@ -409,19 +409,19 @@ void ABasicArm::RefreshPose(float InAlpha)
 		DrawDebugLine(GetWorld(), Start, InterpolatedHandWorld, FColor::Green, false, 0.f, 0, 2.f);
 		DrawDebugSphere(GetWorld(), InterpolatedHandWorld, 6.f, 12, FColor::Yellow, false, 0.f);
 	}
-	
+
 	// Debug lines for arm reach and target
 	if (bDebugLines && GetWorld())
 	{
 		const FHex TargetHex = ComputeTargetHex();
 		const FVector TargetWorld = HexToWorld(TargetHex);
-		
+
 		// Draw line from arm base to target hex
 		DrawDebugLine(GetWorld(), BaseWorld, TargetWorld, FColor::Red, false, 0.f, 0, 2.f);
-		
+
 		// Draw line from arm base to current hand position
 		DrawDebugLine(GetWorld(), BaseWorld, InterpolatedHandWorld, FColor::Orange, false, 0.f, 0, 1.f);
-		
+
 		// Draw hex outline at target
 		const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 		DrawDebugCircle(GetWorld(), TargetWorld, Tile * 0.5f, 6, FColor::Red, false, 0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
@@ -429,7 +429,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 
 	// Opus Magnum approach: cluster rotates naturally with the arm
 	// No per-tick updates needed - the attachment system handles rotation
-	
+
 	// Debug: Draw spheres showing simulation positions of held cluster orbs
 	if (bDebugSpheres && bHolding && HeldOrb.bIsCluster && GetWorld())
 	{
@@ -438,21 +438,21 @@ void ABasicArm::RefreshPose(float InAlpha)
 		const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
 		const AActor* Anchor = Driver ? Driver->GetGridAnchor() : nullptr;
 		const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
-		
+
 		// Calculate the arm's current target hex (where it's reaching)
 		const FHex TargetHex = ComputeTargetHex();
 		const FVector TargetWorld = HexToWorld(TargetHex);
-		
+
 		// Draw debug spheres for each sub-orb in the cluster
 		for (int32 i = 0; i < HeldOrb.Orbs.Num(); i++)
 		{
 			const FOrbData& Sub = HeldOrb.Orbs[i];
-			
+
 			// Calculate the simulation position of this sub-orb
 			// First, get the base position from the target hex
 			const FHex SubOrbHex = FHex(TargetHex.Q + Sub.dQ, TargetHex.R + Sub.dR);
 			const FVector SubOrbWorld = HexToWorld(SubOrbHex);
-			
+
 			// Apply arm rotation to the sub-orb position relative to the target hex
 			FVector RotatedSubOrbWorld = SubOrbWorld;
 			if (Sub.dQ != 0 || Sub.dR != 0) // Don't rotate the grabbed orb (it's at the target)
@@ -460,33 +460,33 @@ void ABasicArm::RefreshPose(float InAlpha)
 				// Calculate the offset from the target hex
 				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
 				const FVector2D RotatedOffset = HexCoord::Rotate2D(HexOffset, GridYaw);
-				
+
 				// Apply the arm's current rotation to this offset
 				const float ArmYawRad = FMath::DegreesToRadians(Yaw);
 				const float CosA = FMath::Cos(ArmYawRad);
 				const float SinA = FMath::Sin(ArmYawRad);
 				const float RotX = RotatedOffset.X * CosA - RotatedOffset.Y * SinA;
 				const float RotY = RotatedOffset.X * SinA + RotatedOffset.Y * CosA;
-				
+
 				// Position relative to the target hex center
 				RotatedSubOrbWorld = TargetWorld + FVector(RotX, RotY, 0.f);
 			}
-			
+
 			// Color code: grabbed orb (dQ=0, dR=0) in green, others in blue
 			const FColor DebugColor = (Sub.dQ == 0 && Sub.dR == 0) ? FColor::Green : FColor::Blue;
 			const float SphereSize = (Sub.dQ == 0 && Sub.dR == 0) ? 8.f : 6.f;
-			
+
 			DrawDebugSphere(GetWorld(), RotatedSubOrbWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
-			
+
 			// Draw a line from the arm base to each sub-orb for clarity
 			DrawDebugLine(GetWorld(), BaseWorld, RotatedSubOrbWorld, DebugColor, false, 0.f, 0, 1.f);
-			
+
 			// Draw text showing the sub-orb's dQ, dR values
-			DrawDebugString(GetWorld(), RotatedSubOrbWorld + FVector(0, 0, 15.f), 
-				FString::Printf(TEXT("dQ:%d dR:%d"), Sub.dQ, Sub.dR), 
+			DrawDebugString(GetWorld(), RotatedSubOrbWorld + FVector(0, 0, 15.f),
+				FString::Printf(TEXT("dQ:%d dR:%d"), Sub.dQ, Sub.dR),
 				nullptr, DebugColor, 0.f, true, 1.2f);
 		}
-		
+
 		// Draw the target hex center in yellow
 		// DrawDebugSphere(GetWorld(), TargetWorld, 10.f, 12, FColor::Yellow, false, 0.f, 0, 3.f);
 		// DrawDebugString(GetWorld(), TargetWorld + FVector(0, 0, 20.f), 
@@ -497,9 +497,9 @@ void ABasicArm::RefreshPose(float InAlpha)
 
 void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= true*/)
 {
-	UE_LOG(LogAGArm, Warning, TEXT("SetProgram called on Arm '%s' (SimIndex=%d) with %d instructions"), 
+	UE_LOG(LogAGArm, Warning, TEXT("SetProgram called on Arm '%s' (SimIndex=%d) with %d instructions"),
 		*GetName(), SimArmIndex, InProgram.Num());
-	
+
 	Program = InProgram;
 	bLoopProgram = bLoop;
 	PC = 0;
@@ -540,15 +540,15 @@ TArray<FOp> ABasicArm::BuildOpsFromProgram(const TArray<FArmInstr>& InProgram) c
 // NEW: push actor-side program / facing into sim
 void ABasicArm::PushProgramToSim()
 {
-	if (!Sim || SimArmIndex < 0 || SimArmIndex >= Sim->Arms.Num()) 
+	if (!Sim || SimArmIndex < 0 || SimArmIndex >= Sim->Arms.Num())
 	{
-		UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' has invalid SimArmIndex=%d (Sim has %d arms)"), 
+		UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' has invalid SimArmIndex=%d (Sim has %d arms)"),
 			*GetName(), SimArmIndex, Sim ? Sim->Arms.Num() : -1);
 		return;
 	}
-	
+
 	FArmState& S = Sim->Arms[SimArmIndex];
-	
+
 	// Check if we're in the middle of executing temporary Reset operations
 	// If the tape has more operations than what BuildOpsFromProgram would generate,
 	// it means we have temporary operations that shouldn't be overwritten
@@ -556,23 +556,23 @@ void ABasicArm::PushProgramToSim()
 	if (S.Tape.Num() > NewTape.Num() && S.PC > 0)
 	{
 		// We're likely executing temporary Reset operations - don't overwrite!
-		UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' (SimIndex=%d) skipping update - temporary ops in progress (Tape=%d, Expected=%d)"), 
+		UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' (SimIndex=%d) skipping update - temporary ops in progress (Tape=%d, Expected=%d)"),
 			*GetName(), SimArmIndex, S.Tape.Num(), NewTape.Num());
 		return;
 	}
-	
+
 	// Log what we're about to replace
-	UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' (SimIndex=%d) updating tape from %d ops to %d ops"), 
+	UE_LOG(LogAGArm, Warning, TEXT("PushProgramToSim: Arm '%s' (SimIndex=%d) updating tape from %d ops to %d ops"),
 		*GetName(), SimArmIndex, S.Tape.Num(), NewTape.Num());
-	
+
 	S.Tape = NewTape;
 	S.PC = 0;
 	S.Facing = static_cast<EHexDir>(FacingDir);
-	
+
 	// Debug: Log the converted program
-	UE_LOG(LogAGArm, Log, TEXT("Arm '%s': PushProgramToSim called - Converting %d instructions to %d ops"), 
+	UE_LOG(LogAGArm, Log, TEXT("Arm '%s': PushProgramToSim called - Converting %d instructions to %d ops"),
 		*GetName(), Program.Num(), S.Tape.Num());
-	
+
 	// Always log tape contents after Reset expansion for debugging
 	UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Program pushed (TapeLen=%d)"), *GetName(), S.Tape.Num());
 	for (int32 i = 0; i < S.Tape.Num(); i++)
@@ -595,7 +595,7 @@ void ABasicArm::PushProgramToSim()
 		}
 		UE_LOG(LogAGArm, Log, TEXT("  [%d]: %s %d"), i, *CmdName, Op.Arg);
 	}
-	
+
 	UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Program pushed (TapeLen=%d Holding(sim)=%d)"),
 		*GetName(), S.Tape.Num(), S.bHolding ? 1 : 0);
 }
@@ -766,7 +766,7 @@ void ABasicArm::SyncDebugSettingsFromDriver()
 		bDebugLogs = Driver->bDebugLogs;
 		bDebugSpheres = Driver->bDebugSpheres;
 		bDebugLines = Driver->bDebugLines;
-		UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Synced debug settings from driver - Logs=%d Spheres=%d Lines=%d"), 
+		UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Synced debug settings from driver - Logs=%d Spheres=%d Lines=%d"),
 			*GetName(), bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0);
 	}
 	else
@@ -820,7 +820,7 @@ void ABasicArm::ExpandResetAtPC()
 {
 	// Expand "Reset" into: (Drop if holding) + Reach adjustments + Rotation adjustments back to starting values
 	TArray<FArmInstr> Expansion;
-	
+
 	// Always drop first if holding
 	if (bHolding)
 	{
@@ -831,7 +831,7 @@ void ABasicArm::ExpandResetAtPC()
 	const int32 CurrentReach = ReachTiles;
 	const int32 TargetReach = FMath::Clamp(StartingReach, 1, 6);
 	const int32 ReachDiff = TargetReach - CurrentReach;
-	
+
 	if (ReachDiff > 0)
 	{
 		// Need to extend
@@ -868,11 +868,11 @@ void ABasicArm::ExpandResetAtPC()
 	{
 		Program.Insert(Expansion, PC);
 	}
-	
+
 	// Log the expansion for debugging
 	UE_LOG(LogAGArm, Verbose, TEXT("BasicArm '%s' Reset expanded: Rotation(%d->%d) Reach(%d->%d) Holding=%d ExpansionSteps=%d"),
-		*GetName(), 
-		int32(CurrentRotation), int32(TargetRotation), 
+		*GetName(),
+		int32(CurrentRotation), int32(TargetRotation),
 		CurrentReach, TargetReach,
 		bHolding ? 1 : 0,
 		Expansion.Num());
@@ -1000,7 +1000,7 @@ UMaterialInterface* ABasicArm::GetMaterialForOrbColor(uint8 OrbType) const
 		{
 			return CentralizedMaterial;
 		}
-		
+
 		// Try the default material from the centralized system
 		UMaterialInterface* DefaultMaterial = MaterialManager->GetDefaultOrbMaterial();
 		if (DefaultMaterial)
@@ -1062,7 +1062,7 @@ UMaterialInterface* ABasicArm::ResolveOrbMaterial(const FItem& Item) const
 		{
 			return CentralizedMaterial;
 		}
-		
+
 		// Try the default material from the centralized system
 		UMaterialInterface* DefaultMaterial = MaterialManager->GetDefaultOrbMaterial();
 		if (DefaultMaterial)
@@ -1159,7 +1159,7 @@ void ABasicArm::AttachHeldOrb()
 			SubMesh->SetStaticMesh(SM);
 
 			UMaterialInterface* Mat = GetMaterialForOrbColor(Sub.Type);
-			if (Mat) 
+			if (Mat)
 			{
 				SubMesh->SetMaterial(0, Mat);
 				// Ensure the material renders as opaque (not transparent)
@@ -1171,7 +1171,7 @@ void ABasicArm::AttachHeldOrb()
 			const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
 			const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
 			FVector2D Off2D = HexOffset * ClusterOffsetScale;
-			
+
 			// Apply rotation based on GrabFacing to make offsets relative to arm direction
 			if (HeldOrb.GrabFacing >= 0)
 			{
@@ -1183,15 +1183,15 @@ void ABasicArm::AttachHeldOrb()
 				const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
 				Off2D = FVector2D(RotX, RotY);
 			}
-			
+
 			if (bInvertClusterVisualFacing)
 			{
 				// 180° flip around Z so visual layout matches logical facing.
 				Off2D *= -1.f;
 			}
-			
+
 			SubMesh->SetRelativeLocation(FVector(Off2D.X, Off2D.Y, 0.f));
-			
+
 
 			SubMesh->SetRelativeScale3D(HeldOrbScale);
 
@@ -1210,7 +1210,7 @@ void ABasicArm::AttachHeldOrb()
 		// Handle single orbs the same way as clusters - create a sub-orb mesh
 		// This ensures consistent material handling between single orbs and clusters
 		HeldOrbComp->SetStaticMesh(nullptr); // Clear the main component mesh
-		
+
 		// Create a sub-orb mesh for the single orb
 		UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
 		SubMesh->RegisterComponent();
@@ -1222,7 +1222,7 @@ void ABasicArm::AttachHeldOrb()
 		SubMesh->SetStaticMesh(SM);
 
 		UMaterialInterface* Mat = GetMaterialForOrbColor((uint8)HeldOrb.Single.Type);
-		if (Mat) 
+		if (Mat)
 		{
 			SubMesh->SetMaterial(0, Mat);
 			// Ensure the material renders as opaque (not transparent)
@@ -1311,14 +1311,14 @@ void ABasicArm::UpdateHeldClusterOnly()
 	{
 		return;
 	}
-	
+
 	// Only update the held orb data and visual, don't touch orientation or other state
 	const FArmState& SimState = Sim->Arms[SimArmIndex];
-	
+
 	// Update holding state and item payload only
 	bool bWasHolding = bHolding;
 	bHolding = SimState.bHolding;
-	
+
 	if (bHolding)
 	{
 		HeldOrb = SimState.Held;
@@ -1327,13 +1327,13 @@ void ABasicArm::UpdateHeldClusterOnly()
 	{
 		HeldOrb = FItem();
 	}
-	
+
 	// Only update visual if holding state changed or cluster composition changed
 	const int32 NewOrbCount = bHolding ? HeldOrb.Orbs.Num() : 0;
 	const bool bClusterChanged = (NewOrbCount != LastHeldOrbCount);
-	
 
-	
+
+
 	if (bWasHolding != bHolding || (bHolding && bClusterChanged))
 	{
 		UpdateHeldOrbVisual();
@@ -1402,7 +1402,7 @@ void ABasicArm::GenerateBondedOrbMeshes()
 
 	// Get the bonds for this held cluster
 	const TArray<USimWorldHex::FBond>& Bonds = Sim->GetBonds();
-	
+
 	// Find bonds that involve sub-orbs in this held cluster
 	for (const auto& Bond : Bonds)
 	{
@@ -1422,7 +1422,7 @@ void ABasicArm::GenerateBondedOrbMeshes()
 				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
 				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
 				FVector2D Off2D = HexOffset * ClusterOffsetScale;
-				
+
 				// Apply rotation based on GrabFacing
 				if (HeldOrb.GrabFacing >= 0)
 				{
@@ -1434,15 +1434,15 @@ void ABasicArm::GenerateBondedOrbMeshes()
 					const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
 					Off2D = FVector2D(RotX, RotY);
 				}
-				
+
 				if (bInvertClusterVisualFacing)
 				{
 					Off2D *= -1.f;
 				}
-				
+
 				PosA = FVector(Off2D.X, Off2D.Y, 0.f);
 			}
-			
+
 			if (Sub.ItemId == Bond.ItemB)
 			{
 				bItemBInCluster = true;
@@ -1450,7 +1450,7 @@ void ABasicArm::GenerateBondedOrbMeshes()
 				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
 				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
 				FVector2D Off2D = HexOffset * ClusterOffsetScale;
-				
+
 				// Apply rotation based on GrabFacing
 				if (HeldOrb.GrabFacing >= 0)
 				{
@@ -1462,12 +1462,12 @@ void ABasicArm::GenerateBondedOrbMeshes()
 					const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
 					Off2D = FVector2D(RotX, RotY);
 				}
-				
+
 				if (bInvertClusterVisualFacing)
 				{
 					Off2D *= -1.f;
 				}
-				
+
 				PosB = FVector(Off2D.X, Off2D.Y, 0.f);
 			}
 		}
@@ -1479,7 +1479,7 @@ void ABasicArm::GenerateBondedOrbMeshes()
 			BondMesh->RegisterComponent();
 			BondMesh->AttachToComponent(HeldOrbComp, FAttachmentTransformRules::KeepRelativeTransform);
 			BondMesh->SetStaticMesh(BondedOrbMesh);
-			
+
 			UMaterialInterface* BondedOrbMaterial = GetBondedOrbMaterial();
 			if (BondedOrbMaterial)
 			{
@@ -1499,7 +1499,7 @@ void ABasicArm::GenerateBondedOrbMeshes()
 				Right = FVector::RightVector;
 			}
 			FVector Forward = FVector::CrossProduct(Right, Up).GetSafeNormal();
-			
+
 			// Create rotation matrix from the three axes
 			FMatrix RotationMatrix = FMatrix(Forward, Right, Up, FVector::ZeroVector);
 			FRotator Rotation = FQuat(RotationMatrix).Rotator();

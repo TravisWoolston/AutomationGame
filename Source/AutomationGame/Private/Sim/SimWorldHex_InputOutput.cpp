@@ -269,10 +269,13 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 			// Animation complete
 			if (AnimatedOrb.bIsInput)
 			{
-				// Input animation complete - place the item
-				TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item);
+				// Input animation complete - place the item (if not already placed)
+				if (!ItemMap.Contains(AnimatedOrb.Hex))
+				{
+					TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item);
+				}
 			}
-			// For outputs, the item was already removed from simulation when animation started
+			// For outputs and unbonded orbs, the item was already handled when animation started
 			
 			// Remove the completed animation
 			AnimatedOrbs.RemoveAt(i);

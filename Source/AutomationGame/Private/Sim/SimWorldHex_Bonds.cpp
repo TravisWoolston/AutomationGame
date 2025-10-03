@@ -11,7 +11,7 @@ void USimWorldHex::StepBonds()
 		if (Bonds.Num() > 0) CleanupBrokenBonds(TSet<int32>());
 		return;
 	}
-	
+
 	// DEBUG: Log when StepBonds is called
 	if (bDevDebugBonds)
 	{
@@ -118,7 +118,7 @@ void USimWorldHex::StepBonds()
 			}
 		}
 	}
-	
+
 	// Only form bonds when arms are not actively rotating to prevent premature bond formation
 	if (bAnyArmMoving)
 	{
@@ -139,7 +139,7 @@ void USimWorldHex::StepBonds()
 				}
 			}
 		}
-		
+
 		// If any arm is actively rotating, skip bond formation
 		if (bAnyArmActivelyRotating)
 		{
@@ -170,29 +170,29 @@ void USimWorldHex::StepBonds()
 		// Resolve item ids at endpoints (world or virtual held)
 		int32 AId = 0, BId = 0;
 		bool bAIsHeld = false, bBIsHeld = false;
-		
-		if (FItem* IA = ItemMap.Find(AHex)) 
+
+		if (FItem* IA = ItemMap.Find(AHex))
 		{
 			AId = IA->Id;
 			bAIsHeld = false; // On board
 		}
-		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) 
+		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex))
 		{
 			AId = *HeldA;
 			bAIsHeld = true; // Held
 		}
 
-		if (FItem* IB = ItemMap.Find(BHex)) 
+		if (FItem* IB = ItemMap.Find(BHex))
 		{
 			BId = IB->Id;
 			bBIsHeld = false; // On board
 		}
-		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) 
+		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex))
 		{
 			BId = *HeldB;
 			bBIsHeld = true; // Held
 		}
-		
+
 		// Debug: Log when we expect to find held orbs but don't
 		if (bDevDebugBonds && GEngine)
 		{
@@ -201,42 +201,42 @@ void USimWorldHex::StepBonds()
 			for (const FArmState& A : Arms)
 			{
 				if (!A.bHolding || !A.Held.bIsCluster) continue;
-				
+
 				FHex GripHex = A.BaseHex;
 				for (int i = 0; i < A.ArmLen; ++i)
 					GripHex = HexUtil::Neighbor(GripHex, A.Facing);
-				
+
 				const uint8 cur = (uint8)A.Facing % 6;
 				const int8 grab = (int8)A.Held.GrabFacing;
 				const uint8 facingDelta = (grab >= 0)
 					? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
 					: cur;
 				const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-				
+
 				auto Rot60 = [](FHex D, uint8 StepsCCW)
-				{
-					for (uint8 i = 0; i < (StepsCCW % 6); ++i)
 					{
-						int32 q = D.Q;
-						int32 r = D.R;
-						D.Q = -r;
-						D.R = q + r;
-					}
-					return D;
-				};
-				
+						for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+						{
+							int32 q = D.Q;
+							int32 r = D.R;
+							D.Q = -r;
+							D.R = q + r;
+						}
+						return D;
+					};
+
 				for (const FOrbData& Sub : A.Held.Orbs)
 				{
 					if (Sub.ItemId <= 0) continue;
 					FHex Local(Sub.dQ, Sub.dR);
 					FHex Rot = Rot60(Local, ccw);
 					FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
-					
+
 					if (World == AHex) bExpectedHeldAtA = true;
 					if (World == BHex) bExpectedHeldAtB = true;
 				}
 			}
-			
+
 			if (bExpectedHeldAtA && !bAIsHeld)
 			{
 				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
@@ -250,14 +250,14 @@ void USimWorldHex::StepBonds()
 		}
 
 		if (AId <= 0 || BId <= 0 || AId == BId) continue;
-		
+
 		// DEBUG: Log bond detection (commented out for production)
 		// UE_LOG(LogAGSim, Warning, TEXT("Bond detected: AId=%d (held=%s) BId=%d (held=%s) at AHex=(%d,%d) BHex=(%d,%d)"), 
 		//	AId, bAIsHeld ? TEXT("yes") : TEXT("no"), BId, bBIsHeld ? TEXT("yes") : TEXT("no"), 
 		//	AHex.Q, AHex.R, BHex.Q, BHex.R);
-		
+
 		// Debug logging
-		
+
 		// Debug: Log what we're trying to bond
 		if (bDevDebugBonds)
 		{
@@ -265,7 +265,7 @@ void USimWorldHex::StepBonds()
 			FString ArmInfoB = bBIsHeld ? TEXT("(Held)") : TEXT("(Board)");
 			UE_LOG(LogAGSim, Log, TEXT("Attempting bond: %d%s-%d%s"), AId, *ArmInfoA, BId, *ArmInfoB);
 		}
-		
+
 		// Allow bonds between items held by different arms or between held and board items
 		if (Newly.Contains(AId) || Newly.Contains(BId)) { /* allow multiple bonds same tick but avoid duplication */ }
 
@@ -294,7 +294,7 @@ void USimWorldHex::StepBonds()
 		NewB.dQ = (int8)(BHex.Q - AHex.Q);
 		NewB.dR = (int8)(BHex.R - AHex.R);
 		NewB.bActive = true;
-		
+
 		// Form bond between items
 		const int32 NewIdx = Bonds.Add(NewB);
 		AddItemBondLink(NewB.ItemA, NewIdx);
@@ -318,13 +318,13 @@ void USimWorldHex::StepBonds()
 			int32 HoldingArmIndex = -1;
 			// DEBUG: Log arm lookup (commented out for production)
 			// UE_LOG(LogAGSim, Warning, TEXT("Looking for arm holding AId=%d"), AId);
-			
+
 			for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 			{
 				const FArmState& Arm = Arms[ArmIndex];
 				// UE_LOG(LogAGSim, Warning, TEXT("  Arm %d: bHolding=%s, Held.Id=%d"), 
 				//	ArmIndex, Arm.bHolding ? TEXT("yes") : TEXT("no"), Arm.Held.Id);
-				
+
 				if (Arm.bHolding)
 				{
 					// Check if this arm is holding the item directly
@@ -351,7 +351,7 @@ void USimWorldHex::StepBonds()
 					}
 				}
 			}
-			
+
 			if (HoldingArmIndex >= 0)
 			{
 				// Create pending bond formation - will be processed when arm finishes rotating
@@ -362,13 +362,13 @@ void USimWorldHex::StepBonds()
 				Pending.ArmIndex = HoldingArmIndex;
 				Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
 				PendingBondFormations.Add(Pending);
-				
+
 				if (bDebugLogs && bDevDebugBonds && GEngine)
 				{
 					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
 						FString::Printf(TEXT("Queued bond formation: board orb %d -> held item %d (arm %d)"), BId, AId, HoldingArmIndex));
 				}
-				
+
 				// DEBUG: Always log pending formations for debugging (commented out for production)
 				// UE_LOG(LogAGSim, Warning, TEXT("Created pending bond formation: board orb %d -> held item %d (arm %d), total pending: %d"), 
 				//	BId, AId, HoldingArmIndex, PendingBondFormations.Num());
@@ -380,13 +380,13 @@ void USimWorldHex::StepBonds()
 			int32 HoldingArmIndex = -1;
 			// DEBUG: Log arm lookup (commented out for production)
 			// UE_LOG(LogAGSim, Warning, TEXT("Looking for arm holding BId=%d"), BId);
-			
+
 			for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 			{
 				const FArmState& Arm = Arms[ArmIndex];
 				// UE_LOG(LogAGSim, Warning, TEXT("  Arm %d: bHolding=%s, Held.Id=%d"), 
 				//	ArmIndex, Arm.bHolding ? TEXT("yes") : TEXT("no"), Arm.Held.Id);
-				
+
 				if (Arm.bHolding)
 				{
 					// Check if this arm is holding the item directly
@@ -413,21 +413,21 @@ void USimWorldHex::StepBonds()
 					}
 				}
 			}
-			
+
 			if (HoldingArmIndex >= 0)
 			{
 				// Check if this board item is part of a dropped cluster
 				// Look for other board items that might be part of the same dropped cluster
 				TArray<FItem*> ClusterItems;
 				TArray<FHex> ClusterHexes;
-				
+
 				// Start with the current board item
 				FItem* CurrentItem = ItemMap.Find(AHex);
 				if (CurrentItem && CurrentItem->Id == AId)
 				{
 					ClusterItems.Add(CurrentItem);
 					ClusterHexes.Add(AHex);
-					
+
 					// Look for other board items that might be part of the same cluster
 					// We'll check adjacent hexes for items that might be part of the dropped cluster
 					for (int32 NeighborDir = 0; NeighborDir < 6; NeighborDir++)
@@ -446,7 +446,7 @@ void USimWorldHex::StepBonds()
 						}
 					}
 				}
-				
+
 				// Always use the pending bond formation system to ensure WaitForBond works correctly
 				// This applies to both single items and clusters
 				FPendingBondFormation Pending;
@@ -456,7 +456,7 @@ void USimWorldHex::StepBonds()
 				Pending.ArmIndex = HoldingArmIndex;
 				Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
 				PendingBondFormations.Add(Pending);
-				
+
 				if (bDebugLogs && bDevDebugBonds && GEngine)
 				{
 					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
@@ -469,12 +469,12 @@ void USimWorldHex::StepBonds()
 			// Both items are held - find which arms are holding them
 			int32 ArmHoldingA = -1;
 			int32 ArmHoldingB = -1;
-			
+
 			for (int32 ArmIdx = 0; ArmIdx < Arms.Num(); ArmIdx++)
 			{
 				const FArmState& Arm = Arms[ArmIdx];
 				if (!Arm.bHolding) continue;
-				
+
 				if (Arm.Held.bIsCluster)
 				{
 					for (const FOrbData& Sub : Arm.Held.Orbs)
@@ -489,7 +489,7 @@ void USimWorldHex::StepBonds()
 					if (Arm.Held.Id == BId) ArmHoldingB = ArmIdx;
 				}
 			}
-			
+
 			// If both arms found and they're different arms, create a pending merge
 			if (ArmHoldingA >= 0 && ArmHoldingB >= 0 && ArmHoldingA != ArmHoldingB)
 			{
@@ -497,19 +497,19 @@ void USimWorldHex::StepBonds()
 				// For now, the lower index arm receives (arbitrary but consistent)
 				int32 ReceiverArm = FMath::Min(ArmHoldingA, ArmHoldingB);
 				int32 DonorArm = FMath::Max(ArmHoldingA, ArmHoldingB);
-				
+
 				// Check if we already have a pending merge for these arms
 				bool bAlreadyPending = false;
 				for (const FPendingHeldMerge& Existing : PendingHeldMerges)
 				{
 					if ((Existing.ReceiverArmIndex == ReceiverArm && Existing.DonorArmIndex == DonorArm) ||
-					    (Existing.ReceiverArmIndex == DonorArm && Existing.DonorArmIndex == ReceiverArm))
+						(Existing.ReceiverArmIndex == DonorArm && Existing.DonorArmIndex == ReceiverArm))
 					{
 						bAlreadyPending = true;
 						break;
 					}
 				}
-				
+
 				if (!bAlreadyPending)
 				{
 					FPendingHeldMerge PendingMerge;
@@ -518,17 +518,17 @@ void USimWorldHex::StepBonds()
 					PendingMerge.ItemIdA = (ReceiverArm == ArmHoldingA) ? AId : BId;
 					PendingMerge.ItemIdB = (DonorArm == ArmHoldingA) ? AId : BId;
 					PendingHeldMerges.Add(PendingMerge);
-					
+
 					if (bDevDebugBonds)
 					{
-						UE_LOG(LogAGSim, Log, TEXT("Created pending held-to-held merge: Arm %d will receive from Arm %d"), 
+						UE_LOG(LogAGSim, Log, TEXT("Created pending held-to-held merge: Arm %d will receive from Arm %d"),
 							ReceiverArm, DonorArm);
 					}
 				}
 			}
 		}
 	}
-	
+
 	// Debug: Log bond tile processing results
 	if (bDevDebugBonds)
 	{
@@ -577,7 +577,7 @@ void USimWorldHex::StepBonds()
 			for (const FOrbData& SubA : A.Held.Orbs)
 			{
 				if (SubA.ItemId <= 0) continue;
-				
+
 				FHex LocalA(SubA.dQ, SubA.dR);
 				FHex RotA = Rot60(LocalA, ccw);
 				FHex WorldA(GripHex.Q + RotA.Q, GripHex.R + RotA.R);
@@ -589,7 +589,7 @@ void USimWorldHex::StepBonds()
 					for (const FOrbData& SubB : A.Held.Orbs)
 					{
 						if (SubB.ItemId <= 0 || SubB.ItemId == SubA.ItemId) continue;
-						
+
 						FHex LocalB(SubB.dQ, SubB.dR);
 						FHex RotB = Rot60(LocalB, ccw);
 						FHex WorldB(GripHex.Q + RotB.Q, GripHex.R + RotB.R);
@@ -651,24 +651,24 @@ void USimWorldHex::StepBonds()
 		// Resolve item ids at endpoints (world or virtual held)
 		int32 AId = 0, BId = 0;
 		bool bAIsHeld = false, bBIsHeld = false;
-		
-		if (FItem* IA = ItemMap.Find(AHex)) 
+
+		if (FItem* IA = ItemMap.Find(AHex))
 		{
 			AId = IA->Id;
 			bAIsHeld = false; // On board
 		}
-		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) 
+		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex))
 		{
 			AId = *HeldA;
 			bAIsHeld = true; // Held
 		}
 
-		if (FItem* IB = ItemMap.Find(BHex)) 
+		if (FItem* IB = ItemMap.Find(BHex))
 		{
 			BId = IB->Id;
 			bBIsHeld = false; // On board
 		}
-		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) 
+		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex))
 		{
 			BId = *HeldB;
 			bBIsHeld = true; // Held
@@ -686,12 +686,12 @@ void USimWorldHex::StepBonds()
 	{
 		int32 ArmIndex = KV.Key;
 		uint8 VisualFacing = KV.Value;
-		
+
 		if (ArmIndex < 0 || ArmIndex >= Arms.Num()) continue;
-		
+
 		FArmState& A = Arms[ArmIndex];
 		if (!A.bHolding || !A.Held.bIsCluster) continue;
-		
+
 		// Skip if this arm was already processed by the old unbond function
 		// (which runs before this new function and might have converted cluster to single orb)
 		if (A.Held.Orbs.Num() <= 1) continue;
@@ -735,10 +735,10 @@ void USimWorldHex::StepBonds()
 		{
 			const FOrbData& SubA = A.Held.Orbs[SubIndex];
 			if (SubA.ItemId <= 0) continue;
-			
+
 			// Skip the grabbed orb (the one at the grip position)
 			if (SubA.dQ == 0 && SubA.dR == 0) continue;
-			
+
 			// Check if this orb has any bonds to other orbs in the cluster
 			bool bHasBondsInCluster = false;
 			if (const TArray<int32>* BondList = ItemToBonds.Find(SubA.ItemId))
@@ -748,7 +748,7 @@ void USimWorldHex::StepBonds()
 					if (!Bonds.IsValidIndex(BondIdx)) continue;
 					const FBond& Bond = Bonds[BondIdx];
 					if (!Bond.bActive) continue;
-					
+
 					// Check if this bond connects to another orb in the same cluster
 					int32 OtherItemId = (Bond.ItemA == SubA.ItemId) ? Bond.ItemB : Bond.ItemA;
 					for (const FOrbData& OtherSub : A.Held.Orbs)
@@ -762,7 +762,7 @@ void USimWorldHex::StepBonds()
 					if (bHasBondsInCluster) break;
 				}
 			}
-			
+
 			// If this orb has no bonds to other orbs in the cluster, remove it
 			if (!bHasBondsInCluster)
 			{
@@ -770,32 +770,34 @@ void USimWorldHex::StepBonds()
 				FHex LocalA(SubA.dQ, SubA.dR);
 				FHex RotA = Rot60(LocalA, ccw);
 				FHex WorldA(GripHex.Q + RotA.Q, GripHex.R + RotA.R);
-				
+
 				// Create a single orb item for the unbonded orb
 				FItem UnbondedOrb;
 				UnbondedOrb.bIsCluster = false;
 				UnbondedOrb.Id = SubA.ItemId;
 				UnbondedOrb.Single.Type = (EOrbType)SubA.Type;
 				UnbondedOrb.Single.Color = (EOrbColor)SubA.Color;
-				
-				// Create an animated orb to delay both visibility and simulation availability
+
+				// Place the unbonded orb immediately so it can be grabbed right away
+				TryPutItem(WorldA, UnbondedOrb);
+
+				// Also create an animated orb for visual effect only
+				// Note: The orb is already in ItemMap, so this is just for visuals
 				FAnimatedOrb AnimatedOrb;
 				AnimatedOrb.Item = UnbondedOrb;
 				AnimatedOrb.Hex = WorldA;
 				AnimatedOrb.AnimationTime = 0.f;
-				AnimatedOrb.AnimationDuration = 1.0f; // 1 second to descend (like output orbs)
+				AnimatedOrb.AnimationDuration = 0.25f; // Quick visual effect
 				AnimatedOrb.bIsInput = false; // This is an unbonded orb, not an input
 				AnimatedOrb.bActive = true;
 				AnimatedOrbs.Add(AnimatedOrb);
-				
-				// Don't immediately place the item - it will be placed when animation completes
-				
+
 				// Remove the orb from the held cluster
 				A.Held.Orbs.RemoveAt(SubIndex);
-				
+
 				// Remove from HeldItemLastHex since this orb is no longer held
 				HeldItemLastHex.Remove(SubA.ItemId);
-				
+
 				// If this was the last orb in the cluster, convert to single orb
 				if (A.Held.Orbs.Num() == 1)
 				{
@@ -814,14 +816,14 @@ void USimWorldHex::StepBonds()
 					A.bHolding = false;
 					A.Held = FItem();
 				}
-				
+
 				if (bDebugLogs && bDevDebugBonds && GEngine)
 				{
 					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
-						FString::Printf(TEXT("Unbond: Orb %d removed from held cluster and placed at (%d,%d)"), 
+						FString::Printf(TEXT("Unbond: Orb %d removed from held cluster and placed at (%d,%d)"),
 							SubA.ItemId, WorldA.Q, WorldA.R));
 				}
-				
+
 				// Force the arm to update its visual immediately
 				if (UWorld* World = GetWorld())
 				{
@@ -835,21 +837,21 @@ void USimWorldHex::StepBonds()
 						}
 					}
 				}
-				
+
 				break; // Only remove one orb per arm per tick
 			}
 		}
-		
+
 		// Special case: Check if the unbond tile was triggered on the grabbed orb itself (dQ=0, dR=0)
 		// In this case, we need to place the grabbed orb on the board and continue holding the remaining cluster
 		for (int32 SubIndex = A.Held.Orbs.Num() - 1; SubIndex >= 0; SubIndex--)
 		{
 			const FOrbData& SubA = A.Held.Orbs[SubIndex];
 			if (SubA.ItemId <= 0) continue;
-			
+
 			// Only process the grabbed orb (the one at the grip position)
 			if (SubA.dQ != 0 || SubA.dR != 0) continue;
-			
+
 			// Check if this grabbed orb has any bonds to other orbs in the cluster
 			bool bHasBondsInCluster = false;
 			if (const TArray<int32>* BondList = ItemToBonds.Find(SubA.ItemId))
@@ -859,7 +861,7 @@ void USimWorldHex::StepBonds()
 					if (!Bonds.IsValidIndex(BondIdx)) continue;
 					const FBond& Bond = Bonds[BondIdx];
 					if (!Bond.bActive) continue;
-					
+
 					// Check if this bond connects to another orb in the same cluster
 					int32 OtherItemId = (Bond.ItemA == SubA.ItemId) ? Bond.ItemB : Bond.ItemA;
 					for (const FOrbData& OtherSub : A.Held.Orbs)
@@ -873,65 +875,69 @@ void USimWorldHex::StepBonds()
 					if (bHasBondsInCluster) break;
 				}
 			}
-			
+
 			// If the grabbed orb has no bonds to other orbs in the cluster, place it on the board
 			// and continue holding the remaining cluster
 			if (!bHasBondsInCluster && A.Held.Orbs.Num() > 1)
 			{
 				// Calculate the world position of the grabbed orb (it's at the grip position)
 				FHex WorldA = GripHex;
-				
+
 				// Create a single orb item for the grabbed orb
 				FItem UnbondedOrb;
 				UnbondedOrb.bIsCluster = false;
 				UnbondedOrb.Id = SubA.ItemId;
 				UnbondedOrb.Single.Type = (EOrbType)SubA.Type;
 				UnbondedOrb.Single.Color = (EOrbColor)SubA.Color;
-				
-				// Create an animated orb to delay both visibility and simulation availability
+
+				// Place the unbonded orb immediately so it can be grabbed right away
+				TryPutItem(WorldA, UnbondedOrb);
+
+				// Also create an animated orb for visual effect only
+				// Note: The orb is already in ItemMap, so this is just for visuals
 				FAnimatedOrb AnimatedOrb;
 				AnimatedOrb.Item = UnbondedOrb;
 				AnimatedOrb.Hex = WorldA;
 				AnimatedOrb.AnimationTime = 0.f;
-				AnimatedOrb.AnimationDuration = 1.0f; // 1 second to descend (like output orbs)
+				AnimatedOrb.AnimationDuration = 0.25f; // Quick visual effect
 				AnimatedOrb.bIsInput = false; // This is an unbonded orb, not an input
 				AnimatedOrb.bActive = true;
 				AnimatedOrbs.Add(AnimatedOrb);
-				
+
 				// Remove the grabbed orb from the held cluster
 				A.Held.Orbs.RemoveAt(SubIndex);
-				
+
 				// Remove from HeldItemLastHex since this orb is no longer held
 				HeldItemLastHex.Remove(SubA.ItemId);
-				
+
 				// After removing the grabbed orb, we need to pick a new grabbed orb from the remaining cluster
 				if (A.Held.Orbs.Num() > 0)
 				{
 					// Find the first remaining orb to become the new grabbed orb
 					FOrbData& NewGrabbedOrb = A.Held.Orbs[0];
-					
+
 					// Adjust all other orbs' positions relative to the new grabbed orb
 					for (FOrbData& Orb : A.Held.Orbs)
 					{
 						Orb.dQ -= NewGrabbedOrb.dQ;
 						Orb.dR -= NewGrabbedOrb.dR;
 					}
-					
+
 					// The new grabbed orb should be at (0,0)
 					NewGrabbedOrb.dQ = 0;
 					NewGrabbedOrb.dR = 0;
-					
+
 					// Update the held item's ID to match the new grabbed orb
 					A.Held.Id = NewGrabbedOrb.ItemId;
 				}
-				
+
 				if (bDebugLogs && bDevDebugBonds && GEngine)
 				{
 					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
-						FString::Printf(TEXT("Unbond: Grabbed orb %d placed at (%d,%d). Remaining cluster orbs: %d"), 
+						FString::Printf(TEXT("Unbond: Grabbed orb %d placed at (%d,%d). Remaining cluster orbs: %d"),
 							SubA.ItemId, WorldA.Q, WorldA.R, A.Held.Orbs.Num()));
 				}
-				
+
 				// Force the arm to update its visual immediately
 				if (UWorld* World = GetWorld())
 				{
@@ -945,15 +951,15 @@ void USimWorldHex::StepBonds()
 						}
 					}
 				}
-				
+
 				break; // Only process one grabbed orb per arm per tick
 			}
 		}
 	}
-	
+
 	// Clear the arms ready for unbond processing
 	ArmsReadyForUnbond.Empty();
-	
+
 	// Update previous state for next frame's rotation completion detection
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 	{
