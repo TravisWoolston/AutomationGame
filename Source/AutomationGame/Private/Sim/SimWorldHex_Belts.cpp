@@ -700,6 +700,21 @@ void USimWorldHex::StepBelts()
 			}
 		}
 	}
+	
+	// Set newly placed items to ready for next tick
+	// This prevents items dropped by arms from being immediately pulled by belts
+	for (int32 ItemId : NewlyPlacedItems)
+	{
+		// Find the item in the map and set it ready for next tick
+		for (auto& KV : ItemMap)
+		{
+			if (KV.Value.Id == ItemId)
+			{
+				KV.Value.bIsReady = true;
+				break;
+			}
+		}
+	}
 
 	// Clear newly placed items and recently dropped tracking
 	NewlyPlacedItems.Empty();

@@ -69,17 +69,50 @@ bool USimWorldHex::TryPutItem(const FHex& H, const FItem& I)
 		Copy.Id = NextItemId++;
 	}
 	
-	// Check if placing on a bond/unbond tile - if so, set bIsReady appropriately
+	// Items placed by arms should start with bIsReady = false to prevent immediate belt pulling
+	// This gives items at least one tick to settle before being moved by belts
+	Copy.bIsReady = false;
+	
+	// Special case: Check if placing on a bond/unbond tile area
 	const FTile* Tile = TileMap.Find(H);
+	bool bIsOnBondArea = false;
+	
 	if (Tile && (Tile->Kind == ETileKind::Bond || Tile->Kind == ETileKind::Unbond))
 	{
-		// When placing an item on a bond/unbond tile, it should not be ready immediately
-		// This ensures it spends at least one tick on the tile before belts can pull it
-		Copy.bIsReady = false;
+		// Placing directly on a primary bond/unbond tile
+		bIsOnBondArea = true;
 	}
+	else
+	{
+		// Check if placing on a partner area of a bond/unbond glyph
+		for (const auto& TileKV : TileMap)
+		{
+			const FTile& CheckTile = TileKV.Value;
+			if (CheckTile.Kind != ETileKind::Bond && CheckTile.Kind != ETileKind::Unbond) continue;
+
+			// Calculate this glyph's partner hex
+			const uint8 CheckGlyphDir = (uint8)(CheckTile.Arg & 0xFF);
+			const FHex CheckPartnerHex = HexUtil::Neighbor(TileKV.Key, (EHexDir)(CheckGlyphDir % 6));
+
+			// If we're placing on this glyph's partner hex
+			if (CheckPartnerHex == H)
+			{
+				bIsOnBondArea = true;
+				break;
+			}
+		}
+	}
+	
+	// Note: Items placed on bond/unbond areas (primary or partner) keep bIsReady = false
+	// Items placed elsewhere also start with bIsReady = false to prevent immediate pulling
+	// The bIsReady flag will be set to true at the end of the current simulation tick
 	
 	ItemMap.Add(H, Copy);
 	OrbAt.Add(H, KindFromItem(Copy));
+	
+	// Add to NewlyPlacedItems to prevent belt processing this tick
+	NewlyPlacedItems.Add(Copy.Id);
+	
 	return true;
 }
 
@@ -2389,6 +2422,8 @@ void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
 		}
 	}
 }
+
+
 
 
 
