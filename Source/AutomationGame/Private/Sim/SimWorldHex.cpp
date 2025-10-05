@@ -49,10 +49,10 @@ int32 USimWorldHex::AddArm(const FArmState& Arm)
 	S.HomeFacing = (EHexDir)((uint8)S.HomeFacing % 6);
 	S.ArmLen = FMath::Clamp<int32>(S.ArmLen <= 0 ? 1 : S.ArmLen, 1, 6);
 	S.HomeArmLen = FMath::Clamp<int32>(S.HomeArmLen <= 0 ? 1 : S.HomeArmLen, 1, 6);
-	
-	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::AddArm - Added arm at (%d,%d) facing=%d assigned SimIndex=%d (total arms: %d)"), 
+
+	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::AddArm - Added arm at (%d,%d) facing=%d assigned SimIndex=%d (total arms: %d)"),
 		Arm.BaseHex.Q, Arm.BaseHex.R, (int32)Arm.Facing, NewIndex, Arms.Num());
-	
+
 	return NewIndex;
 }
 
@@ -68,15 +68,15 @@ bool USimWorldHex::TryPutItem(const FHex& H, const FItem& I)
 	{
 		Copy.Id = NextItemId++;
 	}
-	
+
 	// Items placed by arms should start with bIsReady = false to prevent immediate belt pulling
 	// This gives items at least one tick to settle before being moved by belts
 	Copy.bIsReady = false;
-	
+
 	// Special case: Check if placing on a bond/unbond tile area
 	const FTile* Tile = TileMap.Find(H);
 	bool bIsOnBondArea = false;
-	
+
 	if (Tile && (Tile->Kind == ETileKind::Bond || Tile->Kind == ETileKind::Unbond))
 	{
 		// Placing directly on a primary bond/unbond tile
@@ -102,17 +102,17 @@ bool USimWorldHex::TryPutItem(const FHex& H, const FItem& I)
 			}
 		}
 	}
-	
+
 	// Note: Items placed on bond/unbond areas (primary or partner) keep bIsReady = false
 	// Items placed elsewhere also start with bIsReady = false to prevent immediate pulling
 	// The bIsReady flag will be set to true at the end of the current simulation tick
-	
+
 	ItemMap.Add(H, Copy);
 	OrbAt.Add(H, KindFromItem(Copy));
-	
+
 	// Add to NewlyPlacedItems to prevent belt processing this tick
 	NewlyPlacedItems.Add(Copy.Id);
-	
+
 	return true;
 }
 
@@ -267,7 +267,7 @@ void USimWorldHex::CleanupBrokenBonds(const TSet<int32>& HeldIds)
 						B.ItemA, B.ItemB, dq, dr));
 			}
 		}
-		
+
 		// Update HeldItemLastHex for held items to their current virtual positions
 		// This ensures the virtual positions stay current as the arm moves/rotates
 		if (HeldIds.Contains(B.ItemA))
@@ -285,14 +285,14 @@ void USimWorldHex::MoveBondedClusterOnBelt(int32 SeedItemId, const FHex& FromHex
 {
 	// Recursively move all bonded items when one item in a cluster moves on a belt
 	// This ensures the entire cluster moves as a cohesive unit
-	
+
 	// Check if the seed item has already been moved this tick (prevents infinite loops)
 	FItem* SeedItem = ItemMap.Find(FromHex);
 	if (!SeedItem || SeedItem->Id != SeedItemId)
 	{
 		return; // Item doesn't exist at expected location
 	}
-	
+
 	// If the item was already moved this tick, check if it's at the target location
 	if (SeedItem->LocationUpdatedThisTick)
 	{
@@ -306,17 +306,17 @@ void USimWorldHex::MoveBondedClusterOnBelt(int32 SeedItemId, const FHex& FromHex
 		}
 		return; // Already moved but not to our destination, let other movement handle it
 	}
-	
+
 	// Calculate the movement vector
 	const int32 dQ = ToHex.Q - FromHex.Q;
 	const int32 dR = ToHex.R - FromHex.R;
-	
+
 	// First, gather all bonded items that need to be moved as part of this cluster
 	TSet<int32> ClusterItemIds;
 	TArray<int32> Stack;
 	Stack.Add(SeedItemId);
 	ClusterItemIds.Add(SeedItemId);
-	
+
 	// Use BFS to find all connected items through bonds
 	while (Stack.Num() > 0)
 	{
@@ -328,7 +328,7 @@ void USimWorldHex::MoveBondedClusterOnBelt(int32 SeedItemId, const FHex& FromHex
 				if (!Bonds.IsValidIndex(BondIdx)) continue;
 				const FBond& Bond = Bonds[BondIdx];
 				if (!Bond.bActive) continue;
-				
+
 				int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
 				if (OtherId > 0 && !ClusterItemIds.Contains(OtherId))
 				{
@@ -351,22 +351,22 @@ void USimWorldHex::MoveBondedClusterOnBelt(int32 SeedItemId, const FHex& FromHex
 			}
 		}
 	}
-	
+
 	// Check if all destination hexes are available
 	bool bCanMoveCluster = true;
 	TArray<TPair<int32, FHex>> MovePairs; // ItemId -> destination hex
-	
+
 	for (int32 ItemId : ClusterItemIds)
 	{
 		const FHex* CurrentHex = ItemHex.Find(ItemId);
-		if (!CurrentHex) 
+		if (!CurrentHex)
 		{
 			bCanMoveCluster = false;
 			break;
 		}
-		
+
 		FHex DestHex(CurrentHex->Q + dQ, CurrentHex->R + dR);
-		
+
 		// Check if destination is blocked by non-cluster items
 		if (ItemMap.Contains(DestHex))
 		{
@@ -377,52 +377,52 @@ void USimWorldHex::MoveBondedClusterOnBelt(int32 SeedItemId, const FHex& FromHex
 				break;
 			}
 		}
-		
+
 		MovePairs.Add(TPair<int32, FHex>(ItemId, DestHex));
 	}
-	
+
 	if (!bCanMoveCluster)
 	{
 		// Cannot move the entire cluster, abort
 		return;
 	}
-	
+
 	// Now move all items in the cluster atomically
 	TMap<FHex, FItem> TempStorage; // Store items temporarily to avoid conflicts
-	
+
 	// First pass: remove all items from their current positions
 	for (const TPair<int32, FHex>& MovePair : MovePairs)
 	{
 		int32 ItemId = MovePair.Key;
 		const FHex* CurrentHex = ItemHex.Find(ItemId);
 		if (!CurrentHex) continue;
-		
+
 		FItem* Item = ItemMap.Find(*CurrentHex);
 		if (!Item || Item->Id != ItemId) continue;
-		
+
 		// Store item temporarily
 		FItem MovedItem = *Item;
 		MovedItem.LocationUpdatedThisTick = true;
 		TempStorage.Add(MovePair.Value, MovedItem);
-		
+
 		// Remove from current position
 		ItemMap.Remove(*CurrentHex);
 		OrbAt.Remove(*CurrentHex);
 	}
-	
+
 	// Second pass: place all items at their new positions
 	for (const TPair<FHex, FItem>& TempPair : TempStorage)
 	{
 		const FHex& DestHex = TempPair.Key;
 		const FItem& Item = TempPair.Value;
-		
+
 		// Place item at destination
 		ItemMap.Add(DestHex, Item);
 		OrbAt.Add(DestHex, KindFromItem(Item));
-		
+
 		// Update ItemHex lookup
 		ItemHex[Item.Id] = DestHex;
-		
+
 		// Update belt progress
 		if (float* Progress = BeltProgress.Find(Item.Id))
 		{
@@ -463,12 +463,12 @@ void USimWorldHex::StepSim()
 	StepBelts();
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
 	StepBonds();
-	
+
 	// Second pass for arms - allows immediate grab after unbonding
 	StepArmsSecondPass();
-	
+
 	ProcessOutputs();
-	
+
 	// Debug visualization - draw bond cylinders when DebugSpheres is enabled
 	DrawBondDebugLines();
 }
@@ -494,7 +494,7 @@ void USimWorldHex::StepArms()
 	{
 		S.bRotationCompleted = false;
 	}
-	
+
 	// --- Local helpers (can access private FBond type through this) ---
 	auto GatherBondedClusterFn = [&](int32 RootId, TSet<int32>& OutIds)
 		{
@@ -563,22 +563,22 @@ void USimWorldHex::StepArms()
 	{
 		FArmState& S = Arms[ArmIndex];
 		if (S.Tape.Num() == 0) continue;
-		
-		
+
+
 		// Allow multiple operations per tick for immediate execution
 		int32 OpsExecutedThisTick = 0;
 		const int32 MaxOpsPerTick = 3; // Safety limit to prevent infinite loops
 		bool bContinueProcessing = true;
-		
+
 		while (bContinueProcessing && OpsExecutedThisTick < MaxOpsPerTick)
 		{
 			bContinueProcessing = false; // Default to stopping after one op
 			OpsExecutedThisTick++;
-			
-			
+
+
 			const FOp& Op = S.Tape[S.PC];
 			bool bResetCommandExpanded = false; // Track if Reset expanded the tape
-			
+
 			// Clean up any stale pending grabs for this arm (if it's not trying to grab anymore)
 			if (Op.Cmd != ECmd::Grab)
 			{
@@ -593,124 +593,164 @@ void USimWorldHex::StepArms()
 
 			switch (Op.Cmd)
 			{
-		case ECmd::Wait:
-		{
-			if (S.WaitCounter == 0) 
+			case ECmd::Wait:
 			{
-				S.WaitCounter = (Op.Arg == 0 ? 1 : Op.Arg);
-				if (bDebugLogs && GEngine)
+				if (S.WaitCounter == 0)
 				{
-					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
-						FString::Printf(TEXT("Arm %d: Starting wait for %d ticks"), ArmIndex, S.WaitCounter));
-				}
-			}
-			--S.WaitCounter;
-			if (S.WaitCounter > 0) 
-			{
-				// Still waiting - don't advance PC, just continue to next arm
-				if (bDebugLogs && GEngine)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 0.1f, FColor::Cyan,
-						FString::Printf(TEXT("Arm %d: Waiting... %d ticks left"), ArmIndex, S.WaitCounter));
-				}
-				break; // Exit switch without advancing PC
-			}
-			S.WaitCounter = 0;
-			if (bDebugLogs && GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-					FString::Printf(TEXT("Arm %d: Wait complete, advancing to next instruction"), ArmIndex));
-			}
-		} break;
-
-		case ECmd::Grab:
-			if (!S.bHolding)
-			{
-				// Check if we need to wait for rotation completion
-				// Look at the previous command to see if it was a rotation
-				if (S.PC > 0)
-				{
-					const FOp& PrevOp = S.Tape[(S.PC - 1 + S.Tape.Num()) % S.Tape.Num()];
-					if ((PrevOp.Cmd == ECmd::RotateL || PrevOp.Cmd == ECmd::RotateR))
-					{
-						// Previous command was a rotation - check if it completed this tick
-						// If not, we need to wait for the rotation to complete
-						if (!S.bRotationCompleted)
-						{
-							continue;
-						}
-					}
-				}
-				
-				bool bGrabSucceeded = false;            // NEW
-
-				FHex Target = S.BaseHex;
-				for (int i = 0; i < S.ArmLen; ++i)
-					Target = HexUtil::Neighbor(Target, S.Facing);
-
-				FItem* Found = ItemMap.Find(Target);
-				
-				// Check if another arm is already trying to grab this cluster
-				bool bAnotherArmGrabbing = false;
-				if (Found)
-				{
-					// Check if any other arm is pending a grab of this cluster
-					for (const FPendingGrab& PendingGrab : PendingGrabs)
-					{
-						if (PendingGrab.ArmIndex != ArmIndex && 
-							PendingGrab.TargetHex == Target && 
-							PendingGrab.ClusterId == Found->Id)
-						{
-							bAnotherArmGrabbing = true;
-							break;
-						}
-					}
-				}
-				
-				// If another arm is grabbing this cluster, wait
-				if (bAnotherArmGrabbing)
-				{
+					S.WaitCounter = (Op.Arg == 0 ? 1 : Op.Arg);
 					if (bDebugLogs && GEngine)
 					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
-							FString::Printf(TEXT("Arm %d: Another arm is grabbing cluster at (%d,%d), waiting"), ArmIndex, Target.Q, Target.R));
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
+							FString::Printf(TEXT("Arm %d: Starting wait for %d ticks"), ArmIndex, S.WaitCounter));
 					}
-					continue; // Wait for next tick
 				}
-				if (!Found)
+				--S.WaitCounter;
+				if (S.WaitCounter > 0)
 				{
-					FItem Temp;
-					if (TryArmPickItem(Target, Temp))
+					// Still waiting - don't advance PC, just continue to next arm
+					if (bDebugLogs && GEngine)
 					{
-						// Check if this orb was recently dropped by this same arm
-						if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(Temp.Id))
+						GEngine->AddOnScreenDebugMessage(-1, 0.1f, FColor::Cyan,
+							FString::Printf(TEXT("Arm %d: Waiting... %d ticks left"), ArmIndex, S.WaitCounter));
+					}
+					break; // Exit switch without advancing PC
+				}
+				S.WaitCounter = 0;
+				if (bDebugLogs && GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+						FString::Printf(TEXT("Arm %d: Wait complete, advancing to next instruction"), ArmIndex));
+				}
+			} break;
+
+			case ECmd::Grab:
+				if (!S.bHolding)
+				{
+					// Check if we need to wait for rotation completion
+					// Look at the previous command to see if it was a rotation
+					if (S.PC > 0)
+					{
+						const FOp& PrevOp = S.Tape[(S.PC - 1 + S.Tape.Num()) % S.Tape.Num()];
+						if ((PrevOp.Cmd == ECmd::RotateL || PrevOp.Cmd == ECmd::RotateR))
 						{
-							if (*DroppedByArm == ArmIndex)
+							// Previous command was a rotation - check if it completed this tick
+							// If not, we need to wait for the rotation to complete
+							if (!S.bRotationCompleted)
 							{
-								// This arm just dropped this orb, don't pick it up immediately
 								continue;
 							}
 						}
-						
-						S.Held = Temp;
-						S.bHolding = true;
-						S.PrevHeldOrbCount = 1; // Single orb
-						SkipInputThisFrame.Add(Target);
-						bGrabSucceeded = true;        // NEW
 					}
-				}
-				else
-				{
-					TSet<int32> ClusterIds;
-					if (Found->Id != 0 && ItemToBonds.Contains(Found->Id))
-						GatherBondedClusterFn(Found->Id, ClusterIds);
 
-					if (ClusterIds.Num() <= 1)
+					bool bGrabSucceeded = false;            // NEW
+
+					FHex Target = S.BaseHex;
+					for (int i = 0; i < S.ArmLen; ++i)
+						Target = HexUtil::Neighbor(Target, S.Facing);
+
+					FItem* Found = ItemMap.Find(Target);
+
+					// Check if another arm is already trying to grab this cluster
+					bool bAnotherArmGrabbing = false;
+					if (Found)
 					{
-						// Clear old HeldItemLastHex entries for this arm's previous item
-						if (S.bHolding)
+						// Check if any other arm is pending a grab of this cluster
+						for (const FPendingGrab& PendingGrab : PendingGrabs)
 						{
-							if (S.Held.bIsCluster)
+							if (PendingGrab.ArmIndex != ArmIndex &&
+								PendingGrab.TargetHex == Target &&
+								PendingGrab.ClusterId == Found->Id)
+							{
+								bAnotherArmGrabbing = true;
+								break;
+							}
+						}
+					}
+
+					// If another arm is grabbing this cluster, wait
+					if (bAnotherArmGrabbing)
+					{
+						if (bDebugLogs && GEngine)
+						{
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
+								FString::Printf(TEXT("Arm %d: Another arm is grabbing cluster at (%d,%d), waiting"), ArmIndex, Target.Q, Target.R));
+						}
+						continue; // Wait for next tick
+					}
+					if (!Found)
+					{
+						FItem Temp;
+						if (TryArmPickItem(Target, Temp))
+						{
+							// Check if this orb was recently dropped by this same arm
+							//if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(Temp.Id))
+							//{
+							//	if (*DroppedByArm == ArmIndex)
+							//	{
+							//		// This arm just dropped this orb, don't pick it up immediately
+							//		continue;
+							//	}
+							//}
+
+							S.Held = Temp;
+							S.bHolding = true;
+							S.PrevHeldOrbCount = 1; // Single orb
+							SkipInputThisFrame.Add(Target);
+							bGrabSucceeded = true;        // NEW
+						}
+					}
+					else
+					{
+						TSet<int32> ClusterIds;
+						if (Found->Id != 0 && ItemToBonds.Contains(Found->Id))
+							GatherBondedClusterFn(Found->Id, ClusterIds);
+
+						if (ClusterIds.Num() <= 1)
+						{
+							// Clear old HeldItemLastHex entries for this arm's previous item
+							if (S.bHolding)
+							{
+								if (S.Held.bIsCluster)
+								{
+									for (const FOrbData& OldSub : S.Held.Orbs)
+									{
+										if (OldSub.ItemId > 0)
+										{
+											HeldItemLastHex.Remove(OldSub.ItemId);
+										}
+									}
+								}
+								else if (S.Held.Id > 0)
+								{
+									HeldItemLastHex.Remove(S.Held.Id);
+								}
+							}
+
+							FItem SingleOut;
+							if (TryArmPickItem(Target, SingleOut))
+							{
+								// Check if this orb was recently dropped by this same arm
+								//if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(SingleOut.Id))
+								//{
+								//	if (*DroppedByArm == ArmIndex)
+								//	{
+								//		// This arm just dropped this orb, don't pick it up immediately
+								//		continue;
+								//	}
+								//}
+
+								S.Held = SingleOut;
+								S.bHolding = true;
+								S.PrevHeldOrbCount = 1; // Single orb
+								SkipInputThisFrame.Add(Target);
+								bGrabSucceeded = true;    // NEW
+							}
+						}
+						else
+						{
+							// Clear old HeldItemLastHex entries for this arm's previous cluster
+							// This prevents bond formation based on old cluster positions
+							if (S.bHolding && S.Held.bIsCluster)
 							{
 								for (const FOrbData& OldSub : S.Held.Orbs)
 								{
@@ -720,571 +760,531 @@ void USimWorldHex::StepArms()
 									}
 								}
 							}
-							else if (S.Held.Id > 0)
+
+							FItem Cluster;
+							Cluster.bIsCluster = true;
+							Cluster.Id = Found->Id;                 // Arbitrary representative Id (not reused for sub‑orbs)
+							Cluster.GrabFacing = (int8)S.Facing;
+
+							// Gather cluster members (Id -> local offsets)
+							TArray<int32> ClusterOrder;
+							ClusterOrder.Reserve(ClusterIds.Num());
+							for (int32 ItemId : ClusterIds)
 							{
-								HeldItemLastHex.Remove(S.Held.Id);
-							}
-						}
-						
-						FItem SingleOut;
-						if (TryArmPickItem(Target, SingleOut))
-						{
-							// Check if this orb was recently dropped by this same arm
-							if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(SingleOut.Id))
-							{
-								if (*DroppedByArm == ArmIndex)
+								const FHex* HexPtr = nullptr;
+								for (const auto& KV : ItemMap)
+									if (KV.Value.Id == ItemId) { HexPtr = &KV.Key; break; }
+								if (!HexPtr) continue;
+
+								FHex D(HexPtr->Q - Target.Q, HexPtr->R - Target.R);
+								const FVector2D Off2D = HexCoord::AxialToXY(FHexAxial(D.Q, D.R), 1.f, GridOrientation);
+
+								FOrbData Orb;
+								if (const FItem* It = ItemMap.Find(*HexPtr))
 								{
-									// This arm just dropped this orb, don't pick it up immediately
-									continue;
+									if (!It->bIsCluster)
+									{
+										Orb.Type = (uint8)It->Single.Type;
+										Orb.Color = (uint8)It->Single.Color;
+									}
+									Orb.ItemId = It->Id;         // preserve original Id
+								}
+								Orb.Offset = Off2D;
+								Orb.dQ = (int8)D.Q;
+								Orb.dR = (int8)D.R;
+								Cluster.Orbs.Add(Orb);
+								ClusterOrder.Add(Orb.ItemId);
+							}
+
+							// Preserve last hex positions for ALL items so CleanupBrokenBonds keeps offsets/bonds alive.
+							for (int32 ItemId : ClusterIds)
+							{
+								for (const auto& KV : ItemMap)
+									if (KV.Value.Id == ItemId)
+										HeldItemLastHex.FindOrAdd(ItemId) = KV.Key;
+							}
+
+							// Remove only the items themselves from the board (keep Bonds unchanged!)
+							for (int32 ItemId : ClusterIds)
+							{
+								FHex RemoveHex; bool bFoundHex = false;
+								for (const auto& KV : ItemMap)
+									if (KV.Value.Id == ItemId) { RemoveHex = KV.Key; bFoundHex = true; break; }
+								if (bFoundHex)
+								{
+									FItem Dummy;
+									TryTakeItem(RemoveHex, Dummy);
 								}
 							}
-							
-							S.Held = SingleOut;
-							S.bHolding = true;
-							S.PrevHeldOrbCount = 1; // Single orb
-							SkipInputThisFrame.Add(Target);
-							bGrabSucceeded = true;    // NEW
-						}
-					}
-					else
-					{
-						// Clear old HeldItemLastHex entries for this arm's previous cluster
-						// This prevents bond formation based on old cluster positions
-						if (S.bHolding && S.Held.bIsCluster)
-						{
-							for (const FOrbData& OldSub : S.Held.Orbs)
+
+							if (Cluster.Orbs.Num() > 0)
 							{
-								if (OldSub.ItemId > 0)
-								{
-									HeldItemLastHex.Remove(OldSub.ItemId);
-								}
+								S.Held = Cluster;
+								S.bHolding = true;
+								S.PrevHeldOrbCount = Cluster.Orbs.Num(); // Initial cluster size
+								SkipInputThisFrame.Add(Target);
+								bGrabSucceeded = true;
 							}
 						}
-						
-						FItem Cluster;
-						Cluster.bIsCluster = true;
-						Cluster.Id = Found->Id;                 // Arbitrary representative Id (not reused for sub‑orbs)
-						Cluster.GrabFacing = (int8)S.Facing;
+					}
 
-						// Gather cluster members (Id -> local offsets)
-						TArray<int32> ClusterOrder;
-						ClusterOrder.Reserve(ClusterIds.Num());
-						for (int32 ItemId : ClusterIds)
+					// If grab failed (nothing there), wait for next tick (retry)
+					if (!bGrabSucceeded)
+					{
+						break; // Exit switch, don't advance PC, retry next tick
+					}
+
+					// If grab succeeded, register pending grab and let normal flow advance PC
+					if (bGrabSucceeded && Found)
+					{
+						// Register this arm as grabbing this cluster
+						FPendingGrab PendingGrab;
+						PendingGrab.ArmIndex = ArmIndex;
+						PendingGrab.TargetHex = Target;
+						PendingGrab.ClusterId = Found->Id;
+						PendingGrabs.Add(PendingGrab);
+
+						if (bDebugLogs && GEngine)
 						{
-							const FHex* HexPtr = nullptr;
-							for (const auto& KV : ItemMap)
-								if (KV.Value.Id == ItemId) { HexPtr = &KV.Key; break; }
-							if (!HexPtr) continue;
-
-							FHex D(HexPtr->Q - Target.Q, HexPtr->R - Target.R);
-							const FVector2D Off2D = HexCoord::AxialToXY(FHexAxial(D.Q, D.R), 1.f, GridOrientation);
-
-							FOrbData Orb;
-							if (const FItem* It = ItemMap.Find(*HexPtr))
-							{
-								if (!It->bIsCluster)
-								{
-									Orb.Type = (uint8)It->Single.Type;
-									Orb.Color = (uint8)It->Single.Color;
-								}
-								Orb.ItemId = It->Id;         // preserve original Id
-							}
-							Orb.Offset = Off2D;
-							Orb.dQ = (int8)D.Q;
-							Orb.dR = (int8)D.R;
-							Cluster.Orbs.Add(Orb);
-							ClusterOrder.Add(Orb.ItemId);
-						}
-
-						// Preserve last hex positions for ALL items so CleanupBrokenBonds keeps offsets/bonds alive.
-						for (int32 ItemId : ClusterIds)
-						{
-							for (const auto& KV : ItemMap)
-								if (KV.Value.Id == ItemId)
-									HeldItemLastHex.FindOrAdd(ItemId) = KV.Key;
-						}
-
-						// Remove only the items themselves from the board (keep Bonds unchanged!)
-						for (int32 ItemId : ClusterIds)
-						{
-							FHex RemoveHex; bool bFoundHex = false;
-							for (const auto& KV : ItemMap)
-								if (KV.Value.Id == ItemId) { RemoveHex = KV.Key; bFoundHex = true; break; }
-							if (bFoundHex)
-							{
-								FItem Dummy;
-								TryTakeItem(RemoveHex, Dummy);
-							}
-						}
-
-						if (Cluster.Orbs.Num() > 0)
-						{
-							S.Held = Cluster;
-							S.bHolding = true;
-							S.PrevHeldOrbCount = Cluster.Orbs.Num(); // Initial cluster size
-							SkipInputThisFrame.Add(Target);
-							bGrabSucceeded = true;
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+								FString::Printf(TEXT("Arm %d: Grab succeeded, registered pending grab for cluster %d"), ArmIndex, Found->Id));
 						}
 					}
-				}
-
-				// If grab failed (nothing there), wait for next tick (retry)
-				if (!bGrabSucceeded)
-				{
-					break; // Exit switch, don't advance PC, retry next tick
-				}
-				
-				// If grab succeeded, register pending grab and let normal flow advance PC
-				if (bGrabSucceeded && Found)
-				{
-					// Register this arm as grabbing this cluster
-					FPendingGrab PendingGrab;
-					PendingGrab.ArmIndex = ArmIndex;
-					PendingGrab.TargetHex = Target;
-					PendingGrab.ClusterId = Found->Id;
-					PendingGrabs.Add(PendingGrab);
-					
-					if (bDebugLogs && GEngine)
+					else if (bGrabSucceeded)
 					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-							FString::Printf(TEXT("Arm %d: Grab succeeded, registered pending grab for cluster %d"), ArmIndex, Found->Id));
-					}
-				}
-				else if (bGrabSucceeded)
-				{
-					if (bDebugLogs && GEngine)
-					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-							FString::Printf(TEXT("Arm %d: Grab succeeded, will advance to next instruction"), ArmIndex));
-					}
-				}
-				
-				// Enable immediate execution of next command after successful grab
-				if (bGrabSucceeded)
-				{
-					bContinueProcessing = true;
-				}
-			}
-			break;
-
-		case ECmd::Drop:
-			if (S.bHolding)
-			{
-				FHex GripTarget = S.BaseHex;
-				for (int i = 0; i < S.ArmLen; ++i)
-					GripTarget = HexUtil::Neighbor(GripTarget, S.Facing);
-
-				if (!S.Held.bIsCluster)
-				{
-					// Clear any ghost tracking for this single orb before placing it
-					HeldItemLastHex.Remove(S.Held.Id);
-					NewlyPlacedItems.Remove(S.Held.Id);
-					RecentlyDroppedByArm.Remove(S.Held.Id);
-					
-					// Also remove any ghost orb from ItemMap that might be causing collision issues
-					for (auto It = ItemMap.CreateIterator(); It; ++It)
-					{
-						if (It.Value().Id == S.Held.Id)
+						if (bDebugLogs && GEngine)
 						{
-							It.RemoveCurrent();
-							break;
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+								FString::Printf(TEXT("Arm %d: Grab succeeded, will advance to next instruction"), ArmIndex));
 						}
 					}
-					
-					if (TryArmPlaceItem(GripTarget, S.Held))
+
+					// Enable immediate execution of next command after successful grab
+					if (bGrabSucceeded)
 					{
-						S.bHolding = false;
-						S.Held = FItem();
-						S.bWaitingForBond = false;
-						S.WaitForBondInitialCount = 0;
-						S.PrevHeldOrbCount = 0;
-						SkipOutputThisFrame.Add(GripTarget);
-						
-						// Enable immediate execution of next command after successful drop
 						bContinueProcessing = true;
 					}
-					else
-					{
-						// Drop failed - location occupied
-					}
 				}
-				else
+				break;
+
+			case ECmd::Drop:
+				if (S.bHolding)
 				{
-					// Compute rotation delta relative to grab, not absolute facing.
-					const uint8 CurFacingSteps = (uint8)S.Facing % 6;
-					const int8 StoredGrabFacing = (int8)(S.Held.GrabFacing);
-					const uint8 FacingDelta = (StoredGrabFacing >= 0)
-						? (uint8)(((int32)CurFacingSteps - (int32)(StoredGrabFacing % 6) + 6) % 6)
-						: CurFacingSteps; // fallback for legacy items
+					FHex GripTarget = S.BaseHex;
+					for (int i = 0; i < S.ArmLen; ++i)
+						GripTarget = HexUtil::Neighbor(GripTarget, S.Facing);
 
-					bool bBlocked = false;
-					TArray<FHex> TargetHexes;
-					TargetHexes.Reserve(S.Held.Orbs.Num());
-
-					for (const FOrbData& Sub : S.Held.Orbs)
+					if (!S.Held.bIsCluster)
 					{
-						FHex Local;
-						if (Sub.dQ != 0 || Sub.dR != 0 || Sub.Offset.IsNearlyZero())
-							Local = FHex(Sub.dQ, Sub.dR);
-						else
-							Local = ApproxXYToAxialFn(Sub.Offset); // legacy fallback
+						// Clear any ghost tracking for this single orb before placing it
+						HeldItemLastHex.Remove(S.Held.Id);
+						NewlyPlacedItems.Remove(S.Held.Id);
+						RecentlyDroppedByArm.Remove(S.Held.Id);
 
-						// FacingDelta was computed as (CurFacing - GrabFacing) in a system where
-						// +1 is a clockwise 60° step (see DirToYaw). RotateAxial60Fn expects
-						// positive steps = CCW, so we invert the direction.
-						const uint8 CCWSteps = (uint8)((6 - FacingDelta) % 6);
-						FHex RotLocal = RotateAxial60Fn(Local, CCWSteps);
-
-						FHex WorldHex(GripTarget.Q + RotLocal.Q, GripTarget.R + RotLocal.R);
-						if (ItemMap.Contains(WorldHex)) { bBlocked = true; break; }
-						TargetHexes.Add(WorldHex);
-					}
-
-					if (bBlocked)
-					{
-						if (S.WaitCounter == 0) S.WaitCounter = 1;
-						break;
-					}
-
-					// Clear any ghost tracking for this arm before placing real orbs
-					// This prevents teleporting behavior from stale HeldItemLastHex entries
-					for (const FOrbData& Sub : S.Held.Orbs)
-					{
-						HeldItemLastHex.Remove(Sub.ItemId);
-						NewlyPlacedItems.Remove(Sub.ItemId);
-						RecentlyDroppedByArm.Remove(Sub.ItemId);
-						
-						// Also remove any ghost orbs from ItemMap that might be causing collision issues
+						// Also remove any ghost orb from ItemMap that might be causing collision issues
 						for (auto It = ItemMap.CreateIterator(); It; ++It)
 						{
-							if (It.Value().Id == Sub.ItemId)
+							if (It.Value().Id == S.Held.Id)
 							{
 								It.RemoveCurrent();
 								break;
 							}
 						}
-					}
-					
-					// Place each sub‑orb back with its preserved ItemId (or assign if missing)
-					for (int32 idx = 0; idx < S.Held.Orbs.Num(); ++idx)
-					{
-						const FOrbData& Sub = S.Held.Orbs[idx];
-						FOrb O; O.Type = (EOrbType)Sub.Type; O.Color = (EOrbColor)Sub.Color;
 
-						FItem NewItem = FItem::MakeSingle(O);
-						if (Sub.ItemId > 0)
+						if (TryArmPlaceItem(GripTarget, S.Held))
 						{
-							NewItem.Id = Sub.ItemId;          // reuse original Id
-							// Defensive: keep NextItemId ahead
-							NextItemId = FMath::Max(NextItemId, NewItem.Id + 1);
+							S.bHolding = false;
+							S.Held = FItem();
+							S.bWaitingForBond = false;
+							S.WaitForBondInitialCount = 0;
+							S.PrevHeldOrbCount = 0;
+							SkipOutputThisFrame.Add(GripTarget);
+
+							// Enable immediate execution of next command after successful drop
+							bContinueProcessing = true;
 						}
 						else
 						{
-							NewItem.Id = NextItemId++;        // legacy fallback
-						}
-
-						if (TryPutItem(TargetHexes[idx], NewItem))
-						{
-							SkipOutputThisFrame.Add(TargetHexes[idx]);
-							HeldItemLastHex.Remove(NewItem.Id);
+							// Drop failed - location occupied
 						}
 					}
-
-					// Bonds referencing these Ids were never removed; offsets will self‑heal in CleanupBrokenBonds next tick.
-					S.bHolding = false;
-					S.Held = FItem();
-					S.bWaitingForBond = false;
-					S.WaitForBondInitialCount = 0;
-					S.PrevHeldOrbCount = 0;
-					
-					// Enable immediate execution of next command after successful drop
-					bContinueProcessing = true;
-				}
-				
-				// Clean up any pending grabs for this arm
-				for (int32 i = PendingGrabs.Num() - 1; i >= 0; i--)
-				{
-					if (PendingGrabs[i].ArmIndex == ArmIndex)
+					else
 					{
-						PendingGrabs.RemoveAt(i);
+						// Compute rotation delta relative to grab, not absolute facing.
+						const uint8 CurFacingSteps = (uint8)S.Facing % 6;
+						const int8 StoredGrabFacing = (int8)(S.Held.GrabFacing);
+						const uint8 FacingDelta = (StoredGrabFacing >= 0)
+							? (uint8)(((int32)CurFacingSteps - (int32)(StoredGrabFacing % 6) + 6) % 6)
+							: CurFacingSteps; // fallback for legacy items
+
+						bool bBlocked = false;
+						TArray<FHex> TargetHexes;
+						TargetHexes.Reserve(S.Held.Orbs.Num());
+
+						for (const FOrbData& Sub : S.Held.Orbs)
+						{
+							FHex Local;
+							if (Sub.dQ != 0 || Sub.dR != 0 || Sub.Offset.IsNearlyZero())
+								Local = FHex(Sub.dQ, Sub.dR);
+							else
+								Local = ApproxXYToAxialFn(Sub.Offset); // legacy fallback
+
+							// FacingDelta was computed as (CurFacing - GrabFacing) in a system where
+							// +1 is a clockwise 60° step (see DirToYaw). RotateAxial60Fn expects
+							// positive steps = CCW, so we invert the direction.
+							const uint8 CCWSteps = (uint8)((6 - FacingDelta) % 6);
+							FHex RotLocal = RotateAxial60Fn(Local, CCWSteps);
+
+							FHex WorldHex(GripTarget.Q + RotLocal.Q, GripTarget.R + RotLocal.R);
+							if (ItemMap.Contains(WorldHex)) { bBlocked = true; break; }
+							TargetHexes.Add(WorldHex);
+						}
+
+						if (bBlocked)
+						{
+							if (S.WaitCounter == 0) S.WaitCounter = 1;
+							break;
+						}
+
+						// Clear any ghost tracking for this arm before placing real orbs
+						// This prevents teleporting behavior from stale HeldItemLastHex entries
+						for (const FOrbData& Sub : S.Held.Orbs)
+						{
+							HeldItemLastHex.Remove(Sub.ItemId);
+							NewlyPlacedItems.Remove(Sub.ItemId);
+							RecentlyDroppedByArm.Remove(Sub.ItemId);
+
+							// Also remove any ghost orbs from ItemMap that might be causing collision issues
+							for (auto It = ItemMap.CreateIterator(); It; ++It)
+							{
+								if (It.Value().Id == Sub.ItemId)
+								{
+									It.RemoveCurrent();
+									break;
+								}
+							}
+						}
+
+						// Place each sub‑orb back with its preserved ItemId (or assign if missing)
+						for (int32 idx = 0; idx < S.Held.Orbs.Num(); ++idx)
+						{
+							const FOrbData& Sub = S.Held.Orbs[idx];
+							FOrb O; O.Type = (EOrbType)Sub.Type; O.Color = (EOrbColor)Sub.Color;
+
+							FItem NewItem = FItem::MakeSingle(O);
+							if (Sub.ItemId > 0)
+							{
+								NewItem.Id = Sub.ItemId;          // reuse original Id
+								// Defensive: keep NextItemId ahead
+								NextItemId = FMath::Max(NextItemId, NewItem.Id + 1);
+							}
+							else
+							{
+								NewItem.Id = NextItemId++;        // legacy fallback
+							}
+
+							if (TryPutItem(TargetHexes[idx], NewItem))
+							{
+								SkipOutputThisFrame.Add(TargetHexes[idx]);
+								HeldItemLastHex.Remove(NewItem.Id);
+							}
+						}
+
+						// Bonds referencing these Ids were never removed; offsets will self‑heal in CleanupBrokenBonds next tick.
+						S.bHolding = false;
+						S.Held = FItem();
+						S.bWaitingForBond = false;
+						S.WaitForBondInitialCount = 0;
+						S.PrevHeldOrbCount = 0;
+
+						// Enable immediate execution of next command after successful drop
+						bContinueProcessing = true;
 					}
+
+					// Clean up any pending grabs for this arm
+					for (int32 i = PendingGrabs.Num() - 1; i >= 0; i--)
+					{
+						if (PendingGrabs[i].ArmIndex == ArmIndex)
+						{
+							PendingGrabs.RemoveAt(i);
+						}
+					}
+				}
+				break;
+
+			case ECmd::RotateL:
+			case ECmd::RotateR:
+			{
+				// Mark that rotation is starting
+				S.bRotationCompleted = false;
+
+				// If we were told to wait (from a previously blocked rotate) count it down and retry next tick.
+				if (S.WaitCounter > 0)
+				{
+					--S.WaitCounter;
+					// Do NOT advance PC; retry this same rotate instruction.
+					continue;
+				}
+
+				EHexDir NewFacing = (Op.Cmd == ECmd::RotateL)
+					? (EHexDir)(((uint8)S.Facing + 1) % 6)
+					: (EHexDir)(((uint8)S.Facing + 5) % 6);
+
+				// Hand positions before/after rotation
+				FHex OldHand = S.BaseHex;
+				for (int i = 0; i < S.ArmLen; ++i)
+					OldHand = HexUtil::Neighbor(OldHand, S.Facing);
+
+				FHex NewHand = S.BaseHex;
+				for (int i = 0; i < S.ArmLen; ++i)
+					NewHand = HexUtil::Neighbor(NewHand, NewFacing);
+
+				const int32 dQ = NewHand.Q - OldHand.Q;
+				const int32 dR = NewHand.R - OldHand.R;
+
+				// Occupancy: world items
+				TSet<FHex> WorldOcc;
+				for (const auto& KV : ItemMap)
+					WorldOcc.Add(KV.Key);
+
+				// Helper: compute hand hex for a given arm/facing
+				auto ComputeGripHex = [](const FArmState& A, EHexDir Facing)->FHex
+					{
+						FHex Grip = A.BaseHex;
+						for (int i = 0; i < A.ArmLen; ++i)
+							Grip = HexUtil::Neighbor(Grip, Facing);
+						return Grip;
+					};
+
+				// Helper: rotate an axial coordinate by StepsCCW 60° steps
+				auto Rot60 = [](FHex D, uint8 StepsCCW)
+					{
+						for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+						{
+							const int32 q = D.Q;
+							const int32 r = D.R;
+							D.Q = -r;
+							D.R = q + r;
+						}
+						return D;
+					};
+
+				// Build occupancy for other arms' held orbs (and their hands)
+				TSet<FHex> OtherHeldOcc;
+				for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
+				{
+					if (OtherIdx == ArmIndex) continue;
+					const FArmState& O = Arms[OtherIdx];
+					if (!O.bHolding) continue;
+
+					// Always include their hand hex
+					const FHex OHand = ComputeGripHex(O, O.Facing);
+					OtherHeldOcc.Add(OHand);
+
+					if (O.Held.bIsCluster)
+					{
+						// Virtual positions of their sub-orbs at current facing
+						const uint8 cur = (uint8)O.Facing % 6;
+						const int8 grab = (int8)O.Held.GrabFacing;
+						const uint8 facingDelta = (grab >= 0)
+							? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+							: cur;
+						const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+						for (const FOrbData& Sub : O.Held.Orbs)
+						{
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex RotLocal = Rot60(Local, ccw);
+							OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R));
+						}
+					}
+					else
+					{
+						// Single held orb occupies the hand
+						OtherHeldOcc.Add(OHand);
+					}
+				}
+
+				// Self held-orb positions at start and end, plus two “mid” phases
+				auto BuildLocals = [&](EHexDir Facing, TArray<FHex>& OutLocals)->void
+					{
+						OutLocals.Reset();
+						if (!S.bHolding)
+							return;
+
+						const FHex Grip = ComputeGripHex(S, Facing);
+						if (!S.Held.bIsCluster)
+						{
+							OutLocals.Add(Grip);
+							return;
+						}
+
+						const uint8 cur = (uint8)Facing % 6;
+						const int8 grab = (int8)S.Held.GrabFacing;
+						const uint8 facingDelta = (grab >= 0)
+							? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+							: cur;
+						const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+						for (const FOrbData& Sub : S.Held.Orbs)
+						{
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex RotLocal = Rot60(Local, ccw);
+							OutLocals.Add(FHex(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R));
+						}
+					};
+
+				TArray<FHex> StartLocals, EndLocals, MidTranslateLocals, MidRotateLocals;
+				BuildLocals(S.Facing, StartLocals);
+				BuildLocals(NewFacing, EndLocals);
+
+				// Mid A: translate hand first (Old orientation at New hand)
+				if (S.bHolding)
+				{
+					if (!S.Held.bIsCluster)
+					{
+						MidTranslateLocals.Add(NewHand);
+					}
+					else
+					{
+						// Old orientation at New hand
+						const uint8 curOld = (uint8)S.Facing % 6;
+						const int8 grab = (int8)S.Held.GrabFacing;
+						const uint8 facingDeltaOld = (grab >= 0)
+							? (uint8)(((int32)curOld - (int32)(grab % 6) + 6) % 6)
+							: curOld;
+						const uint8 ccwOld = (uint8)((6 - facingDeltaOld) % 6);
+						for (const FOrbData& Sub : S.Held.Orbs)
+						{
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex RotLocal = Rot60(Local, ccwOld);
+							MidTranslateLocals.Add(FHex(NewHand.Q + RotLocal.Q, NewHand.R + RotLocal.R));
+						}
+					}
+				}
+
+				// Mid B: rotate first (New orientation at Old hand)
+				if (S.bHolding)
+				{
+					if (!S.Held.bIsCluster)
+					{
+						MidRotateLocals.Add(OldHand);
+					}
+					else
+					{
+						const uint8 curNew = (uint8)NewFacing % 6;
+						const int8 grab = (int8)S.Held.GrabFacing;
+						const uint8 facingDeltaNew = (grab >= 0)
+							? (uint8)(((int32)curNew - (int32)(grab % 6) + 6) % 6)
+							: curNew;
+						const uint8 ccwNew = (uint8)((6 - facingDeltaNew) % 6);
+						for (const FOrbData& Sub : S.Held.Orbs)
+						{
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex RotLocal = Rot60(Local, ccwNew);
+							MidRotateLocals.Add(FHex(OldHand.Q + RotLocal.Q, OldHand.R + RotLocal.R));
+						}
+					}
+				}
+
+				auto OverlapsAny = [&](const FHex& H)->bool
+					{
+						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H);
+					};
+
+				bool bBlocked = false;
+
+				// 1) Destination hand cannot contain foreign item/held orb (covers single held-orb too)
+				// Only check this if the arm is holding something
+				if (S.bHolding && OverlapsAny(NewHand))
+				{
+					bBlocked = true;
+				}
+
+				// 2) End positions of all sub-orbs
+				if (!bBlocked)
+				{
+					for (const FHex& H : EndLocals)
+					{
+						if (OverlapsAny(H))
+						{
+							bBlocked = true;
+							break;
+						}
+					}
+				}
+
+				// 3) Mid A: translate first (hand moves; orientation unchanged)
+				if (!bBlocked)
+				{
+					for (const FHex& H : MidTranslateLocals)
+						if (OverlapsAny(H)) { bBlocked = true; break; }
+				}
+
+				// 4) Mid B: rotate first (orientation changes; hand stays)
+				if (!bBlocked)
+				{
+					for (const FHex& H : MidRotateLocals)
+						if (OverlapsAny(H)) { bBlocked = true; break; }
+				}
+
+				if (bBlocked)
+				{
+					// Arm cannot rotate this tick; set a 1‑tick wait and retry SAME instruction.
+					if (S.WaitCounter == 0)
+					{
+						S.WaitCounter = 1;
+					}
+					// Do NOT advance PC; keep pointing at this rotate op.
+					continue;
+				}
+
+				// Commit rotation
+				S.Facing = NewFacing;
+			}
+			break;
+
+			case ECmd::Extend:
+			{
+				const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
+				const int32 OldLen = S.ArmLen;
+				S.ArmLen = FMath::Clamp<int32>(S.ArmLen + Delta, 1, MAX_ARM_LEN);
+
+				if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
+				{
+					FHex Hand = S.BaseHex;
+					for (int i = 0; i < S.ArmLen; ++i)
+						Hand = HexUtil::Neighbor(Hand, S.Facing);
+					GEngine->AddOnScreenDebugMessage(
+						-1, 1.5f, FColor::Green,
+						FString::Printf(TEXT("[Arm %d] EXTEND (Δ=%d) Len=%d Hand=(%d,%d)"),
+							ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
 				}
 			}
 			break;
 
-		case ECmd::RotateL:
-		case ECmd::RotateR:
-		{
-			// Mark that rotation is starting
-			S.bRotationCompleted = false;
-			
-			// If we were told to wait (from a previously blocked rotate) count it down and retry next tick.
-			if (S.WaitCounter > 0)
+			case ECmd::Retract:
 			{
-				--S.WaitCounter;
-				// Do NOT advance PC; retry this same rotate instruction.
-				continue;
-			}
+				const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
+				const int32 OldLen = S.ArmLen;
+				S.ArmLen = FMath::Clamp<int32>(S.ArmLen - Delta, 1, MAX_ARM_LEN);
 
-			EHexDir NewFacing = (Op.Cmd == ECmd::RotateL)
-				? (EHexDir)(((uint8)S.Facing + 1) % 6)
-				: (EHexDir)(((uint8)S.Facing + 5) % 6);
-
-			// Hand positions before/after rotation
-			FHex OldHand = S.BaseHex;
-			for (int i = 0; i < S.ArmLen; ++i)
-				OldHand = HexUtil::Neighbor(OldHand, S.Facing);
-
-			FHex NewHand = S.BaseHex;
-			for (int i = 0; i < S.ArmLen; ++i)
-				NewHand = HexUtil::Neighbor(NewHand, NewFacing);
-
-			const int32 dQ = NewHand.Q - OldHand.Q;
-			const int32 dR = NewHand.R - OldHand.R;
-
-			// Occupancy: world items
-			TSet<FHex> WorldOcc;
-			for (const auto& KV : ItemMap)
-				WorldOcc.Add(KV.Key);
-
-			// Helper: compute hand hex for a given arm/facing
-			auto ComputeGripHex = [](const FArmState& A, EHexDir Facing)->FHex
+				if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
 				{
-					FHex Grip = A.BaseHex;
-					for (int i = 0; i < A.ArmLen; ++i)
-						Grip = HexUtil::Neighbor(Grip, Facing);
-					return Grip;
-				};
-
-			// Helper: rotate an axial coordinate by StepsCCW 60° steps
-			auto Rot60 = [](FHex D, uint8 StepsCCW)
-				{
-					for (uint8 i = 0; i < (StepsCCW % 6); ++i)
-					{
-						const int32 q = D.Q;
-						const int32 r = D.R;
-						D.Q = -r;
-						D.R = q + r;
-					}
-					return D;
-				};
-
-			// Build occupancy for other arms' held orbs (and their hands)
-			TSet<FHex> OtherHeldOcc;
-			for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
-			{
-				if (OtherIdx == ArmIndex) continue;
-				const FArmState& O = Arms[OtherIdx];
-				if (!O.bHolding) continue;
-
-				// Always include their hand hex
-				const FHex OHand = ComputeGripHex(O, O.Facing);
-				OtherHeldOcc.Add(OHand);
-
-				if (O.Held.bIsCluster)
-				{
-					// Virtual positions of their sub-orbs at current facing
-					const uint8 cur = (uint8)O.Facing % 6;
-					const int8 grab = (int8)O.Held.GrabFacing;
-					const uint8 facingDelta = (grab >= 0)
-						? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
-						: cur;
-					const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-
-					for (const FOrbData& Sub : O.Held.Orbs)
-					{
-						FHex Local(Sub.dQ, Sub.dR);
-						FHex RotLocal = Rot60(Local, ccw);
-						OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R));
-					}
-				}
-				else
-				{
-					// Single held orb occupies the hand
-					OtherHeldOcc.Add(OHand);
+					FHex Hand = S.BaseHex;
+					for (int i = 0; i < S.ArmLen; ++i)
+						Hand = HexUtil::Neighbor(Hand, S.Facing);
+					GEngine->AddOnScreenDebugMessage(
+						-1, 1.5f, FColor::Orange,
+						FString::Printf(TEXT("[Arm %d] RETRACT (Δ=%d) Len=%d Hand=(%d,%d)"),
+							ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
 				}
 			}
-
-			// Self held-orb positions at start and end, plus two “mid” phases
-			auto BuildLocals = [&](EHexDir Facing, TArray<FHex>& OutLocals)->void
-				{
-					OutLocals.Reset();
-					if (!S.bHolding)
-						return;
-
-					const FHex Grip = ComputeGripHex(S, Facing);
-					if (!S.Held.bIsCluster)
-					{
-						OutLocals.Add(Grip);
-						return;
-					}
-
-					const uint8 cur = (uint8)Facing % 6;
-					const int8 grab = (int8)S.Held.GrabFacing;
-					const uint8 facingDelta = (grab >= 0)
-						? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
-						: cur;
-					const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-
-					for (const FOrbData& Sub : S.Held.Orbs)
-					{
-						FHex Local(Sub.dQ, Sub.dR);
-						FHex RotLocal = Rot60(Local, ccw);
-						OutLocals.Add(FHex(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R));
-					}
-				};
-
-			TArray<FHex> StartLocals, EndLocals, MidTranslateLocals, MidRotateLocals;
-			BuildLocals(S.Facing, StartLocals);
-			BuildLocals(NewFacing, EndLocals);
-
-			// Mid A: translate hand first (Old orientation at New hand)
-			if (S.bHolding)
-			{
-				if (!S.Held.bIsCluster)
-				{
-					MidTranslateLocals.Add(NewHand);
-				}
-				else
-				{
-					// Old orientation at New hand
-					const uint8 curOld = (uint8)S.Facing % 6;
-					const int8 grab = (int8)S.Held.GrabFacing;
-					const uint8 facingDeltaOld = (grab >= 0)
-						? (uint8)(((int32)curOld - (int32)(grab % 6) + 6) % 6)
-						: curOld;
-					const uint8 ccwOld = (uint8)((6 - facingDeltaOld) % 6);
-					for (const FOrbData& Sub : S.Held.Orbs)
-					{
-						FHex Local(Sub.dQ, Sub.dR);
-						FHex RotLocal = Rot60(Local, ccwOld);
-						MidTranslateLocals.Add(FHex(NewHand.Q + RotLocal.Q, NewHand.R + RotLocal.R));
-					}
-				}
-			}
-
-			// Mid B: rotate first (New orientation at Old hand)
-			if (S.bHolding)
-			{
-				if (!S.Held.bIsCluster)
-				{
-					MidRotateLocals.Add(OldHand);
-				}
-				else
-				{
-					const uint8 curNew = (uint8)NewFacing % 6;
-					const int8 grab = (int8)S.Held.GrabFacing;
-					const uint8 facingDeltaNew = (grab >= 0)
-						? (uint8)(((int32)curNew - (int32)(grab % 6) + 6) % 6)
-						: curNew;
-					const uint8 ccwNew = (uint8)((6 - facingDeltaNew) % 6);
-					for (const FOrbData& Sub : S.Held.Orbs)
-					{
-						FHex Local(Sub.dQ, Sub.dR);
-						FHex RotLocal = Rot60(Local, ccwNew);
-						MidRotateLocals.Add(FHex(OldHand.Q + RotLocal.Q, OldHand.R + RotLocal.R));
-					}
-				}
-			}
-
-			auto OverlapsAny = [&](const FHex& H)->bool
-				{
-					return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H);
-				};
-
-			bool bBlocked = false;
-
-			// 1) Destination hand cannot contain foreign item/held orb (covers single held-orb too)
-			// Only check this if the arm is holding something
-			if (S.bHolding && OverlapsAny(NewHand))
-			{
-				bBlocked = true;
-			}
-
-			// 2) End positions of all sub-orbs
-			if (!bBlocked)
-			{
-				for (const FHex& H : EndLocals)
-				{
-					if (OverlapsAny(H)) 
-					{ 
-						bBlocked = true; 
-						break; 
-					}
-				}
-			}
-
-			// 3) Mid A: translate first (hand moves; orientation unchanged)
-			if (!bBlocked)
-			{
-				for (const FHex& H : MidTranslateLocals)
-					if (OverlapsAny(H)) { bBlocked = true; break; }
-			}
-
-			// 4) Mid B: rotate first (orientation changes; hand stays)
-			if (!bBlocked)
-			{
-				for (const FHex& H : MidRotateLocals)
-					if (OverlapsAny(H)) { bBlocked = true; break; }
-			}
-
-			if (bBlocked)
-			{
-				// Arm cannot rotate this tick; set a 1‑tick wait and retry SAME instruction.
-				if (S.WaitCounter == 0)
-				{
-					S.WaitCounter = 1;
-				}
-				// Do NOT advance PC; keep pointing at this rotate op.
-				continue;
-			}
-
-			// Commit rotation
-			S.Facing = NewFacing;
-		}
-		break;
-
-		case ECmd::Extend:
-		{
-			const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
-			const int32 OldLen = S.ArmLen;
-			S.ArmLen = FMath::Clamp<int32>(S.ArmLen + Delta, 1, MAX_ARM_LEN);
-
-			if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
-			{
-				FHex Hand = S.BaseHex;
-				for (int i = 0; i < S.ArmLen; ++i)
-					Hand = HexUtil::Neighbor(Hand, S.Facing);
-				GEngine->AddOnScreenDebugMessage(
-					-1, 1.5f, FColor::Green,
-					FString::Printf(TEXT("[Arm %d] EXTEND (Δ=%d) Len=%d Hand=(%d,%d)"),
-						ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
-			}
-		}
-		break;
-
-		case ECmd::Retract:
-		{
-			const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
-			const int32 OldLen = S.ArmLen;
-			S.ArmLen = FMath::Clamp<int32>(S.ArmLen - Delta, 1, MAX_ARM_LEN);
-
-			if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
-			{
-				FHex Hand = S.BaseHex;
-				for (int i = 0; i < S.ArmLen; ++i)
-					Hand = HexUtil::Neighbor(Hand, S.Facing);
-				GEngine->AddOnScreenDebugMessage(
-					-1, 1.5f, FColor::Orange,
-					FString::Printf(TEXT("[Arm %d] RETRACT (Δ=%d) Len=%d Hand=(%d,%d)"),
-						ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
-			}
-		}
-		break;
-		case ECmd::MovePos: S.TrackIdx = FMath::Clamp<int32>(S.TrackIdx + 1, -4, 4); break;
-		case ECmd::MoveNeg: S.TrackIdx = FMath::Clamp<int32>(S.TrackIdx - 1, -4, 4); break;
-		case ECmd::PivotL:  break;
-		case ECmd::PivotR:  break;
+			break;
+			case ECmd::MovePos: S.TrackIdx = FMath::Clamp<int32>(S.TrackIdx + 1, -4, 4); break;
+			case ECmd::MoveNeg: S.TrackIdx = FMath::Clamp<int32>(S.TrackIdx - 1, -4, 4); break;
+			case ECmd::PivotL:  break;
+			case ECmd::PivotR:  break;
 			case ECmd::Reset:
 			{
 				// Reset command implementation: Generate commands to drop and return to home position
@@ -1293,17 +1293,17 @@ void USimWorldHex::StepArms()
 				const int32 TargetReach = S.HomeArmLen;
 				const uint8 CurrentRotation = static_cast<uint8>(S.Facing);
 				const uint8 TargetRotation = static_cast<uint8>(S.HomeFacing);
-				
-				
-			// Create a temporary program to return to home
-			TArray<FOp> ResetOps;
-			
-			// Handle drop if holding
-			if (S.bHolding)
-			{
-				ResetOps.Add({ ECmd::Drop, 0 });
-			}
-				
+
+
+				// Create a temporary program to return to home
+				TArray<FOp> ResetOps;
+
+				// Handle drop if holding
+				if (S.bHolding)
+				{
+					ResetOps.Add({ ECmd::Drop, 0 });
+				}
+
 				// Add reach adjustments
 				const int32 ReachDiff = TargetReach - CurrentReach;
 				if (ReachDiff > 0)
@@ -1322,14 +1322,14 @@ void USimWorldHex::StepArms()
 						ResetOps.Add({ ECmd::Retract, 1 });
 					}
 				}
-				
+
 				// Add rotation adjustments - find shortest path
 				// In hex coordinates, RotateL increases the facing value (0->1->2->3->4->5->0)
 				// and RotateR decreases it (0->5->4->3->2->1->0)
 				// So to go from current to target:
 				// - If we need to increase facing, we use RotateL
 				// - If we need to decrease facing, we use RotateR
-				
+
 				if (CurrentRotation != TargetRotation)
 				{
 					// Calculate steps needed in each direction
@@ -1337,7 +1337,7 @@ void USimWorldHex::StepArms()
 					const int32 StepsCounterClockwise = (TargetRotation - CurrentRotation + 6) % 6;
 					// Steps using RotateR (clockwise, decreases facing)
 					const int32 StepsClockwise = (CurrentRotation - TargetRotation + 6) % 6;
-					
+
 					// Choose the shorter path
 					if (StepsClockwise <= StepsCounterClockwise)
 					{
@@ -1356,14 +1356,14 @@ void USimWorldHex::StepArms()
 						}
 					}
 				}
-				
+
 				// If we generated any reset operations, insert them into the tape
 				if (ResetOps.Num() > 0)
 				{
 					// Insert the reset operations after the current PC
 					S.Tape.Insert(ResetOps, S.PC + 1);
 					bResetCommandExpanded = true;
-					
+
 					// Enable immediate execution of the first reset operation
 					bContinueProcessing = true;
 				}
@@ -1373,61 +1373,61 @@ void USimWorldHex::StepArms()
 				}
 			}
 			break;
-		case ECmd::Repeat:  break;
-		case ECmd::RotateHeldL:
-			if (S.bHolding && S.Held.bIsCluster)
-			{
-				S.Held.GrabFacing = (S.Held.GrabFacing + 1) % 6;
-			}
-			break;
-		case ECmd::RotateHeldR:
-			if (S.bHolding && S.Held.bIsCluster)
-			{
-				S.Held.GrabFacing = (S.Held.GrabFacing + 5) % 6;
-			}
-			break;
-		case ECmd::WaitForBond:
-			if (S.bHolding)
-			{
-				int32 CurrentCount = S.Held.bIsCluster ? S.Held.Orbs.Num() : 1;
-				
-				// Initialize wait state if just starting
-				if (!S.bWaitingForBond)
+			case ECmd::Repeat:  break;
+			case ECmd::RotateHeldL:
+				if (S.bHolding && S.Held.bIsCluster)
 				{
-					S.bWaitingForBond = true;
-					// Use the count from the previous tick as baseline
-					S.WaitForBondInitialCount = S.PrevHeldOrbCount;
-					
-					// If a bond was already formed this tick (current > previous),
-					// don't wait - proceed immediately
-					if (CurrentCount > S.PrevHeldOrbCount)
+					S.Held.GrabFacing = (S.Held.GrabFacing + 1) % 6;
+				}
+				break;
+			case ECmd::RotateHeldR:
+				if (S.bHolding && S.Held.bIsCluster)
+				{
+					S.Held.GrabFacing = (S.Held.GrabFacing + 5) % 6;
+				}
+				break;
+			case ECmd::WaitForBond:
+				if (S.bHolding)
+				{
+					int32 CurrentCount = S.Held.bIsCluster ? S.Held.Orbs.Num() : 1;
+
+					// Initialize wait state if just starting
+					if (!S.bWaitingForBond)
 					{
+						S.bWaitingForBond = true;
+						// Use the count from the previous tick as baseline
+						S.WaitForBondInitialCount = S.PrevHeldOrbCount;
+
+						// If a bond was already formed this tick (current > previous),
+						// don't wait - proceed immediately
+						if (CurrentCount > S.PrevHeldOrbCount)
+						{
+							S.bWaitingForBond = false;
+							S.WaitForBondInitialCount = 0;
+							// Enable immediate execution of next command
+							bContinueProcessing = true;
+							break;
+						}
+					}
+
+					// Check if a bond has been added since we started waiting
+					if (CurrentCount > S.WaitForBondInitialCount)
+					{
+						// Bond detected, clear wait state and continue
 						S.bWaitingForBond = false;
 						S.WaitForBondInitialCount = 0;
 						// Enable immediate execution of next command
 						bContinueProcessing = true;
-						break;
+					}
+					else
+					{
+						// Still waiting, don't advance PC
+						break; // Exit switch without advancing PC
 					}
 				}
-				
-				// Check if a bond has been added since we started waiting
-				if (CurrentCount > S.WaitForBondInitialCount)
-				{
-					// Bond detected, clear wait state and continue
-					S.bWaitingForBond = false;
-					S.WaitForBondInitialCount = 0;
-					// Enable immediate execution of next command
-					bContinueProcessing = true;
-				}
-				else
-				{
-					// Still waiting, don't advance PC
-					break; // Exit switch without advancing PC
-				}
+				break;
 			}
-			break;
-			}
-			
+
 			// Handle PC advancement based on command execution result
 			// Some commands (like failed grabs or waiting) shouldn't advance PC
 			bool bShouldAdvancePC = true;
@@ -1448,7 +1448,7 @@ void USimWorldHex::StepArms()
 			default:
 				break;
 			}
-			
+
 			if (bShouldAdvancePC)
 			{
 				// Special handling for Reset command: don't advance PC if we just expanded the tape
@@ -1463,13 +1463,13 @@ void USimWorldHex::StepArms()
 				{
 					int32 OldPC = S.PC;
 					S.PC = (S.PC + 1) % S.Tape.Num();
-					
+
 					// Check if we wrapped around (looped)
 					if (S.PC == 0 && OldPC > 0)
 					{
 						// We've looped! Check if the tape has been expanded by Reset commands
 						// If so, we need to rebuild it from the original program
-						
+
 						// Find the corresponding actor and rebuild the tape
 						ABasicArm* ArmActor = nullptr;
 						if (UWorld* World = GetWorld())
@@ -1484,7 +1484,7 @@ void USimWorldHex::StepArms()
 								}
 							}
 						}
-						
+
 						if (ArmActor)
 						{
 							// Rebuild the tape from the original program
@@ -1496,13 +1496,13 @@ void USimWorldHex::StepArms()
 							}
 						}
 					}
-					
+
 				}
 			}
 		} // End of while loop for immediate execution
-		
+
 	}
-	
+
 	// Update previous orb counts for next tick's WaitForBond checks
 	for (FArmState& S : Arms)
 	{
@@ -1514,21 +1514,21 @@ void USimWorldHex::StepArmsSecondPass()
 {
 	// Second pass - only process arms that are trying to grab and don't have anything
 	// This allows immediate grabbing of orbs that were just unbonded
-	
+
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 	{
 		FArmState& S = Arms[ArmIndex];
 		if (S.Tape.Num() == 0) continue;
-		
+
 		// Only process arms that are trying to grab and failed in the first pass
 		const FOp& Op = S.Tape[S.PC];
 		if (Op.Cmd != ECmd::Grab || S.bHolding) continue;
-		
+
 		// Calculate target position
 		FHex Target = S.BaseHex;
 		for (int i = 0; i < S.ArmLen; ++i)
 			Target = HexUtil::Neighbor(Target, S.Facing);
-		
+
 		// Try to grab again
 		FItem* Found = ItemMap.Find(Target);
 		if (!Found)
@@ -1545,19 +1545,19 @@ void USimWorldHex::StepArmsSecondPass()
 						continue; // Still can't grab own dropped items
 					}
 				}
-				
+
 				S.Held = Temp;
 				S.bHolding = true;
 				S.PrevHeldOrbCount = 1;
 				SkipInputThisFrame.Add(Target);
-				
+
 				// Advance PC since grab succeeded
 				S.PC = (S.PC + 1) % S.Tape.Num();
-				
+
 				if (bDebugLogs && GEngine)
 				{
 					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-						FString::Printf(TEXT("Arm %d: Second pass grab succeeded at (%d,%d)"), 
+						FString::Printf(TEXT("Arm %d: Second pass grab succeeded at (%d,%d)"),
 							ArmIndex, Target.Q, Target.R));
 				}
 			}
@@ -1572,7 +1572,7 @@ void USimWorldHex::StepArmsSecondPass()
 				TArray<int32> Stack;
 				Stack.Add(Found->Id);
 				ClusterIds.Add(Found->Id);
-				
+
 				while (Stack.Num() > 0)
 				{
 					int32 CurrentId = Stack.Pop();
@@ -1583,7 +1583,7 @@ void USimWorldHex::StepArmsSecondPass()
 							if (!Bonds.IsValidIndex(BondIdx)) continue;
 							const FBond& Bond = Bonds[BondIdx];
 							if (!Bond.bActive) continue;
-							
+
 							int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
 							if (OtherId > 0 && !ClusterIds.Contains(OtherId))
 							{
@@ -1594,7 +1594,7 @@ void USimWorldHex::StepArmsSecondPass()
 					}
 				}
 			}
-			
+
 			if (ClusterIds.Num() <= 1)
 			{
 				// Single item
@@ -1608,19 +1608,19 @@ void USimWorldHex::StepArmsSecondPass()
 							continue;
 						}
 					}
-					
+
 					S.Held = SingleOut;
 					S.bHolding = true;
 					S.PrevHeldOrbCount = 1;
 					SkipInputThisFrame.Add(Target);
-					
+
 					// Advance PC
 					S.PC = (S.PC + 1) % S.Tape.Num();
-					
+
 					if (bDebugLogs && GEngine)
 					{
 						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-							FString::Printf(TEXT("Arm %d: Second pass single grab at (%d,%d)"), 
+							FString::Printf(TEXT("Arm %d: Second pass single grab at (%d,%d)"),
 								ArmIndex, Target.Q, Target.R));
 					}
 				}
@@ -1632,14 +1632,14 @@ void USimWorldHex::StepArmsSecondPass()
 				Cluster.bIsCluster = true;
 				Cluster.Id = Found->Id;
 				Cluster.GrabFacing = (int8)S.Facing;
-				
+
 				// Gather all cluster members
 				bool bAllFound = true;
 				for (int32 ItemId : ClusterIds)
 				{
 					FHex ItemHex;
 					bool bItemFound = false;
-					
+
 					for (const auto& KV : ItemMap)
 					{
 						if (KV.Value.Id == ItemId)
@@ -1649,16 +1649,16 @@ void USimWorldHex::StepArmsSecondPass()
 							break;
 						}
 					}
-					
+
 					if (!bItemFound)
 					{
 						bAllFound = false;
 						break;
 					}
-					
+
 					// Calculate relative position
 					FHex D(ItemHex.Q - Target.Q, ItemHex.R - Target.R);
-					
+
 					FOrbData Orb;
 					const FItem* It = ItemMap.Find(ItemHex);
 					if (It && !It->bIsCluster)
@@ -1672,7 +1672,7 @@ void USimWorldHex::StepArmsSecondPass()
 						Cluster.Orbs.Add(Orb);
 					}
 				}
-				
+
 				if (bAllFound && Cluster.Orbs.Num() > 0)
 				{
 					// Remove all items from board
@@ -1689,18 +1689,18 @@ void USimWorldHex::StepArmsSecondPass()
 							}
 						}
 					}
-					
+
 					S.Held = Cluster;
 					S.bHolding = true;
 					S.PrevHeldOrbCount = Cluster.Orbs.Num();
-					
+
 					// Advance PC
 					S.PC = (S.PC + 1) % S.Tape.Num();
-					
+
 					if (bDebugLogs && GEngine)
 					{
 						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-							FString::Printf(TEXT("Arm %d: Second pass cluster grab (%d orbs) at (%d,%d)"), 
+							FString::Printf(TEXT("Arm %d: Second pass cluster grab (%d orbs) at (%d,%d)"),
 								ArmIndex, Cluster.Orbs.Num(), Target.Q, Target.R));
 					}
 				}
@@ -1929,7 +1929,7 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 	const FVector NextCenter = HexCenterToWorld(NextHex);
 
 	OutWorld = FMath::Lerp(CurCenter, NextCenter, VisualP);
-	
+
 	return true;
 }
 
@@ -1947,13 +1947,13 @@ void USimWorldHex::DrawBondDebugLines()
 	{
 		return;
 	}
-	
+
 	UWorld* World = GetWorld();
 	if (!World)
 	{
 		return;
 	}
-	
+
 	// Get driver for coordinate conversion
 	AOrbSimDriver* Driver = nullptr;
 	for (TActorIterator<AOrbSimDriver> It(World); It; ++It)
@@ -1961,26 +1961,26 @@ void USimWorldHex::DrawBondDebugLines()
 		Driver = *It;
 		break;
 	}
-	
+
 	if (!Driver)
 	{
 		return;
 	}
-	
+
 	const AActor* Anchor = Driver->GetGridAnchor();
 	const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 	const float Tile = Driver->GetTileSize();
 	const EHexOrientation DriverGridOrientation = Driver->GetGridOrientation();
 	const float GridYaw = Driver->GetGridYaw();
-	
+
 	// Helper lambda to convert hex to world position
 	auto HexToWorld = [&](const FHex& H) -> FVector
-	{
-		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, DriverGridOrientation);
-		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
-	};
-	
+		{
+			const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, DriverGridOrientation);
+			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+			return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
+		};
+
 	// Draw debug lines for all active bonds
 	for (const FBond& Bond : Bonds)
 	{
@@ -1988,11 +1988,11 @@ void USimWorldHex::DrawBondDebugLines()
 		{
 			continue;
 		}
-		
+
 		// Find the actual positions of the bonded items
 		FVector PosA, PosB;
 		bool bFoundA = false, bFoundB = false;
-		
+
 		// Check if items are on the board
 		for (const auto& ItemKV : ItemMap)
 		{
@@ -2007,14 +2007,14 @@ void USimWorldHex::DrawBondDebugLines()
 				bFoundB = true;
 			}
 		}
-		
+
 		// Check if items are held by arms (for held clusters)
 		if (!bFoundA || !bFoundB)
 		{
 			for (const FArmState& Arm : Arms)
 			{
 				if (!Arm.bHolding) continue;
-				
+
 				if (Arm.Held.bIsCluster)
 				{
 					for (const FOrbData& Sub : Arm.Held.Orbs)
@@ -2025,26 +2025,26 @@ void USimWorldHex::DrawBondDebugLines()
 							FHex GripHex = Arm.BaseHex;
 							for (int i = 0; i < Arm.ArmLen; ++i)
 								GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
-							
+
 							const uint8 cur = (uint8)Arm.Facing % 6;
 							const int8 grab = (int8)Arm.Held.GrabFacing;
 							const uint8 facingDelta = (grab >= 0)
 								? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
 								: cur;
 							const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-							
+
 							auto Rot60 = [](FHex D, uint8 StepsCCW)
-							{
-								for (uint8 i = 0; i < (StepsCCW % 6); ++i)
 								{
-									int32 q = D.Q;
-									int32 r = D.R;
-									D.Q = -r;
-									D.R = q + r;
-								}
-								return D;
-							};
-							
+									for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+									{
+										int32 q = D.Q;
+										int32 r = D.R;
+										D.Q = -r;
+										D.R = q + r;
+									}
+									return D;
+								};
+
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex Rot = Rot60(Local, ccw);
 							FHex WorldHex(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
@@ -2057,26 +2057,26 @@ void USimWorldHex::DrawBondDebugLines()
 							FHex GripHex = Arm.BaseHex;
 							for (int i = 0; i < Arm.ArmLen; ++i)
 								GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
-							
+
 							const uint8 cur = (uint8)Arm.Facing % 6;
 							const int8 grab = (int8)Arm.Held.GrabFacing;
 							const uint8 facingDelta = (grab >= 0)
 								? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
 								: cur;
 							const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-							
+
 							auto Rot60 = [](FHex D, uint8 StepsCCW)
-							{
-								for (uint8 i = 0; i < (StepsCCW % 6); ++i)
 								{
-									int32 q = D.Q;
-									int32 r = D.R;
-									D.Q = -r;
-									D.R = q + r;
-								}
-								return D;
-							};
-							
+									for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+									{
+										int32 q = D.Q;
+										int32 r = D.R;
+										D.Q = -r;
+										D.R = q + r;
+									}
+									return D;
+								};
+
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex Rot = Rot60(Local, ccw);
 							FHex WorldHex(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
@@ -2105,22 +2105,22 @@ void USimWorldHex::DrawBondDebugLines()
 				}
 			}
 		}
-		
+
 		// Only draw if both positions were found
 		if (!bFoundA || !bFoundB)
 		{
 			continue;
 		}
-		
+
 		// Add some height offset to make bonds visible above the ground
 		PosA.Z += 15.f;
 		PosB.Z += 15.f;
-		
+
 		// Calculate bond direction and distance
 		FVector BondDirection = (PosB - PosA).GetSafeNormal();
 		float BondLength = FVector::Dist(PosA, PosB);
 		FVector BondMidpoint = (PosA + PosB) * 0.5f;
-		
+
 		// Draw cylinder to represent the bond
 		if (BondLength > 0.f)
 		{
@@ -2132,23 +2132,23 @@ void USimWorldHex::DrawBondDebugLines()
 				Right = FVector::RightVector;
 			}
 			FVector Forward = FVector::CrossProduct(Right, BondDirection).GetSafeNormal();
-			
+
 			// Create rotation matrix from the three axes
 			FMatrix RotationMatrix = FMatrix(Forward, Right, BondDirection, FVector::ZeroVector);
 			FRotator BondRotation = FQuat(RotationMatrix).Rotator();
-			
+
 			// Draw the cylinder (persistent for 1 second to avoid flickering)
 			DrawDebugCylinder(World, PosA, PosB, 2.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
-			
+
 			// Draw small spheres at bond endpoints (persistent for 1 second)
 			DrawDebugSphere(World, PosA, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
 			DrawDebugSphere(World, PosB, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
-			
+
 			// Draw bond ID text at midpoint (persistent for 1 second)
 			FVector TextPosition = BondMidpoint;
 			TextPosition.Z += 10.f;
-			DrawDebugString(World, TextPosition, 
-				FString::Printf(TEXT("Bond: %d-%d"), Bond.ItemA, Bond.ItemB), 
+			DrawDebugString(World, TextPosition,
+				FString::Printf(TEXT("Bond: %d-%d"), Bond.ItemA, Bond.ItemB),
 				nullptr, FColor::Cyan, 1.0f, true, 0.8f);
 		}
 	}
@@ -2164,18 +2164,18 @@ void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
 	// {
 	//	UE_LOG(LogAGSim, Warning, TEXT("Processing %d pending bond formations"), PendingBondFormations.Num());
 	// }
-	
+
 	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
 	{
 		FPendingBondFormation& Pending = PendingBondFormations[i];
-		
+
 		// Check if the arm is still valid and holding the item
 		if (Pending.ArmIndex < 0 || Pending.ArmIndex >= Arms.Num())
 		{
 			PendingBondFormations.RemoveAt(i);
 			continue;
 		}
-		
+
 		const FArmState& Arm = Arms[Pending.ArmIndex];
 		if (!Arm.bHolding)
 		{
@@ -2183,7 +2183,7 @@ void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
 			PendingBondFormations.RemoveAt(i);
 			continue;
 		}
-		
+
 		// Check if the board item still exists
 		const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
 		if (!BoardItem || BoardItem->Id != Pending.BoardItemId)
@@ -2192,10 +2192,10 @@ void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
 			PendingBondFormations.RemoveAt(i);
 			continue;
 		}
-		
+
 		// Decrease time remaining
 		Pending.TimeRemaining -= DeltaTime;
-		
+
 		if (Pending.TimeRemaining <= 0.f)
 		{
 			// Time to form the bond - use the current held item ID
@@ -2204,7 +2204,7 @@ void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
 				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
 					FString::Printf(TEXT("Processing pending bond: board orb %d -> held item %d"), Pending.BoardItemId, Arm.Held.Id));
 			}
-			
+
 			AddBoardOrbToHeldItem(Arm.Held.Id, Pending.BoardItemId, Pending.BoardItemHex);
 			PendingBondFormations.RemoveAt(i);
 		}
@@ -2219,7 +2219,7 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
 	{
 		FPendingBondFormation& Pending = PendingBondFormations[i];
-		
+
 		if (Pending.ArmIndex == ArmIndex)
 		{
 			// Check if the arm is still valid and holding something
@@ -2240,7 +2240,7 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 							TArray<int32> Stack;
 							Stack.Add(Pending.BoardItemId);
 							ClusterIds.Add(Pending.BoardItemId);
-							
+
 							while (Stack.Num() > 0)
 							{
 								int32 CurrentId = Stack.Pop();
@@ -2251,7 +2251,7 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 										if (!Bonds.IsValidIndex(BondIdx)) continue;
 										const FBond& Bond = Bonds[BondIdx];
 										if (!Bond.bActive) continue;
-										
+
 										int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
 										if (OtherId > 0 && !ClusterIds.Contains(OtherId))
 										{
@@ -2265,7 +2265,7 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 													break;
 												}
 											}
-											
+
 											if (bOtherOnBoard)
 											{
 												ClusterIds.Add(OtherId);
@@ -2281,14 +2281,14 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 							// Single item, not part of a cluster
 							ClusterIds.Add(Pending.BoardItemId);
 						}
-						
+
 						if (bDebugLogs && bDevDebugBonds && GEngine)
 						{
 							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-								FString::Printf(TEXT("Arm rotation complete - adding %d board orb(s) to held item %d"), 
+								FString::Printf(TEXT("Arm rotation complete - adding %d board orb(s) to held item %d"),
 									ClusterIds.Num(), Arm.Held.Id));
 						}
-						
+
 						// Add all cluster items to the held item
 						for (int32 BoardId : ClusterIds)
 						{
@@ -2304,7 +2304,7 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 									break;
 								}
 							}
-							
+
 							if (bFound)
 							{
 								AddBoardOrbToHeldItem(Arm.Held.Id, BoardId, BoardHex);
@@ -2313,51 +2313,51 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 					}
 				}
 			}
-			
+
 			PendingBondFormations.RemoveAt(i);
 		}
 	}
-	
+
 	// Process any pending held-to-held merges for this arm
 	for (int32 i = PendingHeldMerges.Num() - 1; i >= 0; i--)
 	{
 		FPendingHeldMerge& PendingMerge = PendingHeldMerges[i];
-		
+
 		// Check if this arm is involved in the merge
 		if (PendingMerge.ReceiverArmIndex == ArmIndex || PendingMerge.DonorArmIndex == ArmIndex)
 		{
 			// Check if both arms have completed their rotation
 			bool bBothArmsReady = true;
-			
+
 			// For simplicity, we'll process the merge when either arm completes rotation
 			// This works because both arms should be rotating to form the bond
-			
+
 			if (PendingMerge.ReceiverArmIndex >= 0 && PendingMerge.ReceiverArmIndex < Arms.Num() &&
-			    PendingMerge.DonorArmIndex >= 0 && PendingMerge.DonorArmIndex < Arms.Num())
+				PendingMerge.DonorArmIndex >= 0 && PendingMerge.DonorArmIndex < Arms.Num())
 			{
 				FArmState& ReceiverArm = Arms[PendingMerge.ReceiverArmIndex];
 				FArmState& DonorArm = Arms[PendingMerge.DonorArmIndex];
-				
+
 				// Make sure both arms are still holding their items
 				if (ReceiverArm.bHolding && DonorArm.bHolding)
 				{
 					// Perform the merge - copy all orbs from donor to receiver
 					ProcessHeldToHeldMerge(PendingMerge.ReceiverArmIndex, PendingMerge.DonorArmIndex);
-					
+
 					if (bDebugLogs && bDevDebugBonds && GEngine)
 					{
 						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-							FString::Printf(TEXT("Arm rotation complete - merged held clusters: Arm %d absorbed Arm %d's items"), 
+							FString::Printf(TEXT("Arm rotation complete - merged held clusters: Arm %d absorbed Arm %d's items"),
 								PendingMerge.ReceiverArmIndex, PendingMerge.DonorArmIndex));
 					}
 				}
 			}
-			
+
 			// Remove the pending merge
 			PendingHeldMerges.RemoveAt(i);
 		}
 	}
-	
+
 	// Note: Unbond processing is now handled in OnArmRotationFullyComplete()
 	// This function only handles bond formation at 95% rotation completion
 }
@@ -2369,7 +2369,7 @@ void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 	{
 		Arms[ArmIndex].bRotationCompleted = true;
 	}
-	
+
 	// Mark this arm as ready for unbond processing with its current facing direction
 	// The actual unbond processing will happen during the next simulation step
 	// This function is idempotent - it can be called multiple times safely
@@ -2381,7 +2381,7 @@ void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 		{
 			return; // Already marked, no need to do it again
 		}
-		
+
 		// Get the arm's visual facing direction when rotation fully completes
 		uint8 VisualFacing = (uint8)Arms[ArmIndex].Facing; // Default to simulation facing
 		if (UWorld* World = GetWorld())
@@ -2397,7 +2397,7 @@ void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 				}
 			}
 		}
-		
+
 		// Store the arm index and the facing direction when rotation fully completed
 		ArmsReadyForUnbond.Add(ArmIndex, VisualFacing);
 	}
@@ -2409,7 +2409,7 @@ void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
 	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
 	{
 		FPendingBondFormation& Pending = PendingBondFormations[i];
-		
+
 		if (Pending.ArmIndex == ArmIndex)
 		{
 			if (bDebugLogs && bDevDebugBonds && GEngine)
@@ -2417,7 +2417,7 @@ void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
 				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
 					FString::Printf(TEXT("Canceling pending bond formation for arm %d (arm dropped item)"), ArmIndex));
 			}
-			
+
 			PendingBondFormations.RemoveAt(i);
 		}
 	}

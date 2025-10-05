@@ -783,14 +783,14 @@ void USimWorldHex::StepBonds()
 
 				// Also create an animated orb for visual effect only
 				// Note: The orb is already in ItemMap, so this is just for visuals
-				FAnimatedOrb AnimatedOrb;
-				AnimatedOrb.Item = UnbondedOrb;
-				AnimatedOrb.Hex = WorldA;
-				AnimatedOrb.AnimationTime = 0.f;
-				AnimatedOrb.AnimationDuration = 0.25f; // Quick visual effect
-				AnimatedOrb.bIsInput = false; // This is an unbonded orb, not an input
-				AnimatedOrb.bActive = true;
-				AnimatedOrbs.Add(AnimatedOrb);
+				//FAnimatedOrb AnimatedOrb;
+				//AnimatedOrb.Item = UnbondedOrb;
+				//AnimatedOrb.Hex = WorldA;
+				//AnimatedOrb.AnimationTime = 0.f;
+				//AnimatedOrb.AnimationDuration = 0.25f; // Quick visual effect
+				//AnimatedOrb.bIsInput = false; // This is an unbonded orb, not an input
+				//AnimatedOrb.bActive = true;
+				//AnimatedOrbs.Add(AnimatedOrb);
 
 				// Remove the orb from the held cluster
 				A.Held.Orbs.RemoveAt(SubIndex);
@@ -895,14 +895,14 @@ void USimWorldHex::StepBonds()
 
 				// Also create an animated orb for visual effect only
 				// Note: The orb is already in ItemMap, so this is just for visuals
-				FAnimatedOrb AnimatedOrb;
-				AnimatedOrb.Item = UnbondedOrb;
-				AnimatedOrb.Hex = WorldA;
-				AnimatedOrb.AnimationTime = 0.f;
-				AnimatedOrb.AnimationDuration = 0.25f; // Quick visual effect
-				AnimatedOrb.bIsInput = false; // This is an unbonded orb, not an input
-				AnimatedOrb.bActive = true;
-				AnimatedOrbs.Add(AnimatedOrb);
+				//FAnimatedOrb AnimatedOrb;
+				//AnimatedOrb.Item = UnbondedOrb;
+				//AnimatedOrb.Hex = WorldA;
+				//AnimatedOrb.AnimationTime = 0.f;
+				//AnimatedOrb.AnimationDuration = 0.25f; // Quick visual effect
+				//AnimatedOrb.bIsInput = false; // This is an unbonded orb, not an input
+				//AnimatedOrb.bActive = true;
+				//AnimatedOrbs.Add(AnimatedOrb);
 
 				// Remove the grabbed orb from the held cluster
 				A.Held.Orbs.RemoveAt(SubIndex);
