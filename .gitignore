@@ -1,3 +1,4 @@
+/Content/Imported
 # Ignore all files by default, but scan all directories.
 *
 !*/
