@@ -42,7 +42,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Grid")
 	bool bUseAnchorZForPicking = true;
 
-
 	/** Visual conventions for belts */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Belts")
 	int32 BeltVisualDirOffset = 0;
@@ -93,6 +92,19 @@ public:
 	/** Set grid parameters from GameManager (source of truth) */
 	UFUNCTION(BlueprintCallable, Category = "Grid")
 	void SetGridParameters(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor);
+
+	// Apply sphere settings as dictated by GameManager (no public editable toggle anymore)
+	void ApplySphereSettings(bool bEnable, float InRadius) { bSphereGrid = bEnable; SphereRadiusUU = InRadius; }
+	bool IsSphereEnabled() const { return bSphereGrid; }
+	float GetSphereRadius() const { return SphereRadiusUU; }
+
+	// (Deprecated) kept for backward compatibility – just forwards to SetGridParameters + ApplySphereSettings
+	UFUNCTION(BlueprintCallable, Category="Grid", meta=(DeprecatedFunction, DeprecationMessage="Use GameManager settings instead."))
+	void SetGridParametersSphere(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor, bool bInSphere, float InSphereRadius)
+	{
+		SetGridParameters(InOrientation, InYawDeg, InTileSizeUU, InAnchor);
+		ApplySphereSettings(bInSphere, InSphereRadius);
+	}
 	
 	/** Sync debug settings to all BasicArm actors in the world */
 	UFUNCTION(BlueprintCallable, Category = "Debug")
@@ -102,7 +114,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void ForceSyncDebugSettings();
 	
+	/** Map a simulation hex coordinate to world space (handles sphere mapping if enabled). */
+	UFUNCTION(BlueprintCallable, Category="Grid")
+	FVector MapHexToWorld(const FHex& H) const;
 
+	/** Inverse of MapHexToWorld (best-effort for sphere mapping). Returns true if success. */
+	UFUNCTION(BlueprintCallable, Category="Grid")
+	bool WorldToHex(const FVector& World, FHex& OutHex) const;
 
 	/** Draw debug spheres for all orbs in the simulation.
 	 * Called every frame when bDebugSpheres is enabled.
@@ -138,4 +156,20 @@ private:
 	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
 	float GridYawDeg = 0.f;
 	float TileSizeUU = 120.f;
+
+	// Sphere mapping extents (rotated planar XY bounds) for converting axial -> lon/lat
+	float SphereMinX = -1.f;
+	float SphereMaxX = 1.f;
+	float SphereMinY = -1.f;
+	float SphereMaxY = 1.f;
+
+	// Internal sphere state (no longer publicly editable)
+	bool  bSphereGrid = false;
+	float SphereRadiusUU = 2000.f;
+
+public:
+	void SetSphereMappingExtents(float InMinX, float InMaxX, float InMinY, float InMaxY, float InRadius)
+	{
+		SphereMinX = InMinX; SphereMaxX = InMaxX; SphereMinY = InMinY; SphereMaxY = InMaxY; SphereRadiusUU = InRadius; bSphereGrid = true;
+	}
 };

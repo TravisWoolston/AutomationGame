@@ -8,6 +8,29 @@
 #include "Sim/HexCoord.h"
 #include "Sim/SimWorldHex.h"          // <-- ADDED for USimWorldHex / FArmState
 #include "DrawDebugHelpers.h"
+#include "Sim/HexTypes.h" // <-- ADDED for HexUtil
+#include "Geometry/GoldbergGrid.h" // NEW
+
+// Local helper to build orthonormal basis from Up + arbitrary forward (similar to HexFactoryActor)
+namespace { inline void BuildSafeBasisGM(const FVector& InUpRaw, const FVector& InForwardRaw, FVector& OutF, FVector& OutR, FVector& OutU)
+{
+	OutU = InUpRaw.GetSafeNormal(); if (OutU.IsNearlyZero()) OutU = FVector::UpVector;
+	FVector F = InForwardRaw - OutU * FVector::DotProduct(InForwardRaw, OutU);
+	if (F.SizeSquared() < KINDA_SMALL_NUMBER)
+	{
+		F = FVector::CrossProduct(OutU, FVector::RightVector);
+		if (F.SizeSquared() < KINDA_SMALL_NUMBER) F = FVector::CrossProduct(OutU, FVector::ForwardVector);
+	}
+	OutF = F.GetSafeNormal();
+	OutR = FVector::CrossProduct(OutF, OutU).GetSafeNormal();
+	if (OutR.IsNearlyZero())
+	{
+		FVector Aux = FVector::CrossProduct(OutU, FVector::ForwardVector); if (Aux.IsNearlyZero()) Aux = FVector::CrossProduct(OutU, FVector::RightVector);
+		OutF = Aux.GetSafeNormal();
+		OutR = FVector::CrossProduct(OutF, OutU).GetSafeNormal();
+	}
+	OutF = FVector::CrossProduct(OutU, OutR).GetSafeNormal();
+} }
 
 AGameManager::AGameManager()
 {
@@ -127,45 +150,52 @@ void AGameManager::BuildGridInstances()
 	if (TileMesh) ISM->SetStaticMesh(TileMesh);
 	if (TileMaterial) ISM->SetMaterial(0, TileMaterial);
 
-	const float S = FMath::Max(1.f, TileSizeUU);
+	const float TileSpacing = TileSizeUU; // alias for clarity
+	const float S = FMath::Max(1.f, TileSpacing);
 	const FVector Origin = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
+	const float OriYawOffsetDegPlanar = (GridOrientation == EHexOrientation::PointyTop) ? 30.f : 0.f;
+	USimWorldHex* Sim = OrbSimDriver ? OrbSimDriver->GetSim() : nullptr;
 
-	const auto ToWorld = [S, Origin, this](int32 Q, int32 R)->FVector
-		{
-			// Use the same coordinate conversion as HexCoord::AxialToXY
-			const FVector2D XY = HexCoord::AxialToXY(FHexAxial(Q, R), S, GridOrientation);
-			const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
-			return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
-		};
-
-	// Get simulation state to avoid rendering grid tiles where other tiles are placed
-	USimWorldHex* Sim = nullptr;
-	if (OrbSimDriver)
+	if (bSphereGrid && bUseGoldbergSphere)
 	{
-		Sim = OrbSimDriver->GetSim();
-	}
-
-	for (int r = -Radius; r <= Radius; ++r)
-	{
-		for (int q = -Radius; q <= Radius; ++q)
+		if (!GoldbergGrid) GoldbergGrid = NewObject<UGoldbergGrid>(this, TEXT("GoldbergGrid"));
+		GoldbergGrid->Build(GoldbergFrequency, GetEffectiveSphereRadius(), Origin);
+		const TArray<FGoldbergCell>& Cells = GoldbergGrid->GetCells();
+		const bool bPointy = (GridOrientation == EHexOrientation::PointyTop);
+		for (int32 i=0;i<Cells.Num();++i)
 		{
-			const int s = -q - r;
-			if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue;
-			
-			// Skip rendering grid tile only if there's an output tile placed here in the simulation
-			if (Sim && Sim->TileMap.Contains(FHex(q, r)))
+			const FGoldbergCell& C = Cells[i];
+			if (C.bPentagon) continue; // leave pentagon slots empty for now
+			FVector Up = (C.Position - Origin).GetSafeNormal(); if (Up.IsNearlyZero()) Up = FVector::UpVector;
+			FVector East = FVector::CrossProduct(FVector::UpVector, Up); if (East.IsNearlyZero()) East = FVector::RightVector; East.Normalize();
+			FVector North = FVector::CrossProduct(Up, East).GetSafeNormal();
+			// Unreal forward = X (use East), right = Y (use North), up = Z
+			FMatrix M(East, North, Up, FVector::ZeroVector);
+			FTransform XForm(M.Rotator(), C.Position, FVector(1));
+			if (bPointy)
 			{
-				const FTile& PlacedTile = Sim->TileMap[FHex(q, r)];
-				if (PlacedTile.Kind == ETileKind::Output)
-				{
-					continue; // Skip grid tile for outputs only
-				}
+				// Apply same 30 deg yaw offset used in planar grid so hex mesh aligns consistently
+				FQuat OffsetRot(Up, FMath::DegreesToRadians(30.f));
+				XForm.ConcatenateRotation(OffsetRot);
 			}
-			
-			const FVector P = ToWorld(q, r);
-			ISM->AddInstance(FTransform(FRotator::ZeroRotator, P, FVector(1)));
+			ISM->AddInstance(XForm);
 		}
+		return; // done
 	}
+
+	if (bSphereGrid && OrbSimDriver)
+	{
+		TArray<FHex> Hexes; Hexes.Reserve((Radius * 2 + 1) * (Radius * 2 + 1));
+		float MinX=FLT_MAX, MaxX=-FLT_MAX, MinY=FLT_MAX, MaxY=-FLT_MAX;
+		for(int r=-Radius;r<=Radius;++r){ for(int q=-Radius;q<=Radius;++q){ int s=-q-r; if(FMath::Max3(FMath::Abs(q),FMath::Abs(r),FMath::Abs(s))>Radius) continue; Hexes.Add(FHex(q,r)); FVector2D XY=HexCoord::AxialToXY(FHexAxial(q,r), S, GridOrientation); MinX=FMath::Min(MinX,XY.X); MaxX=FMath::Max(MaxX,XY.X); MinY=FMath::Min(MinY,XY.Y); MaxY=FMath::Max(MaxY,XY.Y);} }
+		const float SphereR = GetEffectiveSphereRadius();
+		OrbSimDriver->SetSphereMappingExtents(MinX,MaxX,MinY,MaxY,SphereR);
+		for(const FHex& H: Hexes){ if (Sim && Sim->TileMap.Contains(H)){ const FTile& PT=Sim->TileMap[H]; if(PT.Kind==ETileKind::Output) continue;} FVector P=OrbSimDriver->MapHexToWorld(H); FVector Radial=(P-Origin).GetSafeNormal(); if(Radial.IsNearlyZero()) Radial=FVector::UpVector; FVector East=FVector::CrossProduct(FVector::UpVector,Radial); if(East.IsNearlyZero()) East=FVector::CrossProduct(FVector::RightVector,Radial); East.Normalize(); FVector North=FVector::CrossProduct(Radial,East).GetSafeNormal(); FMatrix M(East,North,Radial,FVector::ZeroVector); FTransform X(M.Rotator(),P,FVector(1)); if (GridOrientation==EHexOrientation::PointyTop){ FQuat Off(Radial, FMath::DegreesToRadians(30.f)); X.ConcatenateRotation(Off);} ISM->AddInstance(X); }
+		return;
+	}
+	// planar path
+	const auto ToWorld=[S,Origin,this](int32 Q,int32 R){ FVector2D XY=HexCoord::AxialToXY(FHexAxial(Q,R),S,GridOrientation); FVector2D RotXY=HexCoord::Rotate2D(XY,GridYawDeg); return Origin+FVector(RotXY.X,RotXY.Y,0.f); };
+	for(int r=-Radius;r<=Radius;++r){ for(int q=-Radius;q<=Radius;++q){ int s=-q-r; if(FMath::Max3(FMath::Abs(q),FMath::Abs(r),FMath::Abs(s))>Radius) continue; if(Sim && Sim->TileMap.Contains(FHex(q,r))){ const FTile& PT=Sim->TileMap[FHex(q,r)]; if(PT.Kind==ETileKind::Output) continue;} FVector P=ToWorld(q,r); FRotator R(0.f, GridYawDeg + OriYawOffsetDegPlanar, 0.f); ISM->AddInstance(FTransform(R,P,FVector(1))); }}
 }
 
 void AGameManager::Rebuild()
@@ -217,17 +247,8 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 		return nullptr;
 	}
 
-	// Compute world from grid
-	const float Tile = OrbSimDriver->GetTileSize();
-	const float GridYaw = OrbSimDriver->GetGridYaw();
-	const EHexOrientation Ori = OrbSimDriver->GetGridOrientation();
-	const AActor* Anchor = OrbSimDriver->GetGridAnchor();
-	const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
-
-	const FVector2D XY = HexCoord::AxialToXY(FHexAxial(Hex.Q, Hex.R), Tile, Ori);
-	const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYaw);
-	const FVector   Loc = AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
-	const float     Yaw = GridYaw + 60.f * float(Facing % 6);
+	FVector Loc = OrbSimDriver->MapHexToWorld(Hex);
+	float Yaw = OrbSimDriver->GetGridYaw() + 60.f * float(Facing % 6);
 
 	FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	ABasicArm* Arm = GetWorld()->SpawnActor<ABasicArm>(BasicArmClass, FTransform(FRotator(0, Yaw, 0), Loc), S);
@@ -279,11 +300,22 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 
 void AGameManager::SyncOrbSimDriverParameters()
 {
-	if (!OrbSimDriver) return;
-	
-	// GameManager is the source of truth - sync OrbSimDriver to match
+	if (!OrbSimDriver) return; 
 	OrbSimDriver->SetGridParameters(GridOrientation, GridYawDeg, TileSizeUU, GridAnchor);
-	
-	UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver parameters - Orientation=%d Yaw=%.1f TileSize=%.1f"),
-		(int32)GridOrientation, GridYawDeg, TileSizeUU);
+	OrbSimDriver->ApplySphereSettings(bSphereGrid, GetEffectiveSphereRadius());
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver params Orientation=%d Yaw=%.1f TileSpacing=%.1f SphereR=%.1f Auto=%d"), (int32)GridOrientation, GridYawDeg, TileSizeUU, GetEffectiveSphereRadius(), bAutoSphereRadius?1:0);
+}
+
+FVector AGameManager::GetWorldForHex(const FHex& H) const
+{
+	if (OrbSimDriver)
+	{
+		return OrbSimDriver->MapHexToWorld(H);
+	}
+	// Fallback to previous planar conversion
+	const float S = FMath::Max(1.f, TileSizeUU);
+	const FVector Origin = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
+	const FVector2D XY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), S, GridOrientation);
+	const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
+	return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
 }

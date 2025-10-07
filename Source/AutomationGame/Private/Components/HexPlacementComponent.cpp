@@ -666,6 +666,17 @@ void UHexPlacementComponent::UpdateHoverHex()
 		return;
 	}
 
+	if (Driver && Driver->IsSphereEnabled())
+	{
+		FHex H;
+		if (Driver->WorldToHex(World, H))
+		{
+			HoverHex = H;
+			bHoverValid = true;
+			return;
+		}
+	}
+
 	const float Tile = Driver ? Driver->GetTileSize() : (Sim ? Sim->TileSizeUU : 100.f);
 	const AActor* Anchor = GetAnchor();
 	const FVector2D OriginXY = Anchor

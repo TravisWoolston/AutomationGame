@@ -40,17 +40,17 @@ void AOrbSimDriver::BeginPlay()
 			for (TActorIterator<AGameManager> It(W); It; ++It) { GM = *It; break; }
 		}
 	}
-	
+
 	// If GameManager already set our parameters before Sim was created, sync them now
 	if (Sim && (GridOrientation != EHexOrientation::PointyTop || GridYawDeg != 0.f || TileSizeUU != 120.f))
 	{
 		Sim->TileSizeUU = TileSizeUU;
 		const FVector AnchorLoc = GridAnchor ? GridAnchor->GetActorLocation() : FVector::ZeroVector;
-		Sim->SetWorldTransform(AnchorLoc, GridYawDeg, GridOrientation);
-		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Synced Sim with pre-set parameters - TileSize=%.1f Orientation=%d Yaw=%.1f"), 
+		Sim->SetWorldTransform(AnchorLoc, GridYawDeg, GridOrientation); // set world transform (3 params)
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Synced Sim with pre-set parameters - TileSize=%.1f Orientation=%d Yaw=%.1f"),
 			TileSizeUU, (int32)GridOrientation, GridYawDeg);
 	}
-	
+
 	// Always sync debug settings when Sim is created
 	if (Sim)
 	{
@@ -59,7 +59,7 @@ void AOrbSimDriver::BeginPlay()
 		Sim->bDebugLines = bDebugLines;
 		Sim->bDebugBonds = bDebugBonds;
 	}
-	
+
 	// Sync debug settings to all arms
 	SyncDebugSettingsToArms();
 
@@ -89,7 +89,7 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 	StepAlpha = FMath::Clamp(StepAlpha, 0.f, 1.f);
 
 	Sim->SetFrameAlpha(StepAlpha);   // was: Sim->FrameAlpha = StepAlpha;
-	
+
 	// Draw debug spheres for all orbs in the simulation
 	if (bDebugSpheres && GetWorld())
 	{
@@ -141,24 +141,16 @@ void AOrbSimDriver::SetGridParameters(EHexOrientation InOrientation, float InYaw
 	GridYawDeg = InYawDeg;
 	TileSizeUU = InTileSizeUU;
 	GridAnchor = InAnchor;
-	
-	// Update the sim's parameters to match (if sim exists)
 	if (Sim)
 	{
 		Sim->TileSizeUU = TileSizeUU;
 		const FVector AnchorLoc = InAnchor ? InAnchor->GetActorLocation() : FVector::ZeroVector;
 		Sim->SetWorldTransform(AnchorLoc, GridYawDeg, GridOrientation);
-		
-		// Sync debug settings
-		Sim->bDebugLogs = bDebugLogs;
-		Sim->bDebugSpheres = bDebugSpheres;
-		Sim->bDebugLines = bDebugLines;
-		Sim->bDebugBonds = bDebugBonds;
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Grid parameters updated - Orientation=%d Yaw=%.1f TileSize=%.1f Sim=%s"),
-		(int32)GridOrientation, GridYawDeg, TileSizeUU, Sim ? TEXT("exists") : TEXT("null"));
+	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Grid parameters updated - Orientation=%d Yaw=%.1f TileSize=%.1f"), (int32)GridOrientation, GridYawDeg, TileSizeUU);
 }
+
+// Deprecated legacy function kept for BP compatibility (now calls ApplySphereSettings via inline wrapper in header)
 
 void AOrbSimDriver::SyncDebugSettingsToArms()
 {
@@ -181,12 +173,12 @@ void AOrbSimDriver::SyncDebugSettingsToArms()
 void AOrbSimDriver::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
-	
+
 	if (HasAnyFlags(RF_ClassDefaultObject)) return;
 	if (!GIsPlayInEditorWorld) return; // only care while PIE is running
-	
+
 	const FName PropName = PropertyChangedEvent.Property ? PropertyChangedEvent.Property->GetFName() : NAME_None;
-	
+
 	// Check if any debug settings changed
 	if (PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugLogs) ||
 		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugSpheres) ||
@@ -201,11 +193,11 @@ void AOrbSimDriver::PostEditChangeProperty(FPropertyChangedEvent& PropertyChange
 			Sim->bDebugLines = bDebugLines;
 			Sim->bDebugBonds = bDebugBonds;
 		}
-		
+
 		// Sync to all arms
 		SyncDebugSettingsToArms();
-		
-		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Debug settings changed - Logs=%d Spheres=%d Lines=%d Bonds=%d"), 
+
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Debug settings changed - Logs=%d Spheres=%d Lines=%d Bonds=%d"),
 			bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0, bDebugBonds ? 1 : 0);
 	}
 }
@@ -221,50 +213,48 @@ void AOrbSimDriver::ForceSyncDebugSettings()
 		Sim->bDebugLines = bDebugLines;
 		Sim->bDebugBonds = bDebugBonds;
 	}
-	
+
 	// Sync to all arms
 	SyncDebugSettingsToArms();
-	
-	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Force synced debug settings - Logs=%d Spheres=%d Lines=%d Bonds=%d"), 
+
+	UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Force synced debug settings - Logs=%d Spheres=%d Lines=%d Bonds=%d"),
 		bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0, bDebugBonds ? 1 : 0);
 }
-
-
 
 void AOrbSimDriver::DrawAllOrbDebugSpheres()
 {
 	if (!Sim || !GetWorld()) return;
-	
+
 	const AActor* Anchor = GetGridAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 	const float Tile = GetTileSize();
 	const float GridYaw = GetGridYaw();
 	const EHexOrientation Ori = GetGridOrientation();
-	
+
 	// Draw spheres for all board items (not held by arms)
 	for (const auto& KV : Sim->ItemMap)
 	{
 		const FHex& Hex = KV.Key;
 		const FItem& Item = KV.Value;
-		
+
 		if (Item.Id == 0) continue; // Skip invalid items
-		
+
 		// Calculate world position for this hex
 		const FHexAxial A(Hex.Q, Hex.R);
 		const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
 		const FVector HexWorld = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-		
+
 		if (!Item.bIsCluster)
 		{
 			// Single orb
 			const FColor DebugColor = GetDebugColorForOrbType(static_cast<uint8>(Item.Single.Type));
 			const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(Item.Single.Type), false);
 			DrawDebugSphere(GetWorld(), HexWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
-			
+
 			// Draw item ID text
-			DrawDebugString(GetWorld(), HexWorld + FVector(0, 0, SphereSize + 5.f), 
-				FString::Printf(TEXT("ID:%d"), Item.Id), 
+			DrawDebugString(GetWorld(), HexWorld + FVector(0, 0, SphereSize + 5.f),
+				FString::Printf(TEXT("ID:%d"), Item.Id),
 				nullptr, DebugColor, 0.f, true, 1.0f);
 		}
 		else
@@ -273,14 +263,14 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 			for (int32 SubIdx = 0; SubIdx < Item.Orbs.Num(); ++SubIdx)
 			{
 				const FOrbData& Sub = Item.Orbs[SubIdx];
-				
+
 				// Calculate offset from cluster center using hex coordinates
 				const FHex SubHex(Hex.Q + Sub.dQ, Hex.R + Sub.dR);
 				const FHexAxial SubA(SubHex.Q, SubHex.R);
 				const FVector2D SubLocalXY = HexCoord::AxialToXY(SubA, Tile, Ori);
 				const FVector2D SubRotXY = HexCoord::Rotate2D(SubLocalXY, GridYaw);
 				const FVector SubWorld = AnchorV + FVector(SubRotXY.X, SubRotXY.Y, 0.f);
-				
+
 				// Color code: grabbed orb (dQ=0, dR=0) in green, others based on type
 				FColor DebugColor;
 				if (Sub.dQ == 0 && Sub.dR == 0)
@@ -291,50 +281,50 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 				{
 					DebugColor = GetDebugColorForOrbType(static_cast<uint8>(Sub.Type));
 				}
-				
+
 				const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(Sub.Type), true);
 				DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
-				
+
 				// Draw orb info
-				DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, SphereSize + 5.f), 
-					FString::Printf(TEXT("ID:%d[%d] dQ:%d dR:%d"), Item.Id, SubIdx, Sub.dQ, Sub.dR), 
+				DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, SphereSize + 5.f),
+					FString::Printf(TEXT("ID:%d[%d] dQ:%d dR:%d"), Item.Id, SubIdx, Sub.dQ, Sub.dR),
 					nullptr, DebugColor, 0.f, true, 0.8f);
 			}
 		}
 	}
-	
+
 	// Draw spheres for all held items by arms
 	for (const FArmState& ArmState : Sim->Arms)
 	{
 		if (!ArmState.bHolding || ArmState.Held.Id == 0) continue;
-		
+
 		const FItem& HeldItem = ArmState.Held;
-		
+
 		// Calculate arm grip position
 		FHex GripHex = ArmState.BaseHex;
 		for (int32 i = 0; i < ArmState.ArmLen; ++i)
 		{
 			GripHex = HexUtil::Neighbor(GripHex, ArmState.Facing);
 		}
-		
+
 		const FHexAxial GA(GripHex.Q, GripHex.R);
 		const FVector2D LocalXY = HexCoord::AxialToXY(GA, Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
 		const FVector GripWorld = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-		
+
 		// Apply arm rotation for held items
 		const float ArmYawDeg = GridYaw - 60.f * static_cast<uint8>(ArmState.Facing);
-		
+
 		if (!HeldItem.bIsCluster)
 		{
 			// Single held orb
 			const FColor DebugColor = FColor::Yellow; // Held items in yellow
 			const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(HeldItem.Single.Type), false);
 			DrawDebugSphere(GetWorld(), GripWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
-			
+
 			// Draw held item info
-			DrawDebugString(GetWorld(), GripWorld + FVector(0, 0, SphereSize + 5.f), 
-				FString::Printf(TEXT("HELD ID:%d"), HeldItem.Id), 
+			DrawDebugString(GetWorld(), GripWorld + FVector(0, 0, SphereSize + 5.f),
+				FString::Printf(TEXT("HELD ID:%d"), HeldItem.Id),
 				nullptr, DebugColor, 0.f, true, 1.0f);
 		}
 		else
@@ -343,12 +333,12 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 			for (int32 SubIdx = 0; SubIdx < HeldItem.Orbs.Num(); ++SubIdx)
 			{
 				const FOrbData& Sub = HeldItem.Orbs[SubIdx];
-				
+
 				// Calculate orb position relative to grip with arm rotation
 				const FHex SubHex(GripHex.Q + Sub.dQ, GripHex.R + Sub.dR);
 				const FHexAxial SubA(SubHex.Q, SubHex.R);
 				const FVector2D SubLocalXY = HexCoord::AxialToXY(SubA, Tile, Ori);
-				
+
 				// Apply arm rotation to the offset
 				FVector2D RotatedOffset = SubLocalXY;
 				if (Sub.dQ != 0 || Sub.dR != 0) // Don't rotate the grabbed orb
@@ -361,9 +351,9 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 					const float RotY = HexOffset.X * SinA + HexOffset.Y * CosA;
 					RotatedOffset = FVector2D(RotX, RotY);
 				}
-				
+
 				const FVector SubWorld = GripWorld + FVector(RotatedOffset.X, RotatedOffset.Y, 0.f);
-				
+
 				// Color code: grabbed orb in bright yellow, others in orange
 				FColor DebugColor;
 				if (Sub.dQ == 0 && Sub.dR == 0)
@@ -374,13 +364,13 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 				{
 					DebugColor = FColor::Orange; // Other held orbs
 				}
-				
+
 				const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(Sub.Type), true);
 				DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
-				
+
 				// Draw held cluster orb info
-				DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, SphereSize + 5.f), 
-					FString::Printf(TEXT("HELD ID:%d[%d]"), HeldItem.Id, SubIdx), 
+				DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, SphereSize + 5.f),
+					FString::Printf(TEXT("HELD ID:%d[%d]"), HeldItem.Id, SubIdx),
 					nullptr, DebugColor, 0.f, true, 0.8f);
 			}
 		}
@@ -407,6 +397,310 @@ float AOrbSimDriver::GetDebugSizeForOrbType(uint8 OrbType, bool bIsSubOrb) const
 	// All orbs use the same size regardless of whether they're in a cluster or not
 	return DebugSphereSize;
 }
+
+FVector AOrbSimDriver::MapHexToWorld(const FHex& H) const
+{
+	const AActor* Anchor = GetGridAnchor();
+	const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	if (!IsSphereEnabled())
+	{
+		const FVector2D XY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), TileSizeUU, GridOrientation);
+		const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
+		return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
+	}
+
+	// --- Full sphere mapping with equal-area latitude to avoid polar clustering ---
+	const FVector2D BaseXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), TileSizeUU, GridOrientation);
+	const float SpanX = FMath::Max(1.f, SphereMaxX - SphereMinX);
+	const float SpanY = FMath::Max(1.f, SphereMaxY - SphereMinY);
+	float tX = (BaseXY.X - SphereMinX) / SpanX; // [0,1]
+	float tY = (BaseXY.Y - SphereMinY) / SpanY; // [0,1]
+	const float OneMinusEps = 0.999999f;
+	tX = FMath::Clamp(tX, 0.f, OneMinusEps);
+	tY = FMath::Clamp(tY, 0.f, 1.f);
+
+	// Equal-area latitude: y in [0,1] -> m = 2y-1 in [-1,1]; Lat = asin(m)
+	const float m = FMath::Clamp(2.f * tY - 1.f, -0.999999f, 0.999999f); // avoid exactly +/-1
+	const float Lat = FMath::Asin(m); // [-pi/2, pi/2]
+	const float Lon = (tX * TWO_PI) - PI; // [-pi,pi)
+
+	const float CosLat = FMath::Cos(Lat);
+	const float SinLat = FMath::Sin(Lat);
+	const float SinLon = FMath::Sin(Lon);
+	const float CosLon = FMath::Cos(Lon);
+	FVector P(
+		SphereRadiusUU * CosLat * SinLon, // X
+		SphereRadiusUU * SinLat,          // Y (up before reorientation)
+		SphereRadiusUU * CosLat * CosLon  // Z
+	);
+	// Reorient to match existing convention (swap Y/Z)
+	P = FVector(P.X, P.Z, P.Y);
+	return AnchorLoc + P;
+}
+
+bool AOrbSimDriver::WorldToHex(const FVector& World, FHex& OutHex) const
+{
+	const AActor* Anchor = GetGridAnchor();
+	const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	if (!IsSphereEnabled())
+	{
+		FVector Local = World - AnchorLoc;
+		FVector2D Rot2D = HexCoord::Rotate2D(FVector2D(Local.X, Local.Y), -GridYawDeg);
+		FHexAxial A = HexCoord::XYToAxialRound(Rot2D, TileSizeUU, GridOrientation);
+		OutHex = FHex(A.Q, A.R);
+		return true;
+	}
+
+	FVector D = World - AnchorLoc;
+	if (D.IsNearlyZero()) { OutHex = FHex(0,0); return true; }
+	// Undo reorientation (stored as X,Z,Y)
+	const float Xs = D.X;
+	const float Ys = D.Z; // original Y (sinLat * R)
+	const float Zs = D.Y; // original Z
+	const float R = FVector(Xs, Ys, Zs).Size();
+	if (R < KINDA_SMALL_NUMBER) { OutHex = FHex(0,0); return true; }
+	// Recover latitude via equal-area: SinLat = Ys / R
+	float SinLat = FMath::Clamp(Ys / R, -0.999999f, 0.999999f);
+	float Lat = FMath::Asin(SinLat);
+	float Lon = FMath::Atan2(Xs, Zs);
+	Lon = FMath::UnwindRadians(Lon);
+
+	// Forward mapping used: m = sin(Lat) = 2*tY -1  => tY = (m+1)/2
+	float tY = (SinLat + 1.f) * 0.5f; // [0,1]
+	float tX = (Lon + PI) / TWO_PI;   // [0,1)
+	tX = FMath::Clamp(tX, 0.f, 0.999999f);
+	tY = FMath::Clamp(tY, 0.f, 1.f);
+
+	const float SpanX = FMath::Max(1.f, SphereMaxX - SphereMinX);
+	const float SpanY = FMath::Max(1.f, SphereMaxY - SphereMinY);
+	const float PlanarX = SphereMinX + tX * SpanX;
+	const float PlanarY = SphereMinY + tY * SpanY;
+
+	FVector2D Planar(PlanarX, PlanarY);
+	FHexAxial A = HexCoord::XYToAxialRound(Planar, TileSizeUU, GridOrientation);
+	OutHex = FHex(A.Q, A.R);
+	return true;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

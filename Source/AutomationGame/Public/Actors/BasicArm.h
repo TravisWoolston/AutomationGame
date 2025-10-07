@@ -221,6 +221,11 @@ private:
 	UPROPERTY(Transient) UStaticMeshComponent* HandComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* HeldOrbComp = nullptr;
 
+	// --- Reach interpolation (visual only) ---
+	// Reach at start/end of current fixed step for smooth Extend/Retract visual tween
+	float ReachVisualStart = 1.f;
+	float ReachVisualEnd   = 1.f; // target logical reach for this step
+
 	// --- Held cluster visual support ---
 	UPROPERTY(Transient)
 	TArray<UStaticMeshComponent*> HeldClusterComps;          // One per sub-orb

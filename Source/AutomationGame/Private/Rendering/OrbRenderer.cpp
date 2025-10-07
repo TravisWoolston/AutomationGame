@@ -248,7 +248,6 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 	RebuildBondedOrbs();
 }
 
-
 void UOrbRenderer::RebuildCurrPos()
 {
 	CurrPos.Reset();
@@ -260,6 +259,27 @@ void UOrbRenderer::RebuildCurrPos()
 	const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
 	const float Yaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const bool bSphere = (Driver && Driver->IsSphereEnabled());
+
+	auto ComputeUprightRot = [&](const FVector& WorldPos, const FHex& H)->FRotator
+	{
+		if (!bSphere) return FRotator::ZeroRotator;
+		FVector Up = (WorldPos - AnchorV).GetSafeNormal();
+		if (Up.IsNearlyZero()) Up = FVector::UpVector;
+		// Approx forward: direction toward axial +1 in direction D0 (east) mapped on sphere
+		FHex Neighbor = HexUtil::Neighbor(H, EHexDir::D0);
+		FVector NeighborPos = Driver->MapHexToWorld(Neighbor);
+		FVector Forward = (NeighborPos - WorldPos).GetSafeNormal();
+		if (Forward.IsNearlyZero())
+		{
+			Forward = FVector::CrossProduct(FVector::UpVector, Up).GetSafeNormal();
+			if (Forward.IsNearlyZero()) Forward = FVector::ForwardVector;
+		}
+		FVector Right = FVector::CrossProduct(Forward, Up).GetSafeNormal();
+		Forward = FVector::CrossProduct(Up, Right).GetSafeNormal();
+		FMatrix M(Forward, Right, Up, FVector::ZeroVector);
+		return M.Rotator();
+	};
 
 	// Board items (not held)
 	for (const auto& KV : Sim->ItemMap)
@@ -267,26 +287,39 @@ void UOrbRenderer::RebuildCurrPos()
 		const FItem& Item = KV.Value;
 		const int32 ItemId = Item.Id;
 		if (ItemId == 0) continue;
-
-		const FHexAxial A(KV.Key.Q, KV.Key.R);
-		const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
-		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
-		const FVector TileWorld = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		const FHex H = KV.Key;
+		FVector TileWorld = bSphere ? Driver->MapHexToWorld(H) : [&]() {
+			const FHexAxial A(H.Q, H.R);
+			const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
+			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
+			return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		}();
 
 		if (!Item.bIsCluster)
 		{
 			CurrPos.Add(ItemId, TileWorld);
+			if (bSphere) CurrRot.Add(ItemId, ComputeUprightRot(TileWorld, H));
 		}
 		else
 		{
 			for (int32 SubIdx = 0; SubIdx < Item.Orbs.Num(); ++SubIdx)
 			{
 				const FOrbData& Sub = Item.Orbs[SubIdx];
-				// Treat offsets as tile-based; scale by Tile
-				const FVector2D OffRot = RotateXY(Sub.Offset * Tile, Yaw);
-				const FVector SubWorld = TileWorld + FVector(OffRot.X, OffRot.Y, 0.f);
 				const int32 SubId = MakeSubOrbId(ItemId, SubIdx);
+				// Use offset for planar only; on sphere recompute by hex offset mapping
+				FVector SubWorld;
+				if (bSphere)
+				{
+					FHex SubHex(H.Q + Sub.dQ, H.R + Sub.dR);
+					SubWorld = Driver->MapHexToWorld(SubHex);
+				}
+				else
+				{
+					const FVector2D OffRot = RotateXY(Sub.Offset * Tile, Yaw);
+					SubWorld = TileWorld + FVector(OffRot.X, OffRot.Y, 0.f);
+				}
 				CurrPos.Add(SubId, SubWorld);
+				if (bSphere) CurrRot.Add(SubId, ComputeUprightRot(SubWorld, FHex(H.Q + Sub.dQ, H.R + Sub.dR)));
 			}
 		}
 	}
@@ -302,13 +335,15 @@ void UOrbRenderer::RebuildCurrPos()
 		for (int i = 0; i < S.ArmLen; ++i)
 			Grip = HexUtil::Neighbor(Grip, S.Facing);
 
-		const FHexAxial GA(Grip.Q, Grip.R);
-		const FVector2D LocalXY = HexCoord::AxialToXY(GA, Tile, Ori);
-		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
-		const FVector GripWorld = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		FVector GripWorld = bSphere ? Driver->MapHexToWorld(Grip) : [&]() {
+			const FHexAxial GA(Grip.Q, Grip.R);
+			const FVector2D LocalXY = HexCoord::AxialToXY(GA, Tile, Ori);
+			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
+			return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		}();
 
-		const float OrbYaw = DirToYaw(static_cast<uint8>(S.Facing));
-		const FRotator BaseRot(0.f, OrbYaw, 0.f);
+		FRotator BaseRot = bSphere ? ComputeUprightRot(GripWorld, Grip)
+			: FRotator(0.f, DirToYaw(static_cast<uint8>(S.Facing)), 0.f);
 
 		if (!Held.bIsCluster)
 		{
@@ -317,16 +352,7 @@ void UOrbRenderer::RebuildCurrPos()
 		}
 		else
 		{
-			//for (int32 SubIdx = 0; SubIdx < Held.Orbs.Num(); ++SubIdx)
-			//{
-			//	const FOrbData& Sub = Held.Orbs[SubIdx];
-			//	// Rotate + scale offsets (tile units -> UU)
-			//	const FVector2D OffRot = RotateXY(Sub.Offset * Tile, OrbYaw + Yaw);
-			//	const FVector SubWorld = GripWorld + FVector(OffRot.X, OffRot.Y, 0.f);
-			//	const int32 SubId = MakeSubOrbId(Held.Id, SubIdx);
-			//	CurrPos.Add(SubId, SubWorld);
-			//	CurrRot.Add(SubId, BaseRot);
-			//}
+			// (Clusters while held are drawn by arm meshes; skip per‑sub orb instances)
 		}
 	}
 }

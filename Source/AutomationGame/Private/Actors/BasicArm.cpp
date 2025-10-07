@@ -1,4 +1,4 @@
-﻿#include "Actors/BasicArm.h"
+#include "Actors/BasicArm.h"
 #include "Actors/OrbSimDriver.h"
 #include "Framework/GameTickManager.h"
 #include "Components/StaticMeshComponent.h"
@@ -132,7 +132,18 @@ void ABasicArm::Tick(float DeltaSeconds)
 
 		if (ReachTiles != SimState.ArmLen)
 		{
-			ReachTiles = SimState.ArmLen;
+			// When logical reach changes mid-step we keep current interpolated fraction as new start
+			// and set new end to target logical reach for smooth transition.
+			float CurrentInterp = FMath::Lerp(ReachVisualStart, ReachVisualEnd, StepAlpha);
+			ReachVisualStart = CurrentInterp;
+			ReachVisualEnd = (float)SimState.ArmLen;
+			ReachTiles = SimState.ArmLen; // store logical
+		}
+		else if (ReachVisualEnd != ReachTiles)
+		{
+			// Initialize end if first frame
+			ReachVisualStart = (float)ReachTiles;
+			ReachVisualEnd = (float)ReachTiles;
 		}
 
 		// Sync wait state and program counter from simulation
@@ -216,6 +227,11 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 		NormDeg(LastYawDeg + FMath::FindDeltaAngleDegrees(LastYawDeg, CurrYawDeg) * StepAlpha);
 	LastYawDeg = RenderedYaw;
 
+	// For reach, start new interpolation from current interpolated position toward current logical target
+	float CurrentReach = FMath::Lerp(ReachVisualStart, ReachVisualEnd, StepAlpha);
+	ReachVisualStart = CurrentReach;
+	ReachVisualEnd = (float)ReachTiles; // ensure matches logical after step boundary
+
 	// Reset StepAlpha for new animation cycle
 	StepAlpha = 0.f;
 	RefreshPose(0.f);
@@ -274,135 +290,105 @@ void ABasicArm::RefreshMeshes()
 FVector ABasicArm::HexToWorld(const FHex& H) const
 {
 	if (!Driver) return GetActorLocation();
-
-	const AActor* Anchor = Driver->GetGridAnchor();
-	const FVector Origin = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
-	const float Tile = Driver->GetTileSize();
-	const EHexOrientation Ori = Driver->GetGridOrientation();
-	const FVector2D XY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
-	const FVector2D RotXY = HexCoord::Rotate2D(XY, Driver->GetGridYaw());
-	return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
+	return Driver->MapHexToWorld(H);
 }
 
 float ABasicArm::DirToYaw(uint8 Dir) const
 {
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
-	return NormDeg(GridYaw - 60.f * float(Dir % 6));
+	const bool bFlat = (Driver && Driver->GetGridOrientation() == EHexOrientation::FlatTop);
+	const float OriOffset = bFlat ? 30.f : 0.f; // mesh authored for pointy -> add 30 when flat
+	return NormDeg(GridYaw - 60.f * float(Dir % 6) + OriOffset);
 }
 
 void ABasicArm::RefreshPose(float InAlpha)
 {
-	// Use linear interpolation for consistent movement speed
 	float EasedAlpha = InAlpha;
-
 	const FVector BaseWorld = HexToWorld(FHex(Q, R)) + FVector(0, 0, BaseZ);
-
 	const float StartYaw = NormDeg(LastYawDeg);
 	const float TargetYaw = NormDeg(CurrYawDeg);
 	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
 	const float Yaw = NormDeg(StartYaw + Delta * EasedAlpha);
+	const float ReachInterp = FMath::Lerp(ReachVisualStart, ReachVisualEnd, EasedAlpha);
 
-	if (bDebugLogs)
+	const bool bFlat = (Driver && Driver->GetGridOrientation() == EHexOrientation::FlatTop);
+	const float OriOffset = bFlat ? 30.f : 0.f;
+
+	FRotator BaseRot(0.f, Yaw + BaseYawOffsetDeg + OriOffset, 0.f);
+	const bool bSphere = (Driver && Driver->IsSphereEnabled());
+	if (bSphere)
 	{
-		UE_LOG(LogAGArm, Verbose, TEXT("RefreshPose: Q=%d R=%d LastYaw=%.2f CurrYaw=%.2f StepAlpha=%.2f EasedAlpha=%.2f Delta=%.2f Yaw=%.2f"),
-			Q, R, StartYaw, TargetYaw, InAlpha, EasedAlpha, Delta, Yaw);
+		const AActor* Anchor = Driver->GetGridAnchor();
+		const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+		FVector Up = (BaseWorld - AnchorLoc).GetSafeNormal();
+		if (Up.IsNearlyZero()) Up = FVector::UpVector;
+		FHex FaceHex = FHex(Q, R);
+		for (int32 i = 0; i < FMath::Max(1, ReachTiles); ++i)
+		{
+			FaceHex = HexUtil::Neighbor(FaceHex, static_cast<EHexDir>(FacingDir));
+		}
+		const FVector FaceWorld = HexToWorld(FaceHex) + FVector(0, 0, BaseZ);
+		FVector Forward = (FaceWorld - BaseWorld).GetSafeNormal();
+		if (Forward.IsNearlyZero())
+		{
+			const float Rad = FMath::DegreesToRadians(Yaw);
+			Forward = FVector(FMath::Cos(Rad), FMath::Sin(Rad), 0.f);
+		}
+		FVector Right = FVector::CrossProduct(Forward, Up).GetSafeNormal();
+		if (Right.IsNearlyZero()) Right = FVector::CrossProduct(Up, FVector::ForwardVector).GetSafeNormal();
+		Forward = FVector::CrossProduct(Up, Right).GetSafeNormal();
+		FMatrix M(Forward, Right, Up, FVector::ZeroVector);
+		BaseRot = M.Rotator();
+		BaseRot.Add(0.f, BaseYawOffsetDeg + OriOffset, 0.f);
 	}
+	if (BaseComp) { BaseComp->SetWorldLocation(BaseWorld); BaseComp->SetWorldRotation(BaseRot); }
 
-	const FRotator BaseRot(0.f, Yaw + BaseYawOffsetDeg, 0.f);
-
-	if (BaseComp)
-	{
-		BaseComp->SetWorldLocation(BaseWorld);
-		BaseComp->SetWorldRotation(BaseRot);
-	}
-
-	// --- Use arm rotation for smooth movement, but target tile center as reference ---
-	FVector HandWorld = BaseWorld; // fallback
 	FVector InterpolatedHandWorld = BaseWorld;
 	{
-		// Calculate the arm's target hex (where it's reaching)
-		const FHex TargetHex = ComputeTargetHex();
-		const FVector TargetWorld = HexToWorld(TargetHex);
-
-		// Use the arm's interpolated rotation to calculate grip direction
-		const float GripYawRad = FMath::DegreesToRadians(Yaw);
-		const FVector GripDirection = FVector(FMath::Cos(GripYawRad), FMath::Sin(GripYawRad), 0.f);
-
-		// Use the arm's reach distance (based on ReachTiles) instead of actual distance
-		const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
-		const float ReachDistance = Tile * ReachTiles;
-
-		// Use the arm's rotation with its configured reach distance
-		const FVector BaseGripPos = BaseWorld + GripDirection * ReachDistance + FVector(0, 0, GripZOffset);
-
-		// Apply grip location offset relative to the hand's orientation
-		const FVector HandForward = GripDirection;
-		const FVector HandRight = FVector(-HandForward.Y, HandForward.X, 0.f);
-		const FVector HandUp = FVector(0.f, 0.f, 1.f);
-		const FVector RelativeOffset = HandForward * GripLocationOffset.X + HandRight * GripLocationOffset.Y + HandUp * GripLocationOffset.Z;
-		const FVector FinalGripPos = BaseGripPos + RelativeOffset;
-
-		// If holding a cluster, adjust grip position to account for which orb was grabbed
-		if (bHolding && HeldOrb.bIsCluster && HeldOrb.Orbs.Num() > 0)
+		FVector Forward;
+		if (bSphere)
 		{
-			// Find the grabbed orb (the one at offset 0,0 - this is the one the arm is holding)
-			const FOrbData* GrabbedOrb = nullptr;
-			for (const FOrbData& Orb : HeldOrb.Orbs)
-			{
-				if (Orb.dQ == 0 && Orb.dR == 0)
-				{
-					GrabbedOrb = &Orb;
-					break;
-				}
-			}
-
-			if (GrabbedOrb)
-			{
-				// Calculate the offset of the grabbed orb from the cluster center
-				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
-				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(GrabbedOrb->dQ, GrabbedOrb->dR), Tile, GridOrientation);
-				FVector2D OrbOffset = HexOffset * ClusterOffsetScale;
-
-				// Apply rotation based on GrabFacing to make offset relative to arm direction
-				if (HeldOrb.GrabFacing >= 0)
-				{
-					const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
-					const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
-					const float CosA = FMath::Cos(YawRad);
-					const float SinA = FMath::Sin(YawRad);
-					const float RotX = OrbOffset.X * CosA - OrbOffset.Y * SinA;
-					const float RotY = OrbOffset.X * SinA + OrbOffset.Y * CosA;
-					OrbOffset = FVector2D(RotX, RotY);
-				}
-
-				// Adjust grip position so the grabbed orb is at the grip point
-				InterpolatedHandWorld = FinalGripPos - FVector(OrbOffset.X, OrbOffset.Y, 0.f);
-			}
-			else
-			{
-				InterpolatedHandWorld = FinalGripPos;
-			}
+			FHex TargetHex = ComputeTargetHex();
+			const FVector TargetWorld = HexToWorld(TargetHex) + FVector(0, 0, BaseZ);
+			Forward = (TargetWorld - BaseWorld).GetSafeNormal();
+			if (Forward.IsNearlyZero()) Forward = BaseRot.Vector();
 		}
 		else
 		{
-			InterpolatedHandWorld = FinalGripPos;
+			const float GripYawRad = FMath::DegreesToRadians(Yaw);
+			Forward = FVector(FMath::Cos(GripYawRad), FMath::Sin(GripYawRad), 0.f);
 		}
-
-		HandWorld = InterpolatedHandWorld;
+		const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
+		const float ReachDistance = Tile * ReachInterp;
+		FVector Up = bSphere ? (BaseWorld - (Driver->GetGridAnchor() ? Driver->GetGridAnchor()->GetActorLocation() : FVector::ZeroVector)).GetSafeNormal() : FVector::UpVector;
+		if (Up.IsNearlyZero()) Up = FVector::UpVector;
+		FVector Right = FVector::CrossProduct(Forward, Up).GetSafeNormal();
+		if (Right.IsNearlyZero()) Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
+		Forward = FVector::CrossProduct(Up, Right).GetSafeNormal();
+		const FVector BaseGripPos = BaseWorld + Forward * ReachDistance + FVector(0, 0, GripZOffset);
+		const FVector RelativeOffset = Forward * GripLocationOffset.X + Right * GripLocationOffset.Y + Up * GripLocationOffset.Z;
+		const FVector FinalGripPos = BaseGripPos + RelativeOffset;
+		if (bHolding && HeldOrb.bIsCluster && HeldOrb.Orbs.Num() > 0)
+		{
+			const FOrbData* GrabbedOrb = nullptr;
+			for (const FOrbData& Orb : HeldOrb.Orbs) { if (Orb.dQ == 0 && Orb.dR == 0) { GrabbedOrb = &Orb; break; } }
+			if (GrabbedOrb)
+			{
+				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
+				const float TileSize = (Driver ? Driver->GetTileSize() : 100.f);
+				const FVector2D HexOffset2D = HexCoord::AxialToXY(FHexAxial(GrabbedOrb->dQ, GrabbedOrb->dR), TileSize, GridOrientation) * ClusterOffsetScale;
+				InterpolatedHandWorld = FinalGripPos - (Forward * HexOffset2D.X + Right * HexOffset2D.Y);
+			}
+			else { InterpolatedHandWorld = FinalGripPos; }
+		}
+		else { InterpolatedHandWorld = FinalGripPos; }
 	}
-
-	// Keep GripPivotComp at exact hand world position (unless using a socket)
 	if (GripPivotComp && !bUseGripSocket)
 	{
-		// Use the interpolated hand world position for smooth movement
 		GripPivotComp->SetWorldLocation(InterpolatedHandWorld);
-
-		// Apply the full rotation to match the arm
-		const FRotator WorldRotation = FRotator(0.f, Yaw + BaseYawOffsetDeg, 0.f) + GripPivotLocalRotation;
-		GripPivotComp->SetWorldRotation(WorldRotation);
+		GripPivotComp->SetWorldRotation(BaseRot + GripPivotLocalRotation);
 	}
-
-	// Optional debug draw
+	// (retain existing debug + cluster code below unchanged)
 	if (bDebugHandLocation && GetWorld())
 	{
 		const FVector Start = BaseComp ? BaseComp->GetComponentLocation() : GetActorLocation();
@@ -415,83 +401,44 @@ void ABasicArm::RefreshPose(float InAlpha)
 	{
 		const FHex TargetHex = ComputeTargetHex();
 		const FVector TargetWorld = HexToWorld(TargetHex);
-
-		// Draw line from arm base to target hex
 		DrawDebugLine(GetWorld(), BaseWorld, TargetWorld, FColor::Red, false, 0.f, 0, 2.f);
-
-		// Draw line from arm base to current hand position
 		DrawDebugLine(GetWorld(), BaseWorld, InterpolatedHandWorld, FColor::Orange, false, 0.f, 0, 1.f);
-
-		// Draw hex outline at target
 		const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 		DrawDebugCircle(GetWorld(), TargetWorld, Tile * 0.5f, 6, FColor::Red, false, 0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
 	}
 
-	// Opus Magnum approach: cluster rotates naturally with the arm
-	// No per-tick updates needed - the attachment system handles rotation
+	UpdateHeldClusterTransforms(EasedAlpha);
 
-	// Debug: Draw spheres showing simulation positions of held cluster orbs
 	if (bDebugSpheres && bHolding && HeldOrb.bIsCluster && GetWorld())
 	{
 		const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
 		const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
 		const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
-		const AActor* Anchor = Driver ? Driver->GetGridAnchor() : nullptr;
-		const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
-
-		// Calculate the arm's current target hex (where it's reaching)
 		const FHex TargetHex = ComputeTargetHex();
 		const FVector TargetWorld = HexToWorld(TargetHex);
-
-		// Draw debug spheres for each sub-orb in the cluster
 		for (int32 i = 0; i < HeldOrb.Orbs.Num(); i++)
 		{
 			const FOrbData& Sub = HeldOrb.Orbs[i];
-
-			// Calculate the simulation position of this sub-orb
-			// First, get the base position from the target hex
 			const FHex SubOrbHex = FHex(TargetHex.Q + Sub.dQ, TargetHex.R + Sub.dR);
 			const FVector SubOrbWorld = HexToWorld(SubOrbHex);
-
-			// Apply arm rotation to the sub-orb position relative to the target hex
 			FVector RotatedSubOrbWorld = SubOrbWorld;
-			if (Sub.dQ != 0 || Sub.dR != 0) // Don't rotate the grabbed orb (it's at the target)
+			if (Sub.dQ != 0 || Sub.dR != 0)
 			{
-				// Calculate the offset from the target hex
 				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
 				const FVector2D RotatedOffset = HexCoord::Rotate2D(HexOffset, GridYaw);
-
-				// Apply the arm's current rotation to this offset
 				const float ArmYawRad = FMath::DegreesToRadians(Yaw);
 				const float CosA = FMath::Cos(ArmYawRad);
 				const float SinA = FMath::Sin(ArmYawRad);
 				const float RotX = RotatedOffset.X * CosA - RotatedOffset.Y * SinA;
 				const float RotY = RotatedOffset.X * SinA + RotatedOffset.Y * CosA;
-
-				// Position relative to the target hex center
 				RotatedSubOrbWorld = TargetWorld + FVector(RotX, RotY, 0.f);
 			}
-
-			// Color code: grabbed orb (dQ=0, dR=0) in green, others in blue
 			const FColor DebugColor = (Sub.dQ == 0 && Sub.dR == 0) ? FColor::Green : FColor::Blue;
 			const float SphereSize = (Sub.dQ == 0 && Sub.dR == 0) ? 8.f : 6.f;
-
 			DrawDebugSphere(GetWorld(), RotatedSubOrbWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
-
-			// Draw a line from the arm base to each sub-orb for clarity
 			DrawDebugLine(GetWorld(), BaseWorld, RotatedSubOrbWorld, DebugColor, false, 0.f, 0, 1.f);
-
-			// Draw text showing the sub-orb's dQ, dR values
-			DrawDebugString(GetWorld(), RotatedSubOrbWorld + FVector(0, 0, 15.f),
-				FString::Printf(TEXT("dQ:%d dR:%d"), Sub.dQ, Sub.dR),
-				nullptr, DebugColor, 0.f, true, 1.2f);
+			DrawDebugString(GetWorld(), RotatedSubOrbWorld + FVector(0, 0, 15.f), FString::Printf(TEXT("dQ:%d dR:%d"), Sub.dQ, Sub.dR), nullptr, DebugColor, 0.f, true, 1.2f);
 		}
-
-		// Draw the target hex center in yellow
-		// DrawDebugSphere(GetWorld(), TargetWorld, 10.f, 12, FColor::Yellow, false, 0.f, 0, 3.f);
-		// DrawDebugString(GetWorld(), TargetWorld + FVector(0, 0, 20.f), 
-		// 	FString::Printf(TEXT("Target Hex (%d,%d)"), TargetHex.Q, TargetHex.R), 
-		// 	nullptr, FColor::Yellow, 0.f, true, 1.2f);
 	}
 }
 
@@ -1560,4 +1507,3 @@ float ABasicArm::GetBondedOrbScale() const
 	}
 	return 0.15f; // Default fallback
 }
-

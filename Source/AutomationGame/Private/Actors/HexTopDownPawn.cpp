@@ -49,11 +49,62 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
-	// Pan
-	const FVector Right = GetActorRightVector();
-	const FVector Fwd = GetActorForwardVector();
-	FVector Delta = (Right * AxisX + Fwd * AxisY) * MoveSpeed * DeltaSeconds;
-	AddActorWorldOffset(Delta, true);
+	AGameManager* GM = nullptr; 
+	if (UWorld* W = GetWorld()) 
+	{ 
+		for (TActorIterator<AGameManager> It(W); It; ++It)
+		{ 
+			GM = *It; 
+			break; 
+		} 
+	}
+	const bool bSphere = (GM && GM->bSphereGrid);
+	if (bSphere)
+	{
+		const FVector Center = GM->GridAnchor ? GM->GridAnchor->GetActorLocation() : GM->GetActorLocation();
+		FVector Pos = GetActorLocation();
+		FVector RadVec = Pos - Center; 
+		float Radius = RadVec.Size(); 
+		if (Radius < 1.f) Radius = 1.f; 
+		RadVec /= Radius; // normal
+		// Build an orthonormal frame with Up=RadVec; choose an arbitrary reference to build East/North (longitude/latitude tangents)
+		FVector Up = RadVec;
+		FVector East = FVector::CrossProduct(FVector::UpVector, Up); 
+		if (East.IsNearlyZero()) East = FVector::CrossProduct(FVector::RightVector, Up); 
+		East.Normalize();
+		FVector North = FVector::CrossProduct(Up, East).GetSafeNormal(); // points toward local north pole
+
+		// Convert input axes into small angular rotations: AxisX = yaw around world up? Better: move along East (longitude), AxisY along North (latitude)
+		float AngularSpeed = MoveSpeed / Radius; // rad/sec equivalent so that linear ground speed ~ MoveSpeed
+		float dLon = AxisX * AngularSpeed * DeltaSeconds; // rotation around North axis? Actually East tangent corresponds to increasing longitude
+		float dLat = AxisY * AngularSpeed * DeltaSeconds; // move toward poles
+
+		// Apply latitude change: rotate RadVec toward North by dLat
+		if (!FMath::IsNearlyZero(dLat))
+		{
+			RadVec = (RadVec * FMath::Cos(dLat) + North * FMath::Sin(dLat)).GetSafeNormal();
+		}
+		// Recompute East & North after latitude change
+		Up = RadVec; 
+		East = FVector::CrossProduct(FVector::UpVector, Up); 
+		if (East.IsNearlyZero()) East = FVector::CrossProduct(FVector::RightVector, Up); 
+		East.Normalize(); 
+		North = FVector::CrossProduct(Up, East).GetSafeNormal();
+		// Apply longitude change: rotate around Up axis by dLon using East/North plane
+		if (!FMath::IsNearlyZero(dLon))
+		{
+			RadVec = (RadVec * FMath::Cos(dLon) + East * FMath::Sin(dLon)).GetSafeNormal();
+		}
+		SetActorLocation(Center + RadVec * Radius);
+	}
+	else
+	{
+		// Planar panning
+		const FVector Right = GetActorRightVector();
+		const FVector Fwd = GetActorForwardVector();
+		FVector Delta = (Right * AxisX + Fwd * AxisY) * MoveSpeed * DeltaSeconds;
+		AddActorWorldOffset(Delta, true);
+	}
 
 	// Zoom (disabled when TypeSelectionActive is held)
 	if (AxisZoom != 0.f && !bTypeSelectionActive)
@@ -115,14 +166,20 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 			// Draw preview of each tile in the blueprint
 			for (const FBlueprintTile& BlueprintTile : BlueprintTiles)
 			{
-				// Calculate the preview hex position
 				FHex PreviewHex = TargetHex;
 				PreviewHex.Q += BlueprintTile.LocalHex.Q;
 				PreviewHex.R += BlueprintTile.LocalHex.R;
-				
-				// Convert hex to world position for drawing
-				FVector2D PreviewWorldPos2D = HexCoord::AxialToXY(FHexAxial(PreviewHex.Q, PreviewHex.R), TileSize, Orientation);
-				FVector PreviewWorldPos = FVector(PreviewWorldPos2D.X, PreviewWorldPos2D.Y, 0);
+
+				FVector PreviewWorldPos;
+				if (Driver && Driver->IsSphereEnabled())
+				{
+					PreviewWorldPos = Driver->MapHexToWorld(PreviewHex);
+				}
+				else
+				{
+					FVector2D PreviewWorldPos2D = HexCoord::AxialToXY(FHexAxial(PreviewHex.Q, PreviewHex.R), TileSize, Orientation);
+					PreviewWorldPos = FVector(PreviewWorldPos2D.X, PreviewWorldPos2D.Y, 0);
+				}
 				
 				// Choose color and size based on tile type
 				FColor PreviewColor;
