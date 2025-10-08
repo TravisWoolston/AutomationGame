@@ -20,10 +20,14 @@ public:
 	AHexFactoryActor();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Build")
 	void Rebuild();
+	
+	UFUNCTION()
+	void HandleSimStepComplete(float StepSeconds);
 
 	// ----- Shared / Grid -----
 	UPROPERTY(EditAnywhere, Category = "Grid") bool bAutoRefresh = true;
@@ -43,6 +47,8 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UStaticMesh* BeltMesh = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UMaterialInterface* BeltMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UMaterialInterface* BeltReadyMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Visual|Belts") UMaterialInterface* BeltWaitingMaterial = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") FVector BeltScale = FVector(1.f);
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") float BeltZOffset = 8.f;
 	UPROPERTY(EditAnywhere, Category = "Visual|Belts") bool bAlwaysDrawBeltArrows = false;
@@ -73,6 +79,8 @@ protected:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondTileISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* UnbondTileISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltReadyISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* BeltWaitingISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* UnbondISM = nullptr;
 	
@@ -97,6 +105,7 @@ protected:
 	void RebuildInternal();
 	void RebuildTiles();
 	void RebuildBelts();
+	void UpdateBeltMaterials();   // Update belt materials based on current item positions
 	void RebuildBonds();          // NEW
 	void RebuildOutputs();        // NEW: Type-specific output rendering
 	void DrawBeltArrow(const FVector& Center, float TileRadiusUU, float YawDeg);

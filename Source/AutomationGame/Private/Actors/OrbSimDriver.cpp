@@ -113,6 +113,9 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 	UE_LOG(LogTemp, VeryVerbose, TEXT("OrbSimDriver: Inputs present? L=%d R=%d  (ItemMap=%d)"),
 		L ? 1 : 0, R ? 1 : 0, Sim->ItemMap.Num());
 #endif
+
+	// Broadcast that simulation has completed this step
+	OnSimStepComplete.Broadcast(StepSeconds);
 }
 
 

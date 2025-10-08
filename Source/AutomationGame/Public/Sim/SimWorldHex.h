@@ -19,7 +19,7 @@ public:
 	// Config
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float TileSizeUU = 120.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float FixedStepSec = 0.20f; // 5 Hz
-	
+
 	// Debug toggles
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugLogs = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugSpheres = false;
@@ -140,13 +140,13 @@ private:
 	float   GridYawDeg = 0.f;
 	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
 
-	
+
 
 private:
 	// One-frame skip sets
 	TSet<FHex> SkipInputThisFrame;
 	TSet<FHex> SkipOutputThisFrame;
-	
+
 	// Track newly placed items that should wait a tick before being moved by belts
 	TSet<int32> NewlyPlacedItems;
 
@@ -184,7 +184,7 @@ private:
 		float TimeRemaining = 0.f; // Time to wait before forming bond
 	};
 	TArray<FPendingBondFormation> PendingBondFormations;
-	
+
 	// Pending grab tracking to prevent multiple arms from grabbing the same cluster
 	struct FPendingGrab
 	{
@@ -203,7 +203,7 @@ private:
 		bool bActive = false;
 	};
 	TArray<FBondedArmPair> BondedArmPairs;
-	
+
 	// Pending held-to-held cluster merges (processed when arms finish rotating)
 	struct FPendingHeldMerge
 	{
@@ -246,11 +246,11 @@ private:
 	// Helpers for multi-bond bookkeeping
 	void AddItemBondLink(int32 ItemId, int32 BondIndex);
 	void RemoveItemBondLink(int32 ItemId, int32 BondIndex);
-	
+
 	// Opus Magnum style cluster management
 	void AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex);
 	void AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex);
-	
+
 	// Check for disconnected orbs in held clusters and remove them
 	void CheckAndRemoveDisconnectedOrbsFromHeldClusters();
 
@@ -259,13 +259,13 @@ private:
 
 	// Process held cluster unbonds for arms that completed rotation
 	void ProcessHeldClusterUnbonds();
-	
+
 	// Process held-to-held cluster merge
 	void ProcessHeldToHeldMerge(int32 ReceiverArmIndex, int32 DonorArmIndex);
 
 	// Helper to calculate arm grip position
 	FHex CalculateArmGripPosition(const FArmState& ArmState) const;
-	
+
 	// Debug visualization
 	void DrawBondDebugLines();
 

@@ -317,6 +317,24 @@ private:
 	UMaterialInterface* GetBondedOrbMaterial() const;
 	float GetBondedOrbScale() const;
 
+	// --- Add near other private members (after LastHeldOrbCount for example)
+
+	// Held cluster rotation (visual interpolation for RotateHeld commands)
+	float HeldClusterFacingStartDeg = 0.f;
+	float HeldClusterFacingEndDeg   = 0.f;
+	int32 LastHeldGrabFacing        = -1;   // last seen HeldOrb.GrabFacing from sim (0..5)
+	bool  bHeldClusterRotating      = false;
+
+	// Raw (unrotated) 2D offsets per sub‑orb in local cluster space (tile -> UU already scaled)
+	TArray<FVector2D> HeldClusterRawOffsets;
+
+	// Helper returns current interpolated cluster yaw in degrees (0..360)
+	float GetCurrentClusterFacingDeg() const
+	{
+		if (!bHeldClusterRotating) return HeldClusterFacingEndDeg;
+		// Use same StepAlpha that drives arm interpolation for consistency
+		return FMath::Lerp(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg, StepAlpha);
+	}
 
 public:
 	// If > 0 overrides ReachTiles * TileSize for grip distance (UU)

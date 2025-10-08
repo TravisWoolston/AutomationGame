@@ -1,4 +1,3 @@
-/Content/Imported/
 # Ignore all files by default, but scan all directories.
 *
 !*/
@@ -20,6 +19,9 @@
 !/Content/**/*.uasset
 !/Content/**/*.umap
 
+# Finally: always ignore this subfolder (overrides the un-ignores above)
+#/Content/Imported
+/Content/Imported/**
 # Allow any files from /RawContent dir.
 # Any file in /RawContent dir will be managed by git lfs.
 !/RawContent/**/*

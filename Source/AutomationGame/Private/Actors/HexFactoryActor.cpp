@@ -47,6 +47,14 @@ AHexFactoryActor::AHexFactoryActor()
 	BeltISM->SetupAttachment(Root);
 	BeltISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	BeltReadyISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltReadyISM"));
+	BeltReadyISM->SetupAttachment(Root);
+	BeltReadyISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	BeltWaitingISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltWaitingISM"));
+	BeltWaitingISM->SetupAttachment(Root);
+	BeltWaitingISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	BondISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BondISM"));
 	BondISM->SetupAttachment(Root);
 	BondISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -107,6 +115,8 @@ void AHexFactoryActor::EnsureComponents()
 	EnsureISM(BondTileISM, TEXT("BondTileISM_Runtime"));
 	EnsureISM(UnbondTileISM, TEXT("UnbondTileISM_Runtime"));
 	EnsureISM(BeltISM, TEXT("BeltISM_Runtime"));
+	EnsureISM(BeltReadyISM, TEXT("BeltReadyISM_Runtime"));
+	EnsureISM(BeltWaitingISM, TEXT("BeltWaitingISM_Runtime"));
 	EnsureISM(BondISM, TEXT("BondISM_Runtime"));
 	EnsureISM(UnbondISM, TEXT("UnbondISM_Runtime"));
 	
@@ -137,6 +147,10 @@ void AHexFactoryActor::BeginPlay()
 			Sim = Driver->GetSim();
 			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::BeginPlay: Driver=%s Sim=%s"), 
 				Driver ? TEXT("found") : TEXT("null"), Sim ? TEXT("found") : TEXT("null"));
+			
+			// Subscribe to simulation step completion for belt material updates
+			Driver->OnSimStepComplete.AddDynamic(this, &AHexFactoryActor::HandleSimStepComplete);
+			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::BeginPlay: Bound to OrbSimDriver::OnSimStepComplete"));
 		}
 		else
 		{
@@ -154,15 +168,31 @@ void AHexFactoryActor::BeginPlay()
 	RebuildInternal();
 }
 
+void AHexFactoryActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (Driver)
+	{
+		Driver->OnSimStepComplete.RemoveDynamic(this, &AHexFactoryActor::HandleSimStepComplete);
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
+void AHexFactoryActor::HandleSimStepComplete(float StepSeconds)
+{
+	// Update belt materials immediately after simulation has stepped
+	UpdateBeltMaterials();
+}
+
 void AHexFactoryActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	if (!Sim) return;
 
 	const bool bBoardChanged = (Board && Board->BoardRevision != LastSeenBoardRevision);
-	if (!bAutoRefresh && !bBoardChanged) return;
-
-	if (Sim->TileRevision != LastSeenRevision || bBoardChanged)
+	const bool bTilesChanged = (Sim->TileRevision != LastSeenRevision);
+	
+	// Handle full rebuilds when tiles or board change
+	if (bTilesChanged || bBoardChanged)
 	{
 		UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::Tick: Triggering rebuild - TileRevision=%d LastSeen=%d BoardChanged=%d"), 
 			Sim->TileRevision, LastSeenRevision, bBoardChanged ? 1 : 0);
@@ -232,7 +262,17 @@ void AHexFactoryActor::RebuildInternal()
 	if (BeltTileMaterial) BeltTileISM->SetMaterial(0, BeltTileMaterial);
 	if (BondTileMaterial) BondTileISM->SetMaterial(0, BondTileMaterial);
 
-	if (BeltMesh) BeltISM->SetStaticMesh(BeltMesh);
+	if (BeltMesh) 
+	{
+		BeltReadyISM->SetStaticMesh(BeltMesh);
+		BeltWaitingISM->SetStaticMesh(BeltMesh);
+		// Legacy BeltISM only used if new materials aren't set
+		BeltISM->SetStaticMesh(BeltMesh);
+	}
+	// Only set up the new material ISMs if materials are provided
+	if (BeltReadyMaterial) BeltReadyISM->SetMaterial(0, BeltReadyMaterial);
+	if (BeltWaitingMaterial) BeltWaitingISM->SetMaterial(0, BeltWaitingMaterial);
+	// Legacy fallback
 	if (BeltMaterial) BeltISM->SetMaterial(0, BeltMaterial);
 	if (BondMesh) BondISM->SetStaticMesh(BondMesh);
 	if (BondMaterial) BondISM->SetMaterial(0, BondMaterial);
@@ -267,6 +307,8 @@ void AHexFactoryActor::RebuildInternal()
 	BondTileISM->ClearInstances();
 	UnbondTileISM->ClearInstances();
 	BeltISM->ClearInstances();
+	BeltReadyISM->ClearInstances();
+	BeltWaitingISM->ClearInstances();
 	BondISM->ClearInstances();
 	UnbondISM->ClearInstances();
 
@@ -376,6 +418,9 @@ void AHexFactoryActor::RebuildBelts()
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 	
 	int32 BeltCount = 0;
+	int32 ReadyCount = 0;
+	int32 WaitingCount = 0;
+	int32 EmptyCount = 0;
 
 	auto ForwardYaw = [&](const FHex& Base, uint8 Dir)->float
 		{
@@ -384,6 +429,82 @@ void AHexFactoryActor::RebuildBelts()
 			const FVector2D Bxy = HexCoord::Rotate2D(HexCoord::AxialToXY(FHexAxial(Fwd.Q, Fwd.R), Tile, Ori), GridYaw);
 			const FVector2D Delta = Bxy - Axy;
 			return Delta.IsNearlyZero() ? 0.f : FMath::RadiansToDegrees(FMath::Atan2(Delta.Y, Delta.X));
+		};
+
+	enum class EBeltState : uint8 { Empty, Ready, Waiting };
+
+	// Helper function to check belt state
+	auto GetBeltState = [&](const FHex& BeltHex, uint8 BeltDir) -> EBeltState
+		{
+			// Check if there's an item on this belt
+			const FItem* BeltItem = Sim->ItemMap.Find(BeltHex);
+			if (!BeltItem || BeltItem->Id == 0)
+			{
+				// No item on belt - belt is empty
+				return EBeltState::Empty;
+			}
+
+			// There's an item on the belt - check if it can move forward
+			const FHex DestHex = HexUtil::Neighbor(BeltHex, (EHexDir)(BeltDir % 6));
+			
+			// Check if destination is occupied
+			if (Sim->ItemMap.Contains(DestHex))
+			{
+				// Destination is occupied - belt is waiting
+				return EBeltState::Waiting;
+			}
+
+			// Check if destination is blocked by held items
+			for (const FArmState& Arm : Sim->Arms)
+			{
+				if (!Arm.bHolding) continue;
+
+				// Calculate arm grip position
+				FHex GripHex = Arm.BaseHex;
+				for (int i = 0; i < Arm.ArmLen; ++i)
+					GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
+
+				if (GripHex == DestHex)
+				{
+					// Arm is holding an item at the destination - belt is waiting
+					return EBeltState::Waiting;
+				}
+
+				// Check for cluster items
+				if (Arm.Held.bIsCluster)
+				{
+					for (const FOrbData& Sub : Arm.Held.Orbs)
+					{
+						FHex Local(Sub.dQ, Sub.dR);
+						// Apply rotation based on arm facing and grab facing
+						const uint8 cur = (uint8)Arm.Facing % 6;
+						const int8 grab = (int8)Arm.Held.GrabFacing;
+						const uint8 facingDelta = (grab >= 0)
+							? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+							: cur;
+						const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+						// Rotate the local offset
+						for (uint8 i = 0; i < (ccw % 6); ++i)
+						{
+							int32 q = Local.Q;
+							int32 r = Local.R;
+							Local.Q = -r;
+							Local.R = q + r;
+						}
+
+						FHex WorldPos(GripHex.Q + Local.Q, GripHex.R + Local.R);
+						if (WorldPos == DestHex)
+						{
+							// Part of held cluster is at destination - belt is waiting
+							return EBeltState::Waiting;
+						}
+					}
+				}
+			}
+
+			// Destination is clear - belt is ready to move
+			return EBeltState::Ready;
 		};
 
 	for (const auto& KV : Sim->TileMap)
@@ -400,7 +521,39 @@ void AHexFactoryActor::RebuildBelts()
 
 		if (BeltMesh)
 		{
-			BeltISM->AddInstance(FTransform(FRotator(0.f, Yaw, 0.f), Loc, BeltScale));
+			const FTransform Transform(FRotator(0.f, Yaw, 0.f), Loc, BeltScale);
+			
+			// Use new material system if materials are set, otherwise fall back to legacy
+			if (BeltReadyMaterial && BeltWaitingMaterial)
+			{
+				const uint8 BeltDir = (uint8)(T.Arg & 0xFF);
+				EBeltState State = GetBeltState(H, BeltDir);
+				
+				switch (State)
+				{
+				case EBeltState::Empty:
+					// Belt has no orbs - use base material
+					BeltISM->AddInstance(Transform);
+					EmptyCount++;
+					break;
+				case EBeltState::Ready:
+					// Belt has orbs that can move - use ready material
+					BeltReadyISM->AddInstance(Transform);
+					ReadyCount++;
+					break;
+				case EBeltState::Waiting:
+					// Belt has orbs that are blocked - use waiting material
+					BeltWaitingISM->AddInstance(Transform);
+					WaitingCount++;
+					break;
+				}
+			}
+			else
+			{
+				// Fallback to legacy single-material rendering
+				BeltISM->AddInstance(Transform);
+			}
+			
 			if (bAlwaysDrawBeltArrows)
 				DrawBeltArrow(Loc, Tile, Yaw);
 		}
@@ -410,8 +563,152 @@ void AHexFactoryActor::RebuildBelts()
 		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildBelts: Found %d belts, BeltMesh=%s, BeltISM=%s"), 
-		BeltCount, BeltMesh ? TEXT("exists") : TEXT("null"), BeltISM ? TEXT("exists") : TEXT("null"));
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildBelts: Found %d belts (%d empty, %d ready, %d waiting), BeltMesh=%s"), 
+		BeltCount, EmptyCount, ReadyCount, WaitingCount, BeltMesh ? TEXT("exists") : TEXT("null"));
+}
+
+void AHexFactoryActor::UpdateBeltMaterials()
+{
+	if (!Sim || !BeltMesh) return;
+	
+	// Only update if new materials are set, otherwise do nothing (legacy system in use)
+	if (!BeltReadyMaterial || !BeltWaitingMaterial) return;
+	
+	// Clear all belt material ISMs
+	BeltISM->ClearInstances();
+	BeltReadyISM->ClearInstances();
+	BeltWaitingISM->ClearInstances();
+	
+	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
+	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	
+	int32 EmptyCount = 0;
+	int32 ReadyCount = 0;
+	int32 WaitingCount = 0;
+
+	auto ForwardYaw = [&](const FHex& Base, uint8 Dir)->float
+		{
+			const FHex Fwd = HexUtil::Neighbor(Base, (EHexDir)(Dir % 6));
+			const FVector2D Axy = HexCoord::Rotate2D(HexCoord::AxialToXY(FHexAxial(Base.Q, Base.R), Tile, Ori), GridYaw);
+			const FVector2D Bxy = HexCoord::Rotate2D(HexCoord::AxialToXY(FHexAxial(Fwd.Q, Fwd.R), Tile, Ori), GridYaw);
+			const FVector2D Delta = Bxy - Axy;
+			return Delta.IsNearlyZero() ? 0.f : FMath::RadiansToDegrees(FMath::Atan2(Delta.Y, Delta.X));
+		};
+
+	enum class EBeltState : uint8 { Empty, Ready, Waiting };
+
+	// Helper function to check belt state
+	auto GetBeltState = [&](const FHex& BeltHex, uint8 BeltDir) -> EBeltState
+		{
+			// Check if there's an item on this belt
+			const FItem* BeltItem = Sim->ItemMap.Find(BeltHex);
+			if (!BeltItem || BeltItem->Id == 0)
+			{
+				// No item on belt - belt is empty
+				return EBeltState::Empty;
+			}
+
+			// There's an item on the belt - check if it can move forward
+			const FHex DestHex = HexUtil::Neighbor(BeltHex, (EHexDir)(BeltDir % 6));
+			
+			// Check if destination is occupied
+			if (Sim->ItemMap.Contains(DestHex))
+			{
+				// Destination is occupied - belt is waiting
+				return EBeltState::Waiting;
+			}
+
+			// Check if destination is blocked by held items
+			for (const FArmState& Arm : Sim->Arms)
+			{
+				if (!Arm.bHolding) continue;
+
+				// Calculate arm grip position
+				FHex GripHex = Arm.BaseHex;
+				for (int i = 0; i < Arm.ArmLen; ++i)
+					GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
+
+				if (GripHex == DestHex)
+				{
+					// Arm is holding an item at the destination - belt is waiting
+					return EBeltState::Waiting;
+				}
+
+				// Check for cluster items
+				if (Arm.Held.bIsCluster)
+				{
+					for (const FOrbData& Sub : Arm.Held.Orbs)
+					{
+						FHex Local(Sub.dQ, Sub.dR);
+						// Apply rotation based on arm facing and grab facing
+						const uint8 cur = (uint8)Arm.Facing % 6;
+						const int8 grab = (int8)Arm.Held.GrabFacing;
+						const uint8 facingDelta = (grab >= 0)
+							? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+							: cur;
+						const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+						// Rotate the local offset
+						for (uint8 i = 0; i < (ccw % 6); ++i)
+						{
+							int32 q = Local.Q;
+							int32 r = Local.R;
+							Local.Q = -r;
+							Local.R = q + r;
+						}
+
+						FHex WorldPos(GripHex.Q + Local.Q, GripHex.R + Local.R);
+						if (WorldPos == DestHex)
+						{
+							// Part of held cluster is at destination - belt is waiting
+							return EBeltState::Waiting;
+						}
+					}
+				}
+			}
+
+			// Destination is clear - belt is ready to move
+			return EBeltState::Ready;
+		};
+
+	for (const auto& KV : Sim->TileMap)
+	{
+		const FHex& H = KV.Key;
+		const FTile& T = KV.Value;
+		if (T.Kind != ETileKind::Belt) continue;
+
+		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
+		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, BeltZOffset);
+		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF));
+
+		const uint8 BeltDir = (uint8)(T.Arg & 0xFF);
+		EBeltState State = GetBeltState(H, BeltDir);
+		
+		const FTransform Transform(FRotator(0.f, Yaw, 0.f), Loc, BeltScale);
+		
+		switch (State)
+		{
+		case EBeltState::Empty:
+			// Belt has no orbs - use base material
+			BeltISM->AddInstance(Transform);
+			EmptyCount++;
+			break;
+		case EBeltState::Ready:
+			// Belt has orbs that can move - use ready material
+			BeltReadyISM->AddInstance(Transform);
+			ReadyCount++;
+			break;
+		case EBeltState::Waiting:
+			// Belt has orbs that are blocked - use waiting material
+			BeltWaitingISM->AddInstance(Transform);
+			WaitingCount++;
+			break;
+		}
+	}
 }
 
 void AHexFactoryActor::RebuildBonds()

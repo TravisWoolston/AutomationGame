@@ -1,9 +1,12 @@
 #include "Sim/SimWorldHex.h"
 
-// True conveyor belt system - items flow continuously based on belt speed
+// Simple belt system - items move every tick based on belt speed
 void USimWorldHex::StepBelts()
 {
 	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return;
+	
+	UE_LOG(LogTemp, Warning, TEXT("StepBelts: Processing %d tiles, %d items, Speed=%.2f"), 
+		TileMap.Num(), ItemMap.Num(), BeltSpeedTilesPerTick);
 
 	const float Speed = FMath::Max(0.f, BeltSpeedTilesPerTick);
 	const float BlockClamp = BeltBlockedClamp;
@@ -65,30 +68,27 @@ void USimWorldHex::StepBelts()
 		TArray<int32> ConnectedItemIds; // All items that must move together as a unit
 	};
 
-	// TRUE CONVEYOR SYSTEM - Key insight: 
-	// Instead of waiting for progress >= 1.0, move items when the belt in front clears
-	// This creates natural conveyor flow where items advance together
-
-	// Step 1: Advance belt progress but don't use it as movement gate
+	// SIMPLE BELT SYSTEM - Move items every tick based on belt speed
+	// Items move one tile per tick when BeltSpeedTilesPerTick >= 1.0
+	
+	// Step 1: Update belt progress for visual interpolation
 	const float Dt = FMath::Max(0.f, FixedStepSec);
-	const float TilesPerSec = (Speed / FMath::Max(KINDA_SMALL_NUMBER, Dt));
-	const float ProgressPerStep = TilesPerSec * Dt;
+	const float ProgressPerStep = Speed * Dt / FMath::Max(KINDA_SMALL_NUMBER, Dt);
 
 	for (const auto& KV : ItemMap)
 	{
 		if (KV.Value.Id == 0) continue;
-		if (NewlyPlacedItems.Contains(KV.Value.Id)) continue;
 
 		const FTile* T = TileMap.Find(KV.Key);
 		if (T && T->Kind == ETileKind::Belt)
 		{
 			float& Progress = BeltProgress.FindOrAdd(KV.Value.Id, 0.f);
 			Progress += ProgressPerStep;
-			// Keep progress for visual interpolation but don't cap it - let it accumulate
+			// Keep progress for visual interpolation but don't cap it
 		}
 	}
 
-	// Step 2: TRUE CONVEYOR LOGIC - Build belt chains and move entire chains when possible
+	// Step 2: Move items on belts - simple per-item movement
 	TMap<FHex, int32> BeltChainIds; // Map each belt hex to its chain ID
 	TArray<TArray<FHex>> BeltChains; // Each chain is an ordered list of belt hexes
 	int32 NextChainId = 0;
@@ -158,7 +158,7 @@ void USimWorldHex::StepBelts()
 		}
 	}
 
-	// Step 3: Process each belt chain for true conveyor movement
+	// Step 3: Process each belt chain for conveyor movement
 	TArray<FMoveOperation> MoveOperations;
 	TSet<int32> ProcessedItems;
 
@@ -192,7 +192,7 @@ void USimWorldHex::StepBelts()
 		{
 			const FHex& ChainHex = Chain[i];
 			const FItem* ChainItem = ItemMap.Find(ChainHex);
-			bool bHasItem = (ChainItem && ChainItem->Id > 0 && !NewlyPlacedItems.Contains(ChainItem->Id));
+			bool bHasItem = (ChainItem && ChainItem->Id > 0);
 
 			// Key conveyor logic: Can move if there's an item AND the next position allows movement
 			CanMove[i] = bHasItem && bPreviousCanMove;
@@ -399,9 +399,8 @@ void USimWorldHex::StepBelts()
 				ItemMap.Add(NewHex, *MovingItem);
 				OrbAt.Add(NewHex, KindFromItem(*MovingItem));
 
-				// TRUE CONVEYOR FIX: Don't subtract progress! 
-				// Keep accumulated progress for smooth visual flow
-				// Progress is only used for visual interpolation now, not movement gating
+				// Reset belt progress for items that moved - they start fresh at new position
+				BeltProgress.Remove(MovingItem->Id);
 
 				// Check if moved to special tiles
 				const FTile* NewTile = TileMap.Find(NewHex);
@@ -467,15 +466,15 @@ void USimWorldHex::StepBelts()
 			if (SourceTile->Kind == ETileKind::Input)
 			{
 				const FItem* InputItem = ItemMap.Find(SourceHex);
-				if (InputItem && InputItem->Id > 0 &&
-					!NewlyPlacedItems.Contains(InputItem->Id))
+				if (InputItem && InputItem->Id > 0)
 				{
 					FItem MovingItem = *InputItem;
 					ItemMap.Remove(SourceHex);
 					OrbAt.Remove(SourceHex);
 					ItemMap.Add(BeltHex, MovingItem);
 					OrbAt.Add(BeltHex, KindFromItem(MovingItem));
-					BeltProgress.Add(MovingItem.Id, 0.f);
+					// Start with some progress for smooth visual interpolation from input to belt
+					BeltProgress.Add(MovingItem.Id, 0.1f);
 					ItemsMovedLastStep.Add(MovingItem.Id);
 					return true;
 				}
@@ -486,7 +485,6 @@ void USimWorldHex::StepBelts()
 			{
 				FItem* BondItem = ItemMap.Find(SourceHex);
 				if (BondItem && BondItem->Id > 0 &&
-					!NewlyPlacedItems.Contains(BondItem->Id) &&
 					!RecentlyDroppedByArm.Contains(BondItem->Id))
 				{
 					if (!BondItem->bIsReady)
@@ -543,7 +541,7 @@ void USimWorldHex::StepBelts()
 					FHex ClusterMoveOffset(BeltHex.Q - SourceHex.Q, BeltHex.R - SourceHex.R);
 					TMap<int32, FHex> ClusterPositions;
 					TMap<int32, FHex> ClusterDestinations;
-					
+
 					for (int32 ConnectedId : ConnectedItemIds)
 					{
 						for (const auto& BoardKV : ItemMap)
@@ -552,7 +550,7 @@ void USimWorldHex::StepBelts()
 							{
 								FHex CurrentPos = BoardKV.Key;
 								FHex DestPos(CurrentPos.Q + ClusterMoveOffset.Q, CurrentPos.R + ClusterMoveOffset.R);
-								
+
 								ClusterPositions.Add(ConnectedId, CurrentPos);
 								ClusterDestinations.Add(ConnectedId, DestPos);
 								break;
@@ -565,13 +563,13 @@ void USimWorldHex::StepBelts()
 					for (const auto& DestKV : ClusterDestinations)
 					{
 						const FHex& DestPos = DestKV.Value;
-						
+
 						if (HeldOrbHexes.Contains(DestPos))
 						{
 							bCanMoveCluster = false;
 							break;
 						}
-						
+
 						if (const FItem* DestItem = ItemMap.Find(DestPos))
 						{
 							if (!InCluster.Contains(DestItem->Id))
@@ -597,7 +595,7 @@ void USimWorldHex::StepBelts()
 								{
 									MovingItems.Add(ItemId, *MovingItem);
 									OldPositions.Add(ItemId, *CurrentPos);
-									
+
 									if (FHex* DestPos = ClusterDestinations.Find(ItemId))
 									{
 										NewPositions.Add(ItemId, *DestPos);
@@ -624,7 +622,8 @@ void USimWorldHex::StepBelts()
 								MovingItem->bIsReady = true;
 								ItemMap.Add(NewHex, *MovingItem);
 								OrbAt.Add(NewHex, KindFromItem(*MovingItem));
-								BeltProgress.Add(MovingItem->Id, 0.f);
+								// Start with some progress for smooth visual interpolation
+								BeltProgress.Add(MovingItem->Id, 0.1f);
 								ItemsMovedLastStep.Add(MovingItem->Id);
 							}
 						}
@@ -681,6 +680,8 @@ void USimWorldHex::StepBelts()
 		{
 			if (TryPullFromHex(BeltHex, InputHex, InputTile))
 			{
+				UE_LOG(LogTemp, Warning, TEXT("StepBelts: Pulled item from input (%d,%d) to belt (%d,%d)"), 
+					InputHex.Q, InputHex.R, BeltHex.Q, BeltHex.R);
 				continue;
 			}
 		}
@@ -727,7 +728,7 @@ void USimWorldHex::StepBelts()
 			}
 		}
 	}
-	
+
 	// Set newly placed items to ready for next tick
 	for (int32 ItemId : NewlyPlacedItems)
 	{

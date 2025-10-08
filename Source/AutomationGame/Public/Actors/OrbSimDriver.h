@@ -8,6 +8,9 @@
 class USimWorldHex;
 class AGameManager;
 
+/** Broadcasts after simulation has stepped */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSimStepComplete, float, StepSeconds);
+
 /**
  * Drives the hex-world simulation.
  * IMPORTANT: Simulation steps ONLY when GameTickManager broadcasts OnFixedTick.
@@ -29,6 +32,10 @@ public:
 
 	/** Called by GameTickManager each fixed step. */
 	UFUNCTION() void HandleFixedTickSeconds(float StepSeconds);
+	
+	/** Fired after simulation has stepped - useful for updating visuals */
+	UPROPERTY(BlueprintAssignable, Category = "Simulation")
+	FOnSimStepComplete OnSimStepComplete;
 
 	// ---------------------------------------------------------------------
 	// Grid / environment knobs (consumed by placement & rendering)
@@ -98,7 +105,7 @@ public:
 	bool IsSphereEnabled() const { return bSphereGrid; }
 	float GetSphereRadius() const { return SphereRadiusUU; }
 
-	// (Deprecated) kept for backward compatibility – just forwards to SetGridParameters + ApplySphereSettings
+	// (Deprecated) kept for backward compatibility ï¿½ just forwards to SetGridParameters + ApplySphereSettings
 	UFUNCTION(BlueprintCallable, Category="Grid", meta=(DeprecatedFunction, DeprecationMessage="Use GameManager settings instead."))
 	void SetGridParametersSphere(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor, bool bInSphere, float InSphereRadius)
 	{

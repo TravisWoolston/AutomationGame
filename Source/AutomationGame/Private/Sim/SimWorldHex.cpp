@@ -8,7 +8,7 @@
 #include "AGLogChannels.h"
 
 // Near top (after includes) add if not already in header:
-static constexpr float DEFAULT_BELT_SPEED_TILES_PER_SECOND = 1.0f;
+static constexpr float DEFAULT_BELT_SPEED_TILES_PER_SECOND = 0.0f;
 // Helper used only inside StepBonds to index held cluster sub‑orbs.
 struct FHeldOrbRef
 {
@@ -1755,6 +1755,7 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 		return true;
 	}
 
+	// Use belt progress for smooth visual interpolation
 	const float* PLogicPtr = BeltProgress.Find(ItemId);
 	float LogicalP = PLogicPtr ? *PLogicPtr : 0.f;
 	const bool bBlockedEdge = LogicalP >= BeltBlockedClamp - 0.0001f;
@@ -1763,8 +1764,7 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 	if (!bBlockedEdge)
 	{
 		const float Dt = FMath::Max(0.f, FixedStepSec);
-		const float TilesPerSec = (BeltSpeedTilesPerSecond > 0.f) ? BeltSpeedTilesPerSecond
-			: (BeltSpeedTilesPerTick / FMath::Max(KINDA_SMALL_NUMBER, Dt));
+		const float TilesPerSec = BeltSpeedTilesPerTick / FMath::Max(KINDA_SMALL_NUMBER, Dt);
 		// Interpolate using elapsed real time within this step
 		VisualP = FMath::Min(BeltBlockedClamp - 0.0001f,
 			LogicalP + FrameAlpha * TilesPerSec * Dt);
