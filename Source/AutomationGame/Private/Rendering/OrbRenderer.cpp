@@ -379,8 +379,6 @@ void UOrbRenderer::RebuildInstances()
 	EnsureISM();
 	if (!Driver || !Sim) return;
 
-	const float Alpha = Driver->GetStepAlpha();
-	
 	// Clear all ISM instances
 	for (auto& KV : OrbTypeISMs)
 	{
@@ -389,6 +387,11 @@ void UOrbRenderer::RebuildInstances()
 			KV.Value->ClearInstances();
 		}
 	}
+
+	// Early return if orbs should be hidden for debugging
+	if (!bShowOrbs) return;
+
+	const float Alpha = Driver->GetStepAlpha();
 
 	// Build set of held item ids so we don't double render
 	TSet<int32> HeldIds;
@@ -534,7 +537,7 @@ void UOrbRenderer::RebuildBondedOrbs()
 	if (!BondedOrbISM || !Driver || !Sim) return;
 
 	BondedOrbISM->ClearInstances();
-	if (!BondedOrbMesh) return;
+	if (!BondedOrbMesh || !bShowOrbs) return;
 
 	// For now, only render bonds between board items (not held items)
 	// Held cluster bonds are handled by BasicArm
@@ -609,7 +612,7 @@ void UOrbRenderer::RebuildBondedOrbs()
 
 void UOrbRenderer::RenderAnimatedOrbs()
 {
-	if (!Sim) return;
+	if (!Sim || !bShowOrbs) return;
 	
 	const TArray<USimWorldHex::FAnimatedOrb>& AnimatedOrbs = Sim->GetAnimatedOrbs();
 	if (AnimatedOrbs.Num() == 0) return;

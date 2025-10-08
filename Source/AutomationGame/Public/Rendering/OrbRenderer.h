@@ -38,6 +38,9 @@ public:
 	/** Auto repair references if driver/sim is not found at BeginPlay (eg. spawned later) */
 	UPROPERTY(EditAnywhere, Category = "Debug") bool bAutoReacquire = true;
 
+	/** Debug: Make orbs invisible when false */
+	UPROPERTY(EditAnywhere, Category = "Debug") bool bShowOrbs = true;
+
 	/** Basic visuals */
 	// Note: OrbMesh and OrbMaterial are now managed by UOrbMaterialManager
 	UPROPERTY(EditAnywhere, Category = "Visual") float OrbScale = 0.30f;
