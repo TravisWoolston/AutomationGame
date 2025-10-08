@@ -51,13 +51,14 @@ struct AUTOMATIONGAME_API FArmState
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bHolding = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FItem   Held;
-	
+
 	// Track which orb the arm is directly holding (for unbond processing)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32   DirectlyHeldOrbId = 0;
-	
+
 	// Pause flag for bonded arm management
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bPausedForBonding = false;
-	
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bReadyForGrab = false;
 	// WaitForBond state tracking
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32   WaitForBondInitialCount = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bWaitingForBond = false;
@@ -69,7 +70,7 @@ struct AUTOMATIONGAME_API FArmState
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) EHexDir PrevFacing = (EHexDir)0;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32   PrevArmLen = 1;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32   PrevTrackIdx = 0;
-	
+
 	// --- NEW: robust rotation completion tracking ---
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) bool    bRotationCompleted = false;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32   RotationCompletionStep = -1;

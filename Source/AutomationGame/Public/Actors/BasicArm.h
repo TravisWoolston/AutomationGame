@@ -111,10 +111,6 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Program", meta = (ClampMin = 0, ClampMax = 5))
 	uint8 StartingRotation = 0;
 
-	/** (Legacy) scalar reach fraction — kept for compatibility with old placements. */
-	// UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", AdvancedDisplay)
-	// float HandReachUU = 0.6f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector BaseScale = FVector(1.f);
 
@@ -130,7 +126,20 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector HeldOrbScale = FVector(0.2f);
-
+	float EffectiveReachStart = 1.f;
+	float EffectiveReachEnd = 1.f;
+	float LastExtendSegmentMultiplier = 1.0f;
+	/**
+	 * Multiplier applied ONLY to each additional segment beyond the first when computing visual distance.
+	 * Effective visual reach = 1 + (ReachTiles - 1) * ExtensionSegmentMultiplier.
+	 * ReachTiles == 1 always yields exactly 1 (no scaling).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", meta = (ClampMin = 0.01))
+	float ExtensionSegmentMultiplier = 1.5f;
+	float ComputeEffectiveReach(int32 Tiles) const
+	{
+		return (Tiles <= 1) ? 1.f : 1.f + float(Tiles - 1) * ExtensionSegmentMultiplier;
+	}
 	// --- Program control (Blueprint-friendly) ---
 	/** Program editable in BP (looped if bLoopProgram). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Program")
@@ -164,7 +173,7 @@ public:
 	/** Check if the arm is currently animating (rotating, etc.) */
 	UFUNCTION(BlueprintPure, Category = "Program")
 	bool IsAnimating() const { return StepAlpha < 1.0f; }
-	
+
 	/** Get the current step alpha for debugging */
 	UFUNCTION(BlueprintPure, Category = "Program")
 	float GetStepAlpha() const { return StepAlpha; }
@@ -176,7 +185,7 @@ public:
 	/** Get the starting facing direction */
 	UFUNCTION(BlueprintPure, Category = "Program")
 	uint8 GetStartFacingDir() const { return StartFacingDir; }
-	
+
 	/** Get the current visual yaw (interpolated during rotation) */
 	float GetVisualYawDeg() const;
 
@@ -190,11 +199,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
 	int32 SimArmIndex;
 
+	// Effective (scaled) visual reach in tile units (not world units).
+	UFUNCTION(BlueprintPure, Category = "Visual")
+	float GetEffectiveReach() const { return ReachTiles <= 1 ? 1.f : 1.f + float(ReachTiles - 1) * ExtensionSegmentMultiplier; }
 
 public:
 	void PushProgramToSim();
-	void PushRuntimePropertiesToSim();   // NEW
-	TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& InProgram) const; // Made member function for Reset expansion
+	void PushRuntimePropertiesToSim();
+	TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& InProgram) const;
 	/** If true, cluster sub-orb offsets are multiplied by TileSize (grid units -> UU). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
 	bool bScaleClusterOffsetsByTile = true;
@@ -227,7 +239,10 @@ private:
 	// --- Reach interpolation (visual only) ---
 	// Reach at start/end of current fixed step for smooth Extend/Retract visual tween
 	float ReachVisualStart = 1.f;
-	float ReachVisualEnd   = 1.f; // target logical reach for this step
+	float ReachVisualEnd = 1.f; // target logical reach for this step
+
+	// Track last applied multiplier to update interpolation smoothly
+	float LastExtensionSegmentMultiplier = 1.0f;
 
 	// --- Held cluster visual support ---
 	UPROPERTY(Transient)
@@ -296,7 +311,7 @@ private:
 
 	// Bonded orb mesh generation
 	void GenerateBondedOrbMeshes();
-	
+
 	// Helper to get bonded orb properties from OrbRenderer
 	UStaticMesh* GetBondedOrbMesh() const;
 	UMaterialInterface* GetBondedOrbMaterial() const;
@@ -307,6 +322,7 @@ public:
 	// If > 0 overrides ReachTiles * TileSize for grip distance (UU)
 	UPROPERTY(EditAnywhere, Category = "Arm|Grip")
 	float GripDistanceOverride = 0.f;
+
 
 	// Vertical (Z) offset for the grip pivot relative to base component
 	UPROPERTY(EditAnywhere, Category = "Arm|Grip")

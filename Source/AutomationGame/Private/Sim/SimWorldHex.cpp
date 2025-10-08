@@ -583,7 +583,7 @@ void USimWorldHex::StepArms()
 			{
 				int32 PrevPC = S.PC - 1;
 				const FOp& PrevOp = S.Tape[PrevPC];
-				
+
 				if (PrevOp.Cmd == ECmd::Grab)
 				{
 					// Execute the deferred grab now
@@ -592,7 +592,7 @@ void USimWorldHex::StepArms()
 						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
 							FString::Printf(TEXT("Arm %d: Executing deferred grab from PC=%d"), ArmIndex, PrevPC));
 					}
-					
+
 					// Execute grab logic here (copied from original grab case)
 					bool bGrabSucceeded = false;
 					FHex Target = S.BaseHex;
@@ -701,7 +701,7 @@ void USimWorldHex::StepArms()
 			} break;
 
 			case ECmd::Grab:
-				
+
 				break;
 
 			case ECmd::Drop:
@@ -1392,12 +1392,12 @@ void USimWorldHex::StepArmsSecondPass()
 				// Advance PC since grab succeeded
 				S.PC = (S.PC + 1) % S.Tape.Num();
 
-				if (bDebugLogs && GEngine)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-						FString::Printf(TEXT("Arm %d: Second pass grab succeeded at (%d,%d)"),
-							ArmIndex, Target.Q, Target.R));
-				}
+				//if (bDebugLogs && GEngine)
+				//{
+				//	GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+				//		FString::Printf(TEXT("Arm %d: Second pass grab succeeded at (%d,%d)"),
+				//			ArmIndex, Target.Q, Target.R));
+				//}
 			}
 		}
 		else
@@ -1455,12 +1455,12 @@ void USimWorldHex::StepArmsSecondPass()
 					// Advance PC
 					S.PC = (S.PC + 1) % S.Tape.Num();
 
-					if (bDebugLogs && GEngine)
-					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-							FString::Printf(TEXT("Arm %d: Second pass single grab at (%d,%d)"),
-								ArmIndex, Target.Q, Target.R));
-					}
+					//if (bDebugLogs && GEngine)
+					//{
+					//	GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+					//		FString::Printf(TEXT("Arm %d: Second pass single grab at (%d,%d)"),
+					//			ArmIndex, Target.Q, Target.R));
+					//}
 				}
 			}
 			else
@@ -1513,34 +1513,45 @@ void USimWorldHex::StepArmsSecondPass()
 
 				if (bAllFound && Cluster.Orbs.Num() > 0)
 				{
-					// Remove all items from board
-					for (const FOrbData& Sub : Cluster.Orbs)
-					{
-						for (auto It = ItemMap.CreateIterator(); It; ++It)
+					if (S.bReadyForGrab) {
+
+						// Remove all items from board
+						for (const FOrbData& Sub : Cluster.Orbs)
 						{
-							if (It.Value().Id == Sub.ItemId)
+							for (auto It = ItemMap.CreateIterator(); It; ++It)
 							{
-								SkipInputThisFrame.Add(It.Key());
-								HeldItemLastHex.Add(Sub.ItemId, It.Key());
-								It.RemoveCurrent();
-								break;
+								if (It.Value().Id == Sub.ItemId)
+								{
+									SkipInputThisFrame.Add(It.Key());
+									HeldItemLastHex.Add(Sub.ItemId, It.Key());
+									It.RemoveCurrent();
+									break;
+								}
 							}
 						}
+
+						S.Held = Cluster;
+						S.bHolding = true;
+						S.PrevHeldOrbCount = Cluster.Orbs.Num();
+
+						// Advance PC
+						S.PC = (S.PC + 1) % S.Tape.Num();
+						S.bReadyForGrab = false;
+					}
+					else {
+
+						S.bReadyForGrab = true;
+						/*if (bDebugLogs && GEngine)
+						{
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+								FString::Printf(TEXT("Arm %d: Second pass cluster grab (%d orbs) at (%d,%d)"),
+									ArmIndex, Cluster.Orbs.Num(), Target.Q, Target.R));
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+							FString::Printf(TEXT("Arm %d: Ready for grab: %d"),
+								ArmIndex, S.bReadyForGrab));
+						}*/
 					}
 
-					S.Held = Cluster;
-					S.bHolding = true;
-					S.PrevHeldOrbCount = Cluster.Orbs.Num();
-
-					// Advance PC
-					S.PC = (S.PC + 1) % S.Tape.Num();
-
-					if (bDebugLogs && GEngine)
-					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-							FString::Printf(TEXT("Arm %d: Second pass cluster grab (%d orbs) at (%d,%d)"),
-								ArmIndex, Cluster.Orbs.Num(), Target.Q, Target.R));
-					}
 				}
 			}
 		}
@@ -2195,7 +2206,7 @@ void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
 			PendingHeldMerges.RemoveAt(i);
 		}
 	}
-
+	StepArmsSecondPass();
 	// Note: Unbond processing is now handled in OnArmRotationFullyComplete()
 	// This function only handles bond formation at 95% rotation completion
 }
@@ -2239,6 +2250,7 @@ void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 		// Store the arm index and the facing direction when rotation fully completed
 		ArmsReadyForUnbond.Add(ArmIndex, VisualFacing);
 	}
+	StepArmsSecondPass();
 }
 
 void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)

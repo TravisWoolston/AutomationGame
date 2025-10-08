@@ -63,6 +63,9 @@ void ABasicArm::OnConstruction(const FTransform& Transform)
 	CurrYawDeg = DirToYaw(FacingDir);
 	LastYawDeg = CurrYawDeg;                 // lock start == target
 	RefreshPose(1.f);
+
+	EffectiveReachStart = EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
+	LastExtensionSegmentMultiplier = ExtensionSegmentMultiplier;
 }
 
 void ABasicArm::BeginPlay()
@@ -115,6 +118,9 @@ void ABasicArm::BeginPlay()
 	RefreshPose(1.f);
 
 	PushRuntimePropertiesToSim(); // NEW
+
+	EffectiveReachStart = EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
+	LastExtensionSegmentMultiplier = ExtensionSegmentMultiplier;
 }
 
 void ABasicArm::Tick(float DeltaSeconds)
@@ -130,20 +136,27 @@ void ABasicArm::Tick(float DeltaSeconds)
 		FacingDir = static_cast<uint8>(SimState.Facing);
 		CurrYawDeg = DirToYaw(FacingDir);
 
-		if (ReachTiles != SimState.ArmLen)
+
+		const bool bHaveSim = (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num());
+		const int32 SimLen = bHaveSim ? Sim->Arms[SimArmIndex].ArmLen : ReachTiles;
+		const bool bLenChanged = (SimLen != ReachTiles);
+		const bool bMultiplierChanged = !FMath::IsNearlyEqual(ExtensionSegmentMultiplier, LastExtendSegmentMultiplier);
+
+		if (bHaveSim && (bLenChanged || bMultiplierChanged))
 		{
-			// When logical reach changes mid-step we keep current interpolated fraction as new start
-			// and set new end to target logical reach for smooth transition.
-			float CurrentInterp = FMath::Lerp(ReachVisualStart, ReachVisualEnd, StepAlpha);
-			ReachVisualStart = CurrentInterp;
-			ReachVisualEnd = (float)SimState.ArmLen;
-			ReachTiles = SimState.ArmLen; // store logical
+			// Preserve current interpolated effective reach
+			const float CurrentEff = FMath::Lerp(EffectiveReachStart, EffectiveReachEnd, StepAlpha);
+			EffectiveReachStart = CurrentEff;
+			ReachTiles = SimLen;                // update logical length AFTER sampling
+			EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
+			LastExtendSegmentMultiplier = ExtensionSegmentMultiplier;
 		}
-		else if (ReachVisualEnd != ReachTiles)
+		else if (!bHaveSim && bMultiplierChanged)
 		{
-			// Initialize end if first frame
-			ReachVisualStart = (float)ReachTiles;
-			ReachVisualEnd = (float)ReachTiles;
+			const float CurrentEff = FMath::Lerp(EffectiveReachStart, EffectiveReachEnd, StepAlpha);
+			EffectiveReachStart = CurrentEff;
+			EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
+			LastExtendSegmentMultiplier = ExtensionSegmentMultiplier;
 		}
 
 		// Sync wait state and program counter from simulation
@@ -168,6 +181,34 @@ void ABasicArm::Tick(float DeltaSeconds)
 		{
 			UpdateHeldOrbVisual();
 			LastHeldOrbCount = bHolding ? HeldOrb.Orbs.Num() : 0;
+		}
+	}
+
+	// ADD in Tick() BEFORE computing/advancing StepAlpha (replace previous ReachTiles/ReachVisual logic)
+	{
+		const bool bLenChanged = (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num()) ? (ReachTiles != Sim->Arms[SimArmIndex].ArmLen) : false;
+		const bool bMultiplierChanged = !FMath::IsNearlyEqual(ExtensionSegmentMultiplier, LastExtensionSegmentMultiplier);
+
+		if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
+		{
+			const FArmState& SimState = Sim->Arms[SimArmIndex];
+			if (bLenChanged || bMultiplierChanged)
+			{
+				// Preserve current interpolated effective distance
+				const float CurrentEff = FMath::Lerp(EffectiveReachStart, EffectiveReachEnd, StepAlpha);
+				EffectiveReachStart = CurrentEff;
+				ReachTiles = SimState.ArmLen;
+				EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
+				LastExtensionSegmentMultiplier = ExtensionSegmentMultiplier;
+			}
+			else
+			{
+				const float TargetEff = ComputeEffectiveReach(ReachTiles);
+				if (!FMath::IsNearlyEqual(EffectiveReachEnd, TargetEff))
+				{
+					EffectiveReachStart = EffectiveReachEnd = TargetEff;
+				}
+			}
 		}
 	}
 
@@ -228,13 +269,15 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 	LastYawDeg = RenderedYaw;
 
 	// For reach, start new interpolation from current interpolated position toward current logical target
-	float CurrentReach = FMath::Lerp(ReachVisualStart, ReachVisualEnd, StepAlpha);
-	ReachVisualStart = CurrentReach;
-	ReachVisualEnd = (float)ReachTiles; // ensure matches logical after step boundary
+	const float CurrentEff = FMath::Lerp(EffectiveReachStart, EffectiveReachEnd, StepAlpha);
+	EffectiveReachStart = CurrentEff;
+	EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
 
 	// Reset StepAlpha for new animation cycle
 	StepAlpha = 0.f;
 	RefreshPose(0.f);
+
+
 }
 
 void ABasicArm::EnsureComps()
@@ -367,8 +410,10 @@ void ABasicArm::RefreshPose(float InAlpha)
 			const float GripYawRad = FMath::DegreesToRadians(Yaw);
 			Forward = FVector(FMath::Cos(GripYawRad), FMath::Sin(GripYawRad), 0.f);
 		}
-		const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
-		const float ReachDistance = Tile * ReachInterp;
+		const float Tile = (Driver ? Driver->GetTileSize() : 300.f);
+		const float ReachDistance = (Driver ? Driver->GetTileSize() : 300.f)
+			* FMath::Lerp(EffectiveReachStart, EffectiveReachEnd, EasedAlpha);
+
 		FVector Up = bSphere ? (BaseWorld - (Driver->GetGridAnchor() ? Driver->GetGridAnchor()->GetActorLocation() : FVector::ZeroVector)).GetSafeNormal() : FVector::UpVector;
 		if (Up.IsNearlyZero()) Up = FVector::UpVector;
 		FVector Right = FVector::CrossProduct(Forward, Up).GetSafeNormal();
@@ -384,7 +429,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 			if (GrabbedOrb)
 			{
 				const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
-				const float TileSize = (Driver ? Driver->GetTileSize() : 100.f);
+				const float TileSize = (Driver ? Driver->GetTileSize() : 300.f);
 				const FVector2D HexOffset2D = HexCoord::AxialToXY(FHexAxial(GrabbedOrb->dQ, GrabbedOrb->dR), TileSize, GridOrientation) * ClusterOffsetScale;
 				InterpolatedHandWorld = FinalGripPos - (Forward * HexOffset2D.X + Right * HexOffset2D.Y);
 			}
