@@ -176,6 +176,9 @@ public:
 	/** Get the starting facing direction */
 	UFUNCTION(BlueprintPure, Category = "Program")
 	uint8 GetStartFacingDir() const { return StartFacingDir; }
+	
+	/** Get the current visual yaw (interpolated during rotation) */
+	float GetVisualYawDeg() const;
 
 	/** For debugging: execute current instruction immediately (ignores Wait). */
 	UFUNCTION(BlueprintCallable, Category = "Program")

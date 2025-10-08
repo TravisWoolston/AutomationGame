@@ -12,6 +12,7 @@
 #include "DrawDebugHelpers.h"
 #include "UI/AutomationGameHUD.h"
 #include "Framework/GameManager.h"
+#include "Framework/GameTickManager.h"
 #include "EngineUtils.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
@@ -284,6 +285,9 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	// Selection modifier key (Left Alt)
 	IC->BindAction("TypeSelectionActive", IE_Pressed, this, &AHexTopDownPawn::SelectionActivePressed);
 	IC->BindAction("TypeSelectionActive", IE_Released, this, &AHexTopDownPawn::SelectionActiveReleased);
+	
+	// Simulation control
+	IC->BindAction("NextTick", IE_Pressed, this, &AHexTopDownPawn::NextTick);
 }
 
 void AHexTopDownPawn::SetInputMode1() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Input); }
@@ -295,6 +299,28 @@ void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceK
 
 void AHexTopDownPawn::SelectionActivePressed() { bTypeSelectionActive = true; }
 void AHexTopDownPawn::SelectionActiveReleased() { bTypeSelectionActive = false; }
+
+void AHexTopDownPawn::NextTick()
+{
+	// Find the GameTickManager
+	AGameTickManager* TickManager = AGameTickManager::Get(this);
+	if (!TickManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("NextTick: No GameTickManager found"));
+		return;
+	}
+	
+	// If simulation is playing, pause it first
+	if (TickManager->IsPlaying())
+	{
+		TickManager->Pause();
+		UE_LOG(LogTemp, Log, TEXT("NextTick: Paused simulation"));
+	}
+	
+	// Advance simulation by one tick
+	TickManager->StepTicks(1);
+	UE_LOG(LogTemp, Log, TEXT("NextTick: Advanced simulation by 1 tick"));
+}
 
 void AHexTopDownPawn::StartSelection()
 {

@@ -188,4 +188,7 @@ private:
 	// Type selection modifier key (for cycling orb types)
 	void SelectionActivePressed();
 	void SelectionActiveReleased();
+	
+	// Simulation control - advance one tick
+	void NextTick();
 };

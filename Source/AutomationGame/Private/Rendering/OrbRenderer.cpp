@@ -11,6 +11,8 @@
 #include "Engine/Engine.h"
 #include "GameFramework/Actor.h"
 #include "Data/OrbMaterialManager.h"
+#include "Actors/BasicArm.h"
+#include "EngineUtils.h"
 
 static FORCEINLINE int32 MakeSubOrbId(int32 ItemId, int32 SubIdx)
 {
@@ -325,25 +327,40 @@ void UOrbRenderer::RebuildCurrPos()
 	}
 
 	// Held items (per arm)
-	for (const FArmState& S : Sim->Arms)
+	for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
 	{
+		const FArmState& S = Sim->Arms[ArmIdx];
 		if (!S.bHolding) continue;
 		const FItem& Held = S.Held;
 		if (Held.Id == 0) continue;
 
+		// Get the visual yaw from the arm actor to ensure smooth rotation
+		float VisualYaw = DirToYaw(static_cast<uint8>(S.Facing)); // Default to simulation facing
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+			{
+				ABasicArm* ArmActor = *ActorItr;
+				if (ArmActor && ArmActor->SimArmIndex == ArmIdx)
+				{
+					// Get the interpolated visual yaw from the arm actor
+					VisualYaw = ArmActor->GetVisualYawDeg();
+					break;
+				}
+			}
+		}
+
+		// Calculate grip position using visual yaw instead of discrete facing
+		// This provides smooth interpolation during rotation
+		FVector GripWorld = ComputeArmGripAtYaw(S, VisualYaw, GetAnchor(), Tile, Yaw, Ori);
+		
+		// For the grip hex (used for sphere rotation), we still need to calculate the logical position
 		FHex Grip = S.BaseHex;
 		for (int i = 0; i < S.ArmLen; ++i)
 			Grip = HexUtil::Neighbor(Grip, S.Facing);
 
-		FVector GripWorld = bSphere ? Driver->MapHexToWorld(Grip) : [&]() {
-			const FHexAxial GA(Grip.Q, Grip.R);
-			const FVector2D LocalXY = HexCoord::AxialToXY(GA, Tile, Ori);
-			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
-			return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-		}();
-
 		FRotator BaseRot = bSphere ? ComputeUprightRot(GripWorld, Grip)
-			: FRotator(0.f, DirToYaw(static_cast<uint8>(S.Facing)), 0.f);
+			: FRotator(0.f, VisualYaw, 0.f);
 
 		if (!Held.bIsCluster)
 		{

@@ -1,4 +1,4 @@
-#include "Actors/BasicArm.h"
+﻿#include "Actors/BasicArm.h"
 #include "Actors/OrbSimDriver.h"
 #include "Framework/GameTickManager.h"
 #include "Components/StaticMeshComponent.h"
@@ -299,6 +299,15 @@ float ABasicArm::DirToYaw(uint8 Dir) const
 	const bool bFlat = (Driver && Driver->GetGridOrientation() == EHexOrientation::FlatTop);
 	const float OriOffset = bFlat ? 30.f : 0.f; // mesh authored for pointy -> add 30 when flat
 	return NormDeg(GridYaw - 60.f * float(Dir % 6) + OriOffset);
+}
+
+float ABasicArm::GetVisualYawDeg() const
+{
+	// Calculate the interpolated yaw based on current animation state
+	const float StartYaw = NormDeg(LastYawDeg);
+	const float TargetYaw = NormDeg(CurrYawDeg);
+	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
+	return NormDeg(StartYaw + Delta * StepAlpha);
 }
 
 void ABasicArm::RefreshPose(float InAlpha)

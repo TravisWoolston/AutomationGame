@@ -964,7 +964,7 @@ void USimWorldHex::StepBonds()
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 	{
 		FArmState& S = Arms[ArmIndex];
-		S.PrevFacing = S.Facing;
+		// S.PrevFacing = S.Facing;
 		S.PrevArmLen = S.ArmLen;
 		S.PrevTrackIdx = S.TrackIdx;
 	}
