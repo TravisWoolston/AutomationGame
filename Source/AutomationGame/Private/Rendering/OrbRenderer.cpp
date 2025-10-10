@@ -622,6 +622,7 @@ void UOrbRenderer::RenderAnimatedOrbs()
 	const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
 	const float Yaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const float Alpha = Driver ? Driver->GetStepAlpha() : 0.f;
 	
 	for (const USimWorldHex::FAnimatedOrb& AnimatedOrb : AnimatedOrbs)
 	{
@@ -633,8 +634,36 @@ void UOrbRenderer::RenderAnimatedOrbs()
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
 		const FVector BasePos = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
 		
-		// Calculate animation progress (0.0 to 1.0)
-		const float Progress = FMath::Clamp(AnimatedOrb.AnimationTime / AnimatedOrb.AnimationDuration, 0.f, 1.f);
+	// Calculate animation progress (0.0 to 1.0)
+	const int32 CurrentStep = Sim->GetStepCounter();
+	// Interpolate during the animation window (from StartStep to CompletionStep)
+	float StepProgress = 0.f;
+	
+	const int32 AnimationDuration = AnimatedOrb.CompletionStep - AnimatedOrb.StartStep;
+	
+	if (CurrentStep < AnimatedOrb.StartStep)
+	{
+		StepProgress = 0.f; // Not started yet
+		if (!AnimatedOrb.bIsInput)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("RenderAnimatedOrbs: Output at (%d,%d) not started yet, CurrentStep=%d < StartStep=%d"), 
+				AnimatedOrb.Hex.Q, AnimatedOrb.Hex.R, CurrentStep, AnimatedOrb.StartStep);
+		}
+	}
+	else if (CurrentStep >= AnimatedOrb.CompletionStep)
+	{
+		StepProgress = 1.f; // Completed
+	}
+	else
+	{
+		// Calculate progress based on how many steps have elapsed + current frame alpha
+		const int32 StepsElapsed = CurrentStep - AnimatedOrb.StartStep;
+		const float ProgressPerStep = 1.0f / FMath::Max(1.0f, (float)AnimationDuration);
+		StepProgress = (StepsElapsed * ProgressPerStep) + (Alpha * ProgressPerStep);
+	}
+	
+	const float Progress = FMath::Clamp(StepProgress, 0.f, 1.f);
+		
 		
 		// Calculate Z offset based on animation type and progress
 		float ZOffset = 0.f;
@@ -661,6 +690,7 @@ void UOrbRenderer::RenderAnimatedOrbs()
 		{
 			OrbType = AnimatedOrb.Item.Single.Type;
 		}
+		
 		
 		// Note: Output orb material logging removed for performance
 		

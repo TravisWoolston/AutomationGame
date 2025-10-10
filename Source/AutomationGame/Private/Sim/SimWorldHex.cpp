@@ -460,7 +460,7 @@ void USimWorldHex::StepSim()
 	SkipOutputThisFrame.Reset();
 	OrbsNewlyMovedToOutput.Reset();
 
-	SpawnInputs();          // pass 1 (empty at start)
+	// SpawnInputs();          // pass 1 (empty at start)
 	StepArms();
 	StepBelts();
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)

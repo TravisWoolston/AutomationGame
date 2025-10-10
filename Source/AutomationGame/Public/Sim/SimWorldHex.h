@@ -104,8 +104,9 @@ public:
 	{
 		FItem Item;
 		FHex Hex;
-		float AnimationTime = 0.f;
-		float AnimationDuration = 1.0f; // seconds
+		int32 StartStep = 0; // Step counter when animation started
+		int32 CompletionStep = 0; // Step counter when animation should complete
+		
 		bool bIsInput = false; // true for input (ascending), false for output (descending)
 		bool bActive = true;
 	};
@@ -224,7 +225,17 @@ private:
 	void StepGlyphs();
 
 
-	static uint8 KindFromItem(const FItem& /*Item*/) { return (uint8)EOrbType::BaseA; }
+	static uint8 KindFromItem(const FItem& Item) 
+	{ 
+		if (Item.bIsCluster && Item.Orbs.Num() > 0)
+		{
+			return (uint8)Item.Orbs[0].Type;
+		}
+		else
+		{
+			return (uint8)Item.Single.Type;
+		}
+	}
 
 	// Belt progress
 	UPROPERTY()

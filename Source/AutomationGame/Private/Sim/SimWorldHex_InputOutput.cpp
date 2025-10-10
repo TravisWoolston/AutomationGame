@@ -34,22 +34,14 @@ void USimWorldHex::SpawnInputs()
 		// Don't spawn if any held item is occupying this position
 		if (bHeldItemAtThisPosition) continue;
 
-		FOrb O; O.Type = (EOrbType)T.Arg;
-		FItem NewItem = FItem::MakeSingle(O);
-		NewItem.Id = NextItemId++;
-
-		// Create animated orb for input (ascending)
-		FAnimatedOrb AnimatedOrb;
-		AnimatedOrb.Item = NewItem;
-		AnimatedOrb.Hex = H;
-		AnimatedOrb.AnimationTime = 0.f;
-		AnimatedOrb.AnimationDuration = 0.5f; // 0.5 seconds to ascend
-		AnimatedOrb.bIsInput = true;
-		AnimatedOrb.bActive = true;
-		AnimatedOrbs.Add(AnimatedOrb);
-		
-		// Don't immediately place the item - it will be placed when animation completes
-	}
+	// Immediately place the item without animation
+	// Animation will be handled by StepBelts when an item is pulled from this input
+	FOrb O; O.Type = (EOrbType)T.Arg;
+	FItem NewItem = FItem::MakeSingle(O);
+	NewItem.Id = NextItemId++;
+	
+	TryPutItem(H, NewItem);
+}
 }
 
 void USimWorldHex::SpawnInputsAfterBelts()
@@ -85,24 +77,14 @@ void USimWorldHex::SpawnInputsAfterBelts()
 		// Don't spawn if any held item is occupying this position
 		if (bHeldItemAtThisPosition) continue;
 
-		FOrb O; O.Type = (EOrbType)T.Arg;
-		FItem NewItem = FItem::MakeSingle(O);
-		NewItem.Id = NextItemId++;
-
-		// Create animated orb for input (ascending)
-		FAnimatedOrb AnimatedOrb;
-		AnimatedOrb.Item = NewItem;
-		AnimatedOrb.Hex = H;
-		AnimatedOrb.AnimationTime = 0.f;
-		AnimatedOrb.AnimationDuration = 0.5f; // 0.5 seconds to ascend
-		AnimatedOrb.bIsInput = true;
-		AnimatedOrb.bActive = true;
-		AnimatedOrbs.Add(AnimatedOrb);
-		
-		// Don't immediately place the item - it will be placed when animation completes
-		// Mark so a second (unexpected) pass this frame wouldn't double spawn
-		SkipInputThisFrame.Add(H);
-	}
+	// Immediately place the item without animation
+	// Animation will be handled by StepBelts when an item is pulled from this input
+	FOrb O; O.Type = (EOrbType)T.Arg;
+	FItem NewItem = FItem::MakeSingle(O);
+	NewItem.Id = NextItemId++;
+	
+	TryPutItem(H, NewItem);
+}
 }
 
 bool USimWorldHex::DoesItemMatchOutputType(const FItem& Item, const FTile& OutputTile) const
@@ -138,8 +120,7 @@ void USimWorldHex::ProcessOutputs()
 		if (T.Kind != ETileKind::Output) continue;
 		if (SkipOutputThisFrame.Contains(H)) continue;
 		
-		// Skip orbs that were just moved to this output tile this tick
-		if (OrbsNewlyMovedToOutput.Contains(H)) continue;
+		// Process orbs immediately, even if just moved this tick (for instant descend animation)
 
 		// Check if there's an item on this output tile
 		const FItem* ItemPtr = ItemMap.Find(H);
@@ -153,15 +134,18 @@ void USimWorldHex::ProcessOutputs()
 			ItemMap.Remove(H);
 			OrbAt.Remove(H);
 			
-			// Create animated orb for output (descending)
-			FAnimatedOrb AnimatedOrb;
-			AnimatedOrb.Item = Temp;
-			AnimatedOrb.Hex = H;
-			AnimatedOrb.AnimationTime = 0.f;
-			AnimatedOrb.AnimationDuration = 1.0f; // 1 second to descend
-			AnimatedOrb.bIsInput = false;
-			AnimatedOrb.bActive = true;
-			AnimatedOrbs.Add(AnimatedOrb);
+		// Create animated orb for output (descending) - synchronized to step counter
+		FAnimatedOrb AnimatedOrb;
+		AnimatedOrb.Item = Temp;
+		AnimatedOrb.Hex = H;
+		AnimatedOrb.StartStep = StepCounter; // Start immediately this step
+		AnimatedOrb.CompletionStep = StepCounter + 3; // Complete after three steps
+		AnimatedOrb.bIsInput = false;
+		AnimatedOrb.bActive = true;
+		AnimatedOrbs.Add(AnimatedOrb);
+		
+		UE_LOG(LogTemp, Warning, TEXT("ProcessOutputs: Created descend animation at (%d,%d), StartStep=%d, CompletionStep=%d, CurrentStep=%d, ItemRemoved=true"), 
+			H.Q, H.R, AnimatedOrb.StartStep, AnimatedOrb.CompletionStep, StepCounter);
 			
 			++OutputCount;
 		}
@@ -257,25 +241,42 @@ bool USimWorldHex::GetOrbKindAt(const FHex& Hex, uint8& OutKind) const
 
 void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 {
+	// Animations complete based on step counter, not time
+	const int32 CurrentStep = GetStepCounter();
+	
 	for (int32 i = AnimatedOrbs.Num() - 1; i >= 0; i--)
 	{
 		FAnimatedOrb& AnimatedOrb = AnimatedOrbs[i];
 		if (!AnimatedOrb.bActive) continue;
 
-		AnimatedOrb.AnimationTime += DeltaTime;
-		
-		if (AnimatedOrb.AnimationTime >= AnimatedOrb.AnimationDuration)
+		// Check if animation has reached its completion step
+		if (CurrentStep >= AnimatedOrb.CompletionStep)
 		{
 			// Animation complete
 			if (AnimatedOrb.bIsInput)
 			{
-				// Input animation complete - place the item (if not already placed)
+				// Input animation complete - spawn a new orb
 				if (!ItemMap.Contains(AnimatedOrb.Hex))
 				{
-					TryPutItem(AnimatedOrb.Hex, AnimatedOrb.Item);
+					// Get the input tile to determine orb type
+					const FTile* InputTile = TileMap.Find(AnimatedOrb.Hex);
+					if (InputTile && InputTile->Kind == ETileKind::Input)
+					{
+						FOrb O;
+						O.Type = (EOrbType)InputTile->Arg;
+						FItem NewItem = FItem::MakeSingle(O);
+						NewItem.Id = NextItemId++;
+						
+						TryPutItem(AnimatedOrb.Hex, NewItem);
+					}
 				}
 			}
-			// For outputs and unbonded orbs, the item was already handled when animation started
+			else
+			{
+				// Output animation complete
+				UE_LOG(LogTemp, Warning, TEXT("UpdateAnimatedOrbs: Removing completed descend animation at (%d,%d), CurrentStep=%d"), 
+					AnimatedOrb.Hex.Q, AnimatedOrb.Hex.R, CurrentStep);
+			}
 			
 			// Remove the completed animation
 			AnimatedOrbs.RemoveAt(i);

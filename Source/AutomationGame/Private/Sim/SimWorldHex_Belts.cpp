@@ -177,6 +177,7 @@ void USimWorldHex::StepBelts()
 		const FHex OutputHex = HexUtil::Neighbor(LastHex, (EHexDir)(LastDir % 6));
 
 		// Can output if destination is clear
+		// Note: Allow output even if there's an active descend animation (animations can overlap)
 		bool bCanOutput = !HeldOrbHexes.Contains(OutputHex) && !ItemMap.Contains(OutputHex);
 
 		// Special case for bond/unbond tiles - can move there if empty
@@ -462,23 +463,39 @@ void USimWorldHex::StepBelts()
 		{
 			if (!SourceTile) return false;
 
-			// Handle input tiles
-			if (SourceTile->Kind == ETileKind::Input)
+		// Handle input tiles
+		if (SourceTile->Kind == ETileKind::Input)
+		{
+			const FItem* InputItem = ItemMap.Find(SourceHex);
+			if (InputItem && InputItem->Id > 0)
 			{
-				const FItem* InputItem = ItemMap.Find(SourceHex);
-				if (InputItem && InputItem->Id > 0)
-				{
-					FItem MovingItem = *InputItem;
-					ItemMap.Remove(SourceHex);
-					OrbAt.Remove(SourceHex);
-					ItemMap.Add(BeltHex, MovingItem);
-					OrbAt.Add(BeltHex, KindFromItem(MovingItem));
-					// Start with some progress for smooth visual interpolation from input to belt
-					BeltProgress.Add(MovingItem.Id, 0.1f);
-					ItemsMovedLastStep.Add(MovingItem.Id);
-					return true;
-				}
+				FItem MovingItem = *InputItem;
+				ItemMap.Remove(SourceHex);
+				OrbAt.Remove(SourceHex);
+				ItemMap.Add(BeltHex, MovingItem);
+				OrbAt.Add(BeltHex, KindFromItem(MovingItem));
+				// Start with some progress for smooth visual interpolation from input to belt
+				BeltProgress.Add(MovingItem.Id, 0.1f);
+				ItemsMovedLastStep.Add(MovingItem.Id);
+				
+				// Mark this input to skip spawning this frame
+				SkipInputThisFrame.Add(SourceHex);
+				
+				// Create ascend animation for the input tile
+				// Animation will complete in one step, synchronized with belt interpolation
+				// Use the item that was pulled to display the correct material
+				FAnimatedOrb AscendAnimation;
+				AscendAnimation.bActive = true;
+				AscendAnimation.bIsInput = true;
+				AscendAnimation.Hex = SourceHex;
+				AscendAnimation.Item = MovingItem; // Use the actual item for correct material
+				AscendAnimation.StartStep = StepCounter;
+				AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
+				AnimatedOrbs.Add(AscendAnimation);
+				
+				return true;
 			}
+		}
 
 			// Handle bond/unbond tiles with enhanced cluster logic
 			if (SourceTile->Kind == ETileKind::Bond || SourceTile->Kind == ETileKind::Unbond)
