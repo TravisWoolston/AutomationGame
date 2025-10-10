@@ -477,7 +477,7 @@ void USimWorldHex::StepBelts()
 				ItemsMovedLastStep.Add(MovingItem.Id);
 				
 				// Mark this input to skip spawning this frame
-				// SkipInputThisFrame.Add(SourceHex);
+				SkipInputThisFrame.Add(SourceHex);
 				
 				// Create ascend animation for the input tile
 				// Animation will complete in one step, synchronized with belt interpolation

@@ -1412,7 +1412,8 @@ void ABasicArm::GenerateBondedOrbMeshes()
 		// Check if both items are in this held cluster
 		bool bItemAInCluster = false;
 		bool bItemBInCluster = false;
-		FVector PosA, PosB;
+		FVector PosA = FVector::ZeroVector;
+		FVector PosB = FVector::ZeroVector;
 
 		for (const FOrbData& Sub : HeldOrb.Orbs)
 		{

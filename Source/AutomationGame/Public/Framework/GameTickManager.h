@@ -25,6 +25,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tick") void Stop();
 	UFUNCTION(BlueprintCallable, Category = "Tick") void StepTicks(int32 NumTicks = 1);
 	UFUNCTION(BlueprintCallable, Category = "Tick") bool IsPlaying() const { return bPlaying; }
+	UFUNCTION(BlueprintCallable, Category = "Tick") bool IsInStartupDelay() const { return RemainingDelayTicks > 0; }
+	UFUNCTION(BlueprintCallable, Category = "Tick") int32 GetRemainingDelayTicks() const { return RemainingDelayTicks; }
 
 	/** Helper to find a manager in the current world. */
 	UFUNCTION(BlueprintCallable, Category = "Tick", meta = (WorldContext = "WorldContextObject"))
@@ -42,6 +44,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tick")
 	bool bAutoPlay = false;
 
+	/** Number of ticks to delay before starting simulation. Useful for setup/initialization. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tick", meta = (ClampMin = "0"))
+	int32 StartupTickDelay = 0;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
@@ -49,6 +55,7 @@ protected:
 private:
 	bool bPlaying = false;
 	double Accum = 0.0;
+	int32 RemainingDelayTicks = 0;
 
 	FORCEINLINE float GetStepSeconds() const { return 1.0f / FMath::Max(0.01f, TicksPerSecond); }
 };

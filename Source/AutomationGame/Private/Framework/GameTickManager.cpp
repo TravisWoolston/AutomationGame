@@ -12,6 +12,7 @@ AGameTickManager::AGameTickManager()
 void AGameTickManager::BeginPlay()
 {
     Super::BeginPlay();
+    RemainingDelayTicks = StartupTickDelay;
     if (bAutoPlay) Play();
 }
 
@@ -27,17 +28,29 @@ void AGameTickManager::Tick(float DeltaSeconds)
     while (Accum >= Step)
     {
         Accum -= Step;
-        OnFixedTick.Broadcast(Step);
-        GEngine->AddOnScreenDebugMessage(-1, 0.2f, FColor::White,
-            FString::Printf(TEXT("TICK")));
-        //UE_LOG(LogTemp, VeryVerbose, TEXT("GameTickManager: Broadcast OnFixedTick step=%.3f"), Step);
+        
+        // Check if we're still in the startup delay period
+        if (RemainingDelayTicks > 0)
+        {
+            RemainingDelayTicks--;
+            UE_LOG(LogTemp, Log, TEXT("GameTickManager: Startup delay tick consumed, %d remaining"), RemainingDelayTicks);
+        }
+        else
+        {
+            // Delay period is over, broadcast the actual simulation tick
+            OnFixedTick.Broadcast(Step);
+            GEngine->AddOnScreenDebugMessage(-1, 0.2f, FColor::White,
+                FString::Printf(TEXT("TICK")));
+            //UE_LOG(LogTemp, VeryVerbose, TEXT("GameTickManager: Broadcast OnFixedTick step=%.3f"), Step);
+        }
     }
 }
 
 void AGameTickManager::Play()
 {
     bPlaying = true;
-    UE_LOG(LogTemp, Log, TEXT("GameTickManager: Play()"));
+    RemainingDelayTicks = StartupTickDelay;
+    UE_LOG(LogTemp, Log, TEXT("GameTickManager: Play() - Startup delay set to %d ticks"), RemainingDelayTicks);
 }
 
 void AGameTickManager::Pause()
