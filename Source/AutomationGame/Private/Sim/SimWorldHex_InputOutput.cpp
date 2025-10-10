@@ -118,13 +118,14 @@ void USimWorldHex::ProcessOutputs()
 		const FHex& H = KV.Key;
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Output) continue;
-		if (SkipOutputThisFrame.Contains(H)) continue;
+
 		
 		// Process orbs immediately, even if just moved this tick (for instant descend animation)
 
 		// Check if there's an item on this output tile
 		const FItem* ItemPtr = ItemMap.Find(H);
 		if (!ItemPtr) continue;
+		
 
 		// Check if the orb type matches the output's expected type
 		if (DoesItemMatchOutputType(*ItemPtr, T))
@@ -139,13 +140,12 @@ void USimWorldHex::ProcessOutputs()
 		AnimatedOrb.Item = Temp;
 		AnimatedOrb.Hex = H;
 		AnimatedOrb.StartStep = StepCounter; // Start immediately this step
-		AnimatedOrb.CompletionStep = StepCounter + 3; // Complete after three steps
+		AnimatedOrb.CompletionStep = StepCounter + 3; 
 		AnimatedOrb.bIsInput = false;
 		AnimatedOrb.bActive = true;
 		AnimatedOrbs.Add(AnimatedOrb);
 		
-		UE_LOG(LogTemp, Warning, TEXT("ProcessOutputs: Created descend animation at (%d,%d), StartStep=%d, CompletionStep=%d, CurrentStep=%d, ItemRemoved=true"), 
-			H.Q, H.R, AnimatedOrb.StartStep, AnimatedOrb.CompletionStep, StepCounter);
+		
 			
 			++OutputCount;
 		}
@@ -273,9 +273,6 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 			}
 			else
 			{
-				// Output animation complete
-				UE_LOG(LogTemp, Warning, TEXT("UpdateAnimatedOrbs: Removing completed descend animation at (%d,%d), CurrentStep=%d"), 
-					AnimatedOrb.Hex.Q, AnimatedOrb.Hex.R, CurrentStep);
 			}
 			
 			// Remove the completed animation

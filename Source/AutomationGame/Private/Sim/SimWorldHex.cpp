@@ -735,7 +735,7 @@ void USimWorldHex::StepArms()
 							S.bWaitingForBond = false;
 							S.WaitForBondInitialCount = 0;
 							S.PrevHeldOrbCount = 0;
-							SkipOutputThisFrame.Add(GripTarget);
+							// SkipOutputThisFrame.Add(GripTarget);
 
 							// Enable immediate execution of next command after successful drop
 							bContinueProcessing = true;

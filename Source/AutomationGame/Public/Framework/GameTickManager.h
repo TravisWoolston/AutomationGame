@@ -34,7 +34,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Tick")
 	FFixedStepEvent OnFixedTick;
 
-	/** Steps per real-time second when playing. */
+	/** Steps per real-time second when playing. This value can be changed in the editor, so don't assume the sim will be running at this rate in real world time. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tick", meta = (ClampMin = "0.01", ClampMax = "240.0"))
 	float TicksPerSecond = 2.0f;
 

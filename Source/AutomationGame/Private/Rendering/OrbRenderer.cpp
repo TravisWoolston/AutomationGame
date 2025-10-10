@@ -496,10 +496,12 @@ void UOrbRenderer::RebuildInstances()
 
 		// Get the orb type for this item
 		EOrbType OrbType = EOrbType::BaseA; // Default
+		bool bFoundInItemMap = false;
 		for (const auto& KV : Sim->ItemMap)
 		{
 			if (KV.Value.Id == Id)
 			{
+				bFoundInItemMap = true;
 				if (KV.Value.bIsCluster && KV.Value.Orbs.Num() > 0)
 				{
 					OrbType = (EOrbType)KV.Value.Orbs[0].Type;
@@ -508,9 +510,11 @@ void UOrbRenderer::RebuildInstances()
 				{
 					OrbType = KV.Value.Single.Type;
 				}
+				
 				break;
 			}
 		}
+		
 
 		// Add to the appropriate ISM
 		if (UInstancedStaticMeshComponent** ISMPtr = OrbTypeISMs.Find(OrbType))
@@ -644,11 +648,6 @@ void UOrbRenderer::RenderAnimatedOrbs()
 	if (CurrentStep < AnimatedOrb.StartStep)
 	{
 		StepProgress = 0.f; // Not started yet
-		if (!AnimatedOrb.bIsInput)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("RenderAnimatedOrbs: Output at (%d,%d) not started yet, CurrentStep=%d < StartStep=%d"), 
-				AnimatedOrb.Hex.Q, AnimatedOrb.Hex.R, CurrentStep, AnimatedOrb.StartStep);
-		}
 	}
 	else if (CurrentStep >= AnimatedOrb.CompletionStep)
 	{
@@ -656,10 +655,10 @@ void UOrbRenderer::RenderAnimatedOrbs()
 	}
 	else
 	{
-		// Calculate progress based on how many steps have elapsed + current frame alpha
+		// Calculate smooth progress based on step counter and frame alpha
+		// This ensures constant animation rate regardless of step boundaries
 		const int32 StepsElapsed = CurrentStep - AnimatedOrb.StartStep;
-		const float ProgressPerStep = 1.0f / FMath::Max(1.0f, (float)AnimationDuration);
-		StepProgress = (StepsElapsed * ProgressPerStep) + (Alpha * ProgressPerStep);
+		StepProgress = (StepsElapsed + Alpha) / FMath::Max(1.0f, (float)AnimationDuration);
 	}
 	
 	const float Progress = FMath::Clamp(StepProgress, 0.f, 1.f);

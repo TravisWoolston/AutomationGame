@@ -5,8 +5,6 @@ void USimWorldHex::StepBelts()
 {
 	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return;
 	
-	UE_LOG(LogTemp, Warning, TEXT("StepBelts: Processing %d tiles, %d items, Speed=%.2f"), 
-		TileMap.Num(), ItemMap.Num(), BeltSpeedTilesPerTick);
 
 	const float Speed = FMath::Max(0.f, BeltSpeedTilesPerTick);
 	const float BlockClamp = BeltBlockedClamp;
@@ -697,8 +695,6 @@ void USimWorldHex::StepBelts()
 		{
 			if (TryPullFromHex(BeltHex, InputHex, InputTile))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("StepBelts: Pulled item from input (%d,%d) to belt (%d,%d)"), 
-					InputHex.Q, InputHex.R, BeltHex.Q, BeltHex.R);
 				continue;
 			}
 		}
