@@ -229,10 +229,11 @@ void ABasicArm::Tick(float DeltaSeconds)
 	// This handles editor pause/focus issues by using more reliable detection
 	if (StepAlpha >= 0.95f && PreviousStepAlpha < 0.95f)
 	{
-		// Rotation is close enough to target - notify the simulation for bond formation
+		// Mark this arm as ready for unbond processing during the next simulation tick
+		// This ensures timing consistency with the simulation cycle
 		if (Sim && SimArmIndex >= 0)
 		{
-			Sim->OnArmRotationComplete(SimArmIndex);
+			Sim->MarkArmReadyForUnbond(SimArmIndex);
 		}
 	}
 
