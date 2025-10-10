@@ -212,28 +212,30 @@ void ABasicArm::Tick(float DeltaSeconds)
 		}
 	}
 
-	// Advance StepAlpha for interpolation with improved robustness
+	// Sync StepAlpha from OrbSimDriver for consistent timing across all systems
+	// This ensures arm rotation timing is synchronized with simulation and rendering
 	float PreviousStepAlpha = StepAlpha;
-	if (StepSecondsCur > 0.f)
+	if (UWorld* World = GetWorld())
 	{
-		// Clamp DeltaSeconds to prevent extreme values during editor pause/focus
-		float ClampedDeltaSeconds = FMath::Clamp(DeltaSeconds, 0.f, StepSecondsCur * 2.f);
-		StepAlpha = FMath::Clamp(StepAlpha + ClampedDeltaSeconds / StepSecondsCur, 0.f, 1.f);
-	}
-	else
-	{
-		StepAlpha = 1.f;
+		for (TActorIterator<AOrbSimDriver> It(World); It; ++It)
+		{
+			AOrbSimDriver* SimDriver = *It;
+			if (SimDriver)
+			{
+				StepAlpha = SimDriver->GetStepAlpha();
+				break;
+			}
+		}
 	}
 
 	// Check for rotation completion notifications with improved robustness
 	// This handles editor pause/focus issues by using more reliable detection
 	if (StepAlpha >= 0.95f && PreviousStepAlpha < 0.95f)
 	{
-		// Mark this arm as ready for unbond processing during the next simulation tick
-		// This ensures timing consistency with the simulation cycle
+		// Rotation is close enough to target - notify the simulation for bond formation
 		if (Sim && SimArmIndex >= 0)
 		{
-			Sim->MarkArmReadyForUnbond(SimArmIndex);
+			Sim->OnArmRotationComplete(SimArmIndex);
 		}
 	}
 
@@ -274,8 +276,8 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 	EffectiveReachStart = CurrentEff;
 	EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
 
-	// Reset StepAlpha for new animation cycle
-	StepAlpha = 0.f;
+	// StepAlpha is now synced from OrbSimDriver in Tick(), not reset here
+	// This ensures consistent timing across all systems
 	RefreshPose(0.f);
 
 

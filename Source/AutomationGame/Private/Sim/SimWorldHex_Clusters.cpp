@@ -1,5 +1,6 @@
 #include "Sim/SimWorldHex.h"
 #include "Actors/BasicArm.h"
+#include "Rendering/OrbRenderer.h"
 #include "EngineUtils.h"
 #include "Engine/Engine.h"
 
@@ -99,11 +100,12 @@ void USimWorldHex::AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, c
 		// Add the orb to the cluster
 		Arm.Held.Orbs.Add(NewOrb);
 		
+		// Update HeldItemLastHex BEFORE removing from ItemMap
+		// This ensures the renderer can find the orb's position during the transition
+		HeldItemLastHex.FindOrAdd(BoardOrbId, BoardOrbHex);
+		
 		// Remove the orb from the board (it's now part of the held cluster)
 		ItemMap.Remove(BoardOrbHex);
-		
-		// Update HeldItemLastHex
-		HeldItemLastHex.FindOrAdd(BoardOrbId, BoardOrbHex);
 		
 		if (bDevDebugBonds && GEngine)
 		{
@@ -113,6 +115,7 @@ void USimWorldHex::AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, c
 		}
 		
 		// Force the arm to update its visual immediately
+		// Also force the renderer to update CurrPos to prevent flickering
 		if (UWorld* World = GetWorld())
 		{
 			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
@@ -121,6 +124,17 @@ void USimWorldHex::AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, c
 				if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
 				{
 					ArmActor->UpdateHeldClusterOnly();
+					break;
+				}
+			}
+			
+			// Update the renderer's position cache to prevent flickering
+			// Find the renderer component in the world
+			for (TActorIterator<AActor> ActorItr(World); ActorItr; ++ActorItr)
+			{
+				if (UOrbRenderer* Renderer = (*ActorItr)->FindComponentByClass<UOrbRenderer>())
+				{
+					Renderer->RebuildCurrPos();
 					break;
 				}
 			}
@@ -212,12 +226,13 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, cons
 			// Update the arm's held item to the new cluster
 			Arm.Held = NewCluster;
 			
-			// Remove the board orb from the board
-			ItemMap.Remove(BoardOrbHex);
-			
-			// Update HeldItemLastHex for both orbs
+			// Update HeldItemLastHex for both orbs BEFORE removing from ItemMap
+			// This ensures the renderer can find positions during the transition
 			HeldItemLastHex.FindOrAdd(Arm.Held.Id, GripHex); // Original orb at grip
 			HeldItemLastHex.FindOrAdd(BoardOrbId, BoardOrbHex); // Board orb at its original position
+			
+			// Remove the board orb from the board
+			ItemMap.Remove(BoardOrbHex);
 			
 			if (bDevDebugBonds && GEngine)
 			{
@@ -227,6 +242,7 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, cons
 			}
 			
 			// Force the arm to update its visual immediately
+			// Also force the renderer to update CurrPos to prevent flickering
 			if (UWorld* World = GetWorld())
 			{
 				for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
@@ -235,6 +251,17 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, cons
 					if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
 					{
 						ArmActor->UpdateHeldClusterOnly();
+						break;
+					}
+				}
+				
+				// Update the renderer's position cache to prevent flickering
+				// Find the renderer component in the world
+				for (TActorIterator<AActor> ActorItr(World); ActorItr; ++ActorItr)
+				{
+					if (UOrbRenderer* Renderer = (*ActorItr)->FindComponentByClass<UOrbRenderer>())
+					{
+						Renderer->RebuildCurrPos();
 						break;
 					}
 				}

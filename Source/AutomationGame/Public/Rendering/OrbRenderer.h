@@ -53,7 +53,11 @@ public:
 
 private:
 	void EnsureISM();
+public:
+	/** Rebuild the current position cache for all items (used to prevent flickering during bond formations) */
 	void RebuildCurrPos();
+
+private:
 	void RebuildInstances();
 	void RebuildBondedOrbs();
 	AActor* GetAnchor() const;
