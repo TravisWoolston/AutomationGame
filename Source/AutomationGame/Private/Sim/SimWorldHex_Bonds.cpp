@@ -360,7 +360,7 @@ void USimWorldHex::StepBonds()
 				Pending.BoardItemId = BId;
 				Pending.BoardItemHex = BHex;
 				Pending.ArmIndex = HoldingArmIndex;
-				Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
+				Pending.TimeRemaining = 1.0f; // Wait 1 tick for visual rotation to complete (tick-based delay)
 				PendingBondFormations.Add(Pending);
 
 				if (bDebugLogs && bDevDebugBonds && GEngine)
@@ -454,7 +454,7 @@ void USimWorldHex::StepBonds()
 				Pending.BoardItemId = AId;
 				Pending.BoardItemHex = AHex;
 				Pending.ArmIndex = HoldingArmIndex;
-				Pending.TimeRemaining = 0.5f; // Wait 0.5 seconds for visual rotation to complete
+				Pending.TimeRemaining = 1.0f; // Wait 1 tick for visual rotation to complete (tick-based delay)
 				PendingBondFormations.Add(Pending);
 
 				if (bDebugLogs && bDevDebugBonds && GEngine)

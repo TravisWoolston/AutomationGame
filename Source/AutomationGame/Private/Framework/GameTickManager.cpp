@@ -28,6 +28,8 @@ void AGameTickManager::Tick(float DeltaSeconds)
     {
         Accum -= Step;
         OnFixedTick.Broadcast(Step);
+        GEngine->AddOnScreenDebugMessage(-1, 0.2f, FColor::White,
+            FString::Printf(TEXT("TICK")));
         //UE_LOG(LogTemp, VeryVerbose, TEXT("GameTickManager: Broadcast OnFixedTick step=%.3f"), Step);
     }
 }

@@ -118,9 +118,9 @@ void USimWorldHex::ProcessOutputs()
 		const FHex& H = KV.Key;
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Output) continue;
-
+		if (OrbsNewlyMovedToOutput.Contains(H)) continue; // Skip orbs just moved by belts this tick
 		
-		// Process orbs immediately, even if just moved this tick (for instant descend animation)
+		// Process orbs that have been sitting on output tiles for at least one tick
 
 		// Check if there's an item on this output tile
 		const FItem* ItemPtr = ItemMap.Find(H);

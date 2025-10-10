@@ -87,9 +87,7 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 	AGameTickManager* TickManager = AGameTickManager::Get(this);
 	float ActualTicksPerSecond = TickManager ? TickManager->TicksPerSecond : 2.0f;
 	float ActualStepDuration = TickManager ? (1.0f / TickManager->TicksPerSecond) : 0.5f;
-	GEngine->AddOnScreenDebugMessage(-1, 0.3f, FColor::Silver,
-		FString::Printf(TEXT("TPS: %.1f StepDur: %.3f StepAlpha: %.3f"),
-			ActualTicksPerSecond, ActualStepDuration, StepAlpha));
+	
 	if (TickManager)
 	{
 		// Get the actual step duration from GameTickManager
@@ -97,11 +95,11 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 		StepAlpha += DeltaSeconds / StepDuration;
 		
 		// Debug: Log StepAlpha to see the distribution
-		if (FMath::Fmod(GetWorld()->GetTimeSeconds(), 1.0f) < 0.1f) // Log every ~1 second
-		{
-			UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: StepAlpha=%.3f, DeltaSeconds=%.3f, StepDuration=%.3f, TPS=%.1f"), 
-				StepAlpha, DeltaSeconds, StepDuration, TickManager->TicksPerSecond);
-		}
+		// if (FMath::Fmod(GetWorld()->GetTimeSeconds(), 1.0f) < 0.1f) // Log every ~1 second
+		// {
+		// 	UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: StepAlpha=%.3f, DeltaSeconds=%.3f, StepDuration=%.3f, TPS=%.1f"), 
+		// 		StepAlpha, DeltaSeconds, StepDuration, TickManager->TicksPerSecond);
+		// }
 	}
 	StepAlpha = FMath::Clamp(StepAlpha, 0.f, 1.f);
 	
@@ -129,8 +127,6 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 	AGameTickManager* TickManager = AGameTickManager::Get(this);
 	float ActualTicksPerSecond = TickManager ? TickManager->TicksPerSecond : 2.0f;
 	float StepDuration = 1.0f / ActualTicksPerSecond;
-	UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: Fixed tick occurred, StepAlpha reset to 0 (TicksPerSec=%.1f, StepDuration=%.3fs)"), 
-		ActualTicksPerSecond, StepDuration);
 #if !(UE_BUILD_SHIPPING)
 	FItem Tmp;
 	const bool L = Sim->PeekItemAt(FHex(-1, 0), Tmp);
