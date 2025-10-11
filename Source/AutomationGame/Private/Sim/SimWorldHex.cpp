@@ -1839,7 +1839,8 @@ void USimWorldHex::DrawBondDebugLines()
 		}
 
 		// Find the actual positions of the bonded items
-		FVector PosA, PosB;
+		FVector PosA = FVector::ZeroVector;
+		FVector PosB = FVector::ZeroVector;
 		bool bFoundA = false, bFoundB = false;
 
 		// Check if items are on the board
