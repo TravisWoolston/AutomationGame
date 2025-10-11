@@ -17,12 +17,12 @@ void USimWorldHex::SpawnInputs()
 		for (const FArmState& S : Arms)
 		{
 			if (!S.bHolding) continue;
-			
+
 			// Calculate the arm's grip position
 			FHex GripHex = S.BaseHex;
 			for (int i = 0; i < S.ArmLen; ++i)
 				GripHex = HexUtil::Neighbor(GripHex, S.Facing);
-			
+
 			// Check if the arm's grip position is at this input tile
 			if (GripHex.Q == H.Q && GripHex.R == H.R)
 			{
@@ -30,18 +30,18 @@ void USimWorldHex::SpawnInputs()
 				break;
 			}
 		}
-		
+
 		// Don't spawn if any held item is occupying this position
 		if (bHeldItemAtThisPosition) continue;
 
-	// Immediately place the item without animation
-	// Animation will be handled by StepBelts when an item is pulled from this input
-	FOrb O; O.Type = (EOrbType)T.Arg;
-	FItem NewItem = FItem::MakeSingle(O);
-	NewItem.Id = NextItemId++;
-	
-	TryPutItem(H, NewItem);
-}
+		// Immediately place the item without animation
+		// Animation will be handled by StepBelts when an item is pulled from this input
+		FOrb O; O.Type = (EOrbType)T.Arg;
+		FItem NewItem = FItem::MakeSingle(O);
+		NewItem.Id = NextItemId++;
+
+		TryPutItem(H, NewItem);
+	}
 }
 
 void USimWorldHex::SpawnInputsAfterBelts()
@@ -60,12 +60,12 @@ void USimWorldHex::SpawnInputsAfterBelts()
 		for (const FArmState& S : Arms)
 		{
 			if (!S.bHolding) continue;
-			
+
 			// Calculate the arm's grip position
 			FHex GripHex = S.BaseHex;
 			for (int i = 0; i < S.ArmLen; ++i)
 				GripHex = HexUtil::Neighbor(GripHex, S.Facing);
-			
+
 			// Check if the arm's grip position is at this input tile
 			if (GripHex.Q == H.Q && GripHex.R == H.R)
 			{
@@ -73,24 +73,24 @@ void USimWorldHex::SpawnInputsAfterBelts()
 				break;
 			}
 		}
-		
+
 		// Don't spawn if any held item is occupying this position
 		if (bHeldItemAtThisPosition) continue;
 
-	// Immediately place the item without animation
-	// Animation will be handled by StepBelts when an item is pulled from this input
-	FOrb O; O.Type = (EOrbType)T.Arg;
-	FItem NewItem = FItem::MakeSingle(O);
-	NewItem.Id = NextItemId++;
-	
-	TryPutItem(H, NewItem);
-}
+		// Immediately place the item without animation
+		// Animation will be handled by StepBelts when an item is pulled from this input
+		FOrb O; O.Type = (EOrbType)T.Arg;
+		FItem NewItem = FItem::MakeSingle(O);
+		NewItem.Id = NextItemId++;
+
+		TryPutItem(H, NewItem);
+	}
 }
 
 bool USimWorldHex::DoesItemMatchOutputType(const FItem& Item, const FTile& OutputTile) const
 {
 	EOrbType ExpectedType = (EOrbType)OutputTile.Arg;
-	
+
 	if (Item.bIsCluster)
 	{
 		// For clusters, check if any sub-orb matches the expected type
@@ -119,13 +119,13 @@ void USimWorldHex::ProcessOutputs()
 		const FTile& T = KV.Value;
 		if (T.Kind != ETileKind::Output) continue;
 		if (OrbsNewlyMovedToOutput.Contains(H)) continue; // Skip orbs just moved by belts this tick
-		
+
 		// Process orbs that have been sitting on output tiles for at least one tick
 
 		// Check if there's an item on this output tile
 		const FItem* ItemPtr = ItemMap.Find(H);
 		if (!ItemPtr) continue;
-		
+
 
 		// Check if the orb type matches the output's expected type
 		if (DoesItemMatchOutputType(*ItemPtr, T))
@@ -134,19 +134,19 @@ void USimWorldHex::ProcessOutputs()
 			FItem Temp = *ItemPtr;
 			ItemMap.Remove(H);
 			OrbAt.Remove(H);
-			
-		// Create animated orb for output (descending) - synchronized to step counter
-		FAnimatedOrb AnimatedOrb;
-		AnimatedOrb.Item = Temp;
-		AnimatedOrb.Hex = H;
-		AnimatedOrb.StartStep = StepCounter; // Start immediately this step
-		AnimatedOrb.CompletionStep = StepCounter + 3; 
-		AnimatedOrb.bIsInput = false;
-		AnimatedOrb.bActive = true;
-		AnimatedOrbs.Add(AnimatedOrb);
-		
-		
-			
+
+			// Create animated orb for output (descending) - synchronized to step counter
+			FAnimatedOrb AnimatedOrb;
+			AnimatedOrb.Item = Temp;
+			AnimatedOrb.Hex = H;
+			AnimatedOrb.StartStep = StepCounter; // Start immediately this step
+			AnimatedOrb.CompletionStep = StepCounter + 3;
+			AnimatedOrb.bIsInput = false;
+			AnimatedOrb.bActive = true;
+			AnimatedOrbs.Add(AnimatedOrb);
+
+
+
 			++OutputCount;
 		}
 		// If type doesn't match, leave the orb on the tile (no action needed)
@@ -243,7 +243,7 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 {
 	// Animations complete based on step counter, not time
 	const int32 CurrentStep = GetStepCounter();
-	
+
 	for (int32 i = AnimatedOrbs.Num() - 1; i >= 0; i--)
 	{
 		FAnimatedOrb& AnimatedOrb = AnimatedOrbs[i];
@@ -266,7 +266,7 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 						O.Type = (EOrbType)InputTile->Arg;
 						FItem NewItem = FItem::MakeSingle(O);
 						NewItem.Id = NextItemId++;
-						
+
 						TryPutItem(AnimatedOrb.Hex, NewItem);
 					}
 				}
@@ -274,7 +274,7 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 			else
 			{
 			}
-			
+
 			// Remove the completed animation
 			AnimatedOrbs.RemoveAt(i);
 		}

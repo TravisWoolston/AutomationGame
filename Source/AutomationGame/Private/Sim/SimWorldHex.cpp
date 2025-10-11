@@ -1215,13 +1215,16 @@ void USimWorldHex::StepArms()
 			case ECmd::RotateHeldL:
 				if (S.bHolding && S.Held.bIsCluster)
 				{
-					S.Held.GrabFacing = (S.Held.GrabFacing + 1) % 6;
+					S.bRotationCompleted = false;
+					S.Held.GrabFacing = (S.Held.GrabFacing + 5) % 6;
 				}
 				break;
 			case ECmd::RotateHeldR:
 				if (S.bHolding && S.Held.bIsCluster)
 				{
-					S.Held.GrabFacing = (S.Held.GrabFacing + 5) % 6;
+					S.bRotationCompleted = false;
+					S.Held.GrabFacing = (S.Held.GrabFacing + 1) % 6;
+
 				}
 				break;
 			case ECmd::WaitForBond:
@@ -2221,36 +2224,140 @@ void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 	}
 
 	// Mark this arm as ready for unbond processing with its current facing direction
-	// The actual unbond processing will happen during the next simulation step
-	// This function is idempotent - it can be called multiple times safely
 	if (ArmIndex >= 0 && ArmIndex < Arms.Num())
 	{
-		// Check if we already have this arm marked for unbond processing
-		// This prevents unnecessary work if called multiple times
-		if (ArmsReadyForUnbond.Contains(ArmIndex))
+		// Avoid duplicates
+		if (!ArmsReadyForUnbond.Contains(ArmIndex))
 		{
-			return; // Already marked, no need to do it again
+			// Use actor's FacingDir if available for visual-accurate facing
+			uint8 VisualFacing = (uint8)Arms[ArmIndex].Facing;
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+				{
+					ABasicArm* ArmActor = *ActorItr;
+					if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
+					{
+						VisualFacing = ArmActor->FacingDir;
+						break;
+					}
+				}
+			}
+			ArmsReadyForUnbond.Add(ArmIndex, VisualFacing);
+		}
+	}
+
+	// Process any pending bond formations for this arm now that rotation is fully complete
+	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
+	{
+		FPendingBondFormation& Pending = PendingBondFormations[i];
+		if (Pending.ArmIndex != ArmIndex) continue;
+
+		// Validate arm and held state
+		if (ArmIndex < 0 || ArmIndex >= Arms.Num())
+		{
+			PendingBondFormations.RemoveAt(i);
+			continue;
 		}
 
-		// Get the arm's visual facing direction when rotation fully completes
-		uint8 VisualFacing = (uint8)Arms[ArmIndex].Facing; // Default to simulation facing
-		if (UWorld* World = GetWorld())
+		const FArmState& Arm = Arms[ArmIndex];
+		if (!Arm.bHolding)
 		{
-			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+			PendingBondFormations.RemoveAt(i);
+			continue;
+		}
+
+		// Ensure board item still exists
+		const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
+		if (!BoardItem || BoardItem->Id != Pending.BoardItemId)
+		{
+			PendingBondFormations.RemoveAt(i);
+			continue;
+		}
+
+		// Collect connected board items (cluster-aware)
+		TSet<int32> ClusterIds;
+		if (ItemToBonds.Contains(Pending.BoardItemId))
+		{
+			TArray<int32> Stack;
+			Stack.Add(Pending.BoardItemId);
+			ClusterIds.Add(Pending.BoardItemId);
+			while (Stack.Num() > 0)
 			{
-				ABasicArm* ArmActor = *ActorItr;
-				if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
+				const int32 CurrentId = Stack.Pop();
+				if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
 				{
-					// Get the visual facing from the arm actor
-					VisualFacing = ArmActor->FacingDir;
-					break;
+					for (int32 BondIdx : *BondList)
+					{
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& Bond = Bonds[BondIdx];
+						if (!Bond.bActive) continue;
+
+						const int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
+						if (OtherId > 0 && !ClusterIds.Contains(OtherId))
+						{
+							// Add only items that are on the board
+							bool bOtherOnBoard = false;
+							for (const auto& ItemKV : ItemMap)
+							{
+								if (ItemKV.Value.Id == OtherId) { bOtherOnBoard = true; break; }
+							}
+							if (bOtherOnBoard)
+							{
+								ClusterIds.Add(OtherId);
+								Stack.Add(OtherId);
+							}
+						}
+					}
 				}
 			}
 		}
+		else
+		{
+			ClusterIds.Add(Pending.BoardItemId);
+		}
 
-		// Store the arm index and the facing direction when rotation fully completed
-		ArmsReadyForUnbond.Add(ArmIndex, VisualFacing);
+		// Add all board items in that cluster to the held item
+		for (int32 BoardId : ClusterIds)
+		{
+			FHex BoardHex;
+			bool bFound = false;
+			for (const auto& ItemKV : ItemMap)
+			{
+				if (ItemKV.Value.Id == BoardId) { BoardHex = ItemKV.Key; bFound = true; break; }
+			}
+			if (bFound)
+			{
+				AddBoardOrbToHeldItem(Arm.Held.Id, BoardId, BoardHex);
+			}
+		}
+
+		PendingBondFormations.RemoveAt(i);
 	}
+
+	// Process any pending held-to-held merges for this arm (moved from OnArmRotationComplete)
+	for (int32 i = PendingHeldMerges.Num() - 1; i >= 0; i--)
+	{
+		FPendingHeldMerge& PendingMerge = PendingHeldMerges[i];
+
+		if (PendingMerge.ReceiverArmIndex == ArmIndex || PendingMerge.DonorArmIndex == ArmIndex)
+		{
+			if (PendingMerge.ReceiverArmIndex >= 0 && PendingMerge.ReceiverArmIndex < Arms.Num() &&
+				PendingMerge.DonorArmIndex >= 0 && PendingMerge.DonorArmIndex < Arms.Num())
+			{
+				FArmState& ReceiverArm = Arms[PendingMerge.ReceiverArmIndex];
+				FArmState& DonorArm = Arms[PendingMerge.DonorArmIndex];
+
+				if (ReceiverArm.bHolding && DonorArm.bHolding)
+				{
+					ProcessHeldToHeldMerge(PendingMerge.ReceiverArmIndex, PendingMerge.DonorArmIndex);
+				}
+			}
+			PendingHeldMerges.RemoveAt(i);
+		}
+	}
+
+	// Allow second-pass grabs now that rotation is fully complete
 	StepArmsSecondPass();
 }
 

@@ -182,6 +182,26 @@ void ABasicArm::Tick(float DeltaSeconds)
 			UpdateHeldOrbVisual();
 			LastHeldOrbCount = bHolding ? HeldOrb.Orbs.Num() : 0;
 		}
+		if (bHolding)
+		{
+			const int32 NewGrabFacing = HeldOrb.GrabFacing; // expected 0..5 from sim
+			if (NewGrabFacing != LastHeldGrabFacing)
+			{
+				// Preserve current interpolated cluster angle as the new start
+				const float CurrentClusterDeg =
+					NormDeg(HeldClusterFacingStartDeg +
+						FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
+				HeldClusterFacingStartDeg = CurrentClusterDeg;
+				HeldClusterFacingEndDeg = 60.f * float(NewGrabFacing % 6);
+				LastHeldGrabFacing = NewGrabFacing;
+			}
+		}
+		else
+		{
+			// Not holding -> reset bookkeeping
+			LastHeldGrabFacing = -1;
+			HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 0.f;
+		}
 	}
 
 	// ADD in Tick() BEFORE computing/advancing StepAlpha (replace previous ReachTiles/ReachVisual logic)
@@ -270,6 +290,11 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 	const float RenderedYaw =
 		NormDeg(LastYawDeg + FMath::FindDeltaAngleDegrees(LastYawDeg, CurrYawDeg) * StepAlpha);
 	LastYawDeg = RenderedYaw;
+
+	const float RenderedClusterDeg =
+		NormDeg(HeldClusterFacingStartDeg +
+			FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
+	HeldClusterFacingStartDeg = RenderedClusterDeg;
 
 	// For reach, start new interpolation from current interpolated position toward current logical target
 	const float CurrentEff = FMath::Lerp(EffectiveReachStart, EffectiveReachEnd, StepAlpha);
@@ -1177,16 +1202,16 @@ void ABasicArm::AttachHeldOrb()
 			FVector2D Off2D = HexOffset * ClusterOffsetScale;
 
 			// Apply rotation based on GrabFacing to make offsets relative to arm direction
-			if (HeldOrb.GrabFacing >= 0)
-			{
-				const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
-				const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
-				const float CosA = FMath::Cos(YawRad);
-				const float SinA = FMath::Sin(YawRad);
-				const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
-				const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
-				Off2D = FVector2D(RotX, RotY);
-			}
+			//if (HeldOrb.GrabFacing >= 0)
+			//{
+			//	const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
+			//	const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
+			//	const float CosA = FMath::Cos(YawRad);
+			//	const float SinA = FMath::Sin(YawRad);
+			//	const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
+			//	const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
+			//	Off2D = FVector2D(RotX, RotY);
+			//}
 
 			if (bInvertClusterVisualFacing)
 			{
@@ -1201,7 +1226,10 @@ void ABasicArm::AttachHeldOrb()
 
 			HeldClusterComps.Add(SubMesh);
 		}
-
+		// Initialize cluster facing interpolation to current GrabFacing
+		LastHeldGrabFacing = (HeldOrb.GrabFacing >= 0 ? HeldOrb.GrabFacing % 6 : 0);
+		HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 60.f * float(LastHeldGrabFacing % 6);
+		HeldOrbComp->SetRelativeRotation(FRotator(0.f, HeldClusterFacingEndDeg, 0.f));
 		// Generate bonded orb meshes for held cluster
 		if (bShowBondedOrbs && GetBondedOrbMesh() && Sim)
 		{
@@ -1234,6 +1262,11 @@ void ABasicArm::AttachHeldOrb()
 		}
 
 		HeldClusterComps.Add(SubMesh);
+
+		// Initialize for single orb too (harmless)
+		LastHeldGrabFacing = (HeldOrb.GrabFacing >= 0 ? HeldOrb.GrabFacing % 6 : 0);
+		HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 60.f * float(LastHeldGrabFacing);
+		HeldOrbComp->SetRelativeRotation(FRotator(0.f, HeldClusterFacingEndDeg, 0.f));
 		if (bDebugLogs)
 		{
 			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Attached single orb Id=%d Type=%d"), *GetName(), HeldOrb.Id, (int32)HeldOrb.Single.Type);
@@ -1364,11 +1397,19 @@ void ABasicArm::DetachHeldOrb()
 	HeldOrbComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
 }
 
-void ABasicArm::UpdateHeldClusterTransforms(float /*CurrentYawDeg*/)
+void ABasicArm::UpdateHeldClusterTransforms(float InAlpha)
 {
-	// Opus Magnum approach: cluster rotates naturally with the arm
-	// The cluster is attached to HeldOrbComp which rotates with the arm
-	// No per-tick updates needed - the attachment system handles rotation
+	// Interpolate cluster facing (degrees) just like reach
+	const float StartDeg = NormDeg(HeldClusterFacingStartDeg);
+	const float EndDeg = NormDeg(HeldClusterFacingEndDeg);
+	const float DeltaDeg = FMath::FindDeltaAngleDegrees(StartDeg, EndDeg);
+	const float ClusterYawDeg = NormDeg(StartDeg + DeltaDeg * InAlpha);
+
+	// Apply as a local rotation on the held container so the whole cluster spins
+	if (HeldOrbComp)
+	{
+		HeldOrbComp->SetRelativeRotation(FRotator(0.f, ClusterYawDeg, 0.f));
+	}
 }
 
 FVector ABasicArm::ComputeGripLocalOffset() const
@@ -1429,16 +1470,16 @@ void ABasicArm::GenerateBondedOrbMeshes()
 				FVector2D Off2D = HexOffset * ClusterOffsetScale;
 
 				// Apply rotation based on GrabFacing
-				if (HeldOrb.GrabFacing >= 0)
-				{
-					const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
-					const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
-					const float CosA = FMath::Cos(YawRad);
-					const float SinA = FMath::Sin(YawRad);
-					const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
-					const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
-					Off2D = FVector2D(RotX, RotY);
-				}
+				//if (HeldOrb.GrabFacing >= 0)
+				//{
+				//	const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
+				//	const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
+				//	const float CosA = FMath::Cos(YawRad);
+				//	const float SinA = FMath::Sin(YawRad);
+				//	const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
+				//	const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
+				//	Off2D = FVector2D(RotX, RotY);
+				//}
 
 				if (bInvertClusterVisualFacing)
 				{
@@ -1457,16 +1498,16 @@ void ABasicArm::GenerateBondedOrbMeshes()
 				FVector2D Off2D = HexOffset * ClusterOffsetScale;
 
 				// Apply rotation based on GrabFacing
-				if (HeldOrb.GrabFacing >= 0)
-				{
-					const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
-					const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
-					const float CosA = FMath::Cos(YawRad);
-					const float SinA = FMath::Sin(YawRad);
-					const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
-					const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
-					Off2D = FVector2D(RotX, RotY);
-				}
+				//if (HeldOrb.GrabFacing >= 0)
+				//{
+				//	const float GrabYawDeg = 60.f * (HeldOrb.GrabFacing % 6);
+				//	const float YawRad = FMath::DegreesToRadians(GrabYawDeg);
+				//	const float CosA = FMath::Cos(YawRad);
+				//	const float SinA = FMath::Sin(YawRad);
+				//	const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
+				//	const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
+				//	Off2D = FVector2D(RotX, RotY);
+				//}
 
 				if (bInvertClusterVisualFacing)
 				{

@@ -23,7 +23,7 @@ void USimWorldHex::StepBonds()
 	{
 		if (!A.bHolding) continue;
 
-		if (A.Held.bIsCluster)
+		if (A.Held.bIsCluster && !A.bRotationCompleted)
 		{
 			for (const FOrbData& Sub : A.Held.Orbs)
 				if (Sub.ItemId > 0)
