@@ -20,6 +20,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float TileSizeUU = 120.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float FixedStepSec = 0.20f; // 5 Hz
 
+	void StepBonds(); // Made public for BondResolver
 	// Debug toggles
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugLogs = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugSpheres = false;
@@ -94,8 +95,6 @@ public:
 		GridOrientation = InOrientation;
 	}
 
-
-
 	/** Get the bonds array for rendering purposes */
 	const TArray<FBond>& GetBonds() const { return Bonds; }
 
@@ -106,7 +105,7 @@ public:
 		FHex Hex;
 		int32 StartStep = 0; // Step counter when animation started
 		int32 CompletionStep = 0; // Step counter when animation should complete
-		
+
 		bool bIsInput = false; // true for input (ascending), false for output (descending)
 		bool bActive = true;
 	};
@@ -120,7 +119,6 @@ public:
 	/** Process pending bond formations (call from renderer) */
 	void ProcessPendingBondFormations(float DeltaTime);
 
-
 	/** Notify that an arm has finished its visual rotation */
 	void OnArmRotationComplete(int32 ArmIndex);
 
@@ -129,6 +127,23 @@ public:
 
 	/** Cancel pending bond formations for a specific arm (when arm drops item) */
 	void CancelPendingBondFormationsForArm(int32 ArmIndex);
+
+	// Sim-state accessors (used by StepBonds and other sim-only logic)
+	FORCEINLINE uint8 GetSimFacing(int32 ArmIndex, const FArmState& A) const
+	{
+		if (const uint8* V = SimFacingByArm.Find(ArmIndex)) return *V;
+		return static_cast<uint8>(A.Facing);
+	}
+	FORCEINLINE int32 GetSimArmLen(int32 ArmIndex, const FArmState& A) const
+	{
+		if (const int32* V = SimArmLenByArm.Find(ArmIndex)) return *V;
+		return A.ArmLen;
+	}
+	FORCEINLINE int8 GetSimGrabFacing(int32 ArmIndex, const FArmState& A) const
+	{
+		if (const int8* V = SimGrabFacingByArm.Find(ArmIndex)) return *V;
+		return A.Held.bIsCluster ? A.Held.GrabFacing : int8(-1);
+	}
 
 private:
 	/** Helper function to check if an item matches an output's expected orb type */
@@ -141,9 +156,6 @@ private:
 	float   GridYawDeg = 0.f;
 	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
 
-
-
-private:
 	// One-frame skip sets
 	TSet<FHex> SkipInputThisFrame;
 	TSet<FHex> SkipOutputThisFrame;
@@ -224,9 +236,8 @@ private:
 	void StepBelts();
 	void StepGlyphs();
 
-
-	static uint8 KindFromItem(const FItem& Item) 
-	{ 
+	static uint8 KindFromItem(const FItem& Item)
+	{
 		if (Item.bIsCluster && Item.Orbs.Num() > 0)
 		{
 			return (uint8)Item.Orbs[0].Type;
@@ -243,8 +254,6 @@ private:
 
 	float BeltSpeedTilesPerTick = 1.0f;
 	float BeltBlockedClamp = 0.98f;
-
-private:
 	TArray<FBond> Bonds;
 
 	// Multi-bond support: each item can appear in many bonds.
@@ -293,7 +302,6 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Spatial")
 	TObjectPtr<class UBondResolver> BondResolver;
 
-private:
 	// Track items moved by belts this step (for spatial system bond timing)
 	TSet<int32>   ItemsMovedLastStep;
 
@@ -320,13 +328,8 @@ private:
 		return false;
 	}
 
-private:
 	TMap<int32, FHex> PrevItemHex;
 
-public:
-	void StepBonds(); // Made public for BondResolver
-
-private:
 	void SpawnInputs();
 	void ProcessOutputs();
 	void SpawnInputsAfterBelts();
@@ -338,4 +341,21 @@ private:
 	void PauseBondedArms();
 	void ResumeArmsWhenBondsBroken();
 	bool IsArmBonded(int32 ArmIndex) const;
+
+	// Committed simulation properties (consumed by StepBonds)
+	// Values update only at fixed-tick boundaries to avoid mid-anim bonds.
+	TMap<int32, uint8> SimFacingByArm;    // 0..5
+	TMap<int32, int32> SimArmLenByArm;    // reach
+	TMap<int32, int8>  SimGrabFacingByArm; // -1 for single held
+
+	// Pending values to commit next fixed tick (written by Rotate*/Extend/Retract)
+	TMap<int32, uint8> PendingFacingByArm;
+	TMap<int32, int32> PendingArmLenByArm;
+	TMap<int32, int8>  PendingGrabFacingByArm;
+
+	// --- NEW: sim-space helpers for held clusters ---
+	FHex GetArmGripHex_Sim(int32 ArmIndex) const;
+	uint8 GetHeldCCW_Steps_Sim(int32 ArmIndex) const;
+	static FHex Rot60CCW(FHex D, uint8 StepsCCW);
+	static FHex Rot60CW(FHex D, uint8 StepsCW);
 };

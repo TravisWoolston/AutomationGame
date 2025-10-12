@@ -30,6 +30,12 @@ void USimWorldHex::Initialize(int32 /*Radius*/)
 	BeltProgress.Empty();
 	Bonds.Empty();
 	ItemToBonds.Empty();
+	SimFacingByArm.Empty();
+	SimArmLenByArm.Empty();
+	SimGrabFacingByArm.Empty();
+	PendingFacingByArm.Empty();
+	PendingArmLenByArm.Empty();
+	PendingGrabFacingByArm.Empty();
 }
 
 // (add near other file‑scope statics)
@@ -51,6 +57,11 @@ int32 USimWorldHex::AddArm(const FArmState& Arm)
 	S.HomeArmLen = FMath::Clamp<int32>(S.HomeArmLen <= 0 ? 1 : S.HomeArmLen, 1, 6);
 	// Initialize rotation completed to true (no rotation in progress)
 	S.bRotationCompleted = true;
+
+	// Seed sim state to current values
+	SimFacingByArm.Add(NewIndex, static_cast<uint8>(S.Facing));
+	SimArmLenByArm.Add(NewIndex, S.ArmLen);
+	SimGrabFacingByArm.Add(NewIndex, int8(-1)); // no held cluster yet
 
 	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::AddArm - Added arm at (%d,%d) facing=%d assigned SimIndex=%d (total arms: %d)"),
 		Arm.BaseHex.Q, Arm.BaseHex.R, (int32)Arm.Facing, NewIndex, Arms.Num());
@@ -465,7 +476,7 @@ void USimWorldHex::StepSim()
 	StepBelts();
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
 	StepBonds();
-
+	CheckAndRemoveDisconnectedOrbsFromHeldClusters();
 	// Second pass for arms - allows immediate grab after unbonding
 	StepArmsSecondPass();
 
@@ -481,6 +492,17 @@ void USimWorldHex::StepGlyphs()
 }
 void USimWorldHex::StepArms()
 {
+	// Apply pending sim values produced by last tick’s Rotate/Extend/Retract
+	if (PendingFacingByArm.Num() || PendingArmLenByArm.Num() || PendingGrabFacingByArm.Num())
+	{
+		for (const auto& KV : PendingFacingByArm)     SimFacingByArm.Add(KV.Key, KV.Value);
+		for (const auto& KV : PendingArmLenByArm)     SimArmLenByArm.Add(KV.Key, KV.Value);
+		for (const auto& KV : PendingGrabFacingByArm) SimGrabFacingByArm.Add(KV.Key, KV.Value);
+		PendingFacingByArm.Empty();
+		PendingArmLenByArm.Empty();
+		PendingGrabFacingByArm.Empty();
+	}
+
 	// Build reverse lookup (item id -> hex) once for this arm step (excludes held items)
 	TMap<int32, FHex> ItemIdToHex;
 	ItemIdToHex.Reserve(ItemMap.Num());
@@ -735,6 +757,9 @@ void USimWorldHex::StepArms()
 							S.bWaitingForBond = false;
 							S.WaitForBondInitialCount = 0;
 							S.PrevHeldOrbCount = 0;
+							// NEW: clear sim held-rotation immediately (not only pending)
+							SimGrabFacingByArm.Add(ArmIndex, int8(-1));
+							PendingGrabFacingByArm.Add(ArmIndex, int8(-1));
 							SkipOutputThisFrame.Add(GripTarget);
 
 							// Enable immediate execution of next command after successful drop
@@ -833,6 +858,9 @@ void USimWorldHex::StepArms()
 						S.bWaitingForBond = false;
 						S.WaitForBondInitialCount = 0;
 						S.PrevHeldOrbCount = 0;
+						// NEW: clear sim held-rotation immediately (not only pending)
+						SimGrabFacingByArm.Add(ArmIndex, int8(-1));
+						PendingGrabFacingByArm.Add(ArmIndex, int8(-1));
 
 						// Enable immediate execution of next command after successful drop
 						bContinueProcessing = true;
@@ -1076,9 +1104,12 @@ void USimWorldHex::StepArms()
 					continue;
 				}
 
-				// Commit rotation
+				// Commit visual/current arm rotation immediately
 				S.Facing = NewFacing;
-				// Don't set bRotationCompleted here - wait for visual completion callback
+
+				// Defer simulation-facing to next fixed tick
+				PendingFacingByArm.Add(ArmIndex, static_cast<uint8>(S.Facing));
+				// Note: we do not touch SimFacingByArm here, it updates next tick
 			}
 			break;
 
@@ -1087,6 +1118,8 @@ void USimWorldHex::StepArms()
 				const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
 				const int32 OldLen = S.ArmLen;
 				S.ArmLen = FMath::Clamp<int32>(S.ArmLen + Delta, 1, MAX_ARM_LEN);
+				// Defer simulation reach to next fixed tick
+				PendingArmLenByArm.Add(ArmIndex, S.ArmLen);
 
 				if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
 				{
@@ -1106,6 +1139,8 @@ void USimWorldHex::StepArms()
 				const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
 				const int32 OldLen = S.ArmLen;
 				S.ArmLen = FMath::Clamp<int32>(S.ArmLen - Delta, 1, MAX_ARM_LEN);
+				// Defer simulation reach to next fixed tick
+				PendingArmLenByArm.Add(ArmIndex, S.ArmLen);
 
 				if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
 				{
@@ -1217,6 +1252,8 @@ void USimWorldHex::StepArms()
 				{
 					S.bRotationCompleted = false;
 					S.Held.GrabFacing = (S.Held.GrabFacing + 5) % 6;
+					// Defer simulation-held orientation to next fixed tick
+					PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
 				}
 				break;
 			case ECmd::RotateHeldR:
@@ -1224,7 +1261,8 @@ void USimWorldHex::StepArms()
 				{
 					S.bRotationCompleted = false;
 					S.Held.GrabFacing = (S.Held.GrabFacing + 1) % 6;
-
+					// Defer simulation-held orientation to next fixed tick
+					PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
 				}
 				break;
 			case ECmd::WaitForBond:
@@ -1391,6 +1429,8 @@ void USimWorldHex::StepArmsSecondPass()
 				S.bHolding = true;
 				S.PrevHeldOrbCount = 1;
 				SkipInputThisFrame.Add(Target);
+				// NEW: single item has no held-rotation
+				SimGrabFacingByArm.Add(ArmIndex, int8(-1));
 
 				// Advance PC since grab succeeded
 				S.PC = (S.PC + 1) % S.Tape.Num();
@@ -1454,8 +1494,10 @@ void USimWorldHex::StepArmsSecondPass()
 					S.bHolding = true;
 					S.PrevHeldOrbCount = 1;
 					SkipInputThisFrame.Add(Target);
+					// NEW: single item has no held-rotation
+					SimGrabFacingByArm.Add(ArmIndex, int8(-1));
 
-					// Advance PC
+					// Advance PC since grab succeeded
 					S.PC = (S.PC + 1) % S.Tape.Num();
 
 					//if (bDebugLogs && GEngine)
@@ -1536,6 +1578,8 @@ void USimWorldHex::StepArmsSecondPass()
 						S.Held = Cluster;
 						S.bHolding = true;
 						S.PrevHeldOrbCount = Cluster.Orbs.Num();
+						// NEW: seed sim-held orientation to the cluster's grab-facing immediately
+						SimGrabFacingByArm.Add(ArmIndex, Cluster.GrabFacing);
 
 						// Advance PC
 						S.PC = (S.PC + 1) % S.Tape.Num();
@@ -1864,97 +1908,45 @@ void USimWorldHex::DrawBondDebugLines()
 		// Check if items are held by arms (for held clusters)
 		if (!bFoundA || !bFoundB)
 		{
-			for (const FArmState& Arm : Arms)
+			for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
 			{
+				const FArmState& Arm = Arms[ArmIndex];
 				if (!Arm.bHolding) continue;
+
+				const FHex GripHex = GetArmGripHex_Sim(ArmIndex);
+				const uint8 ccw = GetHeldCCW_Steps_Sim(ArmIndex);
+
+				auto Rot60 = [](FHex D, uint8 StepsCCW)
+					{
+						for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+						{
+							int32 q = D.Q;
+							int32 r = D.R;
+							D.Q = -r;
+							D.R = q + r;
+						}
+						return D;
+					};
 
 				if (Arm.Held.bIsCluster)
 				{
 					for (const FOrbData& Sub : Arm.Held.Orbs)
 					{
-						if (Sub.ItemId == Bond.ItemA && !bFoundA)
+						if ((Sub.ItemId == Bond.ItemA && !bFoundA) || (Sub.ItemId == Bond.ItemB && !bFoundB))
 						{
-							// Calculate held orb position
-							FHex GripHex = Arm.BaseHex;
-							for (int i = 0; i < Arm.ArmLen; ++i)
-								GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
-
-							const uint8 cur = (uint8)Arm.Facing % 6;
-							const int8 grab = (int8)Arm.Held.GrabFacing;
-							const uint8 facingDelta = (grab >= 0)
-								? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
-								: cur;
-							const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-
-							auto Rot60 = [](FHex D, uint8 StepsCCW)
-								{
-									for (uint8 i = 0; i < (StepsCCW % 6); ++i)
-									{
-										int32 q = D.Q;
-										int32 r = D.R;
-										D.Q = -r;
-										D.R = q + r;
-									}
-									return D;
-								};
-
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex Rot = Rot60(Local, ccw);
 							FHex WorldHex(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
-							PosA = HexToWorld(WorldHex);
-							bFoundA = true;
-						}
-						if (Sub.ItemId == Bond.ItemB && !bFoundB)
-						{
-							// Calculate held orb position (same logic as above)
-							FHex GripHex = Arm.BaseHex;
-							for (int i = 0; i < Arm.ArmLen; ++i)
-								GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
-
-							const uint8 cur = (uint8)Arm.Facing % 6;
-							const int8 grab = (int8)Arm.Held.GrabFacing;
-							const uint8 facingDelta = (grab >= 0)
-								? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
-								: cur;
-							const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-
-							auto Rot60 = [](FHex D, uint8 StepsCCW)
-								{
-									for (uint8 i = 0; i < (StepsCCW % 6); ++i)
-									{
-										int32 q = D.Q;
-										int32 r = D.R;
-										D.Q = -r;
-										D.R = q + r;
-									}
-									return D;
-								};
-
-							FHex Local(Sub.dQ, Sub.dR);
-							FHex Rot = Rot60(Local, ccw);
-							FHex WorldHex(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
-							PosB = HexToWorld(WorldHex);
-							bFoundB = true;
+							const FVector Pos = HexToWorld(WorldHex);
+							if (Sub.ItemId == Bond.ItemA) { PosA = Pos; bFoundA = true; }
+							else { PosB = Pos; bFoundB = true; }
 						}
 					}
 				}
-				else if (Arm.Held.Id == Bond.ItemA && !bFoundA)
+				else
 				{
-					// Single held item
-					FHex GripHex = Arm.BaseHex;
-					for (int i = 0; i < Arm.ArmLen; ++i)
-						GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
-					PosA = HexToWorld(GripHex);
-					bFoundA = true;
-				}
-				else if (Arm.Held.Id == Bond.ItemB && !bFoundB)
-				{
-					// Single held item
-					FHex GripHex = Arm.BaseHex;
-					for (int i = 0; i < Arm.ArmLen; ++i)
-						GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
-					PosB = HexToWorld(GripHex);
-					bFoundB = true;
+					if (Arm.Held.Id == Bond.ItemA && !bFoundA) { PosA = HexToWorld(GripHex); bFoundA = true; }
+					if (Arm.Held.Id == Bond.ItemB && !bFoundB) { PosB = HexToWorld(GripHex); bFoundB = true; }
 				}
 			}
 		}
@@ -2008,7 +2000,55 @@ void USimWorldHex::DrawBondDebugLines()
 }
 
 
+FHex USimWorldHex::GetArmGripHex_Sim(int32 ArmIndex) const
+{
+	if (ArmIndex < 0 || ArmIndex >= Arms.Num()) return FHex(0, 0);
+	const FArmState& A = Arms[ArmIndex];
+	const uint8 SimFace = (SimFacingByArm.Contains(ArmIndex) ? SimFacingByArm[ArmIndex] : uint8(A.Facing));
+	const int32 SimLen = (SimArmLenByArm.Contains(ArmIndex) ? SimArmLenByArm[ArmIndex] : A.ArmLen);
+	FHex Grip = A.BaseHex;
+	for (int i = 0; i < SimLen; ++i)
+		Grip = HexUtil::Neighbor(Grip, (EHexDir)(SimFace % 6));
+	return Grip;
+}
 
+uint8 USimWorldHex::GetHeldCCW_Steps_Sim(int32 ArmIndex) const
+{
+	if (ArmIndex < 0 || ArmIndex >= Arms.Num()) return 0;
+	const FArmState& A = Arms[ArmIndex];
+	const uint8 cur = (SimFacingByArm.Contains(ArmIndex) ? SimFacingByArm[ArmIndex] : uint8(A.Facing)) % 6;
+
+	int8 simGrab = int8(-1);
+	if (const int8* P = SimGrabFacingByArm.Find(ArmIndex))
+	{
+		simGrab = *P;
+	}
+	// If sim grab is invalid, fall back to the current held grab (if any)
+	const int8 grab = (simGrab >= 0) ? simGrab : (A.Held.bIsCluster ? A.Held.GrabFacing : int8(-1));
+
+	const uint8 facingDelta = (grab >= 0)
+		? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+		: cur;
+
+	return (uint8)((6 - facingDelta) % 6); // CCW steps to convert local->world
+}
+
+FHex USimWorldHex::Rot60CCW(FHex D, uint8 StepsCCW)
+{
+	for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+	{
+		const int32 q = D.Q;
+		const int32 r = D.R;
+		D.Q = -r;
+		D.R = q + r;
+	}
+	return D;
+}
+
+FHex USimWorldHex::Rot60CW(FHex D, uint8 StepsCW)
+{
+	return Rot60CCW(D, (uint8)((6 - (StepsCW % 6)) % 6));
+}
 
 void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
 {
@@ -2065,300 +2105,21 @@ void USimWorldHex::ProcessPendingBondFormations(float DeltaTime)
 }
 
 
-void USimWorldHex::OnArmRotationComplete(int32 ArmIndex)
+void USimWorldHex::OnArmRotationComplete(int32 /*ArmIndex*/)
 {
-
-	// Process any pending bond formations for this arm immediately
-	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
-	{
-		FPendingBondFormation& Pending = PendingBondFormations[i];
-
-		if (Pending.ArmIndex == ArmIndex)
-		{
-			// Check if the arm is still valid and holding something
-			if (ArmIndex >= 0 && ArmIndex < Arms.Num())
-			{
-				const FArmState& Arm = Arms[ArmIndex];
-				if (Arm.bHolding)
-				{
-					// Check if the board item still exists
-					const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
-					if (BoardItem && BoardItem->Id == Pending.BoardItemId)
-					{
-						// Check if this board item is part of a bonded cluster
-						TSet<int32> ClusterIds;
-						if (ItemToBonds.Contains(Pending.BoardItemId))
-						{
-							// Gather all items in the bonded cluster
-							TArray<int32> Stack;
-							Stack.Add(Pending.BoardItemId);
-							ClusterIds.Add(Pending.BoardItemId);
-
-							while (Stack.Num() > 0)
-							{
-								int32 CurrentId = Stack.Pop();
-								if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
-								{
-									for (int32 BondIdx : *BondList)
-									{
-										if (!Bonds.IsValidIndex(BondIdx)) continue;
-										const FBond& Bond = Bonds[BondIdx];
-										if (!Bond.bActive) continue;
-
-										int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
-										if (OtherId > 0 && !ClusterIds.Contains(OtherId))
-										{
-											// Check if this other item is on the board (not held)
-											bool bOtherOnBoard = false;
-											for (const auto& ItemKV : ItemMap)
-											{
-												if (ItemKV.Value.Id == OtherId)
-												{
-													bOtherOnBoard = true;
-													break;
-												}
-											}
-
-											if (bOtherOnBoard)
-											{
-												ClusterIds.Add(OtherId);
-												Stack.Add(OtherId);
-											}
-										}
-									}
-								}
-							}
-						}
-						else
-						{
-							// Single item, not part of a cluster
-							ClusterIds.Add(Pending.BoardItemId);
-						}
-
-						if (bDebugLogs && bDevDebugBonds && GEngine)
-						{
-							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-								FString::Printf(TEXT("Arm rotation complete - adding %d board orb(s) to held item %d"),
-									ClusterIds.Num(), Arm.Held.Id));
-						}
-
-						// Add all cluster items to the held item
-						for (int32 BoardId : ClusterIds)
-						{
-							// Find the hex position of this board item
-							FHex BoardHex;
-							bool bFound = false;
-							for (const auto& ItemKV : ItemMap)
-							{
-								if (ItemKV.Value.Id == BoardId)
-								{
-									BoardHex = ItemKV.Key;
-									bFound = true;
-									break;
-								}
-							}
-
-							if (bFound)
-							{
-								AddBoardOrbToHeldItem(Arm.Held.Id, BoardId, BoardHex);
-							}
-						}
-					}
-				}
-			}
-
-			PendingBondFormations.RemoveAt(i);
-		}
-	}
-
-	// Process any pending held-to-held merges for this arm
-	for (int32 i = PendingHeldMerges.Num() - 1; i >= 0; i--)
-	{
-		FPendingHeldMerge& PendingMerge = PendingHeldMerges[i];
-
-		// Check if this arm is involved in the merge
-		if (PendingMerge.ReceiverArmIndex == ArmIndex || PendingMerge.DonorArmIndex == ArmIndex)
-		{
-			// Check if both arms have completed their rotation
-			bool bBothArmsReady = true;
-
-			// For simplicity, we'll process the merge when either arm completes rotation
-			// This works because both arms should be rotating to form the bond
-
-			if (PendingMerge.ReceiverArmIndex >= 0 && PendingMerge.ReceiverArmIndex < Arms.Num() &&
-				PendingMerge.DonorArmIndex >= 0 && PendingMerge.DonorArmIndex < Arms.Num())
-			{
-				FArmState& ReceiverArm = Arms[PendingMerge.ReceiverArmIndex];
-				FArmState& DonorArm = Arms[PendingMerge.DonorArmIndex];
-
-				// Make sure both arms are still holding their items
-				if (ReceiverArm.bHolding && DonorArm.bHolding)
-				{
-					// Perform the merge - copy all orbs from donor to receiver
-					ProcessHeldToHeldMerge(PendingMerge.ReceiverArmIndex, PendingMerge.DonorArmIndex);
-
-					if (bDebugLogs && bDevDebugBonds && GEngine)
-					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-							FString::Printf(TEXT("Arm rotation complete - merged held clusters: Arm %d absorbed Arm %d's items"),
-								PendingMerge.ReceiverArmIndex, PendingMerge.DonorArmIndex));
-					}
-				}
-			}
-
-			// Remove the pending merge
-			PendingHeldMerges.RemoveAt(i);
-		}
-	}
-	StepArmsSecondPass();
-	// Note: Unbond processing is now handled in OnArmRotationFullyComplete()
-	// This function only handles bond formation at 95% rotation completion
+	// No-op for bonding/merges with sim-delayed facing.
+	// Bonds and held-held merges are resolved in StepBonds using committed sim state.
 }
 
 void USimWorldHex::OnArmRotationFullyComplete(int32 ArmIndex)
 {
-	// Mark rotation as completed for this arm
+	// Visual event only: record state for UX/other subsystems if desired.
+	// Do not commit sim-facing here to avoid coupling sim to render frame timing.
 	if (ArmIndex >= 0 && ArmIndex < Arms.Num())
 	{
-		Arms[ArmIndex].bRotationCompleted = true;
+		FArmState& S = Arms[ArmIndex];
+		S.bRotationCompleted = true;
 	}
-
-	// Mark this arm as ready for unbond processing with its current facing direction
-	if (ArmIndex >= 0 && ArmIndex < Arms.Num())
-	{
-		// Avoid duplicates
-		if (!ArmsReadyForUnbond.Contains(ArmIndex))
-		{
-			// Use actor's FacingDir if available for visual-accurate facing
-			uint8 VisualFacing = (uint8)Arms[ArmIndex].Facing;
-			if (UWorld* World = GetWorld())
-			{
-				for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
-				{
-					ABasicArm* ArmActor = *ActorItr;
-					if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
-					{
-						VisualFacing = ArmActor->FacingDir;
-						break;
-					}
-				}
-			}
-			ArmsReadyForUnbond.Add(ArmIndex, VisualFacing);
-		}
-	}
-
-	// Process any pending bond formations for this arm now that rotation is fully complete
-	for (int32 i = PendingBondFormations.Num() - 1; i >= 0; i--)
-	{
-		FPendingBondFormation& Pending = PendingBondFormations[i];
-		if (Pending.ArmIndex != ArmIndex) continue;
-
-		// Validate arm and held state
-		if (ArmIndex < 0 || ArmIndex >= Arms.Num())
-		{
-			PendingBondFormations.RemoveAt(i);
-			continue;
-		}
-
-		const FArmState& Arm = Arms[ArmIndex];
-		if (!Arm.bHolding)
-		{
-			PendingBondFormations.RemoveAt(i);
-			continue;
-		}
-
-		// Ensure board item still exists
-		const FItem* BoardItem = ItemMap.Find(Pending.BoardItemHex);
-		if (!BoardItem || BoardItem->Id != Pending.BoardItemId)
-		{
-			PendingBondFormations.RemoveAt(i);
-			continue;
-		}
-
-		// Collect connected board items (cluster-aware)
-		TSet<int32> ClusterIds;
-		if (ItemToBonds.Contains(Pending.BoardItemId))
-		{
-			TArray<int32> Stack;
-			Stack.Add(Pending.BoardItemId);
-			ClusterIds.Add(Pending.BoardItemId);
-			while (Stack.Num() > 0)
-			{
-				const int32 CurrentId = Stack.Pop();
-				if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
-				{
-					for (int32 BondIdx : *BondList)
-					{
-						if (!Bonds.IsValidIndex(BondIdx)) continue;
-						const FBond& Bond = Bonds[BondIdx];
-						if (!Bond.bActive) continue;
-
-						const int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
-						if (OtherId > 0 && !ClusterIds.Contains(OtherId))
-						{
-							// Add only items that are on the board
-							bool bOtherOnBoard = false;
-							for (const auto& ItemKV : ItemMap)
-							{
-								if (ItemKV.Value.Id == OtherId) { bOtherOnBoard = true; break; }
-							}
-							if (bOtherOnBoard)
-							{
-								ClusterIds.Add(OtherId);
-								Stack.Add(OtherId);
-							}
-						}
-					}
-				}
-			}
-		}
-		else
-		{
-			ClusterIds.Add(Pending.BoardItemId);
-		}
-
-		// Add all board items in that cluster to the held item
-		for (int32 BoardId : ClusterIds)
-		{
-			FHex BoardHex;
-			bool bFound = false;
-			for (const auto& ItemKV : ItemMap)
-			{
-				if (ItemKV.Value.Id == BoardId) { BoardHex = ItemKV.Key; bFound = true; break; }
-			}
-			if (bFound)
-			{
-				AddBoardOrbToHeldItem(Arm.Held.Id, BoardId, BoardHex);
-			}
-		}
-
-		PendingBondFormations.RemoveAt(i);
-	}
-
-	// Process any pending held-to-held merges for this arm (moved from OnArmRotationComplete)
-	for (int32 i = PendingHeldMerges.Num() - 1; i >= 0; i--)
-	{
-		FPendingHeldMerge& PendingMerge = PendingHeldMerges[i];
-
-		if (PendingMerge.ReceiverArmIndex == ArmIndex || PendingMerge.DonorArmIndex == ArmIndex)
-		{
-			if (PendingMerge.ReceiverArmIndex >= 0 && PendingMerge.ReceiverArmIndex < Arms.Num() &&
-				PendingMerge.DonorArmIndex >= 0 && PendingMerge.DonorArmIndex < Arms.Num())
-			{
-				FArmState& ReceiverArm = Arms[PendingMerge.ReceiverArmIndex];
-				FArmState& DonorArm = Arms[PendingMerge.DonorArmIndex];
-
-				if (ReceiverArm.bHolding && DonorArm.bHolding)
-				{
-					ProcessHeldToHeldMerge(PendingMerge.ReceiverArmIndex, PendingMerge.DonorArmIndex);
-				}
-			}
-			PendingHeldMerges.RemoveAt(i);
-		}
-	}
-
-	// Allow second-pass grabs now that rotation is fully complete
-	StepArmsSecondPass();
 }
 
 void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
@@ -2380,8 +2141,4 @@ void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
 		}
 	}
 }
-
-
-
-
 
