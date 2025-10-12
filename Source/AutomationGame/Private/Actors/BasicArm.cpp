@@ -122,7 +122,6 @@ void ABasicArm::BeginPlay()
 	EffectiveReachStart = EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
 	LastExtensionSegmentMultiplier = ExtensionSegmentMultiplier;
 }
-
 void ABasicArm::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
@@ -136,7 +135,6 @@ void ABasicArm::Tick(float DeltaSeconds)
 		FacingDir = static_cast<uint8>(SimState.Facing);
 		CurrYawDeg = DirToYaw(FacingDir);
 
-
 		const bool bHaveSim = (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num());
 		const int32 SimLen = bHaveSim ? Sim->Arms[SimArmIndex].ArmLen : ReachTiles;
 		const bool bLenChanged = (SimLen != ReachTiles);
@@ -144,10 +142,9 @@ void ABasicArm::Tick(float DeltaSeconds)
 
 		if (bHaveSim && (bLenChanged || bMultiplierChanged))
 		{
-			// Preserve current interpolated effective reach
 			const float CurrentEff = FMath::Lerp(EffectiveReachStart, EffectiveReachEnd, StepAlpha);
 			EffectiveReachStart = CurrentEff;
-			ReachTiles = SimLen;                // update logical length AFTER sampling
+			ReachTiles = SimLen;
 			EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
 			LastExtendSegmentMultiplier = ExtensionSegmentMultiplier;
 		}
@@ -176,7 +173,6 @@ void ABasicArm::Tick(float DeltaSeconds)
 			HeldOrb = FItem();
 		}
 
-		// Update visual immediately when holding state or cluster composition changes
 		if (bWasHolding != bHolding || (bHolding && HeldOrb.Orbs.Num() != LastHeldOrbCount))
 		{
 			UpdateHeldOrbVisual();
@@ -184,10 +180,9 @@ void ABasicArm::Tick(float DeltaSeconds)
 		}
 		if (bHolding)
 		{
-			const int32 NewGrabFacing = HeldOrb.GrabFacing; // expected 0..5 from sim
+			const int32 NewGrabFacing = HeldOrb.GrabFacing;
 			if (NewGrabFacing != LastHeldGrabFacing)
 			{
-				// Preserve current interpolated cluster angle as the new start
 				const float CurrentClusterDeg =
 					NormDeg(HeldClusterFacingStartDeg +
 						FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
@@ -198,84 +193,35 @@ void ABasicArm::Tick(float DeltaSeconds)
 		}
 		else
 		{
-			// Not holding -> reset bookkeeping
 			LastHeldGrabFacing = -1;
 			HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 0.f;
 		}
 	}
 
-	// ADD in Tick() BEFORE computing/advancing StepAlpha (replace previous ReachTiles/ReachVisual logic)
-	{
-		const bool bLenChanged = (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num()) ? (ReachTiles != Sim->Arms[SimArmIndex].ArmLen) : false;
-		const bool bMultiplierChanged = !FMath::IsNearlyEqual(ExtensionSegmentMultiplier, LastExtensionSegmentMultiplier);
-
-		if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
-		{
-			const FArmState& SimState = Sim->Arms[SimArmIndex];
-			if (bLenChanged || bMultiplierChanged)
-			{
-				// Preserve current interpolated effective distance
-				const float CurrentEff = FMath::Lerp(EffectiveReachStart, EffectiveReachEnd, StepAlpha);
-				EffectiveReachStart = CurrentEff;
-				ReachTiles = SimState.ArmLen;
-				EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
-				LastExtensionSegmentMultiplier = ExtensionSegmentMultiplier;
-			}
-			else
-			{
-				const float TargetEff = ComputeEffectiveReach(ReachTiles);
-				if (!FMath::IsNearlyEqual(EffectiveReachEnd, TargetEff))
-				{
-					EffectiveReachStart = EffectiveReachEnd = TargetEff;
-				}
-			}
-		}
-	}
-
-	// Sync StepAlpha from OrbSimDriver for consistent timing across all systems
-	// This ensures arm rotation timing is synchronized with simulation and rendering
+	// Sync StepAlpha from GameTickManager (single source of truth)
 	float PreviousStepAlpha = StepAlpha;
-	if (UWorld* World = GetWorld())
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
 	{
-		for (TActorIterator<AOrbSimDriver> It(World); It; ++It)
-		{
-			AOrbSimDriver* SimDriver = *It;
-			if (SimDriver)
-			{
-				StepAlpha = SimDriver->GetStepAlpha();
-				break;
-			}
-		}
+		StepAlpha = TickManager->GetStepAlpha();
 	}
 
-	// Check for rotation completion notifications with improved robustness
-	// This handles editor pause/focus issues by using more reliable detection
+	// Rotation completion notifications (unchanged)
 	if (StepAlpha >= 0.95f && PreviousStepAlpha < 0.95f)
 	{
-		// Rotation is close enough to target - notify the simulation for bond formation
 		if (Sim && SimArmIndex >= 0)
 		{
 			Sim->OnArmRotationComplete(SimArmIndex);
 		}
 	}
-
-	// Robust rotation completion detection - use a more reliable threshold
-	// This prevents issues during performance dips where StepAlpha might not reach exactly 1.0f
 	if (StepAlpha >= 0.99f && PreviousStepAlpha < 0.99f)
 	{
-		// Rotation is effectively complete - notify the simulation for unbond processing
 		if (Sim && SimArmIndex >= 0)
 		{
 			Sim->OnArmRotationFullyComplete(SimArmIndex);
 		}
 	}
-
-	// Additional robustness: If we're at 100% but haven't notified yet, do it now
-	// This handles cases where the editor was paused during the transition
 	if (StepAlpha >= 1.0f && Sim && SimArmIndex >= 0)
 	{
-		// Check if we need to notify for unbond processing
-		// This is idempotent, so it's safe to call multiple times
 		Sim->OnArmRotationFullyComplete(SimArmIndex);
 	}
 

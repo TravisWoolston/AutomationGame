@@ -83,28 +83,18 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	if (!Sim) return;
-	// Use GameTickManager as source of truth for step timing
-	AGameTickManager* TickManager = AGameTickManager::Get(this);
-	float ActualTicksPerSecond = TickManager ? TickManager->TicksPerSecond : 2.0f;
-	float ActualStepDuration = TickManager ? (1.0f / TickManager->TicksPerSecond) : 0.5f;
-	
-	if (TickManager)
+
+	// Read alpha directly from the manager (single source of truth)
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
 	{
-		// Get the actual step duration from GameTickManager
-		const float StepDuration = 1.0f / FMath::Max(0.01f, TickManager->TicksPerSecond);
-		StepAlpha += DeltaSeconds / StepDuration;
-		
-		// Debug: Log StepAlpha to see the distribution
-		// if (FMath::Fmod(GetWorld()->GetTimeSeconds(), 1.0f) < 0.1f) // Log every ~1 second
-		// {
-		// 	UE_LOG(LogTemp, Warning, TEXT("OrbSimDriver: StepAlpha=%.3f, DeltaSeconds=%.3f, StepDuration=%.3f, TPS=%.1f"), 
-		// 		StepAlpha, DeltaSeconds, StepDuration, TickManager->TicksPerSecond);
-		// }
+		StepAlpha = TickManager->GetStepAlpha();
 	}
-	StepAlpha = FMath::Clamp(StepAlpha, 0.f, 1.f);
-	
-			
-	Sim->SetFrameAlpha(StepAlpha);   // was: Sim->FrameAlpha = StepAlpha;
+	else
+	{
+		StepAlpha = 0.f;
+	}
+
+	Sim->SetFrameAlpha(StepAlpha);
 
 	// Draw debug spheres for all orbs in the simulation
 	if (bDebugSpheres && GetWorld())
@@ -120,13 +110,12 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 	UE_LOG(LogTemp, VeryVerbose, TEXT("OrbSimDriver: StepSim dt=%.3f"), StepSeconds);
 	Sim->StepSim();
 
-	StepAlpha = 0.f;
-	Sim->SetFrameAlpha(0.f);         // was: Sim->FrameAlpha = 0.f;
-	
-	// Get the actual GameTickManager to show real TicksPerSecond
-	AGameTickManager* TickManager = AGameTickManager::Get(this);
-	float ActualTicksPerSecond = TickManager ? TickManager->TicksPerSecond : 2.0f;
-	float StepDuration = 1.0f / ActualTicksPerSecond;
+	// Ensure the sim's frame alpha reflects the manager's start-of-step alpha (0 at tick)
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
+	{
+		Sim->SetFrameAlpha(TickManager->GetStepAlpha());
+	}
+
 #if !(UE_BUILD_SHIPPING)
 	FItem Tmp;
 	const bool L = Sim->PeekItemAt(FHex(-1, 0), Tmp);
@@ -476,13 +465,13 @@ bool AOrbSimDriver::WorldToHex(const FVector& World, FHex& OutHex) const
 	}
 
 	FVector D = World - AnchorLoc;
-	if (D.IsNearlyZero()) { OutHex = FHex(0,0); return true; }
+	if (D.IsNearlyZero()) { OutHex = FHex(0, 0); return true; }
 	// Undo reorientation (stored as X,Z,Y)
 	const float Xs = D.X;
 	const float Ys = D.Z; // original Y (sinLat * R)
 	const float Zs = D.Y; // original Z
 	const float R = FVector(Xs, Ys, Zs).Size();
-	if (R < KINDA_SMALL_NUMBER) { OutHex = FHex(0,0); return true; }
+	if (R < KINDA_SMALL_NUMBER) { OutHex = FHex(0, 0); return true; }
 	// Recover latitude via equal-area: SinLat = Ys / R
 	float SinLat = FMath::Clamp(Ys / R, -0.999999f, 0.999999f);
 	float Lat = FMath::Asin(SinLat);
@@ -505,228 +494,3 @@ bool AOrbSimDriver::WorldToHex(const FVector& World, FHex& OutHex) const
 	OutHex = FHex(A.Q, A.R);
 	return true;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

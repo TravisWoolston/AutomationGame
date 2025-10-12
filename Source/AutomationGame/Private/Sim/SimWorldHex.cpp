@@ -649,7 +649,7 @@ void USimWorldHex::StepArms()
 								S.Held = Temp;
 								S.bHolding = true;
 								S.PrevHeldOrbCount = 1;
-								//SkipInputThisFrame.Add(Target);
+								SkipInputThisFrame.Add(Target);
 								bGrabSucceeded = true;
 							}
 						}
@@ -668,7 +668,7 @@ void USimWorldHex::StepArms()
 									S.Held = SingleOut;
 									S.bHolding = true;
 									S.PrevHeldOrbCount = 1;
-									//SkipInputThisFrame.Add(Target);
+									SkipInputThisFrame.Add(Target);
 									bGrabSucceeded = true;
 								}
 							}
@@ -759,7 +759,7 @@ void USimWorldHex::StepArms()
 						S.Held = Temp;
 						S.bHolding = true;
 						S.PrevHeldOrbCount = 1;
-						//SkipInputThisFrame.Add(Target);
+						SkipInputThisFrame.Add(Target);
 						// single item has no held-rotation
 						SimGrabFacingByArm.Add(ArmIndex, int8(-1));
 
@@ -825,7 +825,7 @@ void USimWorldHex::StepArms()
 						S.Held = SingleOut;
 						S.bHolding = true;
 						S.PrevHeldOrbCount = 1;
-						//SkipInputThisFrame.Add(Target);
+						SkipInputThisFrame.Add(Target);
 						SimGrabFacingByArm.Add(ArmIndex, int8(-1));
 
 						// Advance immediately
@@ -901,7 +901,7 @@ void USimWorldHex::StepArms()
 						{
 							if (It.Value().Id == Sub.ItemId)
 							{
-								//SkipInputThisFrame.Add(It.Key());
+								SkipInputThisFrame.Add(It.Key());
 								HeldItemLastHex.Add(Sub.ItemId, It.Key());
 								It.RemoveCurrent();
 								break;

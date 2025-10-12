@@ -27,6 +27,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tick") bool IsPlaying() const { return bPlaying; }
 	UFUNCTION(BlueprintCallable, Category = "Tick") bool IsInStartupDelay() const { return RemainingDelayTicks > 0; }
 	UFUNCTION(BlueprintCallable, Category = "Tick") int32 GetRemainingDelayTicks() const { return RemainingDelayTicks; }
+	/** Interpolation alpha [0..1) within the current fixed step. Resets to 0 when a tick is emitted. */
+	UFUNCTION(BlueprintCallable, Category = "Tick") float GetStepAlpha() const { return StepAlpha; }
 
 	/** Helper to find a manager in the current world. */
 	UFUNCTION(BlueprintCallable, Category = "Tick", meta = (WorldContext = "WorldContextObject"))
@@ -56,6 +58,7 @@ private:
 	bool bPlaying = false;
 	double Accum = 0.0;
 	int32 RemainingDelayTicks = 0;
+	float StepAlpha = 0.f;
 
 	FORCEINLINE float GetStepSeconds() const { return 1.0f / FMath::Max(0.01f, TicksPerSecond); }
 };
