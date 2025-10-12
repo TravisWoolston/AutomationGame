@@ -649,7 +649,7 @@ void USimWorldHex::StepArms()
 								S.Held = Temp;
 								S.bHolding = true;
 								S.PrevHeldOrbCount = 1;
-								SkipInputThisFrame.Add(Target);
+								//SkipInputThisFrame.Add(Target);
 								bGrabSucceeded = true;
 							}
 						}
@@ -668,7 +668,7 @@ void USimWorldHex::StepArms()
 									S.Held = SingleOut;
 									S.bHolding = true;
 									S.PrevHeldOrbCount = 1;
-									SkipInputThisFrame.Add(Target);
+									//SkipInputThisFrame.Add(Target);
 									bGrabSucceeded = true;
 								}
 							}
@@ -723,8 +723,208 @@ void USimWorldHex::StepArms()
 			} break;
 
 			case ECmd::Grab:
+			{
+				// If already holding, just advance
+				if (S.bHolding)
+				{
+					bContinueProcessing = true; // allow next op this tick
+					break;
+				}
 
-				break;
+				// Compute grip/target hex (visual-facing has already been applied to S.Facing here)
+				FHex Target = S.BaseHex;
+				for (int i = 0; i < S.ArmLen; ++i)
+					Target = HexUtil::Neighbor(Target, S.Facing);
+
+				FItem* Found = ItemMap.Find(Target);
+
+				// Try single grab first
+				if (!Found)
+				{
+					FItem Temp;
+					if (TryArmPickItem(Target, Temp))
+					{
+						// Don't allow re-grab of items we dropped ourselves this tick
+						if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(Temp.Id))
+						{
+							if (*DroppedByArm == ArmIndex)
+							{
+								// Put it back and keep waiting on this op
+								ItemMap.Add(Target, Temp);
+								bContinueProcessing = false;
+								break;
+							}
+						}
+
+						S.Held = Temp;
+						S.bHolding = true;
+						S.PrevHeldOrbCount = 1;
+						//SkipInputThisFrame.Add(Target);
+						// single item has no held-rotation
+						SimGrabFacingByArm.Add(ArmIndex, int8(-1));
+
+						// Advance immediately
+						bContinueProcessing = true;
+					}
+					else
+					{
+						// No item to pick up this tick; stay on Grab
+						bContinueProcessing = false;
+					}
+					break;
+				}
+
+				// We have something at target; decide if it's a bonded cluster
+				TSet<int32> ClusterIds;
+				if (Found->Id != 0 && ItemToBonds.Contains(Found->Id))
+				{
+					// Gather bonded ids
+					TArray<int32> Stack;
+					Stack.Add(Found->Id);
+					ClusterIds.Add(Found->Id);
+
+					while (Stack.Num() > 0)
+					{
+						int32 CurrentId = Stack.Pop();
+						if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
+						{
+							for (int32 BondIdx : *BondList)
+							{
+								if (!Bonds.IsValidIndex(BondIdx)) continue;
+								const FBond& Bond = Bonds[BondIdx];
+								if (!Bond.bActive) continue;
+
+								int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
+								if (OtherId > 0 && !ClusterIds.Contains(OtherId))
+								{
+									ClusterIds.Add(OtherId);
+									Stack.Add(OtherId);
+								}
+							}
+						}
+					}
+				}
+
+				// If not actually a multi-item cluster, do a single grab fast-path
+				if (ClusterIds.Num() <= 1)
+				{
+					FItem SingleOut;
+					if (TryArmPickItem(Target, SingleOut))
+					{
+						if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(SingleOut.Id))
+						{
+							if (*DroppedByArm == ArmIndex)
+							{
+								// Put it back; do not advance PC
+								ItemMap.Add(Target, SingleOut);
+								bContinueProcessing = false;
+								break;
+							}
+						}
+
+						S.Held = SingleOut;
+						S.bHolding = true;
+						S.PrevHeldOrbCount = 1;
+						//SkipInputThisFrame.Add(Target);
+						SimGrabFacingByArm.Add(ArmIndex, int8(-1));
+
+						// Advance immediately
+						bContinueProcessing = true;
+					}
+					else
+					{
+						bContinueProcessing = false;
+					}
+					break;
+				}
+
+				// Multi-item cluster: assemble immediately
+				FItem Cluster;
+				Cluster.bIsCluster = true;
+				Cluster.Id = Found->Id;
+				Cluster.GrabFacing = (int8)S.Facing; // seed with current facing (visual already committed to S.Facing)
+
+				bool bAllFound = true;
+				for (int32 ItemId : ClusterIds)
+				{
+					FHex ItemHex;
+					bool bItemFound = false;
+
+					for (const auto& KV2 : ItemMap)
+					{
+						if (KV2.Value.Id == ItemId)
+						{
+							ItemHex = KV2.Key;
+							bItemFound = true;
+							break;
+						}
+					}
+
+					if (!bItemFound)
+					{
+						bAllFound = false;
+						break;
+					}
+
+					const FHex D(ItemHex.Q - Target.Q, ItemHex.R - Target.R);
+
+					FOrbData Orb;
+					const FItem* It = ItemMap.Find(ItemHex);
+					if (It && !It->bIsCluster)
+					{
+						// Disallow re-grab of items we dropped ourselves this tick
+						if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(It->Id))
+						{
+							if (*DroppedByArm == ArmIndex)
+							{
+								bAllFound = false; // treat as not ready yet
+								break;
+							}
+						}
+
+						Orb.Type = (uint8)It->Single.Type;
+						Orb.Color = (uint8)It->Single.Color;
+						Orb.ItemId = It->Id;
+						Orb.dQ = (int8)D.Q;
+						Orb.dR = (int8)D.R;
+						Orb.Offset = FVector2D::ZeroVector;
+						Cluster.Orbs.Add(Orb);
+					}
+				}
+
+				if (bAllFound && Cluster.Orbs.Num() > 0)
+				{
+					// Remove all cluster members from the board
+					for (const FOrbData& Sub : Cluster.Orbs)
+					{
+						for (auto It = ItemMap.CreateIterator(); It; ++It)
+						{
+							if (It.Value().Id == Sub.ItemId)
+							{
+								//SkipInputThisFrame.Add(It.Key());
+								HeldItemLastHex.Add(Sub.ItemId, It.Key());
+								It.RemoveCurrent();
+								break;
+							}
+						}
+					}
+
+					S.Held = Cluster;
+					S.bHolding = true;
+					S.PrevHeldOrbCount = Cluster.Orbs.Num();
+					// seed sim-held orientation immediately
+					SimGrabFacingByArm.Add(ArmIndex, Cluster.GrabFacing);
+
+					// Advance immediately
+					bContinueProcessing = true;
+				}
+				else
+				{
+					// Not ready to grab the cluster now; stay on Grab
+					bContinueProcessing = false;
+				}
+			}
+			break;
 
 			case ECmd::Drop:
 				if (S.bHolding)
@@ -1428,7 +1628,7 @@ void USimWorldHex::StepArmsSecondPass()
 				S.Held = Temp;
 				S.bHolding = true;
 				S.PrevHeldOrbCount = 1;
-				SkipInputThisFrame.Add(Target);
+				//SkipInputThisFrame.Add(Target);
 				// NEW: single item has no held-rotation
 				SimGrabFacingByArm.Add(ArmIndex, int8(-1));
 
@@ -1493,7 +1693,7 @@ void USimWorldHex::StepArmsSecondPass()
 					S.Held = SingleOut;
 					S.bHolding = true;
 					S.PrevHeldOrbCount = 1;
-					SkipInputThisFrame.Add(Target);
+					//SkipInputThisFrame.Add(Target);
 					// NEW: single item has no held-rotation
 					SimGrabFacingByArm.Add(ArmIndex, int8(-1));
 
@@ -1567,7 +1767,7 @@ void USimWorldHex::StepArmsSecondPass()
 							{
 								if (It.Value().Id == Sub.ItemId)
 								{
-									SkipInputThisFrame.Add(It.Key());
+									//SkipInputThisFrame.Add(It.Key());
 									HeldItemLastHex.Add(Sub.ItemId, It.Key());
 									It.RemoveCurrent();
 									break;
@@ -1601,6 +1801,30 @@ void USimWorldHex::StepArmsSecondPass()
 
 				}
 			}
+		}
+	}
+
+	// NEW: finalize WaitForBond in the same tick (after StepBonds ran)
+	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
+	{
+		FArmState& S = Arms[ArmIndex];
+		if (S.Tape.Num() == 0) continue;
+
+		const FOp& Op = S.Tape[S.PC];
+		if (Op.Cmd != ECmd::WaitForBond) continue;
+		if (!S.bHolding) continue;
+
+		const int32 CurrentCount = S.Held.bIsCluster ? S.Held.Orbs.Num() : 1;
+
+		// If wait just began earlier in StepArms, bWaitingForBond will be true and baseline set.
+		// If bonds increased count this tick, clear wait and advance now.
+		if (S.bWaitingForBond && CurrentCount > S.WaitForBondInitialCount)
+		{
+			S.bWaitingForBond = false;
+			S.WaitForBondInitialCount = 0;
+
+			// Advance PC now so next op can start immediately next tick
+			S.PC = (S.PC + 1) % S.Tape.Num();
 		}
 	}
 }

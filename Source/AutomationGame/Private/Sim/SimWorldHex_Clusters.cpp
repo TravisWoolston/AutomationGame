@@ -1,4 +1,4 @@
-#include "Sim/SimWorldHex.h"
+﻿#include "Sim/SimWorldHex.h"
 #include "Actors/BasicArm.h"
 #include "Rendering/OrbRenderer.h"
 #include "EngineUtils.h"
@@ -223,7 +223,7 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 		FArmState& Arm = Arms[ArmIndex];
 		if (!Arm.bHolding || !Arm.Held.bIsCluster || Arm.Held.Orbs.Num() <= 1) continue;
 
-		// SIM frame: grip + rotation
+		// Use SIM-committed state (not visual) to align with bond creation/breaking
 		const FHex GripHex = GetArmGripHex_Sim(ArmIndex);
 		const uint8 ccw = GetHeldCCW_Steps_Sim(ArmIndex);
 
@@ -231,8 +231,10 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 			{
 				for (uint8 i = 0; i < (StepsCCW % 6); ++i)
 				{
-					int32 q = D.Q, r = D.R;
-					D.Q = -r; D.R = q + r;
+					int32 q = D.Q;
+					int32 r = D.R;
+					D.Q = -r;
+					D.R = q + r;
 				}
 				return D;
 			};
@@ -243,7 +245,7 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 			const FOrbData& Sub = Arm.Held.Orbs[SubIndex];
 			if (Sub.ItemId <= 0) continue;
 
-			// Does this sub-orb have any active bonds to other sub-orbs in the same cluster?
+			// Check if this orb has any bonds to other orbs in the cluster
 			bool bHasBondsInCluster = false;
 			if (const TArray<int32>* BondList = ItemToBonds.Find(Sub.ItemId))
 			{
@@ -252,96 +254,141 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 					if (!Bonds.IsValidIndex(BondIdx)) continue;
 					const FBond& Bond = Bonds[BondIdx];
 					if (!Bond.bActive) continue;
+
+					// Check if this bond connects to another orb in the same cluster
 					const int32 OtherItemId = (Bond.ItemA == Sub.ItemId) ? Bond.ItemB : Bond.ItemA;
 					for (const FOrbData& OtherSub : Arm.Held.Orbs)
 					{
-						if (OtherSub.ItemId == OtherItemId) { bHasBondsInCluster = true; break; }
+						if (OtherSub.ItemId == OtherItemId)
+						{
+							bHasBondsInCluster = true;
+							break;
+						}
 					}
 					if (bHasBondsInCluster) break;
 				}
 			}
 
-			if (bHasBondsInCluster) continue;
-
-			// Compute world position for this sub in SIM frame
-			FHex Local(Sub.dQ, Sub.dR);
-			FHex Rot = Rot60(Local, ccw);
-			FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
-
-			if (Sub.dQ == 0 && Sub.dR == 0)
+			// If this orb has no bonds to other orbs in the cluster, remove it
+			if (!bHasBondsInCluster)
 			{
-				// Center is disconnected -> drop all non-center subs, keep center as single
-				for (int32 OtherIndex = Arm.Held.Orbs.Num() - 1; OtherIndex >= 0; OtherIndex--)
+				// Check if this is the held orb (the one at dQ=0, dR=0)
+				if (Sub.dQ == 0 && Sub.dR == 0)
 				{
-					const FOrbData& OtherSub = Arm.Held.Orbs[OtherIndex];
-					if (OtherSub.ItemId <= 0) continue;
-					if (OtherSub.dQ == 0 && OtherSub.dR == 0) continue;
-
-					FHex OL(OtherSub.dQ, OtherSub.dR);
-					FHex OR = Rot60(OL, ccw);
-					FHex OW(GripHex.Q + OR.Q, GripHex.R + OR.R);
-
-					FItem I; I.bIsCluster = false; I.Id = OtherSub.ItemId;
-					I.Single.Type = (EOrbType)OtherSub.Type;
-					I.Single.Color = (EOrbColor)OtherSub.Color;
-					ItemMap.Add(OW, I);
-					NewlyPlacedItems.Add(OtherSub.ItemId);
-					RecentlyDroppedByArm.Add(OtherSub.ItemId, ArmIndex);
-					HeldItemLastHex.Remove(OtherSub.ItemId);
-				}
-
-				// Collapse to single and clear SIM held rotation
-				Arm.Held.bIsCluster = false;
-				Arm.Held.Orbs.Empty();
-				Arm.Held.Single.Type = (EOrbType)Sub.Type;
-				Arm.Held.Single.Color = (EOrbColor)Sub.Color;
-				Arm.Held.Id = Sub.ItemId;
-				Arm.Held.GrabFacing = -1;
-				SimGrabFacingByArm.Add(ArmIndex, int8(-1));
-
-				if (UWorld* World = GetWorld())
-				{
-					for (TActorIterator<ABasicArm> It(World); It; ++It)
+					// Disconnect the cluster: place all other orbs; keep holding center as single
+					for (int32 OtherIndex = Arm.Held.Orbs.Num() - 1; OtherIndex >= 0; OtherIndex--)
 					{
-						if (ABasicArm* A = *It; A && A->SimArmIndex == ArmIndex) { A->UpdateHeldClusterOnly(); break; }
+						const FOrbData& OtherSub = Arm.Held.Orbs[OtherIndex];
+						if (OtherSub.ItemId <= 0) continue;
+						if (OtherSub.dQ == 0 && OtherSub.dR == 0) continue;
+
+						FHex OtherLocal(OtherSub.dQ, OtherSub.dR);
+						FHex OtherRot = Rot60(OtherLocal, ccw);
+						FHex OtherWorldPos(GripHex.Q + OtherRot.Q, GripHex.R + OtherRot.R);
+
+						FItem DisconnectedOrb;
+						DisconnectedOrb.bIsCluster = false;
+						DisconnectedOrb.Id = OtherSub.ItemId;
+						DisconnectedOrb.Single.Type = (EOrbType)OtherSub.Type;
+						DisconnectedOrb.Single.Color = (EOrbColor)OtherSub.Color;
+
+						ItemMap.Add(OtherWorldPos, DisconnectedOrb);
+						NewlyPlacedItems.Add(OtherSub.ItemId);
+						RecentlyDroppedByArm.Add(OtherSub.ItemId, ArmIndex);
+						HeldItemLastHex.Remove(OtherSub.ItemId);
+
+						if (bDebugLogs && bDevDebugBonds && GEngine)
+						{
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+								FString::Printf(TEXT("Disconnected cluster orb %d placed at (%d,%d)"),
+									OtherSub.ItemId, OtherWorldPos.Q, OtherWorldPos.R));
+						}
 					}
-				}
-				break;
-			}
-			else
-			{
-				// Drop this disconnected non-center orb
-				FItem I; I.bIsCluster = false; I.Id = Sub.ItemId;
-				I.Single.Type = (EOrbType)Sub.Type;
-				I.Single.Color = (EOrbColor)Sub.Color;
-				ItemMap.Add(WorldPos, I);
-				NewlyPlacedItems.Add(Sub.ItemId);
-				RecentlyDroppedByArm.Add(Sub.ItemId, ArmIndex);
 
-				const bool bWasLast = (Arm.Held.Orbs.Num() == 1);
-				FOrbData Remaining;
-				if (bWasLast) Remaining = Arm.Held.Orbs[0];
-
-				Arm.Held.Orbs.RemoveAt(SubIndex);
-				HeldItemLastHex.Remove(Sub.ItemId);
-
-				if (bWasLast)
-				{
+					// Convert to single, clear sim-held orientation immediately
+					const FOrbData HeldOrb = Sub;
 					Arm.Held.bIsCluster = false;
 					Arm.Held.Orbs.Empty();
-					Arm.Held.Single.Type = (EOrbType)Remaining.Type;
-					Arm.Held.Single.Color = (EOrbColor)Remaining.Color;
-					Arm.Held.Id = Remaining.ItemId;
+					Arm.Held.Single.Type = (EOrbType)HeldOrb.Type;
+					Arm.Held.Single.Color = (EOrbColor)HeldOrb.Color;
+					Arm.Held.Id = HeldOrb.ItemId;
 					Arm.Held.GrabFacing = -1;
 					SimGrabFacingByArm.Add(ArmIndex, int8(-1));
-					break;
+
+					if (bDebugLogs && bDevDebugBonds && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
+							FString::Printf(TEXT("Held orb %d converted to single after cluster disconnection"), HeldOrb.ItemId));
+					}
+
+					// Force visual refresh
+					if (UWorld* World = GetWorld())
+					{
+						for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+						{
+							ABasicArm* ArmActor = *ActorItr;
+							if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
+							{
+								ArmActor->UpdateHeldClusterOnly();
+								break;
+							}
+						}
+					}
+
+					break; // done with this arm
 				}
-				else if (Arm.Held.Orbs.Num() == 0)
+				else
 				{
-					Arm.bHolding = false;
-					Arm.Held = FItem();
-					SimGrabFacingByArm.Add(ArmIndex, int8(-1));
-					break;
+					// Drop the disconnected non-center orb
+					FHex Local(Sub.dQ, Sub.dR);
+					FHex Rot = Rot60(Local, ccw);
+					FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+
+					FItem DisconnectedOrb;
+					DisconnectedOrb.bIsCluster = false;
+					DisconnectedOrb.Id = Sub.ItemId;
+					DisconnectedOrb.Single.Type = (EOrbType)Sub.Type;
+					DisconnectedOrb.Single.Color = (EOrbColor)Sub.Color;
+
+					ItemMap.Add(WorldPos, DisconnectedOrb);
+					NewlyPlacedItems.Add(Sub.ItemId);
+					RecentlyDroppedByArm.Add(Sub.ItemId, ArmIndex);
+
+					const bool bWillBeLastOrb = (Arm.Held.Orbs.Num() == 1);
+					FOrbData RemainingOrb;
+					if (bWillBeLastOrb)
+					{
+						RemainingOrb = Arm.Held.Orbs[0];
+					}
+
+					Arm.Held.Orbs.RemoveAt(SubIndex);
+					HeldItemLastHex.Remove(Sub.ItemId);
+
+					if (bDebugLogs && bDevDebugBonds && GEngine)
+					{
+						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+							FString::Printf(TEXT("Disconnected orb %d placed at (%d,%d)"),
+								Sub.ItemId, WorldPos.Q, WorldPos.R));
+					}
+
+					if (bWillBeLastOrb)
+					{
+						Arm.Held.bIsCluster = false;
+						Arm.Held.Orbs.Empty();
+						Arm.Held.Single.Type = (EOrbType)RemainingOrb.Type;
+						Arm.Held.Single.Color = (EOrbColor)RemainingOrb.Color;
+						Arm.Held.Id = RemainingOrb.ItemId;
+						Arm.Held.GrabFacing = -1;
+						SimGrabFacingByArm.Add(ArmIndex, int8(-1));
+						break;
+					}
+					else if (Arm.Held.Orbs.Num() == 0)
+					{
+						Arm.bHolding = false;
+						Arm.Held = FItem();
+						SimGrabFacingByArm.Add(ArmIndex, int8(-1));
+						break;
+					}
 				}
 			}
 		}
