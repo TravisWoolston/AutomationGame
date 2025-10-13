@@ -608,12 +608,12 @@ void USimWorldHex::StepArms()
 
 				if (PrevOp.Cmd == ECmd::Grab)
 				{
-					// Execute the deferred grab now
-					if (bDebugLogs && GEngine)
-					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
-							FString::Printf(TEXT("Arm %d: Executing deferred grab from PC=%d"), ArmIndex, PrevPC));
-					}
+					//// Execute the deferred grab now
+					//if (bDebugLogs && GEngine)
+					//{
+					//	GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+					//		FString::Printf(TEXT("Arm %d: Executing deferred grab from PC=%d"), ArmIndex, PrevPC));
+					//}
 
 					// Execute grab logic here (copied from original grab case)
 					bool bGrabSucceeded = false;
@@ -724,6 +724,16 @@ void USimWorldHex::StepArms()
 
 			case ECmd::Grab:
 			{
+				if (Op.Cmd != ECmd::Grab)
+				{
+					for (int32 i = PendingGrabs.Num() - 1; i >= 0; i--)
+					{
+						if (PendingGrabs[i].ArmIndex == ArmIndex)
+						{
+							PendingGrabs.RemoveAt(i);
+						}
+					}
+				}
 				// If already holding, just advance
 				if (S.bHolding)
 				{
@@ -732,9 +742,8 @@ void USimWorldHex::StepArms()
 				}
 
 				// Compute grip/target hex (visual-facing has already been applied to S.Facing here)
-				FHex Target = S.BaseHex;
-				for (int i = 0; i < S.ArmLen; ++i)
-					Target = HexUtil::Neighbor(Target, S.Facing);
+				const FHex Target = GetArmGripHex_Sim(ArmIndex);
+
 
 				FItem* Found = ItemMap.Find(Target);
 
@@ -1596,35 +1605,38 @@ void USimWorldHex::StepArmsSecondPass()
 		const FOp& Op = S.Tape[S.PC];
 		if (Op.Cmd != ECmd::Grab || S.bHolding) continue;
 
+		// Gate on committed sim state (delayed facing/length)
+		const uint8 SimFace = SimFacingByArm.Contains(ArmIndex)
+			? SimFacingByArm[ArmIndex]
+			: uint8(S.Facing);
+		const int32 SimLen = SimArmLenByArm.Contains(ArmIndex)
+			? SimArmLenByArm[ArmIndex]
+			: S.ArmLen;
+
+		if (SimFace != uint8(S.Facing) || SimLen != S.ArmLen)
+		{
+			// Still in-flight rotation/extension; wait for next tick
+			continue;
+		}
 		// Calculate target position
-		FHex Target = S.BaseHex;
-		for (int i = 0; i < S.ArmLen; ++i)
-			Target = HexUtil::Neighbor(Target, S.Facing);
+		const FHex Target = GetArmGripHex_Sim(ArmIndex);
 
 		// Try to grab again
 		FItem* Found = ItemMap.Find(Target);
 		if (!Found)
 		{
-			// Try simple single-item grab
 			FItem Temp;
 			if (TryArmPickItem(Target, Temp))
 			{
-				// Check if this orb was recently dropped by this same arm
 				if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(Temp.Id))
 				{
-					if (*DroppedByArm == ArmIndex)
-					{
-						continue; // Still can't grab own dropped items
-					}
+					if (*DroppedByArm == ArmIndex) continue;
 				}
 
 				S.Held = Temp;
 				S.bHolding = true;
 				S.PrevHeldOrbCount = 1;
-				// NEW: single item has no held-rotation
 				SimGrabFacingByArm.Add(ArmIndex, int8(-1));
-
-				// Advance PC since grab succeeded
 				S.PC = (S.PC + 1) % S.Tape.Num();
 			}
 		}
