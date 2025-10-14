@@ -44,6 +44,13 @@ void AHexTopDownPawn::BeginPlay()
 	{
 		Placer->SetBlueprintMode(false);
 	}
+	
+	// Bind to GameTickManager for NextTick functionality
+	AGameTickManager* TickManager = AGameTickManager::Get(this);
+	if (TickManager)
+	{
+		TickManager->OnFixedTick.AddDynamic(this, &AHexTopDownPawn::HandleNextTickStop);
+	}
 }
 
 void AHexTopDownPawn::Tick(float DeltaSeconds)
@@ -310,16 +317,34 @@ void AHexTopDownPawn::NextTick()
 		return;
 	}
 	
-	// If simulation is playing, pause it first
-	if (TickManager->IsPlaying())
-	{
-		TickManager->Pause();
-		UE_LOG(LogTemp, Log, TEXT("NextTick: Paused simulation"));
-	}
+	// Set flag to pause on the next GTM tick
+	bPauseOnNextTick = true;
 	
-	// Advance simulation by one tick
-	TickManager->StepTicks(1);
-	UE_LOG(LogTemp, Log, TEXT("NextTick: Advanced simulation by 1 tick"));
+	// If paused, start playing so we can reach the next tick
+	if (!TickManager->IsPlaying())
+	{
+		TickManager->Play();
+		UE_LOG(LogTemp, Log, TEXT("NextTick: Playing until next tick"));
+	}
+	else
+	{
+		// Already playing, will pause on next tick
+		UE_LOG(LogTemp, Log, TEXT("NextTick: Will pause on next tick"));
+	}
+}
+
+void AHexTopDownPawn::HandleNextTickStop(float StepSeconds)
+{
+	if (bPauseOnNextTick)
+	{
+		AGameTickManager* TickManager = AGameTickManager::Get(this);
+		if (TickManager)
+		{
+			TickManager->Pause();
+			UE_LOG(LogTemp, Log, TEXT("NextTick: Paused at tick boundary"));
+		}
+		bPauseOnNextTick = false;
+	}
 }
 
 void AHexTopDownPawn::StartSelection()
@@ -595,8 +620,8 @@ void AHexTopDownPawn::CreateBlueprint()
 				
 				// Regular tile (not an arm)
 				BlueprintTiles.Add(FBlueprintTile(LocalHex, Tile->Kind, TileDirection));
-				UE_LOG(LogTemp, Warning, TEXT("Found and captured tile at (%d,%d) of type %d"), 
-					Hex.Q, Hex.R, (int32)Tile->Kind);
+				// UE_LOG(LogTemp, Warning, TEXT("Found and captured tile at (%d,%d) of type %d"), 
+				// 	Hex.Q, Hex.R, (int32)Tile->Kind);
 			}
 			else
 			{

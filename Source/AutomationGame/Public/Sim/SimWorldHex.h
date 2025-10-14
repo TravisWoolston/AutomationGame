@@ -98,6 +98,16 @@ public:
 	/** Get the bonds array for rendering purposes */
 	const TArray<FBond>& GetBonds() const { return Bonds; }
 
+	/** Get belt progress for an item (for sub-tile interpolation in renderer) */
+	float GetBeltProgress(int32 ItemId) const
+	{
+		if (const float* Progress = BeltProgress.Find(ItemId))
+		{
+			return *Progress;
+		}
+		return 0.f;
+	}
+
 	/** Animated orb structure for input/output animations */
 	struct FAnimatedOrb
 	{

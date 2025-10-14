@@ -48,7 +48,7 @@ void USimWorldHex::StepBonds()
 
 			while (Stack.Num() > 0)
 			{
-				const int32 Cur = Stack.Pop(/*bAllowShrinking=*/false);
+				const int32 Cur = Stack.Pop(EAllowShrinking::No);
 				if (Visited.Contains(Cur)) continue;
 				Visited.Add(Cur);
 

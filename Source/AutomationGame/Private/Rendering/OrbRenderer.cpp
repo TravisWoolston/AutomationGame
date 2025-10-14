@@ -13,6 +13,7 @@
 #include "Data/OrbMaterialManager.h"
 #include "Actors/BasicArm.h"
 #include "EngineUtils.h"
+#include "Framework/GameTickManager.h"
 
 static FORCEINLINE int32 MakeSubOrbId(int32 ItemId, int32 SubIdx)
 {
@@ -85,14 +86,39 @@ void UOrbRenderer::BeginPlay()
 	{
 		Driver = AOrbSimDriver::Find(W);
 		if (Driver) Sim = Driver->GetSim();
+		
+		// Set tick dependency: OrbRenderer should tick AFTER OrbSimDriver
+		// This ensures we read the updated alpha value each frame
+		if (Driver)
+		{
+			PrimaryComponentTick.AddPrerequisite(Driver, Driver->PrimaryActorTick);
+		}
 	}
 
 	RebuildCurrPos();
 	PrevPos = CurrPos;
-	PrevRot = CurrRot;                      // <-- add this
-	PrevAlpha = Driver ? Driver->GetStepAlpha() : 0.f; // optional, keeps first frame clean
+	PrevRot = CurrRot;
+	PrevAlpha = Sim ? Sim->GetFrameAlpha() : 0.f;
 }
 
+void UOrbRenderer::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// Clean up any resources if needed
+	CurrPos.Empty();
+	PrevPos.Empty();
+	CurrRot.Empty();
+	PrevRot.Empty();
+	CurrArmFacing.Empty();
+	PrevArmFacing.Empty();
+	
+	Super::EndPlay(EndPlayReason);
+}
+
+void UOrbRenderer::HandleSimStepComplete(float StepSeconds)
+{
+	// This function can be used to respond to simulation step completion
+	// Currently empty as the main logic is in TickComponent
+}
 
 void UOrbRenderer::EnsureISM()
 {
@@ -201,44 +227,86 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 			if (!Driver) Driver = AOrbSimDriver::Find(W);
 			if (Driver && !Sim) Sim = Driver->GetSim();
 			if (Sim) { RebuildCurrPos(); PrevPos = CurrPos; PrevRot = CurrRot; }
+			
+			// Set tick dependency if driver was just acquired
+			if (Driver)
+			{
+				PrimaryComponentTick.AddPrerequisite(Driver, Driver->PrimaryActorTick);
+			}
 		}
 	}
 	if (!Driver || !Sim) return;
 
-	const float Alpha = Driver->GetStepAlpha();
+	// Get alpha from GameTickManager directly for proper synchronization
+	float Alpha = 0.0f;
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
+	{
+		Alpha = TickManager->GetStepAlpha();
+	}
+	else if (Sim)
+	{
+		Alpha = Sim->GetFrameAlpha(); // Fallback
+	}
 	const int32 Step = Sim->GetStepCounter();
 
-	// Feed frame alpha early for animated orbs
-	Sim->SetFrameAlpha(Alpha);
-
-	// Detect new fixed step via counter instead of Alpha wrap
+	// Detect new fixed step via counter
 	if (Step != LastSeenStepCounter)
 	{
 		LastSeenStepCounter = Step;
 
-		// Capture previous arm facings before rebuild
+		// Capture previous arm facings
 		PrevArmFacing = CurrArmFacing;
 		CurrArmFacing.Reset();
 
-		const TMap<int32, FVector>  OldPos = CurrPos;
-		const TMap<int32, FRotator> OldRot = CurrRot;
+		// Save current positions as previous (these are from BEFORE the step)
+		PrevPos = CurrPos;
+		PrevRot = CurrRot;
+		
+		// Debug: Log orb 1's previous position before updating
+		if (FVector* Prev = PrevPos.Find(1))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Step %d: Orb[1] PrevPos = (%.1f, %.1f, %.1f)"), Step, Prev->X, Prev->Y, Prev->Z);
+		}
+		
+		// Rebuild positions from the NEW sim state (AFTER the step)
 		RebuildCurrPos();
-		PrevPos = OldPos;
-		PrevRot = OldRot;
-
-		// Fill CurrArmFacing after new sim snapshot
+		
+		// Debug: Log orb 1's current position and hex after updating
+		if (FVector* Curr = CurrPos.Find(1))
+		{
+			FVector* Prev = PrevPos.Find(1);
+			float Delta = Prev ? FVector::Dist(*Prev, *Curr) : 0.0f;
+			bool bSamePos = (Delta < 0.01f);
+			
+			// Find hex coordinate
+			FString HexInfo = TEXT("NoHex");
+			for (const auto& KV : Sim->ItemMap)
+			{
+				if (KV.Value.Id == 1)
+				{
+					HexInfo = FString::Printf(TEXT("Hex(%d,%d)"), KV.Key.Q, KV.Key.R);
+					break;
+				}
+			}
+			
+			UE_LOG(LogTemp, Warning, TEXT("Step %d: Orb[1] %s CurrPos = (%.1f, %.1f, %.1f), Delta = %.1f %s"), 
+				Step, *HexInfo, Curr->X, Curr->Y, Curr->Z, Delta, bSamePos ? TEXT("⚠ SAME!") : TEXT("✓"));
+		}
+		
+		// Fill CurrArmFacing
 		for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
 		{
 			CurrArmFacing.Add(ArmIdx, (uint8)Sim->Arms[ArmIdx].Facing);
-			// Ensure Prev has entry (for first step or newly added arms)
 			if (!PrevArmFacing.Contains(ArmIdx))
 				PrevArmFacing.Add(ArmIdx, CurrArmFacing[ArmIdx]);
 		}
-
-		Sim->SetFrameAlpha(0.f);
 	}
-
-	PrevAlpha = Alpha;
+	
+	// Draw debug alpha dial if enabled (BEFORE updating PrevAlpha so we can see the difference)
+	if (bShowAlphaDial)
+	{
+		DrawDebugAlphaDial(Alpha, Step);
+	}
 	
 	// Update animated orbs
 	Sim->UpdateAnimatedOrbs(DeltaTime);
@@ -248,6 +316,149 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 	
 	RebuildInstances();
 	RebuildBondedOrbs();
+	
+	// Update PrevAlpha at the END so it's correct for the next frame
+	PrevAlpha = Alpha;
+}
+
+void UOrbRenderer::DrawDebugAlphaDial(float Alpha, int32 Step)
+{
+	if (!GetWorld()) return;
+	
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC) return;
+	
+	FVector CameraLocation;
+	FRotator CameraRotation;
+	PC->GetPlayerViewPoint(CameraLocation, CameraRotation);
+	
+	// === MAIN STATUS DISPLAY (follows camera for top-down view) ===
+	// Position in top-right corner relative to camera
+	FVector StatusPos = CameraLocation;
+	StatusPos.X += 800.0f;   // Right
+	StatusPos.Y -= 600.0f;   // Forward/back depending on camera
+	StatusPos.Z = 50.0f;     // Fixed height above ground
+	
+	FString StatusText = FString::Printf(TEXT("STEP %d | α %.3f | Δα %.3f"), 
+		Step, Alpha, Alpha - PrevAlpha);
+	DrawDebugString(GetWorld(), StatusPos, StatusText,
+		nullptr, FColor::Cyan, 0.0f, true, 3.0f);
+	
+	// === ALPHA DIAL (circular progress indicator) ===
+	FVector DialCenter = StatusPos + FVector(-100, 150, 0);  // Near status
+	float DialRadius = 60.0f;
+	
+	const int32 NumSegments = 32;
+	for (int32 i = 0; i < NumSegments; ++i)
+	{
+		float Angle1 = (float)i / NumSegments * 2.0f * PI;
+		float Angle2 = (float)(i + 1) / NumSegments * 2.0f * PI;
+		
+		FVector Point1 = DialCenter + FVector(FMath::Cos(Angle1) * DialRadius, FMath::Sin(Angle1) * DialRadius, 5);
+		FVector Point2 = DialCenter + FVector(FMath::Cos(Angle2) * DialRadius, FMath::Sin(Angle2) * DialRadius, 5);
+		
+		DrawDebugLine(GetWorld(), Point1, Point2, FColor::White, false, -1.0f, 0, 2.0f);
+	}
+	
+	float AngleRadians = Alpha * 2.0f * PI;
+	FVector DialPos = DialCenter + FVector(FMath::Cos(AngleRadians) * DialRadius, FMath::Sin(AngleRadians) * DialRadius, 5);
+	
+	bool bJustStepped = (Alpha < PrevAlpha);
+	FColor IndicatorColor = bJustStepped ? FColor::Red : FColor::Green;
+	DrawDebugSphere(GetWorld(), DialPos + FVector(0, 0, 5), 10.0f, 8, IndicatorColor, false, -1.0f, 0, 3.0f);
+	DrawDebugSphere(GetWorld(), DialCenter + FVector(0, 0, 5), 5.0f, 8, FColor::Yellow, false, -1.0f, 0, 2.0f);
+	
+	// === PER-ORB VISUALIZATION (at each orb's location) ===
+	if (Sim)
+	{
+		int32 OrbsVisualized = 0;
+		const int32 MaxOrbsToShow = 15;
+		
+		for (const auto& KV : Sim->ItemMap)
+		{
+			const FItem& Item = KV.Value;
+			const int32 OrbId = Item.Id;
+			
+			// Skip invalid IDs and clusters
+			if (OrbId == 0 || Item.bIsCluster) continue;
+			
+			FVector* PrevP = PrevPos.Find(OrbId);
+			FVector* CurrP = CurrPos.Find(OrbId);
+			if (!PrevP || !CurrP) continue;
+			
+			float PosDelta = FVector::Dist(*PrevP, *CurrP);
+			FVector InterpPos = FMath::Lerp(*PrevP, *CurrP, Alpha);
+			
+			// Determine orb state
+			bool bHasMovement = PosDelta > 0.1f;  // Any position change
+			bool bIsOnBelt = false;
+			const FTile* Tile = Sim->TileMap.Find(KV.Key);
+			if (Tile && Tile->Kind == ETileKind::Belt)
+			{
+				bIsOnBelt = true;
+			}
+			
+			// Color coding based on actual interpolation state:
+			// Green = Has movement (good interpolation)
+			// Red = No movement (stuck - PrevPos == CurrPos)
+			// Cyan = Not on belt
+			FColor MarkerColor;
+			if (bIsOnBelt)
+			{
+				MarkerColor = bHasMovement ? FColor::Green : FColor::Red;  // Red = STUCK
+			}
+			else
+			{
+				MarkerColor = FColor::Cyan;
+			}
+			
+			// Draw interpolation visualization
+			if (bHasMovement)
+			{
+				// Path line (prev → curr) - shows expected movement
+				DrawDebugLine(GetWorld(), *PrevP + FVector(0,0,15), *CurrP + FVector(0,0,15), 
+					FColor::Yellow, false, -1.0f, 0, 3.0f);
+				
+				// Endpoint markers
+				DrawDebugSphere(GetWorld(), *PrevP + FVector(0,0,15), 8.0f, 6, FColor::Red, false, -1.0f, 0, 2.0f);
+				DrawDebugSphere(GetWorld(), *CurrP + FVector(0,0,15), 8.0f, 6, FColor::Blue, false, -1.0f, 0, 2.0f);
+			}
+			else if (bIsOnBelt)
+			{
+				// NO MOVEMENT - draw warning indicator
+				DrawDebugSphere(GetWorld(), InterpPos + FVector(0,0,15), 20.0f, 8, FColor::Red, false, -1.0f, 0, 1.0f);
+			}
+			
+			// Main position marker at interpolated location
+			DrawDebugSphere(GetWorld(), InterpPos + FVector(0,0,15), 10.0f, 8, MarkerColor, false, -1.0f, 0, 3.0f);
+			
+			// Debug info text above orb
+			FString OrbInfo;
+			if (bIsOnBelt)
+			{
+				FString State = bHasMovement ? TEXT("OK") : TEXT("STUCK");
+				OrbInfo = FString::Printf(TEXT("%d\n%s Δ%.0f"), 
+					OrbId, *State, PosDelta);
+			}
+			else
+			{
+				OrbInfo = FString::Printf(TEXT("%d\nOFF"), OrbId);
+			}
+			
+			DrawDebugString(GetWorld(), InterpPos + FVector(0, 0, 35), OrbInfo,
+				nullptr, MarkerColor, 0.0f, true, 1.1f);
+			
+			OrbsVisualized++;
+			if (OrbsVisualized >= MaxOrbsToShow) break;
+		}
+		
+		// Legend (positioned near dial)
+		int32 TotalOrbs = Sim->ItemMap.Num();
+		FString Legend = FString::Printf(TEXT("LEGEND:\n● Green = Interpolating OK\n● Red = STUCK (no Δ)\n● Cyan = Off belt\n%d/%d orbs"), 
+			OrbsVisualized, TotalOrbs);
+		DrawDebugString(GetWorld(), DialCenter + FVector(150, 80, 0), Legend,
+			nullptr, FColor::White, 0.0f, true, 1.5f);
+	}
 }
 
 void UOrbRenderer::RebuildCurrPos()
@@ -255,6 +466,8 @@ void UOrbRenderer::RebuildCurrPos()
 	CurrPos.Reset();
 	CurrRot.Reset();
 	if (!Sim) return;
+	
+	UE_LOG(LogTemp, Warning, TEXT("RebuildCurrPos called: Step=%d"), Sim->GetStepCounter());
 
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
@@ -283,32 +496,39 @@ void UOrbRenderer::RebuildCurrPos()
 		return M.Rotator();
 	};
 
-	// Board items (not held)
+	// Board items (not held) - just store tile centers, we'll apply belt progress during rendering
 	for (const auto& KV : Sim->ItemMap)
 	{
 		const FItem& Item = KV.Value;
 		const int32 ItemId = Item.Id;
 		if (ItemId == 0) continue;
 		const FHex H = KV.Key;
+		
+		// Calculate base tile center position
 		FVector TileWorld = bSphere ? Driver->MapHexToWorld(H) : [&]() {
 			const FHexAxial A(H.Q, H.R);
 			const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
 			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
 			return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
 		}();
+		
+		// Position is just the tile center - interpolation happens in RebuildInstances() using Alpha
+		// No need for belt progress offset here!
 
 		if (!Item.bIsCluster)
 		{
 			CurrPos.Add(ItemId, TileWorld);
 			if (bSphere) CurrRot.Add(ItemId, ComputeUprightRot(TileWorld, H));
+			UE_LOG(LogTemp, VeryVerbose, TEXT("  Board orb[%d] at Hex(%d,%d) -> (%.1f, %.1f, %.1f)"), 
+				ItemId, H.Q, H.R, TileWorld.X, TileWorld.Y, TileWorld.Z);
 		}
 		else
 		{
+			// For clusters, apply the belt-adjusted center position to all sub-orbs
 			for (int32 SubIdx = 0; SubIdx < Item.Orbs.Num(); ++SubIdx)
 			{
 				const FOrbData& Sub = Item.Orbs[SubIdx];
 				const int32 SubId = MakeSubOrbId(ItemId, SubIdx);
-				// Use offset for planar only; on sphere recompute by hex offset mapping
 				FVector SubWorld;
 				if (bSphere)
 				{
@@ -327,51 +547,42 @@ void UOrbRenderer::RebuildCurrPos()
 	}
 
 	// Held items (per arm)
-	for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
-	{
-		const FArmState& S = Sim->Arms[ArmIdx];
-		if (!S.bHolding) continue;
-		const FItem& Held = S.Held;
-		if (Held.Id == 0) continue;
+	// for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
+	// {
+	// 	const FArmState& S = Sim->Arms[ArmIdx];
+	// 	if (!S.bHolding) continue;
+	// 	const FItem& Held = S.Held;
+	// 	if (Held.Id == 0) continue;
 
-		// Get the visual yaw from the arm actor to ensure smooth rotation
-		float VisualYaw = DirToYaw(static_cast<uint8>(S.Facing)); // Default to simulation facing
-		if (UWorld* World = GetWorld())
-		{
-			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
-			{
-				ABasicArm* ArmActor = *ActorItr;
-				if (ArmActor && ArmActor->SimArmIndex == ArmIdx)
-				{
-					// Get the interpolated visual yaw from the arm actor
-					VisualYaw = ArmActor->GetVisualYawDeg();
-					break;
-				}
-			}
-		}
+	// 	// Use DISCRETE simulation facing for position capture (no interpolation here!)
+	// 	// Interpolation happens later in RebuildInstances using PrevArmFacing/CurrArmFacing
+	// 	float DiscreteYaw = DirToYaw(static_cast<uint8>(S.Facing));
 
-		// Calculate grip position using visual yaw instead of discrete facing
-		// This provides smooth interpolation during rotation
-		FVector GripWorld = ComputeArmGripAtYaw(S, VisualYaw, GetAnchor(), Tile, Yaw, Ori);
+	// 	// Calculate grip position using discrete facing (not interpolated)
+	// 	FVector GripWorld = ComputeArmGripAtYaw(S, DiscreteYaw, GetAnchor(), Tile, Yaw, Ori);
 		
-		// For the grip hex (used for sphere rotation), we still need to calculate the logical position
-		FHex Grip = S.BaseHex;
-		for (int i = 0; i < S.ArmLen; ++i)
-			Grip = HexUtil::Neighbor(Grip, S.Facing);
+	// 	// For the grip hex (used for sphere rotation), we still need to calculate the logical position
+	// 	FHex Grip = S.BaseHex;
+	// 	for (int i = 0; i < S.ArmLen; ++i)
+	// 		Grip = HexUtil::Neighbor(Grip, S.Facing);
 
-		FRotator BaseRot = bSphere ? ComputeUprightRot(GripWorld, Grip)
-			: FRotator(0.f, VisualYaw, 0.f);
+	// 	FRotator BaseRot = bSphere ? ComputeUprightRot(GripWorld, Grip)
+	// 		: FRotator(0.f, DiscreteYaw, 0.f);
 
-		if (!Held.bIsCluster)
-		{
-			CurrPos.Add(Held.Id, GripWorld);
-			CurrRot.Add(Held.Id, BaseRot);
-		}
-		else
-		{
-			// (Clusters while held are drawn by arm meshes; skip per‑sub orb instances)
-		}
-	}
+	// 	if (!Held.bIsCluster)
+	// 	{
+	// 		CurrPos.Add(Held.Id, GripWorld);
+	// 		CurrRot.Add(Held.Id, BaseRot);
+	// 		UE_LOG(LogTemp, VeryVerbose, TEXT("  Held orb[%d] by Arm[%d] -> (%.1f, %.1f, %.1f)"), 
+	// 			Held.Id, ArmIdx, GripWorld.X, GripWorld.Y, GripWorld.Z);
+	// 	}
+	// 	else
+	// 	{
+	// 		// (Clusters while held are drawn by arm meshes; skip per‑sub orb instances)
+	// 	}
+	// }
+	
+	UE_LOG(LogTemp, Warning, TEXT("RebuildCurrPos done: %d positions captured"), CurrPos.Num());
 }
 
 void UOrbRenderer::RebuildInstances()
@@ -391,7 +602,16 @@ void UOrbRenderer::RebuildInstances()
 	// Early return if orbs should be hidden for debugging
 	if (!bShowOrbs) return;
 
-	const float Alpha = Driver->GetStepAlpha();
+	// Get alpha from GameTickManager directly for proper synchronization
+	float Alpha = 0.0f;
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
+	{
+		Alpha = TickManager->GetStepAlpha();
+	}
+	else if (Sim)
+	{
+		Alpha = Sim->GetFrameAlpha(); // Fallback
+	}
 
 	// Build set of held item ids so we don't double render
 	TSet<int32> HeldIds;
@@ -435,35 +655,15 @@ void UOrbRenderer::RebuildInstances()
 		const FVector To = B ? *B : From;
 
 		FVector P;
-		// Check if this orb is currently held by an arm
-		bool bHeldByArm = false;
-		//FVector ArmBase;
-		for (const FArmState& S : Sim->Arms)
-		{
-			if (S.bHolding && S.Held.Id != 0)
-			{
-				HeldIds.Add(S.Held.Id);
-				if (S.Held.bIsCluster)
-				{
-					for (int32 i = 0; i < S.Held.Orbs.Num(); ++i)
-					{
-						HeldIds.Add(MakeSubOrbId(S.Held.Id, i)); // Skip sub‑orb ISM instances while held
-					}
-				}
-			}
-		}
+		// Check if this orb is currently held by an arm for rotation interpolation
+		bool bHeldByArm = HeldIds.Contains(Id);
 
-		//if (bHeldByArm)
-		//{
-		//	// Interpolate along arc from From to To, centered at ArmBase
-		//	P = InterpArc(ArmBase, From, To, Alpha);
-		//}
-	//else
-		// Default straight interpolation
-		P = FMath::Lerp(From, To, Alpha);
-
-		// Arm rotation arc (only if held and position changed by rotation)
-		if (bHeldByArm)
+	// Simple interpolation between previous and current positions
+	// Belt progress offset is already baked into CurrPos by RebuildCurrPos()
+	P = FMath::Lerp(From, To, Alpha);
+	
+	// Arm rotation arc (only if held and position changed by rotation)
+	if (bHeldByArm)
 		{
 			// Find arm record
 			const AActor* Anchor = GetAnchor();
@@ -545,7 +745,16 @@ void UOrbRenderer::RebuildBondedOrbs()
 
 	// For now, only render bonds between board items (not held items)
 	// Held cluster bonds are handled by BasicArm
-	const float Alpha = Driver->GetStepAlpha();
+	// Get alpha from GameTickManager directly for proper synchronization
+	float Alpha = 0.0f;
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
+	{
+		Alpha = TickManager->GetStepAlpha();
+	}
+	else if (Sim)
+	{
+		Alpha = Sim->GetFrameAlpha(); // Fallback
+	}
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 	const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
@@ -626,7 +835,16 @@ void UOrbRenderer::RenderAnimatedOrbs()
 	const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
 	const float Yaw = Driver ? Driver->GetGridYaw() : 0.f;
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
-	const float Alpha = Driver ? Driver->GetStepAlpha() : 0.f;
+	// Get alpha from GameTickManager directly for proper synchronization
+	float Alpha = 0.0f;
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
+	{
+		Alpha = TickManager->GetStepAlpha();
+	}
+	else if (Sim)
+	{
+		Alpha = Sim->GetFrameAlpha(); // Fallback
+	}
 	
 	for (const USimWorldHex::FAnimatedOrb& AnimatedOrb : AnimatedOrbs)
 	{
@@ -706,4 +924,3 @@ void UOrbRenderer::RenderAnimatedOrbs()
 		}
 	}
 }
-

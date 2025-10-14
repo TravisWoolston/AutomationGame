@@ -124,14 +124,9 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, cons
 					}
 				}
 
-				for (TActorIterator<AActor> ActorItr(World); ActorItr; ++ActorItr)
-				{
-					if (UOrbRenderer* Renderer = (*ActorItr)->FindComponentByClass<UOrbRenderer>())
-					{
-						Renderer->RebuildCurrPos();
-						break;
-					}
-				}
+			// Note: Don't call Renderer->RebuildCurrPos() here!
+			// The renderer will detect the step change and update positions in its TickComponent,
+			// which ensures proper interpolation by saving PrevPos before updating CurrPos.
 			}
 		}
 		else
@@ -200,14 +195,9 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, cons
 					}
 				}
 
-				for (TActorIterator<AActor> ActorItr(World); ActorItr; ++ActorItr)
-				{
-					if (UOrbRenderer* Renderer = (*ActorItr)->FindComponentByClass<UOrbRenderer>())
-					{
-						Renderer->RebuildCurrPos();
-						break;
-					}
-				}
+			// Note: Don't call Renderer->RebuildCurrPos() here!
+			// The renderer will detect the step change and update positions in its TickComponent,
+			// which ensures proper interpolation by saving PrevPos before updating CurrPos.
 			}
 		}
 

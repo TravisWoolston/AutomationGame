@@ -24,6 +24,9 @@ class AUTOMATIONGAME_API UOrbRenderer : public UActorComponent
 	GENERATED_BODY()
 
 public:
+
+	/** Rebuild the current position cache for all items (used to prevent flickering during bond formations) */
+	void RebuildCurrPos();
 	UOrbRenderer();
 
 	/** Create the ISM as soon as the component registers */
@@ -40,6 +43,9 @@ public:
 
 	/** Debug: Make orbs invisible when false */
 	UPROPERTY(EditAnywhere, Category = "Debug") bool bShowOrbs = true;
+	
+	/** Debug: Show alpha interpolation dial on screen */
+	UPROPERTY(EditAnywhere, Category = "Debug") bool bShowAlphaDial = true;
 
 	/** Basic visuals */
 	// Note: OrbMesh and OrbMaterial are now managed by UOrbMaterialManager
@@ -53,14 +59,14 @@ public:
 
 private:
 	void EnsureISM();
-public:
-	/** Rebuild the current position cache for all items (used to prevent flickering during bond formations) */
-	void RebuildCurrPos();
 
-private:
 	void RebuildInstances();
 	void RebuildBondedOrbs();
+	void DrawDebugAlphaDial(float Alpha, int32 Step);
 	AActor* GetAnchor() const;
+	UFUNCTION()
+	void HandleSimStepComplete(float StepSeconds);
+	void EnsureStepBinding();
 
 	UPROPERTY(Transient) TMap<EOrbType, UInstancedStaticMeshComponent*> OrbTypeISMs;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* BondedOrbISM = nullptr;
@@ -78,7 +84,7 @@ protected:
 	// New: arm facing history for arc interpolation
 	TMap<int32, uint8> PrevArmFacing;
 	TMap<int32, uint8> CurrArmFacing;
-
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	// Helper for rotational interpolation of held items
 	FVector ComputeArmGripAtYaw(
 		const FArmState& S,
@@ -90,4 +96,8 @@ protected:
 
 	// Render animated orbs for input/output effects
 	void RenderAnimatedOrbs();
+
+	// Track what we are currently bound to (to avoid duplicates and to unbind safely)
+	TWeakObjectPtr<class AOrbSimDriver> BoundDriver;
+	bool bStepBound = false;
 };

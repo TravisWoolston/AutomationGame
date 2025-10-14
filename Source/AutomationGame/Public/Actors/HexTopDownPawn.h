@@ -191,4 +191,11 @@ private:
 	
 	// Simulation control - advance one tick
 	void NextTick();
+	
+	// Handler for pausing after next tick
+	UFUNCTION()
+	void HandleNextTickStop(float StepSeconds);
+	
+	// Flag to pause on next GTM tick
+	bool bPauseOnNextTick = false;
 };

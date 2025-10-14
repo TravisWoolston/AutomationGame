@@ -679,7 +679,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			TileSpec.Kind = Tile.Kind;
 			TileSpec.Dir = Tile.Arg;
 			Scenario.Tiles.Add(TileSpec);
-			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured tile at (%d,%d) type %d"), Hex.Q, Hex.R, (int32)Tile.Kind);
+			// UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured tile at (%d,%d) type %d"), Hex.Q, Hex.R, (int32)Tile.Kind);
 		}
 
 		// Build a map of existing arm specs to preserve their original facing (if not capturing runtime edits)

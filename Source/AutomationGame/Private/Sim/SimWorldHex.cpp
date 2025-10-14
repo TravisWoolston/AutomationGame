@@ -2460,7 +2460,6 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 			if (*PrevHex != CurHex)
 			{
 				const FVector PrevCenter = HexCenterToWorld(*PrevHex);
-				// FrameAlpha (0..1) provided externally each render frame
 				float Alpha = FMath::Clamp(FrameAlpha, 0.f, 1.f);
 				OutWorld = FMath::Lerp(PrevCenter, CurCenter, Alpha);
 				return true;
@@ -2476,6 +2475,49 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 		return true;
 	}
 
+	// Compute next hex now so we can check runtime blocking
+	const uint8 Dir = (uint8)(Tile->Arg & 0xFF);
+	const FHex NextHex = HexUtil::Neighbor(CurHex, (EHexDir)(Dir % 6));
+	const FVector NextCenter = HexCenterToWorld(NextHex);
+
+	// Determine whether the destination is blocked by a board item or any held orb/hand
+	auto IsDestBlocked = [&](const FHex& Dest)->bool
+		{
+			// Board occupancy
+			if (ItemMap.Contains(Dest))
+				return true;
+
+			// Held occupancy (hands and sub‑orbs)
+			for (int32 ArmIdx = 0; ArmIdx < Arms.Num(); ++ArmIdx)
+			{
+				const FArmState& A = Arms[ArmIdx];
+				if (!A.bHolding) continue;
+
+				// Hand hex at committed sim reach/facing
+				const FHex Grip = GetArmGripHex_Sim(ArmIdx);
+
+				// Single held orb occupies the grip hex
+				if (!A.Held.bIsCluster)
+				{
+					if (Grip == Dest) return true;
+					continue;
+				}
+
+				// Cluster: each sub‑orb at rotated offsets
+				const uint8 ccw = GetHeldCCW_Steps_Sim(ArmIdx);
+				for (const FOrbData& Sub : A.Held.Orbs)
+				{
+					FHex Local(Sub.dQ, Sub.dR);
+					FHex Rot = Rot60CCW(Local, ccw);
+					FHex WorldHex(Grip.Q + Rot.Q, Grip.R + Rot.R);
+					if (WorldHex == Dest) return true;
+				}
+			}
+			return false;
+		};
+
+	const bool bDestBlocked = IsDestBlocked(NextHex);
+
 	// Use belt progress for smooth visual interpolation
 	const float* PLogicPtr = BeltProgress.Find(ItemId);
 	float LogicalP = PLogicPtr ? *PLogicPtr : 0.f;
@@ -2486,22 +2528,25 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 	{
 		const float Dt = FMath::Max(0.f, FixedStepSec);
 		const float TilesPerSec = BeltSpeedTilesPerTick / FMath::Max(KINDA_SMALL_NUMBER, Dt);
-		// Interpolate using elapsed real time within this step
-		VisualP = FMath::Min(BeltBlockedClamp - 0.0001f,
-			LogicalP + FrameAlpha * TilesPerSec * Dt);
+		VisualP = LogicalP + FrameAlpha * TilesPerSec * Dt;
+
+		// Never render beyond the belt's blocked edge
+		VisualP = FMath::Min(VisualP, BeltBlockedClamp - 0.0001f);
+	}
+
+	// If destination is currently blocked, enforce blocked-edge clamping as an extra safety
+	if (bDestBlocked)
+	{
+		VisualP = FMath::Min(VisualP, BeltBlockedClamp - 0.0001f);
 	}
 
 	// Clamp to [0,1) for interpolation across THIS belt segment
 	VisualP = FMath::Clamp(VisualP, 0.f, 0.9999f);
 
-	const uint8 Dir = (uint8)(Tile->Arg & 0xFF);
-	const FHex NextHex = HexUtil::Neighbor(CurHex, (EHexDir)(Dir % 6));
-	const FVector NextCenter = HexCenterToWorld(NextHex);
-
 	OutWorld = FMath::Lerp(CurCenter, NextCenter, VisualP);
-
 	return true;
 }
+
 
 // AddBoardOrbToHeldCluster() and AddBoardOrbToHeldItem() moved to SimWorldHex_Clusters.cpp
 

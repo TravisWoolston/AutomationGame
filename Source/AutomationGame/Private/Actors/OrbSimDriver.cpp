@@ -96,11 +96,7 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 
 	Sim->SetFrameAlpha(StepAlpha);
 
-	// Draw debug spheres for all orbs in the simulation
-	if (bDebugSpheres && GetWorld())
-	{
-		DrawAllOrbDebugSpheres();
-	}
+
 }
 
 void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
@@ -115,7 +111,11 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 	{
 		Sim->SetFrameAlpha(TickManager->GetStepAlpha());
 	}
-
+		// Draw debug spheres for all orbs in the simulation
+		if (bDebugSpheres && GetWorld())
+		{
+			DrawAllOrbDebugSpheres();
+		}
 #if !(UE_BUILD_SHIPPING)
 	FItem Tmp;
 	const bool L = Sim->PeekItemAt(FHex(-1, 0), Tmp);
@@ -243,6 +243,13 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 	const float Tile = GetTileSize();
 	const float GridYaw = GetGridYaw();
 	const EHexOrientation Ori = GetGridOrientation();
+	
+	// Calculate GTM tick duration for debug draw lifetime
+	float DebugLifetime = 0.f;
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
+	{
+		DebugLifetime = 1.0f / FMath::Max(0.01f, TickManager->TicksPerSecond);
+	}
 
 	// Draw spheres for all board items (not held by arms)
 	for (const auto& KV : Sim->ItemMap)
@@ -263,7 +270,7 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 			// Single orb
 			const FColor DebugColor = GetDebugColorForOrbType(static_cast<uint8>(Item.Single.Type));
 			const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(Item.Single.Type), false);
-			DrawDebugSphere(GetWorld(), HexWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
+			DrawDebugSphere(GetWorld(), HexWorld, SphereSize, 12, DebugColor, false, DebugLifetime, 0, 2.f);
 
 			// Draw item ID text
 			DrawDebugString(GetWorld(), HexWorld + FVector(0, 0, SphereSize + 5.f),
@@ -296,7 +303,7 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 				}
 
 				const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(Sub.Type), true);
-				DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
+				DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, DebugLifetime, 0, 2.f);
 
 				// Draw orb info
 				DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, SphereSize + 5.f),
@@ -333,7 +340,7 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 			// Single held orb
 			const FColor DebugColor = FColor::Yellow; // Held items in yellow
 			const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(HeldItem.Single.Type), false);
-			DrawDebugSphere(GetWorld(), GripWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
+			DrawDebugSphere(GetWorld(), GripWorld, SphereSize, 12, DebugColor, false, DebugLifetime, 0, 2.f);
 
 			// Draw held item info
 			DrawDebugString(GetWorld(), GripWorld + FVector(0, 0, SphereSize + 5.f),
@@ -379,7 +386,7 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 				}
 
 				const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(Sub.Type), true);
-				DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
+				DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, DebugLifetime, 0, 2.f);
 
 				// Draw held cluster orb info
 				DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, SphereSize + 5.f),
