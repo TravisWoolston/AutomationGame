@@ -346,10 +346,10 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 
 					const bool bWillBeLastOrb = (Arm.Held.Orbs.Num() == 1);
 					FOrbData RemainingOrb;
-					if (bWillBeLastOrb)
-					{
-						RemainingOrb = Arm.Held.Orbs[0];
-					}
+					// if (bWillBeLastOrb)
+					// {
+					// 	RemainingOrb = Arm.Held.Orbs[0];
+					// }
 
 					Arm.Held.Orbs.RemoveAt(SubIndex);
 					HeldItemLastHex.Remove(Sub.ItemId);

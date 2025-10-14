@@ -253,6 +253,9 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 	if (Step != LastSeenStepCounter)
 	{
 		LastSeenStepCounter = Step;
+		
+		// Trigger full ISM rebuild on step change (orbs can be added/removed)
+		bNeedFullRebuild = true;
 
 		// Capture previous arm facings
 		PrevArmFacing = CurrArmFacing;
@@ -550,15 +553,15 @@ void UOrbRenderer::RebuildCurrPos()
 		FRotator BaseRot = bSphere ? ComputeUprightRot(GripWorld, Grip)
 			: FRotator(0.f, VisualYaw, 0.f);
 
-		if (!Held.bIsCluster)
-		{
-			CurrPos.Add(Held.Id, GripWorld);
-			CurrRot.Add(Held.Id, BaseRot);
-		}
-		else
-		{
-			// (Clusters while held are drawn by arm meshes; skip per‑sub orb instances)
-		}
+		// if (!Held.bIsCluster)
+		// {
+		// 	CurrPos.Add(Held.Id, GripWorld);
+		// 	CurrRot.Add(Held.Id, BaseRot);
+		// }
+		// else
+		// {
+		// 	// (Clusters while held are drawn by arm meshes; skip per‑sub orb instances)
+		// }
 	}
 }
 
@@ -567,17 +570,36 @@ void UOrbRenderer::RebuildInstances()
 	EnsureISM();
 	if (!Driver || !Sim) return;
 
-	// Clear all ISM instances
-	for (auto& KV : OrbTypeISMs)
-	{
-		if (KV.Value)
-		{
-			KV.Value->ClearInstances();
-		}
-	}
-
 	// Early return if orbs should be hidden for debugging
-	if (!bShowOrbs) return;
+	if (!bShowOrbs) 
+	{
+		// Clear all ISM instances if hiding orbs
+		for (auto& KV : OrbTypeISMs)
+		{
+			if (KV.Value)
+			{
+				KV.Value->ClearInstances();
+			}
+		}
+		OrbIdToInstanceIndex.Empty();
+		bNeedFullRebuild = true;
+		return;
+	}
+	
+	// Clear and rebuild ISMs when simulation step changes (orbs can be added/removed)
+	if (bNeedFullRebuild)
+	{
+		for (auto& KV : OrbTypeISMs)
+		{
+			if (KV.Value)
+			{
+				KV.Value->ClearInstances();
+			}
+		}
+		OrbIdToInstanceIndex.Empty();
+		AnimatedOrbToInstanceIndex.Empty(); // Also clear animated orb tracking
+		bNeedFullRebuild = false;
+	}
 
 	// Get alpha from GameTickManager directly for proper synchronization
 	float Alpha = 0.0f;
@@ -755,12 +777,28 @@ void UOrbRenderer::RebuildInstances()
 		}
 		
 
-		// Add to the appropriate ISM
+		// Prepare batch update or add new instance
 		if (UInstancedStaticMeshComponent** ISMPtr = OrbTypeISMs.Find(OrbType))
 		{
 			if (UInstancedStaticMeshComponent* ISM = *ISMPtr)
 			{
-				ISM->AddInstance(FTransform(R, P, FVector(OrbScale)));
+				FTransform Transform(R, P, FVector(OrbScale));
+				
+				// Check if this orb already has an instance
+				TMap<int32, int32>& InstanceMap = OrbIdToInstanceIndex.FindOrAdd(OrbType);
+				int32* ExistingIndex = InstanceMap.Find(Id);
+				
+				if (ExistingIndex && ISM->IsValidInstance(*ExistingIndex))
+				{
+					// Update existing instance - bTeleport=false allows proper motion vectors for TAA/motion blur
+					ISM->UpdateInstanceTransform(*ExistingIndex, Transform, false, true, false);
+				}
+				else
+				{
+					// Add new instance immediately and track its index
+					int32 NewIndex = ISM->AddInstance(Transform);
+					InstanceMap.Add(Id, NewIndex);
+				}
 			}
 		}
 	}
@@ -885,8 +923,9 @@ void UOrbRenderer::RenderAnimatedOrbs()
 		Alpha = Sim->GetFrameAlpha(); // Fallback
 	}
 	
-	for (const USimWorldHex::FAnimatedOrb& AnimatedOrb : AnimatedOrbs)
+	for (int32 AnimIdx = 0; AnimIdx < AnimatedOrbs.Num(); ++AnimIdx)
 	{
+		const USimWorldHex::FAnimatedOrb& AnimatedOrb = AnimatedOrbs[AnimIdx];
 		if (!AnimatedOrb.bActive) continue;
 		
 		// Calculate base position at the hex center
@@ -948,17 +987,28 @@ void UOrbRenderer::RenderAnimatedOrbs()
 		}
 		
 		
-		// Note: Output orb material logging removed for performance
-		
-		// Add to the appropriate ISM
+		// Add or update animated orb instance
 		if (UInstancedStaticMeshComponent** ISMPtr = OrbTypeISMs.Find(OrbType))
 		{
 			if (UInstancedStaticMeshComponent* ISM = *ISMPtr)
 			{
-				// Note: Material logging removed for performance
+				FTransform Transform(FRotator::ZeroRotator, FinalPos, FVector(OrbScale));
 				
-				// Materials are already set correctly in EnsureISM() - no need to set them again
-				ISM->AddInstance(FTransform(FRotator::ZeroRotator, FinalPos, FVector(OrbScale)));
+				// Check if this animated orb already has an instance
+				TMap<int32, int32>& AnimInstanceMap = AnimatedOrbToInstanceIndex.FindOrAdd(OrbType);
+				int32* ExistingIndex = AnimInstanceMap.Find(AnimIdx);
+				
+				if (ExistingIndex && ISM->IsValidInstance(*ExistingIndex))
+				{
+					// Update existing animated orb instance - bTeleport=false for proper motion vectors
+					ISM->UpdateInstanceTransform(*ExistingIndex, Transform, false, true, false);
+				}
+				else
+				{
+					// Add new instance immediately and track its index
+					int32 NewIndex = ISM->AddInstance(Transform);
+					AnimInstanceMap.Add(AnimIdx, NewIndex);
+				}
 			}
 		}
 	}

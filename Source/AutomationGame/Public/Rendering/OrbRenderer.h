@@ -79,6 +79,17 @@ private:
 	float DirToYaw(uint8 Dir) const;
 
 	int32 LastSeenStepCounter = -1;
+	
+	// Track which instance index corresponds to which orb ID per ISM type
+	// Key: OrbType, Value: Map of OrbId -> InstanceIndex
+	TMap<EOrbType, TMap<int32, int32>> OrbIdToInstanceIndex;
+	
+	// Track animated orb instances separately (inputs/outputs)
+	// Key: OrbType, Value: Map of AnimatedOrbIndex -> InstanceIndex
+	TMap<EOrbType, TMap<int32, int32>> AnimatedOrbToInstanceIndex;
+	
+	// Flag to trigger full ISM rebuild (set when simulation step changes)
+	bool bNeedFullRebuild = true;
 
 protected:
 	// New: arm facing history for arc interpolation
