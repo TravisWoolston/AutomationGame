@@ -517,52 +517,9 @@ void UOrbRenderer::RebuildCurrPos()
 		}
 	}
 
-	// Held items (per arm)
-	for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
-	{
-		const FArmState& S = Sim->Arms[ArmIdx];
-		if (!S.bHolding) continue;
-		const FItem& Held = S.Held;
-		if (Held.Id == 0) continue;
-
-		// Get the visual yaw from the arm actor to ensure smooth rotation
-		float VisualYaw = DirToYaw(static_cast<uint8>(S.Facing)); // Default to simulation facing
-		if (UWorld* World = GetWorld())
-		{
-			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
-			{
-				ABasicArm* ArmActor = *ActorItr;
-				if (ArmActor && ArmActor->SimArmIndex == ArmIdx)
-				{
-					// Get the interpolated visual yaw from the arm actor
-					VisualYaw = ArmActor->GetVisualYawDeg();
-					break;
-				}
-			}
-		}
-
-		// Calculate grip position using visual yaw instead of discrete facing
-		// This provides smooth interpolation during rotation
-		FVector GripWorld = ComputeArmGripAtYaw(S, VisualYaw, GetAnchor(), Tile, Yaw, Ori);
-		
-		// For the grip hex (used for sphere rotation), we still need to calculate the logical position
-		FHex Grip = S.BaseHex;
-		for (int i = 0; i < S.ArmLen; ++i)
-			Grip = HexUtil::Neighbor(Grip, S.Facing);
-
-		FRotator BaseRot = bSphere ? ComputeUprightRot(GripWorld, Grip)
-			: FRotator(0.f, VisualYaw, 0.f);
-
-		// if (!Held.bIsCluster)
-		// {
-		// 	CurrPos.Add(Held.Id, GripWorld);
-		// 	CurrRot.Add(Held.Id, BaseRot);
-		// }
-		// else
-		// {
-		// 	// (Clusters while held are drawn by arm meshes; skip per‑sub orb instances)
-		// }
-	}
+	// Held items are rendered by arm meshes, not by the renderer's ISM system
+	// This prevents interference with held cluster rotation interpolation
+	// The renderer only handles board items and animated orbs
 }
 
 void UOrbRenderer::RebuildInstances()
