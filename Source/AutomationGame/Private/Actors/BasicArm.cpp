@@ -178,7 +178,7 @@ void ABasicArm::Tick(float DeltaSeconds)
 			UpdateHeldOrbVisual();
 			LastHeldOrbCount = bHolding ? HeldOrb.Orbs.Num() : 0;
 		}
-		if (bHolding)
+		if (bHolding && HeldOrb.bIsCluster)
 		{
 			const int32 NewGrabFacing = HeldOrb.GrabFacing;
 			if (NewGrabFacing != LastHeldGrabFacing)
@@ -1170,13 +1170,27 @@ void ABasicArm::AttachHeldOrb()
 
 			SubMesh->SetRelativeScale3D(HeldOrbScale);
 
-			HeldClusterComps.Add(SubMesh);
-		}
+		HeldClusterComps.Add(SubMesh);
+	}
+	
+	// Preserve interpolation state when rebuilding cluster (e.g., during bond formation)
+	// Only reset if we weren't holding a cluster before or if there's no active interpolation
+	const bool bHasActiveInterpolation = (FMath::Abs(HeldClusterFacingEndDeg - HeldClusterFacingStartDeg) > 0.1f);
+	if (!bHasActiveInterpolation)
+	{
 		// Initialize cluster facing interpolation to current GrabFacing
 		LastHeldGrabFacing = (HeldOrb.GrabFacing >= 0 ? HeldOrb.GrabFacing % 6 : 0);
 		HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 60.f * float(LastHeldGrabFacing % 6);
 		HeldOrbComp->SetRelativeRotation(FRotator(0.f, HeldClusterFacingEndDeg, 0.f));
-		// Generate bonded orb meshes for held cluster
+	}
+	else
+	{
+		// Preserve current interpolation - rotation will continue in UpdateHeldClusterTransforms
+		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Preserving cluster rotation interpolation during rebuild (%.1f° -> %.1f°)"),
+			*GetName(), HeldClusterFacingStartDeg, HeldClusterFacingEndDeg);
+	}
+	
+	// Generate bonded orb meshes for held cluster
 		if (bShowBondedOrbs && GetBondedOrbMesh() && Sim)
 		{
 			GenerateBondedOrbMeshes();

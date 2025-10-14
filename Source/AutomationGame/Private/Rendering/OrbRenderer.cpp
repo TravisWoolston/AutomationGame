@@ -262,36 +262,8 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick, FActorCompone
 		PrevPos = CurrPos;
 		PrevRot = CurrRot;
 		
-		// Debug: Log orb 1's previous position before updating
-		if (FVector* Prev = PrevPos.Find(1))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("Step %d: Orb[1] PrevPos = (%.1f, %.1f, %.1f)"), Step, Prev->X, Prev->Y, Prev->Z);
-		}
-		
 		// Rebuild positions from the NEW sim state (AFTER the step)
 		RebuildCurrPos();
-		
-		// Debug: Log orb 1's current position and hex after updating
-		if (FVector* Curr = CurrPos.Find(1))
-		{
-			FVector* Prev = PrevPos.Find(1);
-			float Delta = Prev ? FVector::Dist(*Prev, *Curr) : 0.0f;
-			bool bSamePos = (Delta < 0.01f);
-			
-			// Find hex coordinate
-			FString HexInfo = TEXT("NoHex");
-			for (const auto& KV : Sim->ItemMap)
-			{
-				if (KV.Value.Id == 1)
-				{
-					HexInfo = FString::Printf(TEXT("Hex(%d,%d)"), KV.Key.Q, KV.Key.R);
-					break;
-				}
-			}
-			
-			UE_LOG(LogTemp, Warning, TEXT("Step %d: Orb[1] %s CurrPos = (%.1f, %.1f, %.1f), Delta = %.1f %s"), 
-				Step, *HexInfo, Curr->X, Curr->Y, Curr->Z, Delta, bSamePos ? TEXT("⚠ SAME!") : TEXT("✓"));
-		}
 		
 		// Fill CurrArmFacing
 		for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
@@ -466,8 +438,6 @@ void UOrbRenderer::RebuildCurrPos()
 	CurrPos.Reset();
 	CurrRot.Reset();
 	if (!Sim) return;
-	
-	UE_LOG(LogTemp, Warning, TEXT("RebuildCurrPos called: Step=%d"), Sim->GetStepCounter());
 
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
@@ -519,8 +489,6 @@ void UOrbRenderer::RebuildCurrPos()
 		{
 			CurrPos.Add(ItemId, TileWorld);
 			if (bSphere) CurrRot.Add(ItemId, ComputeUprightRot(TileWorld, H));
-			UE_LOG(LogTemp, VeryVerbose, TEXT("  Board orb[%d] at Hex(%d,%d) -> (%.1f, %.1f, %.1f)"), 
-				ItemId, H.Q, H.R, TileWorld.X, TileWorld.Y, TileWorld.Z);
 		}
 		else
 		{
@@ -547,42 +515,51 @@ void UOrbRenderer::RebuildCurrPos()
 	}
 
 	// Held items (per arm)
-	// for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
-	// {
-	// 	const FArmState& S = Sim->Arms[ArmIdx];
-	// 	if (!S.bHolding) continue;
-	// 	const FItem& Held = S.Held;
-	// 	if (Held.Id == 0) continue;
+	for (int32 ArmIdx = 0; ArmIdx < Sim->Arms.Num(); ++ArmIdx)
+	{
+		const FArmState& S = Sim->Arms[ArmIdx];
+		if (!S.bHolding) continue;
+		const FItem& Held = S.Held;
+		if (Held.Id == 0) continue;
 
-	// 	// Use DISCRETE simulation facing for position capture (no interpolation here!)
-	// 	// Interpolation happens later in RebuildInstances using PrevArmFacing/CurrArmFacing
-	// 	float DiscreteYaw = DirToYaw(static_cast<uint8>(S.Facing));
+		// Get the visual yaw from the arm actor to ensure smooth rotation
+		float VisualYaw = DirToYaw(static_cast<uint8>(S.Facing)); // Default to simulation facing
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
+			{
+				ABasicArm* ArmActor = *ActorItr;
+				if (ArmActor && ArmActor->SimArmIndex == ArmIdx)
+				{
+					// Get the interpolated visual yaw from the arm actor
+					VisualYaw = ArmActor->GetVisualYawDeg();
+					break;
+				}
+			}
+		}
 
-	// 	// Calculate grip position using discrete facing (not interpolated)
-	// 	FVector GripWorld = ComputeArmGripAtYaw(S, DiscreteYaw, GetAnchor(), Tile, Yaw, Ori);
+		// Calculate grip position using visual yaw instead of discrete facing
+		// This provides smooth interpolation during rotation
+		FVector GripWorld = ComputeArmGripAtYaw(S, VisualYaw, GetAnchor(), Tile, Yaw, Ori);
 		
-	// 	// For the grip hex (used for sphere rotation), we still need to calculate the logical position
-	// 	FHex Grip = S.BaseHex;
-	// 	for (int i = 0; i < S.ArmLen; ++i)
-	// 		Grip = HexUtil::Neighbor(Grip, S.Facing);
+		// For the grip hex (used for sphere rotation), we still need to calculate the logical position
+		FHex Grip = S.BaseHex;
+		for (int i = 0; i < S.ArmLen; ++i)
+			Grip = HexUtil::Neighbor(Grip, S.Facing);
 
-	// 	FRotator BaseRot = bSphere ? ComputeUprightRot(GripWorld, Grip)
-	// 		: FRotator(0.f, DiscreteYaw, 0.f);
+		FRotator BaseRot = bSphere ? ComputeUprightRot(GripWorld, Grip)
+			: FRotator(0.f, VisualYaw, 0.f);
 
-	// 	if (!Held.bIsCluster)
-	// 	{
-	// 		CurrPos.Add(Held.Id, GripWorld);
-	// 		CurrRot.Add(Held.Id, BaseRot);
-	// 		UE_LOG(LogTemp, VeryVerbose, TEXT("  Held orb[%d] by Arm[%d] -> (%.1f, %.1f, %.1f)"), 
-	// 			Held.Id, ArmIdx, GripWorld.X, GripWorld.Y, GripWorld.Z);
-	// 	}
-	// 	else
-	// 	{
-	// 		// (Clusters while held are drawn by arm meshes; skip per‑sub orb instances)
-	// 	}
-	// }
-	
-	UE_LOG(LogTemp, Warning, TEXT("RebuildCurrPos done: %d positions captured"), CurrPos.Num());
+		if (!Held.bIsCluster)
+		{
+			CurrPos.Add(Held.Id, GripWorld);
+			CurrRot.Add(Held.Id, BaseRot);
+		}
+		else
+		{
+			// (Clusters while held are drawn by arm meshes; skip per‑sub orb instances)
+		}
+	}
 }
 
 void UOrbRenderer::RebuildInstances()
@@ -655,12 +632,74 @@ void UOrbRenderer::RebuildInstances()
 		const FVector To = B ? *B : From;
 
 		FVector P;
-		// Check if this orb is currently held by an arm for rotation interpolation
-		bool bHeldByArm = HeldIds.Contains(Id);
+		// Check if this orb is currently held by an arm
+		bool bHeldByArm = false;
+		//FVector ArmBase;
+		for (const FArmState& S : Sim->Arms)
+		{
+			if (S.bHolding && S.Held.Id != 0)
+			{
+				HeldIds.Add(S.Held.Id);
+				if (S.Held.bIsCluster)
+				{
+					for (int32 i = 0; i < S.Held.Orbs.Num(); ++i)
+					{
+						HeldIds.Add(MakeSubOrbId(S.Held.Id, i)); // Skip sub‑orb ISM instances while held
+					}
+				}
+			}
+		}
 
 	// Simple interpolation between previous and current positions
 	// Belt progress offset is already baked into CurrPos by RebuildCurrPos()
 	P = FMath::Lerp(From, To, Alpha);
+	
+	// Apply belt progress offset for continuous movement (calculated fresh each frame)
+	if (!bHeldByArm)
+	{
+		// Find what tile this orb is on
+		int32 ParentId = (Id >> 8); // Extract parent from sub-orb ID  
+		if (ParentId == 0) ParentId = Id;
+		
+		for (const auto& KV : Sim->ItemMap)
+		{
+			if (KV.Value.Id == ParentId)
+			{
+				const FHex& ItemHex = KV.Key;
+				const FTile* T = Sim->TileMap.Find(ItemHex);
+				
+				if (T && T->Kind == ETileKind::Belt)
+				{
+					float BeltProgress = Sim->GetBeltProgress(ParentId);
+					
+					if (BeltProgress > 0.0f)
+					{
+						// Calculate next tile position
+						uint8 BeltDir = (uint8)(T->Arg & 0xFF);
+						FHex NextHex = HexUtil::Neighbor(ItemHex, (EHexDir)(BeltDir % 6));
+						
+						const AActor* Anchor = GetAnchor();
+						const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+						const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
+						const float Yaw = Driver ? Driver->GetGridYaw() : 0.f;
+						const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+						const bool bSphere = (Driver && Driver->IsSphereEnabled());
+						
+						FVector NextTileWorld = bSphere ? Driver->MapHexToWorld(NextHex) : [&]() {
+							const FHexAxial NextA(NextHex.Q, NextHex.R);
+							const FVector2D NextLocalXY = HexCoord::AxialToXY(NextA, Tile, Ori);
+							const FVector2D NextRotXY = HexCoord::Rotate2D(NextLocalXY, Yaw);
+							return AnchorV + FVector(NextRotXY.X, NextRotXY.Y, 0.f);
+						}();
+						
+						// Apply belt offset to the interpolated position
+						P = FMath::Lerp(P, NextTileWorld, BeltProgress);
+					}
+				}
+				break;
+			}
+		}
+	}
 	
 	// Arm rotation arc (only if held and position changed by rotation)
 	if (bHeldByArm)
