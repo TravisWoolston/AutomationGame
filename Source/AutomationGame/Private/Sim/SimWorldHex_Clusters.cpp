@@ -111,23 +111,9 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, cons
 						BoardOrbId, Arm.Held.Id, BoardOrb.dQ, BoardOrb.dR));
 			}
 
-			// Force visuals to refresh immediately
-			if (UWorld* World = GetWorld())
-			{
-				for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
-				{
-					ABasicArm* ArmActor = *ActorItr;
-					if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
-					{
-						ArmActor->UpdateHeldClusterOnly();
-						break;
-					}
-				}
-
-			// Note: Don't call Renderer->RebuildCurrPos() here!
-			// The renderer will detect the step change and update positions in its TickComponent,
-			// which ensures proper interpolation by saving PrevPos before updating CurrPos.
-			}
+			// DON'T force visual refresh immediately - let the normal tick cycle handle it
+			// This preserves interpolation during RotateHeld commands when bonds form
+			// The arm's Tick() will detect the cluster change and update visuals appropriately
 		}
 		else
 		{
@@ -182,23 +168,9 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, cons
 						Arm.Held.Id, BoardOrbId, BoardOrb.dQ, BoardOrb.dR));
 			}
 
-			// Force visuals to refresh immediately
-			if (UWorld* World = GetWorld())
-			{
-				for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
-				{
-					ABasicArm* ArmActor = *ActorItr;
-					if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
-					{
-						ArmActor->UpdateHeldClusterOnly();
-						break;
-					}
-				}
-
-			// Note: Don't call Renderer->RebuildCurrPos() here!
-			// The renderer will detect the step change and update positions in its TickComponent,
-			// which ensures proper interpolation by saving PrevPos before updating CurrPos.
-			}
+			// DON'T force visual refresh immediately - let the normal tick cycle handle it
+			// This preserves interpolation during RotateHeld commands when bonds form
+			// The arm's Tick() will detect the cluster change and update visuals appropriately
 		}
 
 		break; // Only add to the first matching arm
@@ -311,19 +283,9 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 							FString::Printf(TEXT("Held orb %d converted to single after cluster disconnection"), HeldOrb.ItemId));
 					}
 
-					// Force visual refresh
-					if (UWorld* World = GetWorld())
-					{
-						for (TActorIterator<ABasicArm> ActorItr(World); ActorItr; ++ActorItr)
-						{
-							ABasicArm* ArmActor = *ActorItr;
-							if (ArmActor && ArmActor->SimArmIndex == ArmIndex)
-							{
-								ArmActor->UpdateHeldClusterOnly();
-								break;
-							}
-						}
-					}
+					// DON'T force visual refresh immediately - let the normal tick cycle handle it
+					// This preserves interpolation during RotateHeld commands when bonds form
+					// The arm's Tick() will detect the cluster change and update visuals appropriately
 
 					break; // done with this arm
 				}
