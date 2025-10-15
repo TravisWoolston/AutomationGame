@@ -244,6 +244,9 @@ private:
 	void StepArmsSecondPass();  // Second pass for immediate grab after unbonding
 	void StepBondsSecondPass(); // Second pass for bond formation after rotations complete
 	void StepBelts();
+	
+	// Opus Magnum-style bond prediction for rotation obstruction
+	TMap<FHex, int32> GetPredictedBondFormations() const;
 	void StepGlyphs();
 
 	static uint8 KindFromItem(const FItem& Item)
@@ -368,7 +371,4 @@ private:
 	uint8 GetHeldCCW_Steps_Sim(int32 ArmIndex) const;
 	static FHex Rot60CCW(FHex D, uint8 StepsCCW);
 	static FHex Rot60CW(FHex D, uint8 StepsCW);
-
-	// --- NEW: Bond prediction system ---
-	TMap<FHex, int32> GetPredictedHeldItemPositions() const;
 };

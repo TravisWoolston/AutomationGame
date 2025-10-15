@@ -479,6 +479,8 @@ void USimWorldHex::StepSim()
 	CheckAndRemoveDisconnectedOrbsFromHeldClusters();
 	// Second pass for arms - allows immediate grab after unbonding
 	StepArmsSecondPass();
+	// Second pass for bonds - allows bond formation after rotations complete
+	StepBondsSecondPass();
 
 	ProcessOutputs();
 

@@ -157,10 +157,10 @@ void USimWorldHex::StepBonds()
 			int32 AId = 0, BId = 0;
 			bool bAIsHeld = false, bBIsHeld = false;
 
-			if (FItem* IA = ItemMap.Find(AHex)) { AId = IA->Id; }
+			if (const FItem* IA = ItemMap.Find(AHex)) { AId = IA->Id; }
 			else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) { AId = *HeldA; bAIsHeld = true; }
 
-			if (FItem* IB = ItemMap.Find(BHex)) { BId = IB->Id; }
+			if (const FItem* IB = ItemMap.Find(BHex)) { BId = IB->Id; }
 			else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) { BId = *HeldB; bBIsHeld = true; }
 
 			if (AId <= 0 || BId <= 0 || AId == BId) continue;
@@ -366,4 +366,247 @@ void USimWorldHex::StepBonds()
 		S.PrevArmLen = S.ArmLen;
 		S.PrevTrackIdx = S.TrackIdx;
 	}
+}
+
+void USimWorldHex::StepBondsSecondPass()
+{
+	// Second pass for bond formation - only forms bonds for arms that have pending rotations
+	// This allows bonds to form AFTER rotations complete, preventing obstruction
+	
+	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return;
+	
+	// Only run second bond pass if there are pending rotations
+	bool bHasPendingRotations = false;
+	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
+	{
+		if (PendingFacingByArm.Contains(ArmIndex))
+		{
+			bHasPendingRotations = true;
+			break;
+		}
+	}
+	
+	if (!bHasPendingRotations) return; // No pending rotations, skip second pass
+	
+	if (bDevDebugBonds && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Magenta,
+			TEXT("StepBondsSecondPass: Forming bonds after rotations complete"));
+	}
+	
+	// Use the existing bond formation logic but with current positions (after rotation)
+	// This is essentially the same as the first pass but runs after rotations are committed
+	
+	// Gather held IDs for cleanup
+	TSet<int32> HeldIds;
+	for (const FArmState& A : Arms)
+	{
+		if (!A.bHolding) continue;
+		if (A.Held.bIsCluster)
+		{
+			for (const FOrbData& Sub : A.Held.Orbs)
+				if (Sub.ItemId > 0) HeldIds.Add(Sub.ItemId);
+		}
+		else if (A.Held.Id > 0)
+		{
+			HeldIds.Add(A.Held.Id);
+		}
+	}
+	
+	// Mapping for held items at their current positions (after rotation)
+	TMap<FHex, int32> VirtualHeldItemAt;
+	TMap<int32, int32> HeldItemToArmIndex;
+	
+	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
+	{
+		const FArmState& A = Arms[ArmIndex];
+		if (!A.bHolding) continue;
+
+		const FHex GripHex = GetArmGripHex_Sim(ArmIndex);
+		const uint8 ccw = GetHeldCCW_Steps_Sim(ArmIndex);
+
+		if (A.Held.bIsCluster)
+		{
+			for (const FOrbData& Sub : A.Held.Orbs)
+			{
+				if (Sub.ItemId <= 0) continue;
+				const FHex Rot = Rot60CCW(FHex(Sub.dQ, Sub.dR), ccw);
+				const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+				VirtualHeldItemAt.FindOrAdd(World, Sub.ItemId);
+				HeldItemToArmIndex.FindOrAdd(Sub.ItemId, ArmIndex);
+			}
+		}
+		else if (A.Held.Id > 0)
+		{
+			VirtualHeldItemAt.FindOrAdd(GripHex, A.Held.Id);
+			HeldItemToArmIndex.FindOrAdd(A.Held.Id, ArmIndex);
+		}
+	}
+	
+	// Form bonds using current positions (same logic as first pass)
+	TSet<int32> Newly;
+	
+	for (const auto& KV : TileMap)
+	{
+		const FTile& T = KV.Value;
+		if (T.Kind != ETileKind::Bond) continue;
+
+		const uint8 Dir = (uint8)(T.Arg & 0xFF);
+		const FHex AHex = KV.Key;
+		const FHex BHex = HexUtil::Neighbor(AHex, (EHexDir)(Dir % 6));
+
+		int32 AId = 0, BId = 0;
+		bool bAIsHeld = false, bBIsHeld = false;
+
+		if (const FItem* IA = ItemMap.Find(AHex)) { AId = IA->Id; }
+		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) { AId = *HeldA; bAIsHeld = true; }
+
+		if (const FItem* IB = ItemMap.Find(BHex)) { BId = IB->Id; }
+		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) { BId = *HeldB; bBIsHeld = true; }
+
+		if (AId == 0 || BId == 0 || AId == BId) continue;
+		if (Newly.Contains(AId) || Newly.Contains(BId)) continue;
+
+		// Check if bond already exists
+		bool bAlreadyBonded = false;
+		if (const TArray<int32>* AList = ItemToBonds.Find(AId))
+		{
+			for (int32 BondIdx : *AList)
+			{
+				if (!Bonds.IsValidIndex(BondIdx)) continue;
+				const FBond& Existing = Bonds[BondIdx];
+				if ((Existing.ItemA == AId && Existing.ItemB == BId) ||
+					(Existing.ItemA == BId && Existing.ItemB == AId))
+				{
+					bAlreadyBonded = true;
+					break;
+				}
+			}
+		}
+		if (bAlreadyBonded) continue;
+
+		// Create new bond
+		FBond NewB;
+		NewB.ItemA = AId;
+		NewB.ItemB = BId;
+		NewB.Root = AHex;
+		NewB.dQ = (int8)(BHex.Q - AHex.Q);
+		NewB.dR = (int8)(BHex.R - AHex.R);
+		NewB.bActive = true;
+
+		const int32 Index = Bonds.Add(NewB);
+		AddItemBondLink(NewB.ItemA, Index);
+		AddItemBondLink(NewB.ItemB, Index);
+		Newly.Add(NewB.ItemA);
+		Newly.Add(NewB.ItemB);
+
+		if (bDevDebugBonds && GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Magenta,
+				FString::Printf(TEXT("SecondPass Bond: %d-%d at (%d,%d)"), AId, BId, AHex.Q, AHex.R));
+		}
+	}
+}
+
+TMap<FHex, int32> USimWorldHex::GetPredictedBondFormations() const
+{
+	// Opus Magnum-style logic: predict which board orbs will bond to held clusters
+	// These positions should be excluded from rotation obstruction checks
+	TMap<FHex, int32> PredictedBonds;
+	
+	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return PredictedBonds;
+	
+	// Build virtual occupancy for held items using COMMITTED SIM STATE
+	TMap<FHex, int32> VirtualHeldItemAt;
+	TMap<int32, int32> HeldItemToArmIndex;
+	
+	auto Rot60 = [](FHex D, uint8 StepsCCW)
+		{
+			for (uint8 i = 0; i < (StepsCCW % 6); ++i) { int32 q = D.Q, r = D.R; D.Q = -r; D.R = q + r; }
+			return D;
+		};
+	
+	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
+	{
+		const FArmState& A = Arms[ArmIndex];
+		if (!A.bHolding) continue;
+
+		const FHex GripHex = GetArmGripHex_Sim(ArmIndex);
+		const uint8 ccw = GetHeldCCW_Steps_Sim(ArmIndex);
+
+		if (A.Held.bIsCluster)
+		{
+			for (const FOrbData& Sub : A.Held.Orbs)
+			{
+				if (Sub.ItemId <= 0) continue;
+				const FHex Rot = Rot60(FHex(Sub.dQ, Sub.dR), ccw);
+				const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+				VirtualHeldItemAt.FindOrAdd(World, Sub.ItemId);
+				HeldItemToArmIndex.FindOrAdd(Sub.ItemId, ArmIndex);
+			}
+		}
+		else if (A.Held.Id > 0)
+		{
+			VirtualHeldItemAt.FindOrAdd(GripHex, A.Held.Id);
+			HeldItemToArmIndex.FindOrAdd(A.Held.Id, ArmIndex);
+		}
+	}
+	
+	// Check all bond tiles to see which will form bonds
+	for (const auto& KV : TileMap)
+	{
+		const FTile& T = KV.Value;
+		if (T.Kind != ETileKind::Bond) continue;
+
+		const uint8 Dir = (uint8)(T.Arg & 0xFF);
+		const FHex AHex = KV.Key;
+		const FHex BHex = HexUtil::Neighbor(AHex, (EHexDir)(Dir % 6));
+
+		int32 AId = 0, BId = 0;
+		bool bAIsHeld = false, bBIsHeld = false;
+
+		if (const FItem* IA = ItemMap.Find(AHex)) { AId = IA->Id; }
+		else if (int32* HeldA = VirtualHeldItemAt.Find(AHex)) { AId = *HeldA; bAIsHeld = true; }
+
+		if (const FItem* IB = ItemMap.Find(BHex)) { BId = IB->Id; }
+		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) { BId = *HeldB; bBIsHeld = true; }
+
+		if (AId <= 0 || BId <= 0 || AId == BId) continue;
+
+		// Check if bond already exists
+		bool bAlreadyBonded = false;
+		if (const TArray<int32>* AList = ItemToBonds.Find(AId))
+		{
+			for (int32 BondIdx : *AList)
+			{
+				if (!Bonds.IsValidIndex(BondIdx)) continue;
+				const FBond& Existing = Bonds[BondIdx];
+				if ((Existing.ItemA == AId && Existing.ItemB == BId) ||
+					(Existing.ItemA == BId && Existing.ItemB == AId))
+				{
+					bAlreadyBonded = true;
+					break;
+				}
+			}
+		}
+		if (bAlreadyBonded) continue;
+
+		// If one item is on board and the other is held, this is a predicted bond formation
+		if ((!bAIsHeld && bBIsHeld) || (bAIsHeld && !bBIsHeld))
+		{
+			// The board item will bond to the held item, so exclude it from obstruction
+			FHex BoardItemHex = bAIsHeld ? BHex : AHex;
+			int32 BoardItemId = bAIsHeld ? BId : AId;
+			PredictedBonds.Add(BoardItemHex, BoardItemId);
+			
+			if (bDevDebugBonds && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+					FString::Printf(TEXT("Predicted bond: board orb %d at (%d,%d) will bond to held item"), 
+						BoardItemId, BoardItemHex.Q, BoardItemHex.R));
+			}
+		}
+	}
+	
+	return PredictedBonds;
 }

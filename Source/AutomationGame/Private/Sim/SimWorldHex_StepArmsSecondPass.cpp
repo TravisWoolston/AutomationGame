@@ -564,8 +564,16 @@ void USimWorldHex::StepArmsSecondPass()
 						}
 					};
 
+				// NEW: Get predicted bond formations for Opus Magnum-style logic
+				TMap<FHex, int32> PredictedBonds = GetPredictedBondFormations();
+				
 				auto OverlapsAny = [&](const FHex& H)->bool
 					{
+						// Opus Magnum logic: don't consider board orbs as obstructions if they will bond to held clusters
+						if (PredictedBonds.Contains(H))
+						{
+							return false; // This position will have a bond formed, so it's not an obstruction
+						}
 						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H);
 					};
 
