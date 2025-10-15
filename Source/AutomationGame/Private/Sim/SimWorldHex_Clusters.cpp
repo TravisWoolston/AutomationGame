@@ -126,8 +126,9 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, cons
 			const uint8 SimFace = (SimFacingByArm.Contains(ArmIndex) ? SimFacingByArm[ArmIndex] : (uint8)Arm.Facing);
 			NewCluster.GrabFacing = (int8)SimFace;
 
-			// NEW: seed SIM held orientation immediately so SIM conversions this tick are correct
-			SimGrabFacingByArm.Add(ArmIndex, (int8)SimFace);
+			// NEW: defer SIM held orientation to next tick (consistent with RotateHeld commands)
+			// This preserves interpolation when bonds form during RotateHeld commands
+			PendingGrabFacingByArm.Add(ArmIndex, (int8)SimFace);
 
 			// Add the original single orb as center
 			FOrbData OriginalOrb;
@@ -267,7 +268,7 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 						}
 					}
 
-					// Convert to single, clear sim-held orientation immediately
+					// Convert to single, defer sim-held orientation update to next tick
 					const FOrbData HeldOrb = Sub;
 					Arm.Held.bIsCluster = false;
 					Arm.Held.Orbs.Empty();
@@ -275,7 +276,7 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 					Arm.Held.Single.Color = (EOrbColor)HeldOrb.Color;
 					Arm.Held.Id = HeldOrb.ItemId;
 					Arm.Held.GrabFacing = -1;
-					SimGrabFacingByArm.Add(ArmIndex, int8(-1));
+					PendingGrabFacingByArm.Add(ArmIndex, int8(-1));
 
 					if (bDebugLogs && bDevDebugBonds && GEngine)
 					{

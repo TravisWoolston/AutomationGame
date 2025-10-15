@@ -65,8 +65,6 @@ public:
 	bool TryPutItem(const FHex& H, const FItem& I);
 	bool TryTakeItem(const FHex& H, FItem& Out);
 
-public:
-	/** Bond structure for connections between items */
 	struct FBond
 	{
 		int32 ItemA = 0;
@@ -158,9 +156,10 @@ public:
 private:
 	/** Helper function to check if an item matches an output's expected orb type */
 	bool DoesItemMatchOutputType(const FItem& Item, const FTile& OutputTile) const;
+	bool bDevDebugArms = true; // set true to see arm/hand debug messages
 	float FrameAlpha = 0.f;
 	int32 StepCounter = 0;
-
+	int32 MAX_ARM_LEN = 6;
 	// Cached world transform
 	FVector WorldAnchor = FVector::ZeroVector;
 	float   GridYawDeg = 0.f;
@@ -243,6 +242,7 @@ private:
 	// Core step pieces
 	void StepArms();
 	void StepArmsSecondPass();  // Second pass for immediate grab after unbonding
+	void StepBondsSecondPass(); // Second pass for bond formation after rotations complete
 	void StepBelts();
 	void StepGlyphs();
 
@@ -368,4 +368,7 @@ private:
 	uint8 GetHeldCCW_Steps_Sim(int32 ArmIndex) const;
 	static FHex Rot60CCW(FHex D, uint8 StepsCCW);
 	static FHex Rot60CW(FHex D, uint8 StepsCW);
+
+	// --- NEW: Bond prediction system ---
+	TMap<FHex, int32> GetPredictedHeldItemPositions() const;
 };
