@@ -94,6 +94,17 @@ void USimWorldHex::StepBelts()
 		// Check if destination is available
 		bool bCanMove = !HeldOrbHexes.Contains(ToHex) && !ItemMap.Contains(ToHex);
 		
+		// Don't move items that were just dropped by arms (settling period)
+		if (RecentlyDroppedByArm.Contains(Item.Id))
+		{
+			bCanMove = false;
+			if (bDebugLogs && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Yellow,
+					FString::Printf(TEXT("Belt blocked: Item %d was recently dropped by arm"), Item.Id));
+			}
+		}
+		
 		// Special case for bond/unbond tiles - can move there if empty
 		const FTile* DestTile = TileMap.Find(ToHex);
 		if (DestTile && (DestTile->Kind == ETileKind::Bond || DestTile->Kind == ETileKind::Unbond))

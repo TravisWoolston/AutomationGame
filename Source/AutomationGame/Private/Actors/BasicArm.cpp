@@ -183,11 +183,28 @@ void ABasicArm::Tick(float DeltaSeconds)
 			const int32 NewGrabFacing = HeldOrb.GrabFacing;
 			if (NewGrabFacing != LastHeldGrabFacing)
 			{
-				const float CurrentClusterDeg =
-					NormDeg(HeldClusterFacingStartDeg +
-						FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
-				HeldClusterFacingStartDeg = CurrentClusterDeg;
-				HeldClusterFacingEndDeg = 60.f * float(NewGrabFacing % 6);
+				// Check if a RotateHeld command is currently in progress
+				bool bRotateHeldInProgress = false;
+				if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
+				{
+					bRotateHeldInProgress = !Sim->Arms[SimArmIndex].bRotationCompleted;
+				}
+				
+				if (bRotateHeldInProgress)
+				{
+					// During RotateHeld, don't restart interpolation - just update the target
+					// This preserves smooth interpolation when bonds form during rotation
+					HeldClusterFacingEndDeg = 60.f * float(NewGrabFacing % 6);
+				}
+				else
+				{
+					// Normal case: restart interpolation
+					const float CurrentClusterDeg =
+						NormDeg(HeldClusterFacingStartDeg +
+							FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
+					HeldClusterFacingStartDeg = CurrentClusterDeg;
+					HeldClusterFacingEndDeg = 60.f * float(NewGrabFacing % 6);
+				}
 				LastHeldGrabFacing = NewGrabFacing;
 			}
 		}

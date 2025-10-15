@@ -241,7 +241,7 @@ void USimWorldHex::StepArmsSecondPass()
 				{
 					HeldItemLastHex.Remove(S.Held.Id);
 					NewlyPlacedItems.Remove(S.Held.Id);
-					RecentlyDroppedByArm.Remove(S.Held.Id);
+					// Don't remove from RecentlyDroppedByArm - we need to add after placement
 
 					// Remove any ghost
 					for (auto It = ItemMap.CreateIterator(); It; ++It)
@@ -251,6 +251,9 @@ void USimWorldHex::StepArmsSecondPass()
 
 					if (TryArmPlaceItem(GripTarget, S.Held))
 					{
+						// Add to recently dropped tracking for settling period
+						RecentlyDroppedByArm.Add(S.Held.Id, ArmIndex);
+						
 						S.bHolding = false;
 						S.Held = FItem();
 						S.bWaitingForBond = false;
@@ -294,7 +297,7 @@ void USimWorldHex::StepArmsSecondPass()
 					{
 						HeldItemLastHex.Remove(Sub.ItemId);
 						NewlyPlacedItems.Remove(Sub.ItemId);
-						RecentlyDroppedByArm.Remove(Sub.ItemId);
+						// Don't remove from RecentlyDroppedByArm - we need to add after placement
 						for (auto It = ItemMap.CreateIterator(); It; ++It)
 						{
 							if (It.Value().Id == Sub.ItemId) { It.RemoveCurrent(); break; }
@@ -314,6 +317,8 @@ void USimWorldHex::StepArmsSecondPass()
 						{
 							SkipOutputThisFrame.Add(TargetHexes[idx]);
 							HeldItemLastHex.Remove(NewItem.Id);
+							// Add to recently dropped tracking for settling period
+							RecentlyDroppedByArm.Add(NewItem.Id, ArmIndex);
 						}
 					}
 
@@ -644,6 +649,84 @@ void USimWorldHex::StepArmsSecondPass()
 				if (!bBlocked)
 				{
 					for (const FHex& H : MidRotateLocals) { if (OverlapsAny(H)) { bBlocked = true; break; } }
+				}
+
+				// 5) Full sweep: check if the rotation path would intersect with any orbs
+				if (!bBlocked && S.bHolding)
+				{
+					// For held clusters, we need to check if any sub-orb would sweep through occupied space
+					// during the rotation from start to end orientation
+					if (S.Held.bIsCluster)
+					{
+						// Check each sub-orb's sweep path
+						for (const FOrbData& Sub : S.Held.Orbs)
+						{
+							FHex Local(Sub.dQ, Sub.dR);
+							
+							// Calculate the start and end positions of this sub-orb
+							const uint8 curStart = (uint8)S.Facing % 6;
+							const int8 grab = (int8)S.Held.GrabFacing;
+							const uint8 facingDeltaStart = (grab >= 0)
+								? (uint8)(((int32)curStart - (int32)(grab % 6) + 6) % 6)
+								: curStart;
+							const uint8 ccwStart = (uint8)((6 - facingDeltaStart) % 6);
+							FHex RotLocalStart = RotateAxial60Fn(Local, ccwStart);
+							FHex StartPos(OldHand.Q + RotLocalStart.Q, OldHand.R + RotLocalStart.R);
+							
+							const uint8 curEnd = (uint8)NewFacing % 6;
+							const uint8 facingDeltaEnd = (grab >= 0)
+								? (uint8)(((int32)curEnd - (int32)(grab % 6) + 6) % 6)
+								: curEnd;
+							const uint8 ccwEnd = (uint8)((6 - facingDeltaEnd) % 6);
+							FHex RotLocalEnd = RotateAxial60Fn(Local, ccwEnd);
+							FHex EndPos(NewHand.Q + RotLocalEnd.Q, NewHand.R + RotLocalEnd.R);
+							
+							// Check if any hex along the path from StartPos to EndPos is occupied
+							// For now, we'll check a few intermediate points along the path
+							const int32 dQ = EndPos.Q - StartPos.Q;
+							const int32 dR = EndPos.R - StartPos.R;
+							
+							// Check intermediate positions along the sweep path
+							for (int32 i = 1; i <= 3; ++i) // Check 3 intermediate points
+							{
+								const float t = float(i) / 4.0f; // 0.25, 0.5, 0.75
+								FHex IntermediatePos(
+									StartPos.Q + FMath::RoundToInt(dQ * t),
+									StartPos.R + FMath::RoundToInt(dR * t)
+								);
+								
+								if (OverlapsAny(IntermediatePos))
+								{
+									bBlocked = true;
+									break;
+								}
+							}
+							
+							if (bBlocked) break;
+						}
+					}
+					else
+					{
+						// For single held orbs, check if the hand position sweep would intersect anything
+						const int32 dQ = NewHand.Q - OldHand.Q;
+						const int32 dR = NewHand.R - OldHand.R;
+						
+						// Check intermediate positions along the hand's sweep path
+						for (int32 i = 1; i <= 3; ++i) // Check 3 intermediate points
+						{
+							const float t = float(i) / 4.0f; // 0.25, 0.5, 0.75
+							FHex IntermediatePos(
+								OldHand.Q + FMath::RoundToInt(dQ * t),
+								OldHand.R + FMath::RoundToInt(dR * t)
+							);
+							
+							if (OverlapsAny(IntermediatePos))
+							{
+								bBlocked = true;
+								break;
+							}
+						}
+					}
 				}
 
 				if (bBlocked)
