@@ -96,7 +96,12 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 
 	Sim->SetFrameAlpha(StepAlpha);
 
-
+	// Draw debug spheres for all orbs in the simulation
+	// Moved here from HandleFixedTickSeconds to use proper StepAlpha for interpolation
+	if (bDebugSpheres && GetWorld())
+	{
+		DrawAllOrbDebugSpheres();
+	}
 }
 
 void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
@@ -111,11 +116,7 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 	{
 		Sim->SetFrameAlpha(TickManager->GetStepAlpha());
 	}
-		// Draw debug spheres for all orbs in the simulation
-		if (bDebugSpheres && GetWorld())
-		{
-			DrawAllOrbDebugSpheres();
-		}
+
 #if !(UE_BUILD_SHIPPING)
 	FItem Tmp;
 	const bool L = Sim->PeekItemAt(FHex(-1, 0), Tmp);
@@ -349,50 +350,62 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 		}
 		else
 		{
-			// Held cluster - draw spheres for each orb in the cluster with arm rotation applied
-			for (int32 SubIdx = 0; SubIdx < HeldItem.Orbs.Num(); ++SubIdx)
+		// Held cluster - draw spheres for each orb in the cluster with proper rotation applied
+		// Use the same rotation calculation as the simulation (GetHeldCCW_Steps_Sim)
+		const uint8 cur = static_cast<uint8>(ArmState.Facing) % 6;
+		const int8 grab = HeldItem.GrabFacing;
+		const uint8 facingDelta = (grab >= 0)
+			? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+			: cur;
+		const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+		// Helper lambda for hex rotation (same as simulation)
+		auto Rot60 = [](FHex D, uint8 StepsCCW) -> FHex
+		{
+			for (uint8 i = 0; i < (StepsCCW % 6); ++i)
 			{
-				const FOrbData& Sub = HeldItem.Orbs[SubIdx];
-
-				// Calculate orb position relative to grip with arm rotation
-				const FHex SubHex(GripHex.Q + Sub.dQ, GripHex.R + Sub.dR);
-				const FHexAxial SubA(SubHex.Q, SubHex.R);
-				const FVector2D SubLocalXY = HexCoord::AxialToXY(SubA, Tile, Ori);
-
-				// Apply arm rotation to the offset
-				FVector2D RotatedOffset = SubLocalXY;
-				if (Sub.dQ != 0 || Sub.dR != 0) // Don't rotate the grabbed orb
-				{
-					const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, Ori);
-					const float ArmYawRad = FMath::DegreesToRadians(ArmYawDeg);
-					const float CosA = FMath::Cos(ArmYawRad);
-					const float SinA = FMath::Sin(ArmYawRad);
-					const float RotX = HexOffset.X * CosA - HexOffset.Y * SinA;
-					const float RotY = HexOffset.X * SinA + HexOffset.Y * CosA;
-					RotatedOffset = FVector2D(RotX, RotY);
-				}
-
-				const FVector SubWorld = GripWorld + FVector(RotatedOffset.X, RotatedOffset.Y, 0.f);
-
-				// Color code: grabbed orb in bright yellow, others in orange
-				FColor DebugColor;
-				if (Sub.dQ == 0 && Sub.dR == 0)
-				{
-					DebugColor = FColor::Yellow; // Grabbed orb
-				}
-				else
-				{
-					DebugColor = FColor::Orange; // Other held orbs
-				}
-
-				const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(Sub.Type), true);
-				DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, DebugLifetime, 0, 2.f);
-
-				// Draw held cluster orb info
-				DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, SphereSize + 5.f),
-					FString::Printf(TEXT("HELD ID:%d[%d]"), HeldItem.Id, SubIdx),
-					nullptr, DebugColor, 0.f, true, 0.8f);
+				int32 q = D.Q;
+				int32 r = D.R;
+				D.Q = -r;
+				D.R = q + r;
 			}
+			return D;
+		};
+
+		for (int32 SubIdx = 0; SubIdx < HeldItem.Orbs.Num(); ++SubIdx)
+		{
+			const FOrbData& Sub = HeldItem.Orbs[SubIdx];
+
+			// Apply the same rotation logic as the simulation
+			FHex Local(Sub.dQ, Sub.dR);
+			FHex Rot = Rot60(Local, ccw);
+			FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+
+			// Convert to world coordinates
+			const FHexAxial SubA(WorldPos.Q, WorldPos.R);
+			const FVector2D SubLocalXY = HexCoord::AxialToXY(SubA, Tile, Ori);
+			const FVector2D SubRotXY = HexCoord::Rotate2D(SubLocalXY, GridYaw);
+			const FVector SubWorld = AnchorV + FVector(SubRotXY.X, SubRotXY.Y, 0.f);
+
+			// Color code: grabbed orb in bright yellow, others in orange
+			FColor DebugColor;
+			if (Sub.dQ == 0 && Sub.dR == 0)
+			{
+				DebugColor = FColor::Yellow; // Grabbed orb
+			}
+			else
+			{
+				DebugColor = FColor::Orange; // Other held orbs
+			}
+
+			const float SphereSize = GetDebugSizeForOrbType(static_cast<uint8>(Sub.Type), true);
+			DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, DebugLifetime, 0, 2.f);
+
+			// Draw held cluster orb info
+			DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, SphereSize + 5.f),
+				FString::Printf(TEXT("HELD ID:%d[%d] R:%d"), HeldItem.Id, SubIdx, ccw),
+				nullptr, DebugColor, 0.f, true, 0.8f);
+		}
 		}
 	}
 }

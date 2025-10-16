@@ -665,10 +665,25 @@ void USimWorldHex::StepArms()
 
 				// Build occupancy for other arms' held orbs (and their hands)
 				TSet<FHex> OtherHeldOcc;
+				// Build occupancy for other arms themselves (base positions and reach paths)
+				TSet<FHex> OtherArmOcc;
+				
 				for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
 				{
 					if (OtherIdx == ArmIndex) continue;
 					const FArmState& O = Arms[OtherIdx];
+					
+					// Always include the arm's base position
+					OtherArmOcc.Add(O.BaseHex);
+					
+					// Include the arm's reach path (all hexes from base to grip)
+					FHex CurrentHex = O.BaseHex;
+					for (int32 i = 0; i < O.ArmLen; ++i)
+					{
+						CurrentHex = HexUtil::Neighbor(CurrentHex, O.Facing);
+						OtherArmOcc.Add(CurrentHex);
+					}
+					
 					if (!O.bHolding) continue;
 
 					// Always include their hand hex
@@ -791,7 +806,7 @@ void USimWorldHex::StepArms()
 						{
 							return false; // This position will have a bond formed, so it's not an obstruction
 						}
-						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H);
+						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H);
 					};
 
 				bool bBlocked = false;

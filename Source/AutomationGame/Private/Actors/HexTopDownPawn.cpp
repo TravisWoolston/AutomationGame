@@ -890,6 +890,18 @@ TArray<FArmInstr> AHexTopDownPawn::ConvertOpsToProgram(const TArray<FOp>& Ops)
 			Instr.Cmd = EArmCmd::Reset; 
 			Instr.Arg = 0; 
 			break;
+		case ECmd::RotateHeldL:  
+			Instr.Cmd = EArmCmd::RotateHeldCCW; 
+			Instr.Arg = FMath::Max(1, Op.Arg); 
+			break;
+		case ECmd::RotateHeldR:  
+			Instr.Cmd = EArmCmd::RotateHeldCW; 
+			Instr.Arg = FMath::Max(1, Op.Arg); 
+			break;
+		case ECmd::WaitForBond:  
+			Instr.Cmd = EArmCmd::WaitForBond; 
+			Instr.Arg = 0; 
+			break;
 		default:             
 			Instr.Cmd = EArmCmd::Wait; 
 			Instr.Arg = 1; 

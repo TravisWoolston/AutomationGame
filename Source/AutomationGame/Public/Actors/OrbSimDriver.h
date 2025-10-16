@@ -130,7 +130,8 @@ public:
 	bool WorldToHex(const FVector& World, FHex& OutHex) const;
 
 	/** Draw debug spheres for all orbs in the simulation.
-	 * Called every frame when bDebugSpheres is enabled.
+	 * Called every frame in Tick() when bDebugSpheres is enabled.
+	 * Shows the current simulation state (target positions) without interpolation.
 	 * Draws spheres for:
 	 * - Board items (single orbs and clusters) with type-based colors
 	 * - Held items by arms (yellow/orange) with proper arm rotation

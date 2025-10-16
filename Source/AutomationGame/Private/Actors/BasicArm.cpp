@@ -183,28 +183,11 @@ void ABasicArm::Tick(float DeltaSeconds)
 			const int32 NewGrabFacing = HeldOrb.GrabFacing;
 			if (NewGrabFacing != LastHeldGrabFacing)
 			{
-				// Check if a RotateHeld command is currently in progress
-				bool bRotateHeldInProgress = false;
-				if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
-				{
-					bRotateHeldInProgress = !Sim->Arms[SimArmIndex].bRotationCompleted;
-				}
-				
-				if (bRotateHeldInProgress)
-				{
-					// During RotateHeld, don't restart interpolation - just update the target
-					// This preserves smooth interpolation when bonds form during rotation
-					HeldClusterFacingEndDeg = 60.f * float(NewGrabFacing % 6);
-				}
-				else
-				{
-					// Normal case: restart interpolation
-					const float CurrentClusterDeg =
-						NormDeg(HeldClusterFacingStartDeg +
-							FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
-					HeldClusterFacingStartDeg = CurrentClusterDeg;
-					HeldClusterFacingEndDeg = 60.f * float(NewGrabFacing % 6);
-				}
+				const float CurrentClusterDeg =
+					NormDeg(HeldClusterFacingStartDeg +
+						FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
+				HeldClusterFacingStartDeg = CurrentClusterDeg;
+				HeldClusterFacingEndDeg = 60.f * float(NewGrabFacing % 6);
 				LastHeldGrabFacing = NewGrabFacing;
 			}
 		}
@@ -461,28 +444,40 @@ void ABasicArm::RefreshPose(float InAlpha)
 		const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
 		const FHex TargetHex = ComputeTargetHex();
 		const FVector TargetWorld = HexToWorld(TargetHex);
+
+		// Calculate the interpolated cluster rotation (same as UpdateHeldClusterTransforms)
+		const float StartDeg = NormDeg(HeldClusterFacingStartDeg);
+		const float EndDeg = NormDeg(HeldClusterFacingEndDeg);
+		const float DeltaDeg = FMath::FindDeltaAngleDegrees(StartDeg, EndDeg);
+		const float CurrentClusterYawDeg = NormDeg(StartDeg + DeltaDeg * StepAlpha);
+
 		for (int32 i = 0; i < HeldOrb.Orbs.Num(); i++)
 		{
 			const FOrbData& Sub = HeldOrb.Orbs[i];
-			const FHex SubOrbHex = FHex(TargetHex.Q + Sub.dQ, TargetHex.R + Sub.dR);
-			const FVector SubOrbWorld = HexToWorld(SubOrbHex);
-			FVector RotatedSubOrbWorld = SubOrbWorld;
-			if (Sub.dQ != 0 || Sub.dR != 0)
-			{
-				const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
-				const FVector2D RotatedOffset = HexCoord::Rotate2D(HexOffset, GridYaw);
-				const float ArmYawRad = FMath::DegreesToRadians(Yaw);
-				const float CosA = FMath::Cos(ArmYawRad);
-				const float SinA = FMath::Sin(ArmYawRad);
-				const float RotX = RotatedOffset.X * CosA - RotatedOffset.Y * SinA;
-				const float RotY = RotatedOffset.X * SinA + RotatedOffset.Y * CosA;
-				RotatedSubOrbWorld = TargetWorld + FVector(RotX, RotY, 0.f);
-			}
+
+			// Calculate base hex offset
+			const FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
+			FVector2D Off2D = HexOffset;
+
+			// Apply the interpolated cluster rotation
+			const float YawRad = FMath::DegreesToRadians(CurrentClusterYawDeg);
+			const float CosA = FMath::Cos(YawRad);
+			const float SinA = FMath::Sin(YawRad);
+			const float RotX = Off2D.X * CosA - Off2D.Y * SinA;
+			const float RotY = Off2D.X * SinA + Off2D.Y * CosA;
+			Off2D = FVector2D(RotX, RotY);
+
+			// Apply grid rotation and convert to world position
+			const FVector2D GridRotatedOffset = HexCoord::Rotate2D(Off2D, GridYaw);
+			const FVector SubWorld = TargetWorld + FVector(GridRotatedOffset.X, GridRotatedOffset.Y, 0.f);
+
 			const FColor DebugColor = (Sub.dQ == 0 && Sub.dR == 0) ? FColor::Green : FColor::Blue;
 			const float SphereSize = (Sub.dQ == 0 && Sub.dR == 0) ? 8.f : 6.f;
-			DrawDebugSphere(GetWorld(), RotatedSubOrbWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
-			DrawDebugLine(GetWorld(), BaseWorld, RotatedSubOrbWorld, DebugColor, false, 0.f, 0, 1.f);
-			DrawDebugString(GetWorld(), RotatedSubOrbWorld + FVector(0, 0, 15.f), FString::Printf(TEXT("dQ:%d dR:%d"), Sub.dQ, Sub.dR), nullptr, DebugColor, 0.f, true, 1.2f);
+			DrawDebugSphere(GetWorld(), SubWorld, SphereSize, 12, DebugColor, false, 0.f, 0, 2.f);
+			DrawDebugLine(GetWorld(), BaseWorld, SubWorld, DebugColor, false, 0.f, 0, 1.f);
+			DrawDebugString(GetWorld(), SubWorld + FVector(0, 0, 15.f),
+				FString::Printf(TEXT("dQ:%d dR:%d R:%.1f°"), Sub.dQ, Sub.dR, CurrentClusterYawDeg),
+				nullptr, DebugColor, 0.f, true, 1.2f);
 		}
 	}
 }
@@ -1187,27 +1182,30 @@ void ABasicArm::AttachHeldOrb()
 
 			SubMesh->SetRelativeScale3D(HeldOrbScale);
 
-		HeldClusterComps.Add(SubMesh);
-	}
-	
-	// Preserve interpolation state when rebuilding cluster (e.g., during bond formation)
-	// Only reset if we weren't holding a cluster before or if there's no active interpolation
-	const bool bHasActiveInterpolation = (FMath::Abs(HeldClusterFacingEndDeg - HeldClusterFacingStartDeg) > 0.1f);
-	if (!bHasActiveInterpolation)
-	{
-		// Initialize cluster facing interpolation to current GrabFacing
-		LastHeldGrabFacing = (HeldOrb.GrabFacing >= 0 ? HeldOrb.GrabFacing % 6 : 0);
-		HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 60.f * float(LastHeldGrabFacing % 6);
-		HeldOrbComp->SetRelativeRotation(FRotator(0.f, HeldClusterFacingEndDeg, 0.f));
-	}
-	else
-	{
-		// Preserve current interpolation - rotation will continue in UpdateHeldClusterTransforms
-		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Preserving cluster rotation interpolation during rebuild (%.1f° -> %.1f°)"),
-			*GetName(), HeldClusterFacingStartDeg, HeldClusterFacingEndDeg);
-	}
-	
-	// Generate bonded orb meshes for held cluster
+			HeldClusterComps.Add(SubMesh);
+		}
+
+		// Preserve interpolation state when rebuilding cluster (e.g., during bond formation)
+		// Only reset if we weren't holding a cluster before or if there's no active interpolation
+		const bool bHasActiveInterpolation = (FMath::Abs(HeldClusterFacingEndDeg - HeldClusterFacingStartDeg) > 0.1f);
+		if (!bHasActiveInterpolation)
+		{
+			// Initialize cluster facing interpolation to current GrabFacing
+			LastHeldGrabFacing = (HeldOrb.GrabFacing >= 0 ? HeldOrb.GrabFacing % 6 : 0);
+			HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 60.f * float(LastHeldGrabFacing % 6);
+			HeldOrbComp->SetRelativeRotation(FRotator(0.f, HeldClusterFacingEndDeg, 0.f));
+		}
+		else
+		{
+
+		}
+		{
+			// Preserve current interpolation - rotation will continue in UpdateHeldClusterTransforms
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Preserving cluster rotation interpolation during rebuild (%.1f° -> %.1f°)"),
+				*GetName(), HeldClusterFacingStartDeg, HeldClusterFacingEndDeg);
+		}
+
+		// Generate bonded orb meshes for held cluster
 		if (bShowBondedOrbs && GetBondedOrbMesh() && Sim)
 		{
 			GenerateBondedOrbMeshes();

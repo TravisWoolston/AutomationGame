@@ -372,9 +372,9 @@ void USimWorldHex::StepBondsSecondPass()
 {
 	// Second pass for bond formation - only forms bonds for arms that have pending rotations
 	// This allows bonds to form AFTER rotations complete, preventing obstruction
-	
+
 	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return;
-	
+
 	// Only run second bond pass if there are pending rotations
 	bool bHasPendingRotations = false;
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
@@ -385,18 +385,18 @@ void USimWorldHex::StepBondsSecondPass()
 			break;
 		}
 	}
-	
+
 	if (!bHasPendingRotations) return; // No pending rotations, skip second pass
-	
+
 	if (bDevDebugBonds && GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Magenta,
 			TEXT("StepBondsSecondPass: Forming bonds after rotations complete"));
 	}
-	
+
 	// Use the existing bond formation logic but with current positions (after rotation)
 	// This is essentially the same as the first pass but runs after rotations are committed
-	
+
 	// Gather held IDs for cleanup
 	TSet<int32> HeldIds;
 	for (const FArmState& A : Arms)
@@ -412,11 +412,11 @@ void USimWorldHex::StepBondsSecondPass()
 			HeldIds.Add(A.Held.Id);
 		}
 	}
-	
+
 	// Mapping for held items at their current positions (after rotation)
 	TMap<FHex, int32> VirtualHeldItemAt;
 	TMap<int32, int32> HeldItemToArmIndex;
-	
+
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
 	{
 		const FArmState& A = Arms[ArmIndex];
@@ -442,10 +442,10 @@ void USimWorldHex::StepBondsSecondPass()
 			HeldItemToArmIndex.FindOrAdd(A.Held.Id, ArmIndex);
 		}
 	}
-	
+
 	// Form bonds using current positions (same logic as first pass)
 	TSet<int32> Newly;
-	
+
 	for (const auto& KV : TileMap)
 	{
 		const FTile& T = KV.Value;
@@ -513,19 +513,19 @@ TMap<FHex, int32> USimWorldHex::GetPredictedBondFormations() const
 	// Opus Magnum-style logic: predict which board orbs will bond to held clusters
 	// These positions should be excluded from rotation obstruction checks
 	TMap<FHex, int32> PredictedBonds;
-	
+
 	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return PredictedBonds;
-	
+
 	// Build virtual occupancy for held items using COMMITTED SIM STATE
 	TMap<FHex, int32> VirtualHeldItemAt;
 	TMap<int32, int32> HeldItemToArmIndex;
-	
+
 	auto Rot60 = [](FHex D, uint8 StepsCCW)
 		{
 			for (uint8 i = 0; i < (StepsCCW % 6); ++i) { int32 q = D.Q, r = D.R; D.Q = -r; D.R = q + r; }
 			return D;
 		};
-	
+
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex)
 	{
 		const FArmState& A = Arms[ArmIndex];
@@ -551,7 +551,7 @@ TMap<FHex, int32> USimWorldHex::GetPredictedBondFormations() const
 			HeldItemToArmIndex.FindOrAdd(A.Held.Id, ArmIndex);
 		}
 	}
-	
+
 	// Check all bond tiles to see which will form bonds
 	for (const auto& KV : TileMap)
 	{
@@ -598,15 +598,15 @@ TMap<FHex, int32> USimWorldHex::GetPredictedBondFormations() const
 			FHex BoardItemHex = bAIsHeld ? BHex : AHex;
 			int32 BoardItemId = bAIsHeld ? BId : AId;
 			PredictedBonds.Add(BoardItemHex, BoardItemId);
-			
+
 			if (bDevDebugBonds && GEngine)
 			{
 				GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
-					FString::Printf(TEXT("Predicted bond: board orb %d at (%d,%d) will bond to held item"), 
+					FString::Printf(TEXT("Predicted bond: board orb %d at (%d,%d) will bond to held item"),
 						BoardItemId, BoardItemHex.Q, BoardItemHex.R));
 			}
 		}
 	}
-	
+
 	return PredictedBonds;
 }
