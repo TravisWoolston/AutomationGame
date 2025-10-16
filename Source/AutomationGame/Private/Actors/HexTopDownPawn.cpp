@@ -171,12 +171,45 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 			FHexAxial TargetHexAxial = HexCoord::XYToAxialRound(FVector2D(WorldPosition.X, WorldPosition.Y), TileSize, Orientation);
 			FHex TargetHex(TargetHexAxial.Q, TargetHexAxial.R);
 			
+			// Calculate the center of the blueprint to center it at the mouse position (same as placement logic)
+			FHex BlueprintCenter(0, 0);
+			if (BlueprintTiles.Num() > 0)
+			{
+				// Find the bounds of the blueprint
+				FHex MinHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
+				FHex MaxHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
+				
+				for (const FBlueprintTile& Tile : BlueprintTiles)
+				{
+					MinHex.Q = FMath::Min(MinHex.Q, Tile.LocalHex.Q);
+					MinHex.R = FMath::Min(MinHex.R, Tile.LocalHex.R);
+					MaxHex.Q = FMath::Max(MaxHex.Q, Tile.LocalHex.Q);
+					MaxHex.R = FMath::Max(MaxHex.R, Tile.LocalHex.R);
+				}
+				
+				// Calculate center as the average of min and max
+				BlueprintCenter.Q = (MinHex.Q + MaxHex.Q) / 2;
+				BlueprintCenter.R = (MinHex.R + MaxHex.R) / 2;
+			}
+			
+			// Apply blueprint rotation to the placement offset (same as placement logic)
+			FHex RotatedOffset = BlueprintPlacementOffset;
+			if (BlueprintRotation > 0)
+			{
+				// Rotate the offset by the blueprint rotation
+				for (uint8 i = 0; i < BlueprintRotation; i++)
+				{
+					RotatedOffset = HexUtil::Neighbor(RotatedOffset, EHexDir::D1); // 60 degree rotation
+				}
+			}
+			
 			// Draw preview of each tile in the blueprint
 			for (const FBlueprintTile& BlueprintTile : BlueprintTiles)
 			{
+				// Calculate the preview hex position (same centering logic as placement)
 				FHex PreviewHex = TargetHex;
-				PreviewHex.Q += BlueprintTile.LocalHex.Q;
-				PreviewHex.R += BlueprintTile.LocalHex.R;
+				PreviewHex.Q += BlueprintTile.LocalHex.Q - BlueprintCenter.Q + RotatedOffset.Q;
+				PreviewHex.R += BlueprintTile.LocalHex.R - BlueprintCenter.R + RotatedOffset.R;
 
 				FVector PreviewWorldPos;
 				if (Driver && Driver->IsSphereEnabled())
@@ -721,6 +754,27 @@ void AHexTopDownPawn::PlaceBlueprint()
 	FHexAxial TargetHexAxial = HexCoord::XYToAxialRound(FVector2D(WorldPosition.X, WorldPosition.Y), TileSize, Orientation);
 	FHex TargetHex(TargetHexAxial.Q, TargetHexAxial.R);
 	
+	// Calculate the center of the blueprint to center it at the mouse position
+	FHex BlueprintCenter(0, 0);
+	if (BlueprintTiles.Num() > 0)
+	{
+		// Find the bounds of the blueprint
+		FHex MinHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
+		FHex MaxHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
+		
+		for (const FBlueprintTile& Tile : BlueprintTiles)
+		{
+			MinHex.Q = FMath::Min(MinHex.Q, Tile.LocalHex.Q);
+			MinHex.R = FMath::Min(MinHex.R, Tile.LocalHex.R);
+			MaxHex.Q = FMath::Max(MaxHex.Q, Tile.LocalHex.Q);
+			MaxHex.R = FMath::Max(MaxHex.R, Tile.LocalHex.R);
+		}
+		
+		// Calculate center as the average of min and max
+		BlueprintCenter.Q = (MinHex.Q + MaxHex.Q) / 2;
+		BlueprintCenter.R = (MinHex.R + MaxHex.R) / 2;
+	}
+	
 	// Apply blueprint rotation to the placement offset
 	FHex RotatedOffset = BlueprintPlacementOffset;
 	if (BlueprintRotation > 0)
@@ -736,9 +790,10 @@ void AHexTopDownPawn::PlaceBlueprint()
 	for (const FBlueprintTile& BlueprintTile : BlueprintTiles)
 	{
 		// Calculate the final hex position
+		// Center the blueprint at the mouse position by subtracting the blueprint center
 		FHex FinalHex = TargetHex;
-		FinalHex.Q += BlueprintTile.LocalHex.Q + RotatedOffset.Q;
-		FinalHex.R += BlueprintTile.LocalHex.R + RotatedOffset.R;
+		FinalHex.Q += BlueprintTile.LocalHex.Q - BlueprintCenter.Q + RotatedOffset.Q;
+		FinalHex.R += BlueprintTile.LocalHex.R - BlueprintCenter.R + RotatedOffset.R;
 		
 		if (BlueprintTile.bIsArm)
 		{
