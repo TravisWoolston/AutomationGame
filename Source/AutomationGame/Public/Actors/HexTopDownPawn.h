@@ -156,6 +156,9 @@ private:
 	
 	// Helper function to convert simulation ops to arm instructions
 	TArray<FArmInstr> ConvertOpsToProgram(const TArray<FOp>& Ops);
+	
+	// Helper function to get hexes within a selection area
+	void GetHexesInSelectionArea(const FHex& HexStart, const FHex& HexEnd, const FVector& WorldStart, const FVector& WorldEnd, TArray<FHex>& OutHexes);
 
 	void SetInputMode1();
 	void SetInputMode2();
