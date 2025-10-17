@@ -11,6 +11,7 @@
 class USpringArmComponent;
 class UCameraComponent;
 class UHexPlacementComponent;
+class UStaticMeshComponent;
 
 USTRUCT(BlueprintType)
 struct AUTOMATIONGAME_API FBlueprintTile
@@ -79,6 +80,10 @@ public:
 	UPROPERTY(VisibleAnywhere, Category = "Camera") USpringArmComponent* SpringArm;
 	UPROPERTY(VisibleAnywhere, Category = "Camera") UCameraComponent* Camera;
 	UPROPERTY(VisibleAnywhere, Category = "Place")  UHexPlacementComponent* Placer;
+
+	// Blueprint preview mesh components
+	UPROPERTY(VisibleAnywhere, Category = "Blueprint Preview")
+	TArray<UStaticMeshComponent*> BlueprintPreviewComponents;
 
 private:
 	float AxisX = 0.f, AxisY = 0.f, AxisZoom = 0.f;
@@ -153,6 +158,11 @@ private:
 	void RotateBlueprintCW();
 	void RotateBlueprintCCW();
 	void UpdateBlueprintPreview();
+	
+	// Blueprint preview mesh management
+	void EnsureBlueprintPreviewComponents();
+	void UpdateBlueprintPreviewMeshes();
+	void ClearBlueprintPreviewComponents();
 	
 	// Helper function to convert simulation ops to arm instructions
 	TArray<FArmInstr> ConvertOpsToProgram(const TArray<FOp>& Ops);

@@ -2,6 +2,7 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/HexPlacementComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Actors/OrbSimDriver.h"
 #include "Actors/BasicArm.h"
@@ -142,141 +143,14 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 		}
 	}
 	
-	// Draw blueprint preview if in placement mode
+	// Update blueprint preview meshes if in placement mode
 	if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0 && GetWorld())
 	{
-		FVector2D MousePosition;
-		if (GetWorld()->GetFirstPlayerController() && 
-			GetWorld()->GetFirstPlayerController()->GetMousePosition(MousePosition.X, MousePosition.Y))
-		{
-			// Get tile size and grid info from driver
-			AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
-			float TileSize = Driver ? Driver->GetTileSize() : 100.f;
-			EHexOrientation Orientation = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
-			float GridPlaneZ = Driver ? Driver->GetGridPlaneZ(this) : 0.f;
-			
-			// Convert mouse position to world coordinates by projecting ray to the grid plane
-			FVector WorldPosition, WorldDirection;
-			GetWorld()->GetFirstPlayerController()->DeprojectScreenPositionToWorld(
-				MousePosition.X, MousePosition.Y, WorldPosition, WorldDirection);
-			
-			// Project the ray down to the grid plane (Z = GridPlaneZ)
-			if (FMath::Abs(WorldDirection.Z) > KINDA_SMALL_NUMBER)
-			{
-				float T = (GridPlaneZ - WorldPosition.Z) / WorldDirection.Z;
-				WorldPosition = WorldPosition + WorldDirection * T;
-			}
-			
-			// Convert world coordinates to hex coordinates
-			FHexAxial TargetHexAxial = HexCoord::XYToAxialRound(FVector2D(WorldPosition.X, WorldPosition.Y), TileSize, Orientation);
-			FHex TargetHex(TargetHexAxial.Q, TargetHexAxial.R);
-			
-			// Calculate the center of the blueprint to center it at the mouse position (same as placement logic)
-			FHex BlueprintCenter(0, 0);
-			if (BlueprintTiles.Num() > 0)
-			{
-				// Find the bounds of the blueprint
-				FHex MinHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
-				FHex MaxHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
-				
-				for (const FBlueprintTile& Tile : BlueprintTiles)
-				{
-					MinHex.Q = FMath::Min(MinHex.Q, Tile.LocalHex.Q);
-					MinHex.R = FMath::Min(MinHex.R, Tile.LocalHex.R);
-					MaxHex.Q = FMath::Max(MaxHex.Q, Tile.LocalHex.Q);
-					MaxHex.R = FMath::Max(MaxHex.R, Tile.LocalHex.R);
-				}
-				
-				// Calculate center as the average of min and max
-				BlueprintCenter.Q = (MinHex.Q + MaxHex.Q) / 2;
-				BlueprintCenter.R = (MinHex.R + MaxHex.R) / 2;
-			}
-			
-			// Apply blueprint rotation to the placement offset (same as placement logic)
-			FHex RotatedOffset = BlueprintPlacementOffset;
-			if (BlueprintRotation > 0)
-			{
-				// Rotate the offset by the blueprint rotation
-				for (uint8 i = 0; i < BlueprintRotation; i++)
-				{
-					RotatedOffset = HexUtil::Neighbor(RotatedOffset, EHexDir::D1); // 60 degree rotation
-				}
-			}
-			
-			// Draw preview of each tile in the blueprint
-			for (const FBlueprintTile& BlueprintTile : BlueprintTiles)
-			{
-				// Calculate the preview hex position (same centering logic as placement)
-				FHex PreviewHex = TargetHex;
-				PreviewHex.Q += BlueprintTile.LocalHex.Q - BlueprintCenter.Q + RotatedOffset.Q;
-				PreviewHex.R += BlueprintTile.LocalHex.R - BlueprintCenter.R + RotatedOffset.R;
-
-				FVector PreviewWorldPos;
-				if (Driver && Driver->IsSphereEnabled())
-				{
-					PreviewWorldPos = Driver->MapHexToWorld(PreviewHex);
-				}
-				else
-				{
-					FVector2D PreviewWorldPos2D = HexCoord::AxialToXY(FHexAxial(PreviewHex.Q, PreviewHex.R), TileSize, Orientation);
-					PreviewWorldPos = FVector(PreviewWorldPos2D.X, PreviewWorldPos2D.Y, 0);
-				}
-				
-				// Choose color and size based on tile type
-				FColor PreviewColor;
-				float SphereSize = 40.f;
-				FString TileTypeText;
-				
-				if (BlueprintTile.bIsArm)
-				{
-					PreviewColor = FColor::Green;
-					SphereSize = 60.f;
-					TileTypeText = FString::Printf(TEXT("ARM (F:%d R:%d)"), BlueprintTile.ArmFacing, BlueprintTile.ArmReach);
-				}
-				else
-				{
-					switch (BlueprintTile.TileType)
-					{
-					case ETileKind::Input:
-						PreviewColor = FColor::Cyan;
-						TileTypeText = TEXT("INPUT");
-						break;
-					case ETileKind::Output:
-						PreviewColor = FColor::Magenta;
-						TileTypeText = TEXT("OUTPUT");
-						break;
-					case ETileKind::Belt:
-						PreviewColor = FColor::Yellow;
-						TileTypeText = FString::Printf(TEXT("BELT (D:%d)"), BlueprintTile.TileDirection);
-						break;
-					case ETileKind::Bond:
-						PreviewColor = FColor::Orange;
-						TileTypeText = FString::Printf(TEXT("BOND (D:%d)"), BlueprintTile.TileDirection);
-						break;
-					case ETileKind::Unbond:
-						PreviewColor = FColor::Red;
-						TileTypeText = FString::Printf(TEXT("UNBOND (D:%d)"), BlueprintTile.TileDirection);
-						break;
-					default:
-						PreviewColor = FColor::White;
-						TileTypeText = TEXT("EMPTY");
-						break;
-					}
-				}
-				
-				// Draw the preview sphere
-				DrawDebugSphere(GetWorld(), PreviewWorldPos, SphereSize, 8, PreviewColor, false, 0.f, 0, 2.f);
-				
-				// Draw tile type text above the sphere
-				DrawDebugString(GetWorld(), PreviewWorldPos + FVector(0, 0, SphereSize + 20.f), 
-					TileTypeText, nullptr, PreviewColor, 0.f, true, 1.0f);
-				
-				// Draw hex coordinates for debugging
-				DrawDebugString(GetWorld(), PreviewWorldPos + FVector(0, 0, -20.f), 
-					FString::Printf(TEXT("(%d,%d)"), PreviewHex.Q, PreviewHex.R), 
-					nullptr, FColor::White, 0.f, true, 0.8f);
-			}
-		}
+		UpdateBlueprintPreviewMeshes();
+	}
+	else
+	{
+		ClearBlueprintPreviewComponents();
 	}
 }
 
@@ -678,11 +552,15 @@ void AHexTopDownPawn::ClearSelection()
 	SelectedTiles.Empty();
 	BlueprintTiles.Empty();
 	bBlueprintSelectionActive = false;
+	ClearBlueprintPreviewComponents();
 }
 
 void AHexTopDownPawn::CancelBlueprintPlacement()
 {
 	UE_LOG(LogTemp, Warning, TEXT("Canceling blueprint placement"));
+	
+	// Clear preview components before exiting
+	ClearBlueprintPreviewComponents();
 	
 	// Exit blueprint placement mode and return to normal kind placement
 	bBlueprintPlacementMode = false;
@@ -1267,4 +1145,241 @@ void AHexTopDownPawn::GetHexesInSelectionArea(const FHex& HexStart, const FHex& 
 	}
 	
 	UE_LOG(LogTemp, Warning, TEXT("GetHexesInSelectionArea: Checked %d hexes, found %d in selection area"), TilesChecked, TilesAdded);
+}
+
+void AHexTopDownPawn::EnsureBlueprintPreviewComponents()
+{
+	// Create preview components for each blueprint tile if they don't exist
+	while (BlueprintPreviewComponents.Num() < BlueprintTiles.Num())
+	{
+		UStaticMeshComponent* PreviewComp = NewObject<UStaticMeshComponent>(this);
+		PreviewComp->SetMobility(EComponentMobility::Movable);
+		PreviewComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		PreviewComp->SetVisibility(false);
+		PreviewComp->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+		PreviewComp->RegisterComponent();
+		BlueprintPreviewComponents.Add(PreviewComp);
+	}
+	
+	// Remove excess components
+	while (BlueprintPreviewComponents.Num() > BlueprintTiles.Num())
+	{
+		UStaticMeshComponent* PreviewComp = BlueprintPreviewComponents.Pop();
+		if (PreviewComp)
+		{
+			PreviewComp->DestroyComponent();
+		}
+	}
+}
+
+void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
+{
+	if (!bBlueprintPlacementMode || BlueprintTiles.Num() == 0 || !GetWorld())
+	{
+		ClearBlueprintPreviewComponents();
+		return;
+	}
+	
+	EnsureBlueprintPreviewComponents();
+	
+	// Get tile size and grid info from driver
+	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	if (!Driver) return;
+	
+	float TileSize = Driver->GetTileSize();
+	EHexOrientation Orientation = Driver->GetGridOrientation();
+	float GridPlaneZ = Driver->GetGridPlaneZ(this);
+	
+	// Get mouse position and convert to hex coordinates
+	FVector2D MousePosition;
+	if (!GetWorld()->GetFirstPlayerController() || 
+		!GetWorld()->GetFirstPlayerController()->GetMousePosition(MousePosition.X, MousePosition.Y))
+	{
+		return;
+	}
+	
+	// Convert mouse position to world coordinates
+	FVector WorldPosition, WorldDirection;
+	GetWorld()->GetFirstPlayerController()->DeprojectScreenPositionToWorld(
+		MousePosition.X, MousePosition.Y, WorldPosition, WorldDirection);
+	
+	// Project the ray down to the grid plane
+	if (FMath::Abs(WorldDirection.Z) > KINDA_SMALL_NUMBER)
+	{
+		float T = (GridPlaneZ - WorldPosition.Z) / WorldDirection.Z;
+		WorldPosition = WorldPosition + WorldDirection * T;
+	}
+	
+	// Convert world coordinates to hex coordinates
+	FHexAxial TargetHexAxial = HexCoord::XYToAxialRound(FVector2D(WorldPosition.X, WorldPosition.Y), TileSize, Orientation);
+	FHex TargetHex(TargetHexAxial.Q, TargetHexAxial.R);
+	
+	// Calculate the center of the blueprint
+	FHex BlueprintCenter(0, 0);
+	if (BlueprintTiles.Num() > 0)
+	{
+		FHex MinHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
+		FHex MaxHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
+		
+		for (const FBlueprintTile& Tile : BlueprintTiles)
+		{
+			MinHex.Q = FMath::Min(MinHex.Q, Tile.LocalHex.Q);
+			MinHex.R = FMath::Min(MinHex.R, Tile.LocalHex.R);
+			MaxHex.Q = FMath::Max(MaxHex.Q, Tile.LocalHex.Q);
+			MaxHex.R = FMath::Max(MaxHex.R, Tile.LocalHex.R);
+		}
+		
+		BlueprintCenter.Q = (MinHex.Q + MaxHex.Q) / 2;
+		BlueprintCenter.R = (MinHex.R + MaxHex.R) / 2;
+	}
+	
+	// Apply blueprint rotation to the placement offset
+	FHex RotatedOffset = BlueprintPlacementOffset;
+	if (BlueprintRotation > 0)
+	{
+		for (uint8 i = 0; i < BlueprintRotation; i++)
+		{
+			RotatedOffset = HexUtil::Neighbor(RotatedOffset, EHexDir::D1); // 60 degree rotation
+		}
+	}
+	
+	// Update each preview mesh
+	for (int32 i = 0; i < BlueprintTiles.Num() && i < BlueprintPreviewComponents.Num(); i++)
+	{
+		const FBlueprintTile& BlueprintTile = BlueprintTiles[i];
+		UStaticMeshComponent* PreviewComp = BlueprintPreviewComponents[i];
+		
+		if (!PreviewComp) continue;
+		
+		// Calculate the preview hex position
+		FHex PreviewHex = TargetHex;
+		PreviewHex.Q += BlueprintTile.LocalHex.Q - BlueprintCenter.Q + RotatedOffset.Q;
+		PreviewHex.R += BlueprintTile.LocalHex.R - BlueprintCenter.R + RotatedOffset.R;
+		
+		// Convert hex to world position
+		FVector PreviewWorldPos;
+		if (Driver->IsSphereEnabled())
+		{
+			PreviewWorldPos = Driver->MapHexToWorld(PreviewHex);
+		}
+		else
+		{
+			FVector2D PreviewWorldPos2D = HexCoord::AxialToXY(FHexAxial(PreviewHex.Q, PreviewHex.R), TileSize, Orientation);
+			PreviewWorldPos = FVector(PreviewWorldPos2D.X, PreviewWorldPos2D.Y, GridPlaneZ);
+		}
+		
+		// Get the appropriate mesh for this tile type
+		UStaticMesh* PreviewMesh = nullptr;
+		float PreviewYaw = 0.f;
+		
+		if (BlueprintTile.bIsArm)
+		{
+			// For arms, we need to get the arm preview mesh from the placer
+			if (Placer && Placer->ArmBasePreviewMesh)
+			{
+				PreviewMesh = Placer->ArmBasePreviewMesh;
+			}
+			else if (Placer)
+			{
+				PreviewMesh = Placer->GenericTilePreviewMesh;
+			}
+			// Apply arm rotation
+			PreviewYaw = (BlueprintTile.ArmFacing + BlueprintRotation) * 60.0f;
+			if (Placer)
+			{
+				PreviewYaw = FMath::UnwindDegrees(PreviewYaw + Placer->ArmPreviewFacingFixDeg);
+			}
+		}
+		else
+		{
+			// Get mesh based on tile type
+			switch (BlueprintTile.TileType)
+			{
+			case ETileKind::Input:
+				if (Placer)
+				{
+					PreviewMesh = Placer->GenericTilePreviewMesh;
+				}
+				break;
+			case ETileKind::Output:
+				if (Placer)
+				{
+					PreviewMesh = Placer->GenericTilePreviewMesh;
+					// For output tiles, handle grid orientation
+					if (Orientation == EHexOrientation::FlatTop)
+					{
+						PreviewYaw = 30.0f;
+					}
+				}
+				break;
+			case ETileKind::Belt:
+				if (Placer)
+				{
+					PreviewMesh = Placer->BeltMeshPreview ? Placer->BeltMeshPreview : Placer->GenericTilePreviewMesh;
+				}
+				// Apply belt direction rotation
+				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;
+				break;
+			case ETileKind::Bond:
+				if (Placer && Placer->BondPreviewMesh)
+				{
+					PreviewMesh = Placer->BondPreviewMesh;
+				}
+				else if (Placer)
+				{
+					PreviewMesh = Placer->GenericTilePreviewMesh;
+				}
+				// Apply bond direction rotation
+				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;
+				break;
+			case ETileKind::Unbond:
+				if (Placer && Placer->UnbondPreviewMesh)
+				{
+					PreviewMesh = Placer->UnbondPreviewMesh;
+				}
+				else if (Placer)
+				{
+					PreviewMesh = Placer->GenericTilePreviewMesh;
+				}
+				// Apply unbond direction rotation
+				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;
+				break;
+			default:
+				if (Placer)
+				{
+					PreviewMesh = Placer->GenericTilePreviewMesh;
+				}
+				break;
+			}
+		}
+		
+		// Set the mesh and position
+		if (PreviewMesh)
+		{
+			PreviewComp->SetStaticMesh(PreviewMesh);
+			PreviewComp->SetWorldLocationAndRotation(PreviewWorldPos, FRotator(0.f, PreviewYaw, 0.f));
+			PreviewComp->SetVisibility(true);
+			
+			// Apply preview material if available
+			if (Placer && Placer->PreviewBaseMaterial)
+			{
+				PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
+			}
+		}
+		else
+		{
+			PreviewComp->SetVisibility(false);
+		}
+	}
+}
+
+void AHexTopDownPawn::ClearBlueprintPreviewComponents()
+{
+	for (UStaticMeshComponent* PreviewComp : BlueprintPreviewComponents)
+	{
+		if (PreviewComp)
+		{
+			PreviewComp->SetVisibility(false);
+		}
+	}
 }
