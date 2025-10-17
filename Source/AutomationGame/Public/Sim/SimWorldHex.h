@@ -42,7 +42,22 @@ public:
 	
 	// Accessor for collision debug data
 	const TArray<FCollisionDebugInfo>& GetCollisionDebugData() const { return CollisionDebugData; }
-
+	
+	
+	
+	// Predictive collision debug info struct (declared before use)
+	struct FPredictiveCollisionInfo
+	{
+		int32 ArmIndexA = -1;
+		int32 ArmIndexB = -1;
+		FHex CollisionHex;
+		FString Reason;
+	};
+	
+	// Predictive collision debug data (cleared each frame, populated during predictive collision check)
+	TArray<FPredictiveCollisionInfo> PredictiveCollisionDebugData;
+	// Accessor for predictive collision debug data
+	const TArray<FPredictiveCollisionInfo>& GetPredictiveCollisionDebugData() const { return PredictiveCollisionDebugData; }
 	// ---- Arm <-> Item API ----
 	UFUNCTION(BlueprintCallable, Category = "Sim|Arm")
 	bool TryArmPickItem(const FHex& From, FItem& OutItem);
@@ -387,4 +402,44 @@ private:
 	uint8 GetHeldCCW_Steps_Sim(int32 ArmIndex) const;
 	static FHex Rot60CCW(FHex D, uint8 StepsCCW);
 	static FHex Rot60CW(FHex D, uint8 StepsCW);
+	
+	// --- Predictive collision detection for simultaneous arm movements ---
+	struct FPredictiveArmState
+	{
+		FHex BaseHex;
+		uint8 Facing;
+		int32 ArmLen;
+		bool bHolding;
+		FItem Held;
+		uint8 WaitCounter;
+		int32 PC;
+		bool bRotationCompleted;
+		
+		FPredictiveArmState() : BaseHex(0, 0), Facing(0), ArmLen(1), bHolding(false), WaitCounter(0), PC(0), bRotationCompleted(false) {}
+		FPredictiveArmState(const FArmState& ArmState) 
+			: BaseHex(ArmState.BaseHex), Facing(static_cast<uint8>(ArmState.Facing)), ArmLen(ArmState.ArmLen), 
+			  bHolding(ArmState.bHolding), Held(ArmState.Held), WaitCounter(ArmState.WaitCounter),
+			  PC(ArmState.PC), bRotationCompleted(ArmState.bRotationCompleted) {}
+	};
+	
+	// Check if executing all arms' current commands simultaneously would cause held cluster overlap
+	bool WouldCauseHeldClusterOverlap();
+	
+	// Simulate what would happen if all arms executed their current commands (one tick ahead only)
+	TArray<FPredictiveArmState> SimulateAllArmsExecution();
+	
+	// Check if two held clusters would overlap given their predicted positions
+	bool WouldHeldClustersOverlap(const FPredictiveArmState& ArmA, const FPredictiveArmState& ArmB, 
+		const FArmState& CurrentA, const FArmState& CurrentB);
+	
+	// Get all positions that would be occupied by a held cluster in a given state
+	TArray<FHex> GetHeldClusterPositions(const FPredictiveArmState& ArmState);
+	
+	// Check if two arms' rotation sweeps would cause held clusters to overlap
+	bool WouldRotationSweepsOverlap(const FArmState& ArmA, const FArmState& ArmB,
+		const FPredictiveArmState& PredictedA, const FPredictiveArmState& PredictedB);
+		
+	// Check if a rotating arm's sweep would overlap with a static arm's held cluster
+	bool WouldRotationSweepOverlapStatic(const FArmState& RotatingArm, const FPredictiveArmState& PredictedRotating,
+		const FArmState& StaticArm);
 };

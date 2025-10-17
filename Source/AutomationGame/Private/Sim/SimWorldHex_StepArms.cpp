@@ -7,7 +7,7 @@
 
 void USimWorldHex::StepArms()
 {
-	// Apply pending sim values produced by last tick’s Rotate/Extend/Retract
+	// Apply pending sim values produced by last tick's Rotate/Extend/Retract
 	if (PendingFacingByArm.Num() || PendingArmLenByArm.Num() || PendingGrabFacingByArm.Num())
 	{
 		for (const auto& KV : PendingFacingByArm)     SimFacingByArm.Add(KV.Key, KV.Value);
@@ -16,6 +16,46 @@ void USimWorldHex::StepArms()
 		PendingFacingByArm.Empty();
 		PendingArmLenByArm.Empty();
 		PendingGrabFacingByArm.Empty();
+	}
+	
+	// Check for predictive collision - if executing all arms simultaneously would cause held cluster overlap
+	// If so, make the arm with the higher index wait (arbitrary but consistent ordering)
+	if (WouldCauseHeldClusterOverlap())
+	{
+		// Find the highest index arm that's about to execute a movement command
+		int32 ArmToWait = -1;
+		for (int32 ArmIndex = Arms.Num() - 1; ArmIndex >= 0; --ArmIndex)
+		{
+			FArmState& S = Arms[ArmIndex];
+			if (S.WaitCounter > 0 || S.Tape.Num() == 0) continue;
+			
+			if (S.PC >= S.Tape.Num()) continue;
+			const FOp& Op = S.Tape[S.PC];
+			
+			// Check if this is a movement command that could cause collision
+			if (Op.Cmd == ECmd::RotateL || Op.Cmd == ECmd::RotateR || 
+				Op.Cmd == ECmd::Extend || Op.Cmd == ECmd::Retract)
+			{
+				ArmToWait = ArmIndex;
+				break;
+			}
+		}
+		
+		// Make the selected arm wait
+		if (ArmToWait >= 0)
+		{
+			FArmState& WaitingArm = Arms[ArmToWait];
+			if (WaitingArm.WaitCounter == 0)
+			{
+				WaitingArm.WaitCounter = 1;
+			}
+			
+			if (bDebugLogs && GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange,
+					FString::Printf(TEXT("Predictive collision detected - Arm %d waiting"), ArmToWait));
+			}
+		}
 	}
 
 	// Build reverse lookup (item id -> hex) once for this arm step (excludes held items)

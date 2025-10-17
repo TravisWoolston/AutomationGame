@@ -479,6 +479,24 @@ void AOrbSimDriver::DrawCollisionDebugSpheres()
 			FString::Printf(TEXT("Arm %d: %s"), CollisionInfo.ArmIndex, *CollisionInfo.Reason),
 			nullptr, FColor::Red, 0.f, true, 1.0f);
 	}
+	
+	// Draw predictive collision debug data
+	const TArray<USimWorldHex::FPredictiveCollisionInfo>& PredictiveCollisionData = Sim->GetPredictiveCollisionDebugData();
+	
+	for (const USimWorldHex::FPredictiveCollisionInfo& PredictiveInfo : PredictiveCollisionData)
+	{
+		// Convert collision hex to world coordinates
+		const FHexAxial CollisionA(PredictiveInfo.CollisionHex.Q, PredictiveInfo.CollisionHex.R);
+		const FVector2D CollisionLocalXY = HexCoord::AxialToXY(CollisionA, Tile, Ori);
+		const FVector2D CollisionRotXY = HexCoord::Rotate2D(CollisionLocalXY, GridYaw);
+		const FVector CollisionWorld = AnchorV + FVector(CollisionRotXY.X, CollisionRotXY.Y, 0.f);
+		
+		// Draw predictive collision sphere in orange
+		DrawDebugSphere(GetWorld(), CollisionWorld, DebugSphereSize * 1.5f, 12, FColor::Orange, false, DebugLifetime, 0, 2.f);
+		DrawDebugString(GetWorld(), CollisionWorld + FVector(0, 0, DebugSphereSize + 10.f),
+			FString::Printf(TEXT("Predictive: %s"), *PredictiveInfo.Reason),
+			nullptr, FColor::Orange, 0.f, true, 1.2f);
+	}
 }
 
 FVector AOrbSimDriver::MapHexToWorld(const FHex& H) const
