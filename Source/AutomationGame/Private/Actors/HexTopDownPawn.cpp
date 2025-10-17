@@ -660,11 +660,32 @@ void AHexTopDownPawn::PlaceBlueprint()
 	// Place each tile in the blueprint
 	for (const FBlueprintTile& BlueprintTile : BlueprintTiles)
 	{
+		// Calculate the offset of this tile from the blueprint center
+		FHex OffsetFromCenter = FHex(
+			BlueprintTile.LocalHex.Q - BlueprintCenter.Q,
+			BlueprintTile.LocalHex.R - BlueprintCenter.R
+		);
+		
+		// Rotate the offset by BlueprintRotation * 60 degrees
+		// Use proper hexagonal rotation formula
+		FHex RotatedTileOffset = OffsetFromCenter;
+		if (BlueprintRotation > 0)
+		{
+			// Hexagonal rotation formula for 60-degree increments
+			// Each rotation step rotates the hex coordinates by 60 degrees clockwise
+			for (uint8 j = 0; j < BlueprintRotation; j++)
+			{
+				int32 NewQ = RotatedTileOffset.Q + RotatedTileOffset.R;
+				int32 NewR = -RotatedTileOffset.Q;
+				RotatedTileOffset = FHex(NewQ, NewR);
+			}
+		}
+		
 		// Calculate the final hex position
-		// Center the blueprint at the mouse position by subtracting the blueprint center
+		// Apply the rotated offset to the mouse position (which becomes the new center)
 		FHex FinalHex = TargetHex;
-		FinalHex.Q += BlueprintTile.LocalHex.Q - BlueprintCenter.Q + RotatedOffset.Q;
-		FinalHex.R += BlueprintTile.LocalHex.R - BlueprintCenter.R + RotatedOffset.R;
+		FinalHex.Q += RotatedTileOffset.Q;
+		FinalHex.R += RotatedTileOffset.R;
 		
 		if (BlueprintTile.bIsArm)
 		{
@@ -682,34 +703,38 @@ void AHexTopDownPawn::PlaceBlueprint()
 			
 			if (GameManager)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("Blueprint: Placing arm at (%d,%d) with facing=%d reach=%d"), 
-					FinalHex.Q, FinalHex.R, BlueprintTile.ArmFacing, BlueprintTile.ArmReach);
+				// Apply blueprint rotation to both the arm facing and starting rotation
+				uint8 RotatedArmFacing = (BlueprintTile.ArmFacing + BlueprintRotation) % 6;
+				uint8 RotatedStartingRotation = (BlueprintTile.StartingRotation + BlueprintRotation) % 6;
 				
-				// Use GameManager to spawn the arm with the captured program
+				UE_LOG(LogTemp, Warning, TEXT("Blueprint: Placing arm at (%d,%d) with facing=%d startRot=%d (rotated from facing=%d startRot=%d)"), 
+					FinalHex.Q, FinalHex.R, RotatedArmFacing, RotatedStartingRotation, BlueprintTile.ArmFacing, BlueprintTile.StartingRotation);
+				
+				// Use GameManager to spawn the arm with the rotated arm facing (home position)
 				ABasicArm* SpawnedArm = GameManager->SpawnBasicArmAt(
-					FinalHex, BlueprintTile.ArmFacing, BlueprintTile.ArmProgram, BlueprintTile.bArmLoopProgram);
+					FinalHex, RotatedArmFacing, BlueprintTile.ArmProgram, BlueprintTile.bArmLoopProgram);
 				
 				if (SpawnedArm)
 				{
 					// Set the captured reach distance (reset position)
 					SpawnedArm->ReachTiles = BlueprintTile.StartingReach;
 					SpawnedArm->StartingReach = BlueprintTile.StartingReach;
-
-					// Set the captured rotation (reset position)
-					SpawnedArm->FacingDir = BlueprintTile.StartingRotation % 6;
-					SpawnedArm->StartingRotation = BlueprintTile.StartingRotation % 6;
+					
+					// Set the rotation values
+					SpawnedArm->FacingDir = RotatedStartingRotation;
+					SpawnedArm->StartingRotation = RotatedStartingRotation;
 
 					// Also update the simulation to match the captured reset reach and rotation
 					if (SpawnedArm->SimArmIndex >= 0 && SpawnedArm->SimArmIndex < Sim->Arms.Num())
 					{
 						FArmState& ArmState = Sim->Arms[SpawnedArm->SimArmIndex];
-						ArmState.Facing = (EHexDir)(BlueprintTile.StartingRotation % 6);
-						ArmState.HomeFacing = (EHexDir)(BlueprintTile.StartingRotation % 6);
+						ArmState.Facing = (EHexDir)RotatedStartingRotation;  // Current facing is the starting rotation
+						ArmState.HomeFacing = (EHexDir)RotatedArmFacing;     // Home facing is where it resets to
 						ArmState.ArmLen = BlueprintTile.StartingReach;
 						ArmState.HomeArmLen = BlueprintTile.StartingReach;
 
-						UE_LOG(LogTemp, Warning, TEXT("Blueprint: Sim state for spawned arm - Facing=%d HomeFacing=%d"), 
-							(int32)ArmState.Facing, (int32)ArmState.HomeFacing);
+						UE_LOG(LogTemp, Warning, TEXT("Blueprint: Sim state for spawned arm - HomeFacing=%d, StartingRotation=%d, Blueprint rotation=%d"), 
+							RotatedArmFacing, RotatedStartingRotation, BlueprintRotation);
 					}
 					
 					UE_LOG(LogTemp, Warning, TEXT("Blueprint: Spawned arm at (%d,%d) - FacingDir=%d StartFacingDir=%d SimIndex=%d"), 
@@ -730,13 +755,28 @@ void AHexTopDownPawn::PlaceBlueprint()
 			// Create a regular tile
 			FTile NewTile;
 			NewTile.Kind = BlueprintTile.TileType;
-			NewTile.Arg = BlueprintTile.TileDirection;
+			
+			// Apply blueprint rotation to tile direction for directional tiles
+			uint8 RotatedTileDirection = BlueprintTile.TileDirection;
+			switch (BlueprintTile.TileType)
+			{
+			case ETileKind::Belt:
+			case ETileKind::Bond:
+			case ETileKind::Unbond:
+				RotatedTileDirection = (BlueprintTile.TileDirection + BlueprintRotation) % 6;
+				break;
+			default:
+				// Non-directional tiles don't need direction rotation
+				break;
+			}
+			
+			NewTile.Arg = RotatedTileDirection;
 			
 			// Place the tile in the simulation
 			Sim->PlaceTile(FinalHex, NewTile);
 			
-			UE_LOG(LogTemp, Log, TEXT("Placed tile at (%d,%d) type %d"), 
-				FinalHex.Q, FinalHex.R, (int32)BlueprintTile.TileType);
+			UE_LOG(LogTemp, Log, TEXT("Placed tile at (%d,%d) type %d direction %d (original %d + blueprint rotation %d)"), 
+				FinalHex.Q, FinalHex.R, (int32)BlueprintTile.TileType, RotatedTileDirection, BlueprintTile.TileDirection, BlueprintRotation);
 		}
 	}
 	
@@ -759,7 +799,7 @@ void AHexTopDownPawn::RotateBlueprintCW()
 	if (BlueprintTiles.Num() == 0) return;
 	
 	BlueprintRotation = (BlueprintRotation + 1) % 6;
-	UE_LOG(LogTemp, Log, TEXT("Blueprint rotation: %d"), BlueprintRotation);
+	UE_LOG(LogTemp, Log, TEXT("Blueprint rotated CW, new rotation: %d"), BlueprintRotation);
 }
 
 void AHexTopDownPawn::RotateBlueprintCCW()
@@ -767,7 +807,7 @@ void AHexTopDownPawn::RotateBlueprintCCW()
 	if (BlueprintTiles.Num() == 0) return;
 	
 	BlueprintRotation = (BlueprintRotation + 5) % 6; // +5 is equivalent to -1 mod 6
-	UE_LOG(LogTemp, Log, TEXT("Blueprint rotation: %d"), BlueprintRotation);
+	UE_LOG(LogTemp, Log, TEXT("Blueprint rotated CCW, new rotation: %d"), BlueprintRotation);
 }
 
 void AHexTopDownPawn::UpdateBlueprintPreview()
@@ -1251,10 +1291,32 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 		
 		if (!PreviewComp) continue;
 		
+		// Calculate the offset of this tile from the blueprint center
+		FHex OffsetFromCenter = FHex(
+			BlueprintTile.LocalHex.Q - BlueprintCenter.Q,
+			BlueprintTile.LocalHex.R - BlueprintCenter.R
+		);
+		
+		// Rotate the offset by BlueprintRotation * 60 degrees
+		// Use proper hexagonal rotation formula
+		FHex RotatedTileOffset = OffsetFromCenter;
+		if (BlueprintRotation > 0)
+		{
+			// Hexagonal rotation formula for 60-degree increments
+			// Each rotation step rotates the hex coordinates by 60 degrees clockwise
+			for (uint8 j = 0; j < BlueprintRotation; j++)
+			{
+				int32 NewQ = RotatedTileOffset.Q + RotatedTileOffset.R;
+				int32 NewR = -RotatedTileOffset.Q;
+				RotatedTileOffset = FHex(NewQ, NewR);
+			}
+		}
+		
 		// Calculate the preview hex position
+		// Apply the rotated offset to the mouse position (which becomes the new center)
 		FHex PreviewHex = TargetHex;
-		PreviewHex.Q += BlueprintTile.LocalHex.Q - BlueprintCenter.Q + RotatedOffset.Q;
-		PreviewHex.R += BlueprintTile.LocalHex.R - BlueprintCenter.R + RotatedOffset.R;
+		PreviewHex.Q += RotatedTileOffset.Q;
+		PreviewHex.R += RotatedTileOffset.R;
 		
 		// Convert hex to world position
 		FVector PreviewWorldPos;
@@ -1283,8 +1345,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 			{
 				PreviewMesh = Placer->GenericTilePreviewMesh;
 			}
-			// Apply arm rotation
-			PreviewYaw = (BlueprintTile.ArmFacing + BlueprintRotation) * 60.0f;
+			// Apply arm rotation using StartingRotation
+			PreviewYaw = (BlueprintTile.StartingRotation + BlueprintRotation) * 60.0f;
 			if (Placer)
 			{
 				PreviewYaw = FMath::UnwindDegrees(PreviewYaw + Placer->ArmPreviewFacingFixDeg);
