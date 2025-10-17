@@ -7,6 +7,81 @@
 #include "DrawDebugHelpers.h"
 #include "AGLogChannels.h"
 
+// Constructor
+USimWorldHex::USimWorldHex()
+{
+	// Initialize all containers to prevent memory corruption
+	TileMap.Empty();
+	ItemMap.Empty();
+	Arms.Empty();
+	OrbAt.Empty();
+	BeltProgress.Empty();
+	Bonds.Empty();
+	ItemToBonds.Empty();
+	SimFacingByArm.Empty();
+	SimArmLenByArm.Empty();
+	SimGrabFacingByArm.Empty();
+	PendingFacingByArm.Empty();
+	PendingArmLenByArm.Empty();
+	PendingGrabFacingByArm.Empty();
+	SkipInputThisFrame.Empty();
+	SkipOutputThisFrame.Empty();
+	NewlyPlacedItems.Empty();
+	ArmsReadyForUnbond.Empty();
+	PendingUnbonds.Empty();
+	RecentlyDroppedByArm.Empty();
+	OrbsNewlyMovedToOutput.Empty();
+	AnimatedOrbs.Empty();
+	HeldItemLastHex.Empty();
+	PendingBondFormations.Empty();
+	PendingGrabs.Empty();
+	BondedArmPairs.Empty();
+	PendingHeldMerges.Empty();
+	CollisionDebugData.Empty();
+	PredictiveCollisionDebugData.Empty();
+	ItemsMovedLastStep.Empty();
+	PrevItemHex.Empty();
+}
+
+// Destructor - explicit cleanup to prevent memory corruption
+USimWorldHex::~USimWorldHex()
+{
+	// Clear all containers in a safe order to prevent corruption
+	// Clear complex nested structures first
+	ItemToBonds.Empty();
+	
+	// Clear all other containers
+	TileMap.Empty();
+	ItemMap.Empty();
+	Arms.Empty();
+	OrbAt.Empty();
+	BeltProgress.Empty();
+	Bonds.Empty();
+	SimFacingByArm.Empty();
+	SimArmLenByArm.Empty();
+	SimGrabFacingByArm.Empty();
+	PendingFacingByArm.Empty();
+	PendingArmLenByArm.Empty();
+	PendingGrabFacingByArm.Empty();
+	SkipInputThisFrame.Empty();
+	SkipOutputThisFrame.Empty();
+	NewlyPlacedItems.Empty();
+	ArmsReadyForUnbond.Empty();
+	PendingUnbonds.Empty();
+	RecentlyDroppedByArm.Empty();
+	OrbsNewlyMovedToOutput.Empty();
+	AnimatedOrbs.Empty();
+	HeldItemLastHex.Empty();
+	PendingBondFormations.Empty();
+	PendingGrabs.Empty();
+	BondedArmPairs.Empty();
+	PendingHeldMerges.Empty();
+	CollisionDebugData.Empty();
+	PredictiveCollisionDebugData.Empty();
+	ItemsMovedLastStep.Empty();
+	PrevItemHex.Empty();
+}
+
 // Near top (after includes) add if not already in header:
 static constexpr float DEFAULT_BELT_SPEED_TILES_PER_SECOND = 0.0f;
 // Helper used only inside StepBonds to index held cluster sub‑orbs.
@@ -513,12 +588,18 @@ void USimWorldHex::StepGlyphs()
 
 void USimWorldHex::AddItemBondLink(int32 ItemId, int32 BondIndex)
 {
+	// Safety check: validate parameters
+	if (ItemId <= 0 || BondIndex < 0) return;
+	
 	TArray<int32>& List = ItemToBonds.FindOrAdd(ItemId);
 	List.Add(BondIndex);
 }
 
 void USimWorldHex::RemoveItemBondLink(int32 ItemId, int32 BondIndex)
 {
+	// Safety check: validate parameters
+	if (ItemId <= 0 || BondIndex < 0) return;
+	
 	if (TArray<int32>* List = ItemToBonds.Find(ItemId))
 	{
 		List->Remove(BondIndex);
@@ -583,12 +664,21 @@ void USimWorldHex::TryFormBondAt(const FHex& Root, uint8 Dir, const TSet<int32>&
 void USimWorldHex::RemoveBondIndex(int32 Index)
 {
 	if (!Bonds.IsValidIndex(Index)) return;
+	
+	// Safety check: ensure the bond is valid before proceeding
+	const FBond* BondPtr = &Bonds[Index];
+	if (!BondPtr) return;
+	
 	const int32 LastIndex = Bonds.Num() - 1;
-	const FBond Dead = Bonds[Index];
+	const FBond Dead = *BondPtr;
 
-	// Remove links for dead bond
-	RemoveItemBondLink(Dead.ItemA, Index);
-	RemoveItemBondLink(Dead.ItemB, Index);
+	// Safety check: validate item IDs before removing links
+	if (Dead.ItemA > 0 && Dead.ItemB > 0)
+	{
+		// Remove links for dead bond
+		RemoveItemBondLink(Dead.ItemA, Index);
+		RemoveItemBondLink(Dead.ItemB, Index);
+	}
 
 	// Swap removal if not last
 	if (Index != LastIndex)
@@ -599,14 +689,17 @@ void USimWorldHex::RemoveBondIndex(int32 Index)
 		// Fix moved bond indices in its items' lists
 		auto FixList = [&](int32 ItemId)
 			{
-				if (TArray<int32>* L = ItemToBonds.Find(ItemId))
+				if (ItemId > 0) // Safety check
 				{
-					for (int32& Val : *L)
+					if (TArray<int32>* L = ItemToBonds.Find(ItemId))
 					{
-						if (Val == LastIndex)
+						for (int32& Val : *L)
 						{
-							Val = Index;
-							break;
+							if (Val == LastIndex)
+							{
+								Val = Index;
+								break;
+							}
 						}
 					}
 				}

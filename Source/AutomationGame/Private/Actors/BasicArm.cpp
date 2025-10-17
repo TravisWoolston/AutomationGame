@@ -1186,23 +1186,36 @@ void ABasicArm::AttachHeldOrb()
 		}
 
 		// Preserve interpolation state when rebuilding cluster (e.g., during bond formation)
-		// Only reset if we weren't holding a cluster before or if there's no active interpolation
-		const bool bHasActiveInterpolation = (FMath::Abs(HeldClusterFacingEndDeg - HeldClusterFacingStartDeg) > 0.1f);
-		if (!bHasActiveInterpolation)
+		const int32 CurrentGrabFacing = (HeldOrb.GrabFacing >= 0 ? HeldOrb.GrabFacing % 6 : 0);
+		
+		// Check if we need to initialize new rotation interpolation
+		if (CurrentGrabFacing != LastHeldGrabFacing && LastHeldGrabFacing >= 0)
 		{
-			// Initialize cluster facing interpolation to current GrabFacing
-			LastHeldGrabFacing = (HeldOrb.GrabFacing >= 0 ? HeldOrb.GrabFacing % 6 : 0);
-			HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 60.f * float(LastHeldGrabFacing % 6);
+			// GrabFacing changed - this is a new RotateHeld command starting
+			// Initialize interpolation from current visual angle to new target
+			const float CurrentAngle = NormDeg(HeldClusterFacingStartDeg + 
+				FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
+			HeldClusterFacingStartDeg = CurrentAngle;
+			HeldClusterFacingEndDeg = 60.f * float(CurrentGrabFacing);
+			LastHeldGrabFacing = CurrentGrabFacing;
+			// Apply current interpolated position
+			HeldOrbComp->SetRelativeRotation(FRotator(0.f, CurrentAngle, 0.f));
+		}
+		else if (LastHeldGrabFacing < 0 || StepAlpha >= 0.99f)
+		{
+			// First time setup or rotation complete - snap to current GrabFacing
+			LastHeldGrabFacing = CurrentGrabFacing;
+			HeldClusterFacingStartDeg = HeldClusterFacingEndDeg = 60.f * float(CurrentGrabFacing);
 			HeldOrbComp->SetRelativeRotation(FRotator(0.f, HeldClusterFacingEndDeg, 0.f));
 		}
 		else
 		{
-
-		}
-		{
-			// Preserve current interpolation - rotation will continue in UpdateHeldClusterTransforms
-			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Preserving cluster rotation interpolation during rebuild (%.1f° -> %.1f°)"),
-				*GetName(), HeldClusterFacingStartDeg, HeldClusterFacingEndDeg);
+			// We're in the middle of a rotation and cluster composition changed (bond formed)
+			// Preserve the current interpolated angle
+			const float CurrentAngle = NormDeg(HeldClusterFacingStartDeg + 
+				FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg, HeldClusterFacingEndDeg) * StepAlpha);
+			HeldOrbComp->SetRelativeRotation(FRotator(0.f, CurrentAngle, 0.f));
+			// Keep LastHeldGrabFacing and interpolation values unchanged
 		}
 
 		// Generate bonded orb meshes for held cluster

@@ -16,6 +16,9 @@ class AUTOMATIONGAME_API USimWorldHex : public UObject
 {
 	GENERATED_BODY()
 public:
+	// Constructor and destructor
+	USimWorldHex();
+	virtual ~USimWorldHex();
 	// Config
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float TileSizeUU = 120.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float FixedStepSec = 0.20f; // 5 Hz
@@ -442,4 +445,11 @@ private:
 	// Check if a rotating arm's sweep would overlap with a static arm's held cluster
 	bool WouldRotationSweepOverlapStatic(const FArmState& RotatingArm, const FPredictiveArmState& PredictedRotating,
 		const FArmState& StaticArm);
+
+	// Safety and validation methods
+	UFUNCTION(BlueprintCallable, Category = "Sim|Debug")
+	bool ValidateDataIntegrity() const;
+	
+	UFUNCTION(BlueprintCallable, Category = "Sim|Debug")
+	void CleanupCorruptedData();
 };
