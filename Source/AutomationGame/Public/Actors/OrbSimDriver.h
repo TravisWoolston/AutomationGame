@@ -71,6 +71,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
 	bool bDebugBonds = false;
 	
+	/** Draw red spheres on tiles that are in the way of arm commands */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+	bool DebugCollision = false;
+	
 	/** Size of debug spheres for all orb types */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug", meta = (ClampMin = "1.0", ClampMax = "50.0"))
 	float DebugSphereSize = 8.0f;
@@ -138,6 +142,11 @@ public:
 	 * - Cluster sub-orbs with hex coordinate offsets
 	 * - Debug text showing item IDs and cluster information */
 	void DrawAllOrbDebugSpheres();
+
+	/** Draw red spheres on tiles that are blocking arm commands.
+	 * Called every frame in Tick() when DebugCollision is enabled.
+	 * Shows collision detection for arm movements and rotations. */
+	void DrawCollisionDebugSpheres();
 
 	/** Get debug color for orb type */
 	FColor GetDebugColorForOrbType(uint8 OrbType) const;

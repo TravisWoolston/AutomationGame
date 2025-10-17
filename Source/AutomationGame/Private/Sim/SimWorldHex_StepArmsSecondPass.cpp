@@ -506,7 +506,7 @@ void USimWorldHex::StepArmsSecondPass()
 
 				// Other arms held occupancy (hands + virtual orbs)
 				TSet<FHex> OtherHeldOcc;
-				// Build occupancy for other arms themselves (base positions and reach paths)
+				// Build occupancy for other arms themselves (base positions only)
 				TSet<FHex> OtherArmOcc;
 				
 				for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
@@ -514,24 +514,15 @@ void USimWorldHex::StepArmsSecondPass()
 					if (OtherIdx == ArmIndex) continue;
 					const FArmState& O = Arms[OtherIdx];
 					
-					// Always include the arm's base position
+					// Only include the arm's base position
 					OtherArmOcc.Add(O.BaseHex);
-					
-					// Include the arm's reach path (all hexes from base to grip)
-					FHex CurrentHex = O.BaseHex;
-					for (int32 i = 0; i < O.ArmLen; ++i)
-					{
-						CurrentHex = HexUtil::Neighbor(CurrentHex, O.Facing);
-						OtherArmOcc.Add(CurrentHex);
-					}
 					
 					if (!O.bHolding) continue;
 
-					const FHex OHand = ComputeGripHex(O);
-					OtherHeldOcc.Add(OHand);
-
+					// Don't include the hand hex itself, but include held cluster sub-orbs
 					if (O.Held.bIsCluster)
 					{
+						const FHex OHand = ComputeGripHex(O);
 						const uint8 cur = (uint8)O.Facing % 6;
 						const int8 grab = (int8)O.Held.GrabFacing;
 						const uint8 facingDelta = (grab >= 0)
@@ -540,15 +531,15 @@ void USimWorldHex::StepArmsSecondPass()
 						const uint8 ccw = (uint8)((6 - facingDelta) % 6);
 						for (const FOrbData& Sub : O.Held.Orbs)
 						{
+							// Skip the grabbed orb (dQ=0, dR=0) which would be at the hand position
+							if (Sub.dQ == 0 && Sub.dR == 0) continue;
+							
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = RotateAxial60Fn(Local, ccw);
 							OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R));
 						}
 					}
-					else
-					{
-						OtherHeldOcc.Add(OHand);
-					}
+					// Don't add single held orbs to OtherHeldOcc since they're at the hand position
 				}
 
 				// Build self locals for start and end, plus mid phases
@@ -646,7 +637,8 @@ void USimWorldHex::StepArmsSecondPass()
 				bool bBlocked = false;
 
 				// 1) Destination hand cannot contain foreign item/held orb if holding
-				if (S.bHolding && OverlapsAny(NewHand)) bBlocked = true;
+				// if (S.bHolding && (WorldOcc.Contains(NewHand) || OtherHeldOcc.Contains(NewHand)))
+				// bBlocked = true;
 
 				// 2) End locals
 				if (!bBlocked)

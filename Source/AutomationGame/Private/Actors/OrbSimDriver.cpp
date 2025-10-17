@@ -102,6 +102,12 @@ void AOrbSimDriver::Tick(float DeltaSeconds)
 	{
 		DrawAllOrbDebugSpheres();
 	}
+	
+	// Draw collision debug spheres when enabled
+	if (DebugCollision && GetWorld())
+	{
+		DrawCollisionDebugSpheres();
+	}
 }
 
 void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
@@ -197,7 +203,8 @@ void AOrbSimDriver::PostEditChangeProperty(FPropertyChangedEvent& PropertyChange
 	if (PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugLogs) ||
 		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugSpheres) ||
 		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugLines) ||
-		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugBonds))
+		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugBonds) ||
+		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, DebugCollision))
 	{
 		// Sync to sim
 		if (Sim)
@@ -429,6 +436,49 @@ float AOrbSimDriver::GetDebugSizeForOrbType(uint8 OrbType, bool bIsSubOrb) const
 {
 	// All orbs use the same size regardless of whether they're in a cluster or not
 	return DebugSphereSize;
+}
+
+void AOrbSimDriver::DrawCollisionDebugSpheres()
+{
+	if (!Sim || !GetWorld()) return;
+
+	const AActor* Anchor = GetGridAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	const float Tile = GetTileSize();
+	const float GridYaw = GetGridYaw();
+	const EHexOrientation Ori = GetGridOrientation();
+	
+	// Calculate GTM tick duration for debug draw lifetime
+	float DebugLifetime = 0.f;
+	if (AGameTickManager* TickManager = AGameTickManager::Get(this))
+	{
+		DebugLifetime = 1.0f / FMath::Max(0.01f, TickManager->TicksPerSecond);
+	}
+
+	// Use the collision data tracked by the simulation
+	const TArray<USimWorldHex::FCollisionDebugInfo>& CollisionData = Sim->GetCollisionDebugData();
+	
+	for (const USimWorldHex::FCollisionDebugInfo& CollisionInfo : CollisionData)
+	{
+		// Convert blocked hex to world coordinates
+		const FHexAxial BlockedA(CollisionInfo.BlockedHex.Q, CollisionInfo.BlockedHex.R);
+		const FVector2D BlockedLocalXY = HexCoord::AxialToXY(BlockedA, Tile, Ori);
+		const FVector2D BlockedRotXY = HexCoord::Rotate2D(BlockedLocalXY, GridYaw);
+		const FVector BlockedWorld = AnchorV + FVector(BlockedRotXY.X, BlockedRotXY.Y, 0.f);
+		
+		// Convert arm base hex to world coordinates for line drawing
+		const FHexAxial BaseA(CollisionInfo.ArmBaseHex.Q, CollisionInfo.ArmBaseHex.R);
+		const FVector2D BaseLocalXY = HexCoord::AxialToXY(BaseA, Tile, Ori);
+		const FVector2D BaseRotXY = HexCoord::Rotate2D(BaseLocalXY, GridYaw);
+		const FVector BaseWorld = AnchorV + FVector(BaseRotXY.X, BaseRotXY.Y, 0.f);
+		
+		// Draw the collision sphere and line
+		DrawDebugSphere(GetWorld(), BlockedWorld, DebugSphereSize * 1.2f, 12, FColor::Red, false, DebugLifetime, 0, 2.f);
+		DrawDebugLine(GetWorld(), BaseWorld, BlockedWorld, FColor::Red, false, DebugLifetime, 0, 3.f);
+		DrawDebugString(GetWorld(), BlockedWorld + FVector(0, 0, DebugSphereSize + 5.f),
+			FString::Printf(TEXT("Arm %d: %s"), CollisionInfo.ArmIndex, *CollisionInfo.Reason),
+			nullptr, FColor::Red, 0.f, true, 1.0f);
+	}
 }
 
 FVector AOrbSimDriver::MapHexToWorld(const FHex& H) const

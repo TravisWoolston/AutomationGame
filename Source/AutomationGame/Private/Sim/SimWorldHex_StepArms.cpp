@@ -665,7 +665,7 @@ void USimWorldHex::StepArms()
 
 				// Build occupancy for other arms' held orbs (and their hands)
 				TSet<FHex> OtherHeldOcc;
-				// Build occupancy for other arms themselves (base positions and reach paths)
+				// Build occupancy for other arms themselves (base positions only)
 				TSet<FHex> OtherArmOcc;
 				
 				for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
@@ -673,26 +673,16 @@ void USimWorldHex::StepArms()
 					if (OtherIdx == ArmIndex) continue;
 					const FArmState& O = Arms[OtherIdx];
 					
-					// Always include the arm's base position
+					// Only include the arm's base position
 					OtherArmOcc.Add(O.BaseHex);
-					
-					// Include the arm's reach path (all hexes from base to grip)
-					FHex CurrentHex = O.BaseHex;
-					for (int32 i = 0; i < O.ArmLen; ++i)
-					{
-						CurrentHex = HexUtil::Neighbor(CurrentHex, O.Facing);
-						OtherArmOcc.Add(CurrentHex);
-					}
 					
 					if (!O.bHolding) continue;
 
-					// Always include their hand hex
-					const FHex OHand = ComputeGripHex(O, O.Facing);
-					OtherHeldOcc.Add(OHand);
-
+					// Don't include the hand hex itself, but include held cluster sub-orbs
 					if (O.Held.bIsCluster)
 					{
 						// Virtual positions of their sub-orbs at current facing
+						const FHex OHand = ComputeGripHex(O, O.Facing);
 						const uint8 cur = (uint8)O.Facing % 6;
 						const int8 grab = (int8)O.Held.GrabFacing;
 						const uint8 facingDelta = (grab >= 0)
@@ -702,16 +692,15 @@ void USimWorldHex::StepArms()
 
 						for (const FOrbData& Sub : O.Held.Orbs)
 						{
+							// Skip the grabbed orb (dQ=0, dR=0) which would be at the hand position
+							if (Sub.dQ == 0 && Sub.dR == 0) continue;
+							
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = Rot60(Local, ccw);
 							OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R));
 						}
 					}
-					else
-					{
-						// Single held orb occupies the hand
-						OtherHeldOcc.Add(OHand);
-					}
+					// Don't add single held orbs to OtherHeldOcc since they're at the hand position
 				}
 
 				// Self held-orb positions at start and end, plus two “mid” phases
@@ -811,9 +800,9 @@ void USimWorldHex::StepArms()
 
 				bool bBlocked = false;
 
-				// 1) Destination hand cannot contain foreign item/held orb (covers single held-orb too)
-				// Only check this if the arm is holding something
-				if (S.bHolding && OverlapsAny(NewHand))
+				// 1) Destination hand cannot contain board orbs or other arms' held cluster sub-orbs
+				// Only check this if the arm is holding something, and don't check for other arms' hands
+				if (S.bHolding && (WorldOcc.Contains(NewHand) || OtherHeldOcc.Contains(NewHand)))
 				{
 					bBlocked = true;
 				}
@@ -925,6 +914,69 @@ void USimWorldHex::StepArms()
 
 				if (bBlocked)
 				{
+					// Find the actual obstacle hex that's causing the collision
+					FHex ObstacleHex = NewHand; // Default to new hand position
+					
+					// Check what's actually blocking
+					if (WorldOcc.Contains(NewHand))
+					{
+						ObstacleHex = NewHand;
+					}
+					else if (OtherHeldOcc.Contains(NewHand))
+					{
+						ObstacleHex = NewHand;
+					}
+					else if (OtherArmOcc.Contains(NewHand))
+					{
+						ObstacleHex = NewHand;
+					}
+					else
+					{
+						// Check end positions of held cluster sub-orbs
+						for (const FHex& H : EndLocals)
+						{
+							if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H))
+							{
+								ObstacleHex = H;
+								break;
+							}
+						}
+						
+						// Check mid positions if still not found
+						if (ObstacleHex == NewHand)
+						{
+							for (const FHex& H : MidTranslateLocals)
+							{
+								if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H))
+								{
+									ObstacleHex = H;
+									break;
+								}
+							}
+						}
+						
+						if (ObstacleHex == NewHand)
+						{
+							for (const FHex& H : MidRotateLocals)
+							{
+								if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H))
+								{
+									ObstacleHex = H;
+									break;
+								}
+							}
+						}
+					}
+					
+					// Record collision debug info
+					FCollisionDebugInfo CollisionInfo;
+					CollisionInfo.ArmIndex = ArmIndex;
+					CollisionInfo.ArmBaseHex = S.BaseHex;
+					CollisionInfo.ArmGripHex = NewHand;
+					CollisionInfo.BlockedHex = ObstacleHex;
+					CollisionInfo.Reason = FString::Printf(TEXT("Rotate blocked"));
+					CollisionDebugData.Add(CollisionInfo);
+					
 					// Arm cannot rotate this tick; set a 1‑tick wait and retry SAME instruction.
 					if (S.WaitCounter == 0)
 					{
@@ -956,10 +1008,10 @@ void USimWorldHex::StepArms()
 					FHex Hand = S.BaseHex;
 					for (int i = 0; i < S.ArmLen; ++i)
 						Hand = HexUtil::Neighbor(Hand, S.Facing);
-					GEngine->AddOnScreenDebugMessage(
-						-1, 1.5f, FColor::Green,
-						FString::Printf(TEXT("[Arm %d] EXTEND (Δ=%d) Len=%d Hand=(%d,%d)"),
-							ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
+					// GEngine->AddOnScreenDebugMessage(
+					// 	-1, 1.5f, FColor::Green,
+					// 	FString::Printf(TEXT("[Arm %d] EXTEND (Δ=%d) Len=%d Hand=(%d,%d)"),
+					// 		ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
 				}
 			}
 			break;
@@ -977,10 +1029,10 @@ void USimWorldHex::StepArms()
 					FHex Hand = S.BaseHex;
 					for (int i = 0; i < S.ArmLen; ++i)
 						Hand = HexUtil::Neighbor(Hand, S.Facing);
-					GEngine->AddOnScreenDebugMessage(
-						-1, 1.5f, FColor::Orange,
-						FString::Printf(TEXT("[Arm %d] RETRACT (Δ=%d) Len=%d Hand=(%d,%d)"),
-							ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
+					// GEngine->AddOnScreenDebugMessage(
+					// 	-1, 1.5f, FColor::Orange,
+					// 	FString::Printf(TEXT("[Arm %d] RETRACT (Δ=%d) Len=%d Hand=(%d,%d)"),
+					// 		ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
 				}
 			}
 			break;

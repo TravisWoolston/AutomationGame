@@ -466,6 +466,9 @@ void USimWorldHex::StepSim()
 		KV.Value.LocationUpdatedThisTick = false;
 	}
 
+	// Clear collision debug data for this frame
+	CollisionDebugData.Empty();
+
 	++StepCounter;
 	SkipInputThisFrame.Reset();
 	SkipOutputThisFrame.Reset();

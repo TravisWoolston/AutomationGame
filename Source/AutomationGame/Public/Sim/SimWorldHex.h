@@ -27,6 +27,22 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugLines = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugBonds = false;
 
+	// Collision debug tracking
+	struct FCollisionDebugInfo
+	{
+		int32 ArmIndex = -1;
+		FHex BlockedHex;
+		FString Reason;
+		FHex ArmBaseHex;
+		FHex ArmGripHex;
+	};
+	
+	// Collision debug data (cleared each frame, populated during arm stepping)
+	TArray<FCollisionDebugInfo> CollisionDebugData;
+	
+	// Accessor for collision debug data
+	const TArray<FCollisionDebugInfo>& GetCollisionDebugData() const { return CollisionDebugData; }
+
 	// ---- Arm <-> Item API ----
 	UFUNCTION(BlueprintCallable, Category = "Sim|Arm")
 	bool TryArmPickItem(const FHex& From, FItem& OutItem);
