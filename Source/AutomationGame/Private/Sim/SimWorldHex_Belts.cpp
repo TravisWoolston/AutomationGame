@@ -6,7 +6,7 @@ void USimWorldHex::StepBelts()
 	if (TileMap.Num() == 0 || ItemMap.Num() == 0) return;
 
 
-	const float Speed = FMath::Max(0.f, BeltSpeedTilesPerTick);
+	const float Speed = FMath::Max(0.f, 1.f);
 	const float BlockClamp = BeltBlockedClamp;
 
 	// Gather all hexes occupied by held orbs
@@ -67,12 +67,15 @@ void USimWorldHex::StepBelts()
 	};
 
 	// SIMPLE BELT SYSTEM - Move items every tick based on belt speed
-	// Items move one tile per tick when BeltSpeedTilesPerTick >= 1.0
+
 
 	// Move items on belts - discrete tile-to-tile each tick
 	// Renderer handles smooth interpolation using Alpha
 	TArray<FMoveOperation> MoveOperations;
 	TSet<int32> ProcessedItems;
+	
+	// Track destinations that will be occupied after all moves
+	TMap<FHex, int32> PendingDestinations; // Maps destination hex to item ID that will move there
 
 	// Process each belt tile independently
 	for (const auto& KV : ItemMap)
@@ -92,7 +95,22 @@ void USimWorldHex::StepBelts()
 		const FHex ToHex = HexUtil::Neighbor(FromHex, (EHexDir)(BeltDir % 6));
 		
 		// Check if destination is available
-		bool bCanMove = !HeldOrbHexes.Contains(ToHex) && !ItemMap.Contains(ToHex);
+		// First check static obstacles (held orbs)
+		bool bCanMove = !HeldOrbHexes.Contains(ToHex);
+		
+		// Then check if another item is at the destination
+		if (bCanMove && ItemMap.Contains(ToHex))
+		{
+			// Destination is occupied, we're blocked for now
+			// The cluster validation will handle chain movements properly
+			bCanMove = false;
+		}
+		
+		// Also check if another item already claimed this destination
+		if (bCanMove && PendingDestinations.Contains(ToHex))
+		{
+			bCanMove = false;
+		}
 		
 		// Don't move items that were just dropped by arms (settling period)
 		if (RecentlyDroppedByArm.Contains(Item.Id))
@@ -200,9 +218,17 @@ void USimWorldHex::StepBelts()
 			{
 				if (!InCluster.Contains(DestItem->Id))
 				{
+					// Destination is blocked
 					bCanMoveCluster = false;
 					break;
 				}
+			}
+			
+			// Check if another pending move already claimed this destination
+			if (PendingDestinations.Contains(ConnectedToHex))
+			{
+				bCanMoveCluster = false;
+				break;
 			}
 		}
 
@@ -212,10 +238,166 @@ void USimWorldHex::StepBelts()
 			for (int32 ConnectedId : MoveOp.ConnectedItemIds)
 			{
 				ProcessedItems.Add(ConnectedId);
+				
+				// Track all destination hexes for this cluster
+				for (const auto& BoardKV : ItemMap)
+				{
+					if (BoardKV.Value.Id == ConnectedId)
+					{
+						FHex DestHex(BoardKV.Key.Q + ClusterMoveOffset.Q, BoardKV.Key.R + ClusterMoveOffset.R);
+						PendingDestinations.Add(DestHex, ConnectedId);
+						break;
+					}
+				}
 			}
 		}
 	}
 
+	// Step 2.5: Iterative movement resolution
+	// Use an iterative approach to resolve all possible movements
+	TArray<FMoveOperation> ValidMoveOperations;
+	TSet<int32> ProcessedInThisIteration;
+	TMap<FHex, int32> CurrentItemPositions; // Current state of the board
+	
+	// Initialize current positions
+	for (const auto& KV : ItemMap)
+	{
+		if (KV.Value.Id > 0)
+		{
+			CurrentItemPositions.Add(KV.Key, KV.Value.Id);
+		}
+	}
+	
+	// Keep iterating until no more moves can be validated
+	bool bMadeProgress = true;
+	int32 IterationCount = 0;
+	const int32 MaxIterations = 100; // Safety limit
+	
+	while (bMadeProgress && IterationCount < MaxIterations)
+	{
+		bMadeProgress = false;
+		IterationCount++;
+		TArray<FMoveOperation> ThisIterationMoves;
+		
+		// Try each pending move operation
+		for (const FMoveOperation& MoveOp : MoveOperations)
+		{
+			// Skip if already processed
+			if (ProcessedInThisIteration.Contains(MoveOp.ItemId)) continue;
+			
+			// Check if this move can be executed given current positions
+			bool bCanMove = true;
+			FHex MoveOffset(MoveOp.ToHex.Q - MoveOp.FromHex.Q, MoveOp.ToHex.R - MoveOp.FromHex.R);
+			
+			// Check all items in the cluster
+			for (int32 ItemId : MoveOp.ConnectedItemIds)
+			{
+				// Find current position of this item
+				FHex CurrentPos;
+				bool bFoundPos = false;
+				for (const auto& PosKV : CurrentItemPositions)
+				{
+					if (PosKV.Value == ItemId)
+					{
+						CurrentPos = PosKV.Key;
+						bFoundPos = true;
+						break;
+					}
+				}
+				
+				if (!bFoundPos)
+				{
+					bCanMove = false;
+					break;
+				}
+				
+				// Calculate destination
+				FHex DestPos(CurrentPos.Q + MoveOffset.Q, CurrentPos.R + MoveOffset.R);
+				
+				// Check if destination is blocked
+				if (HeldOrbHexes.Contains(DestPos))
+				{
+					bCanMove = false;
+					break;
+				}
+				
+				// Check if another item is at destination
+				if (const int32* BlockingId = CurrentItemPositions.Find(DestPos))
+				{
+					// Check if the blocking item is part of our cluster
+					if (!MoveOp.ConnectedItemIds.Contains(*BlockingId))
+					{
+						bCanMove = false;
+						break;
+					}
+				}
+			}
+			
+			if (bCanMove)
+			{
+				ThisIterationMoves.Add(MoveOp);
+				bMadeProgress = true;
+			}
+		}
+		
+		// Apply all moves from this iteration to update positions
+		for (const FMoveOperation& MoveOp : ThisIterationMoves)
+		{
+			FHex MoveOffset(MoveOp.ToHex.Q - MoveOp.FromHex.Q, MoveOp.ToHex.R - MoveOp.FromHex.R);
+			
+			// Update positions for all items in the cluster
+			TArray<TPair<FHex, int32>> Updates;
+			
+			// First, collect all items to move (to avoid modifying map while iterating)
+			for (int32 ItemId : MoveOp.ConnectedItemIds)
+			{
+				for (const auto& PosKV : CurrentItemPositions)
+				{
+					if (PosKV.Value == ItemId)
+					{
+						FHex NewPos(PosKV.Key.Q + MoveOffset.Q, PosKV.Key.R + MoveOffset.R);
+						Updates.Add(TPair<FHex, int32>(NewPos, ItemId));
+						break;
+					}
+				}
+			}
+			
+			// Remove old positions
+			for (int32 ItemId : MoveOp.ConnectedItemIds)
+			{
+				// Find and remove all positions for this item
+				TArray<FHex> KeysToRemove;
+				for (const auto& PosKV : CurrentItemPositions)
+				{
+					if (PosKV.Value == ItemId)
+					{
+						KeysToRemove.Add(PosKV.Key);
+					}
+				}
+				for (const FHex& Key : KeysToRemove)
+				{
+					CurrentItemPositions.Remove(Key);
+				}
+			}
+			
+			// Add new positions
+			for (const auto& Update : Updates)
+			{
+				CurrentItemPositions.Add(Update.Key, Update.Value);
+			}
+			
+			// Mark as processed
+			ValidMoveOperations.Add(MoveOp);
+			for (int32 ItemId : MoveOp.ConnectedItemIds)
+			{
+				ProcessedInThisIteration.Add(ItemId);
+			}
+		}
+	}
+	
+	// Use validated operations
+	MoveOperations = ValidMoveOperations;
+	
 	// Step 3: Execute all moves atomically
 	for (const FMoveOperation& MoveOp : MoveOperations)
 	{

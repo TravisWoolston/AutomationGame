@@ -117,7 +117,6 @@ public:
 	bool GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const;
 
 	int32 GetStepCounter() const { return StepCounter; }
-	void SetBeltSpeed(float TilesPerTick) { BeltSpeedTilesPerTick = FMath::Max(0.f, TilesPerTick); }
 
 	// External world transform (optional)
 	void SetWorldTransform(const FVector& InAnchor, float InGridYawDeg, EHexOrientation InOrientation)
@@ -299,7 +298,7 @@ private:
 	UPROPERTY()
 	TMap<int32, float> BeltProgress; // ItemId -> progress [0,1)
 
-	float BeltSpeedTilesPerTick = 1.0f;
+
 	float BeltBlockedClamp = 0.98f;
 	TArray<FBond> Bonds;
 

@@ -590,6 +590,17 @@ void UOrbRenderer::RebuildInstances()
 		}
 	}
 
+	// Build set of animated output item ids so we don't double render them
+	// Input orbs should still be visible on input tiles during ascent
+	TSet<int32> AnimatedOutputIds;
+	for (const USimWorldHex::FAnimatedOrb& AnimatedOrb : Sim->GetAnimatedOrbs())
+	{
+		if (AnimatedOrb.bActive && !AnimatedOrb.bIsInput)
+		{
+			AnimatedOutputIds.Add(AnimatedOrb.Item.Id);
+		}
+	}
+
 	// Render animated orbs (inputs ascending, outputs descending) - these use sim interpolation
 	RenderAnimatedOrbs();
 
@@ -601,6 +612,7 @@ void UOrbRenderer::RebuildInstances()
 	for (int32 Id : AllIds)
 	{
 		if (HeldIds.Contains(Id)) continue;
+		if (AnimatedOutputIds.Contains(Id)) continue; // Skip output orbs that are being animated (descending)
 
 		const FVector* A = PrevPos.Find(Id);
 		const FVector* B = CurrPos.Find(Id);

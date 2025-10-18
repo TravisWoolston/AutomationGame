@@ -90,8 +90,8 @@ struct FHeldOrbRef
 	int32 ArmIndex = -1;
 	int32 SubIdx = -1;
 };
-// Prefer per‑second speed; if <=0 we fall back to legacy BeltSpeedTilesPerTick.
-float BeltSpeedTilesPerSecond = DEFAULT_BELT_SPEED_TILES_PER_SECOND;
+
+
 void USimWorldHex::Initialize(int32 /*Radius*/)
 {
 	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::Initialize() clearing %d arms from simulation"), Arms.Num());
@@ -838,8 +838,7 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
 	if (!bBlockedEdge)
 	{
 		const float Dt = FMath::Max(0.f, FixedStepSec);
-		const float TilesPerSec = BeltSpeedTilesPerTick / FMath::Max(KINDA_SMALL_NUMBER, Dt);
-		VisualP = LogicalP + FrameAlpha * TilesPerSec * Dt;
+		VisualP = LogicalP + FrameAlpha * Dt;
 
 		// Never render beyond the belt's blocked edge
 		VisualP = FMath::Min(VisualP, BeltBlockedClamp - 0.0001f);
