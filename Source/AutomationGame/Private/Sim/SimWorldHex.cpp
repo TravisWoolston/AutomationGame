@@ -31,6 +31,7 @@ USimWorldHex::USimWorldHex()
 	PendingUnbonds.Empty();
 	RecentlyDroppedByArm.Empty();
 	OrbsNewlyMovedToOutput.Empty();
+	OrbsNewlyMovedOnBelts.Empty();
 	AnimatedOrbs.Empty();
 	HeldItemLastHex.Empty();
 	PendingBondFormations.Empty();
@@ -70,6 +71,7 @@ USimWorldHex::~USimWorldHex()
 	PendingUnbonds.Empty();
 	RecentlyDroppedByArm.Empty();
 	OrbsNewlyMovedToOutput.Empty();
+	OrbsNewlyMovedOnBelts.Empty();
 	AnimatedOrbs.Empty();
 	HeldItemLastHex.Empty();
 	PendingBondFormations.Empty();
@@ -548,6 +550,7 @@ void USimWorldHex::StepSim()
 	SkipInputThisFrame.Reset();
 	SkipOutputThisFrame.Reset();
 	OrbsNewlyMovedToOutput.Reset();
+	OrbsNewlyMovedOnBelts.Reset();
 
 	// SpawnInputs();          // pass 1 (empty at start)
 	StepArms();

@@ -177,15 +177,60 @@ void USimWorldHex::StepArms()
 						Target = HexUtil::Neighbor(Target, S.Facing);
 
 					FItem* Found = ItemMap.Find(Target);
+					
+					// If no orb at target, check if there's an orb moving toward this hex from a belt
+					// Only allow grabbing if the orb is actually moving (has belt progress)
+					if (!Found)
+					{
+						// Check all adjacent hexes for orbs on belts that are moving toward our target
+						for (int32 Dir = 0; Dir < 6; ++Dir)
+						{
+							FHex AdjacentHex = HexUtil::Neighbor(Target, (EHexDir)Dir);
+							const FItem* AdjacentItem = ItemMap.Find(AdjacentHex);
+							if (!AdjacentItem || AdjacentItem->Id == 0) continue;
+							
+							// Check if this hex has a belt pointing toward our target
+							const FTile* AdjacentTile = TileMap.Find(AdjacentHex);
+							if (!AdjacentTile || AdjacentTile->Kind != ETileKind::Belt) continue;
+							
+							const uint8 BeltDir = (uint8)(AdjacentTile->Arg & 0xFF);
+							FHex BeltTarget = HexUtil::Neighbor(AdjacentHex, (EHexDir)(BeltDir % 6));
+							
+							// If the belt is pointing toward our target
+							if (BeltTarget == Target)
+							{
+								// Only allow grabbing if the orb is currently moving (has belt progress)
+								// This ensures we grab while the orb is in transit, not before it starts moving
+								if (BeltProgress.Contains(AdjacentItem->Id))
+								{
+									Found = const_cast<FItem*>(AdjacentItem);
+									break;
+								}
+							}
+						}
+					}
 
 					// Check if another arm is already trying to grab this cluster
 					bool bAnotherArmGrabbing = false;
+					FHex GrabHex = Target; // Default to target hex
 					if (Found)
 					{
+						// If we found an orb on an adjacent belt tile, we need to grab from that tile instead
+						for (int32 Dir = 0; Dir < 6; ++Dir)
+						{
+							FHex AdjacentHex = HexUtil::Neighbor(Target, (EHexDir)Dir);
+							const FItem* AdjacentItem = ItemMap.Find(AdjacentHex);
+							if (AdjacentItem && AdjacentItem->Id == Found->Id)
+							{
+								GrabHex = AdjacentHex;
+								break;
+							}
+						}
+						
 						for (const FPendingGrab& PendingGrab : PendingGrabs)
 						{
 							if (PendingGrab.ArmIndex != ArmIndex &&
-								PendingGrab.TargetHex == Target &&
+								PendingGrab.TargetHex == GrabHex &&
 								PendingGrab.ClusterId == Found->Id)
 							{
 								bAnotherArmGrabbing = true;
@@ -218,12 +263,12 @@ void USimWorldHex::StepArms()
 							if (ClusterIds.Num() <= 1)
 							{
 								FItem SingleOut;
-								if (TryArmPickItem(Target, SingleOut))
+								if (TryArmPickItem(GrabHex, SingleOut))
 								{
 									S.Held = SingleOut;
 									S.bHolding = true;
 									S.PrevHeldOrbCount = 1;
-									SkipInputThisFrame.Add(Target);
+									SkipInputThisFrame.Add(GrabHex);
 									bGrabSucceeded = true;
 								}
 							}

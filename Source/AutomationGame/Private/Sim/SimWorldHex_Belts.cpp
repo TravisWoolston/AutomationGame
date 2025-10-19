@@ -67,15 +67,29 @@ void USimWorldHex::StepBelts()
 	};
 
 	// SIMPLE BELT SYSTEM - Move items every tick based on belt speed
+	// Iterative movement to allow orbs to move to vacant positions on the same tick
 
-
-	// Move items on belts - discrete tile-to-tile each tick
-	// Renderer handles smooth interpolation using Alpha
-	TArray<FMoveOperation> MoveOperations;
-	TSet<int32> ProcessedItems;
+	// Continue moving orbs until no more movements are possible
+	// Each orb can only move once per tick, but we iterate to fill vacant positions
+	bool bAnyMovement = true;
+	int32 MaxIterations = 10; // Safety limit to prevent infinite loops
+	int32 CurrentIteration = 0;
 	
-	// Track destinations that will be occupied after all moves
-	TMap<FHex, int32> PendingDestinations; // Maps destination hex to item ID that will move there
+	// Track which orbs have already moved this tick
+	TSet<int32> OrbsMovedThisTick;
+	
+	while (bAnyMovement && CurrentIteration < MaxIterations)
+	{
+		bAnyMovement = false;
+		CurrentIteration++;
+
+		// Move items on belts - discrete tile-to-tile each tick
+		// Renderer handles smooth interpolation using Alpha
+		TArray<FMoveOperation> MoveOperations;
+		TSet<int32> ProcessedItems;
+		
+		// Track destinations that will be occupied after all moves
+		TMap<FHex, int32> PendingDestinations; // Maps destination hex to item ID that will move there
 
 	// Process each belt tile independently
 	for (const auto& KV : ItemMap)
@@ -85,6 +99,9 @@ void USimWorldHex::StepBelts()
 		
 		if (Item.Id == 0) continue;
 		if (ProcessedItems.Contains(Item.Id)) continue;
+		
+		// Skip orbs that have already moved this tick
+		if (OrbsMovedThisTick.Contains(Item.Id)) continue;
 		
 		// Check if this item is on a belt
 		const FTile* BeltTile = TileMap.Find(FromHex);
@@ -271,7 +288,7 @@ void USimWorldHex::StepBelts()
 	// Keep iterating until no more moves can be validated
 	bool bMadeProgress = true;
 	int32 IterationCount = 0;
-	const int32 MaxIterations = 100; // Safety limit
+	MaxIterations = 100; // Safety limit
 	
 	while (bMadeProgress && IterationCount < MaxIterations)
 	{
@@ -481,6 +498,12 @@ void USimWorldHex::StepBelts()
 				{
 					OrbsNewlyMovedToOutput.Add(NewHex);
 				}
+				
+				// Track all orbs that moved on belts for bond timing
+				OrbsNewlyMovedOnBelts.Add(ItemId);
+				
+				// Mark this orb as having moved this tick
+				OrbsMovedThisTick.Add(ItemId);
 			}
 		}
 
@@ -541,6 +564,9 @@ void USimWorldHex::StepBelts()
 				ItemMap.Add(BeltHex, MovingItem);
 				OrbAt.Add(BeltHex, KindFromItem(MovingItem));
 				ItemsMovedLastStep.Add(MovingItem.Id);
+				
+				// Mark this orb as having moved this tick
+				OrbsMovedThisTick.Add(MovingItem.Id);
 
 					// Mark this input to skip spawning this frame
 					SkipInputThisFrame.Add(SourceHex);
@@ -704,6 +730,9 @@ void USimWorldHex::StepBelts()
 							ItemMap.Add(NewHex, *MovingItem);
 							OrbAt.Add(NewHex, KindFromItem(*MovingItem));
 							ItemsMovedLastStep.Add(MovingItem->Id);
+							
+							// Mark this orb as having moved this tick
+							OrbsMovedThisTick.Add(MovingItem->Id);
 						}
 					}
 					
@@ -804,6 +833,13 @@ void USimWorldHex::StepBelts()
 		}
 	}
 
+		// Check if any movements occurred in this iteration
+		if (MoveOperations.Num() > 0)
+		{
+			bAnyMovement = true;
+		}
+	} // End of while loop for iterative movement
+	
 	// Apply deferred bIsReady changes at the end of the tick
 	for (int32 ItemId : ItemsToSetReady)
 	{

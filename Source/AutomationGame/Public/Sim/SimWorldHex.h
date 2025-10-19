@@ -219,6 +219,9 @@ private:
 
 	// Hexes where orbs were newly moved to an output tile this tick
 	TSet<FHex> OrbsNewlyMovedToOutput;
+	
+	// Item IDs of orbs that were newly moved on belts this tick (for bond timing)
+	TSet<int32> OrbsNewlyMovedOnBelts;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;
