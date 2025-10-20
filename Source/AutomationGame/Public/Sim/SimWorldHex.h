@@ -222,6 +222,10 @@ private:
 	
 	// Item IDs of orbs that were newly moved on belts this tick (for bond timing)
 	TSet<int32> OrbsNewlyMovedOnBelts;
+	
+	// Output tile gates - tracks whether output tiles are open for new orbs
+	// True = open for new orbs, False = blocked (incorrect type orb on tile)
+	TMap<FHex, bool> OutputTileGates;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;

@@ -32,6 +32,7 @@ USimWorldHex::USimWorldHex()
 	RecentlyDroppedByArm.Empty();
 	OrbsNewlyMovedToOutput.Empty();
 	OrbsNewlyMovedOnBelts.Empty();
+	OutputTileGates.Empty();
 	AnimatedOrbs.Empty();
 	HeldItemLastHex.Empty();
 	PendingBondFormations.Empty();
@@ -72,6 +73,7 @@ USimWorldHex::~USimWorldHex()
 	RecentlyDroppedByArm.Empty();
 	OrbsNewlyMovedToOutput.Empty();
 	OrbsNewlyMovedOnBelts.Empty();
+	OutputTileGates.Empty();
 	AnimatedOrbs.Empty();
 	HeldItemLastHex.Empty();
 	PendingBondFormations.Empty();
