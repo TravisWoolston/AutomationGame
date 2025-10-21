@@ -101,6 +101,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetCompletedCommandColor(const FLinearColor& CompletedColor);
 
+	/** Calculate optimal timeline position to avoid blocking line of sight */
+	FVector CalculateOptimalTimelinePosition(const FVector& ArmLocation);
+
+	/** Set the maximum number of command icons to display */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetMaxCommandIcons(int32 MaxIcons);
+
 public:
 	/** Widget class to use for the timeline display */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")

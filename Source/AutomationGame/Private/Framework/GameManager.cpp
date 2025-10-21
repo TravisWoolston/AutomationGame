@@ -319,6 +319,7 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 		TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
 		TimelineWidget->SetTimelineScale(TimelineWidgetScale);
 		TimelineWidget->SetTimelineOffset(TimelineWidgetOffset);
+		TimelineWidget->SetMaxCommandIcons(MaxTimelineIcons);
 	}
 
 	return Arm;
@@ -443,6 +444,7 @@ void AGameManager::UpdateAllArmTimelineWidgets()
 					TimelineWidget->SetCompletedCommandColor(TimelineCompletedCommandColor);
 					TimelineWidget->SetTimelineWidgetClass(ArmTimelineWidgetClass);
 					TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
+					TimelineWidget->SetMaxCommandIcons(MaxTimelineIcons);
 				}
 			}
 		}

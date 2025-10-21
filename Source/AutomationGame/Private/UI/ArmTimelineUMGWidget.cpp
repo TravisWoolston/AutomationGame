@@ -280,11 +280,22 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 			// Add the border to the command icons box
 			CommandIconsBox->AddChild(CommandListBorder);
 			
-			// Create icons for the displayed commands
+			// Create icons for the displayed commands using sliding window around current command
 			int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
+			int32 StartIndex = 0;
+			
+			// Show a window around the current command
+			if (CurrentCommandIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
+			{
+				// Center the window around the current command
+				StartIndex = FMath::Max(0, CurrentCommandIndex - MaxDisplayedCommands / 2);
+				StartIndex = FMath::Min(StartIndex, ArmProgram.Num() - MaxDisplayedCommands);
+			}
+			
 			for (int32 i = 0; i < NumCommandsToShow; ++i)
 			{
-				UWidget* IconWidget = CreateCommandIcon(ArmProgram[i].Cmd, i);
+				int32 CommandIndex = StartIndex + i;
+				UWidget* IconWidget = CreateCommandIcon(ArmProgram[CommandIndex].Cmd, CommandIndex);
 				if (IconWidget)
 				{
 					CommandIconWidgets.Add(IconWidget);
@@ -303,11 +314,22 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 	}
 	else
 	{
-		// Fallback: create icons directly in the horizontal box
+		// Fallback: create icons directly in the horizontal box using sliding window
 		int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
+		int32 StartIndex = 0;
+		
+		// Show a window around the current command
+		if (CurrentCommandIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
+		{
+			// Center the window around the current command
+			StartIndex = FMath::Max(0, CurrentCommandIndex - MaxDisplayedCommands / 2);
+			StartIndex = FMath::Min(StartIndex, ArmProgram.Num() - MaxDisplayedCommands);
+		}
+		
 		for (int32 i = 0; i < NumCommandsToShow; ++i)
 		{
-			UWidget* IconWidget = CreateCommandIcon(ArmProgram[i].Cmd, i);
+			int32 CommandIndex = StartIndex + i;
+			UWidget* IconWidget = CreateCommandIcon(ArmProgram[CommandIndex].Cmd, CommandIndex);
 			if (IconWidget)
 			{
 				CommandIconWidgets.Add(IconWidget);
@@ -327,16 +349,29 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 
 void UArmTimelineUMGWidget::UpdateCommandIcons()
 {
+	// Calculate the sliding window start index around the current command
+	int32 StartIndex = 0;
+	if (CurrentCommandIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
+	{
+		// Center the window around the current command
+		StartIndex = FMath::Max(0, CurrentCommandIndex - MaxDisplayedCommands / 2);
+		StartIndex = FMath::Min(StartIndex, ArmProgram.Num() - MaxDisplayedCommands);
+	}
+	
 	// Update existing icons
 	for (int32 i = 0; i < CommandIconWidgets.Num(); ++i)
 	{
-		if (i < ArmProgram.Num() && CommandIconWidgets[i])
+		if (CommandIconWidgets[i])
 		{
-			bool bIsCurrent = (i == CurrentCommandIndex);
-			bool bIsCompleted = (i < CurrentCommandIndex);
-			float Progress = (bIsCurrent) ? CurrentCommandProgress : (bIsCompleted ? 1.0f : 0.0f);
-			
-			UpdateCommandIcon(CommandIconWidgets[i], ArmProgram[i].Cmd, i, bIsCurrent, bIsCompleted, Progress);
+			int32 CommandIndex = StartIndex + i;
+			if (CommandIndex < ArmProgram.Num())
+			{
+				bool bIsCurrent = (CommandIndex == CurrentCommandIndex);
+				bool bIsCompleted = (CommandIndex < CurrentCommandIndex);
+				float Progress = (bIsCurrent) ? CurrentCommandProgress : (bIsCompleted ? 1.0f : 0.0f);
+				
+				UpdateCommandIcon(CommandIconWidgets[i], ArmProgram[CommandIndex].Cmd, CommandIndex, bIsCurrent, bIsCompleted, Progress);
+			}
 		}
 	}
 }

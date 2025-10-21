@@ -162,6 +162,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	FLinearColor TimelineCompletedCommandColor = FLinearColor::Green;
 
+	/** Whether to use smart positioning to avoid blocking line of sight */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	bool bUseSmartTimelinePositioning = true;
+
+	/** Maximum number of command icons to display in timeline */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	int32 MaxTimelineIcons = 10;
+
 	/** Set command textures for timeline display */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Textures);

@@ -274,6 +274,9 @@ void UArmTimelineWidget::UpdateWidgetPosition(const FVector& ArmLocation, const 
 	// Calculate the widget position relative to the arm
 	FVector WidgetLocation = ArmLocation + TimelineOffset;
 	
+	// Try to position the timeline to avoid blocking line of sight to the arm
+	WidgetLocation = CalculateOptimalTimelinePosition(ArmLocation);
+	
 	// Check if we should rotate for top-down view
 	FRotator WidgetRotation = FRotator::ZeroRotator; // Default rotation
 	if (UWorld* World = GetWorld())
@@ -436,5 +439,131 @@ void UArmTimelineWidget::SetCompletedCommandColor(const FLinearColor& CompletedC
 	if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
 	{
 		UMGWidget->SetCompletedCommandColor(CompletedColor);
+	}
+}
+
+FVector UArmTimelineWidget::CalculateOptimalTimelinePosition(const FVector& ArmLocation)
+{
+	// Check if smart positioning is enabled
+	bool bSmartPositioningEnabled = true;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager)
+			{
+				bSmartPositioningEnabled = GameManager->bUseSmartTimelinePositioning;
+				break;
+			}
+		}
+	}
+	
+	// If smart positioning is disabled, use default offset
+	if (!bSmartPositioningEnabled)
+	{
+		return ArmLocation + TimelineOffset;
+	}
+	
+	// Get the player's camera position and direction
+	FVector PlayerLocation;
+	FVector PlayerDirection;
+	
+	if (UWorld* World = GetWorld())
+	{
+		// Find the player controller
+		APlayerController* PC = World->GetFirstPlayerController();
+		if (PC && PC->GetPawn())
+		{
+			PlayerLocation = PC->GetPawn()->GetActorLocation();
+			
+			// Get the camera direction (where the player is looking)
+			FRotator CameraRotation = PC->GetControlRotation();
+			PlayerDirection = CameraRotation.Vector();
+		}
+	}
+	
+	// If we couldn't get player info, use default offset
+	if (PlayerLocation.IsZero())
+	{
+		return ArmLocation + TimelineOffset;
+	}
+	
+	// Calculate the vector from arm to player
+	FVector ArmToPlayer = PlayerLocation - ArmLocation;
+	ArmToPlayer.Normalize();
+	
+	// Calculate the line of sight vector (from player to arm)
+	FVector LineOfSight = ArmLocation - PlayerLocation;
+	LineOfSight.Normalize();
+	
+	// Try different positions around the arm to avoid blocking line of sight
+	TArray<FVector> CandidatePositions;
+	
+	// Position 1: To the right of the line of sight
+	FVector RightOffset = FVector::CrossProduct(LineOfSight, FVector::UpVector);
+	RightOffset.Normalize();
+	CandidatePositions.Add(ArmLocation + RightOffset * 200.0f + FVector(0, 0, 150.0f));
+	
+	// Position 2: To the left of the line of sight
+	FVector LeftOffset = -RightOffset;
+	CandidatePositions.Add(ArmLocation + LeftOffset * 200.0f + FVector(0, 0, 150.0f));
+	
+	// Position 3: Above the arm
+	CandidatePositions.Add(ArmLocation + FVector(0, 0, 300.0f));
+	
+	// Position 4: Behind the arm (opposite to line of sight)
+	FVector BehindOffset = -LineOfSight;
+	CandidatePositions.Add(ArmLocation + BehindOffset * 200.0f + FVector(0, 0, 150.0f));
+	
+	// Find the best position that doesn't block the line of sight
+	FVector BestPosition = ArmLocation + TimelineOffset; // Default fallback
+	float BestScore = -1.0f;
+	
+	for (const FVector& CandidatePos : CandidatePositions)
+	{
+		// Calculate how much this position would block the line of sight
+		FVector CandidateToPlayer = PlayerLocation - CandidatePos;
+		FVector CandidateToArm = ArmLocation - CandidatePos;
+		
+		CandidateToPlayer.Normalize();
+		CandidateToArm.Normalize();
+		
+		// Calculate the angle between the candidate position and the line of sight
+		float DotProduct = FVector::DotProduct(CandidateToPlayer, LineOfSight);
+		float Angle = FMath::Acos(FMath::Clamp(DotProduct, -1.0f, 1.0f));
+		
+		// Prefer positions that are further from the line of sight
+		float Score = Angle; // Higher angle = better (less blocking)
+		
+		// Bonus for positions that are above the arm (less likely to block)
+		if (CandidatePos.Z > ArmLocation.Z)
+		{
+			Score += 0.5f;
+		}
+		
+		// Bonus for positions that are to the side rather than in front/behind
+		FVector SideVector = FVector::CrossProduct(LineOfSight, FVector::UpVector);
+		float SideDot = FMath::Abs(FVector::DotProduct((CandidatePos - ArmLocation).GetSafeNormal(), SideVector));
+		Score += SideDot * 0.3f;
+		
+		if (Score > BestScore)
+		{
+			BestScore = Score;
+			BestPosition = CandidatePos;
+		}
+	}
+	
+	return BestPosition;
+}
+
+void UArmTimelineWidget::SetMaxCommandIcons(int32 MaxIcons)
+{
+	MaxDisplayedCommands = FMath::Clamp(MaxIcons, 1, 20);
+	
+	// Update the UMG widget if it exists
+	if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
+	{
+		UMGWidget->SetMaxDisplayedCommands(MaxDisplayedCommands);
 	}
 }
