@@ -312,6 +312,9 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 		TimelineWidget->SetDefaultCommandTexture(DefaultCommandTexture);
 		TimelineWidget->SetIconSize(TimelineIconSize);
 		TimelineWidget->SetIconBackgroundColor(TimelineIconBackgroundColor);
+		TimelineWidget->SetNormalCommandColor(TimelineNormalCommandColor);
+		TimelineWidget->SetCurrentCommandColor(TimelineCurrentCommandColor);
+		TimelineWidget->SetCompletedCommandColor(TimelineCompletedCommandColor);
 		TimelineWidget->SetTimelineWidgetClass(ArmTimelineWidgetClass);
 		TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
 		TimelineWidget->SetTimelineScale(TimelineWidgetScale);
@@ -383,7 +386,6 @@ void AGameManager::SetTimelineVisibility(bool bVisible)
 {
 	bShowArmTimelines = bVisible;
 	
-	UE_LOG(LogTemp, Log, TEXT("GameManager: SetTimelineVisibility - %s"), bVisible ? TEXT("true") : TEXT("false"));
 	
 	// Update all existing arm timeline widgets
 	if (UWorld* World = GetWorld())
@@ -420,7 +422,6 @@ void AGameManager::UpdateArmTimeline(ABasicArm* Arm, int32 CommandIndex, float P
 
 void AGameManager::UpdateAllArmTimelineWidgets()
 {
-	UE_LOG(LogTemp, Log, TEXT("GameManager: UpdateAllArmTimelineWidgets"));
 	
 	// Update all existing arm timeline widgets with current settings
 	if (UWorld* World = GetWorld())
@@ -437,6 +438,9 @@ void AGameManager::UpdateAllArmTimelineWidgets()
 					TimelineWidget->SetDefaultCommandTexture(DefaultCommandTexture);
 					TimelineWidget->SetIconSize(TimelineIconSize);
 					TimelineWidget->SetIconBackgroundColor(TimelineIconBackgroundColor);
+					TimelineWidget->SetNormalCommandColor(TimelineNormalCommandColor);
+					TimelineWidget->SetCurrentCommandColor(TimelineCurrentCommandColor);
+					TimelineWidget->SetCompletedCommandColor(TimelineCompletedCommandColor);
 					TimelineWidget->SetTimelineWidgetClass(ArmTimelineWidgetClass);
 					TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
 				}

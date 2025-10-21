@@ -1667,6 +1667,9 @@ void ABasicArm::InitializeTimelineWidget()
 				TimelineWidget->SetDefaultCommandTexture(GameManager->DefaultCommandTexture);
 				TimelineWidget->SetIconSize(GameManager->TimelineIconSize);
 				TimelineWidget->SetIconBackgroundColor(GameManager->TimelineIconBackgroundColor);
+				TimelineWidget->SetNormalCommandColor(GameManager->TimelineNormalCommandColor);
+				TimelineWidget->SetCurrentCommandColor(GameManager->TimelineCurrentCommandColor);
+				TimelineWidget->SetCompletedCommandColor(GameManager->TimelineCompletedCommandColor);
 				TimelineWidget->SetTimelineWidgetClass(GameManager->ArmTimelineWidgetClass);
 				TimelineWidget->SetTimelineScale(GameManager->TimelineWidgetScale);
 				TimelineWidget->SetTimelineOffset(GameManager->TimelineWidgetOffset);

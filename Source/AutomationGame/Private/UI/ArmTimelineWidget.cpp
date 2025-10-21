@@ -34,7 +34,6 @@ void UArmTimelineWidget::BeginPlay()
 	
 	InitializeWidget();
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: BeginPlay - Widget initialized"));
 }
 
 void UArmTimelineWidget::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -80,7 +79,6 @@ void UArmTimelineWidget::SetArmProgram(const TArray<FArmInstr>& Program)
 	// Only log when program actually changes
 	if (ArmProgram.Num() != Program.Num())
 	{
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetArmProgram - %d commands"), Program.Num());
 	}
 	
 	if (TimelineWidgetInstance)
@@ -104,7 +102,6 @@ void UArmTimelineWidget::SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Te
 {
 	CommandTextures = Textures;
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetCommandTextures - %d textures set"), Textures.Num());
 	
 	if (TimelineWidgetInstance)
 	{
@@ -117,9 +114,6 @@ void UArmTimelineWidget::SetTimelineWidgetVisible(bool bIsVisible)
 	bTimelineVisible = bIsVisible;
 	SetVisibility(bIsVisible);
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetTimelineWidgetVisible - %s (Component visible: %s)"), 
-		bIsVisible ? TEXT("true") : TEXT("false"),
-		IsVisible() ? TEXT("true") : TEXT("false"));
 }
 
 void UArmTimelineWidget::SetTimelineScale(float Scale)
@@ -127,7 +121,6 @@ void UArmTimelineWidget::SetTimelineScale(float Scale)
 	TimelineScale = FMath::Max(0.1f, Scale);
 	SetWorldScale3D(FVector(TimelineScale));
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetTimelineScale - %.2f"), TimelineScale);
 }
 
 void UArmTimelineWidget::SetTimelineOffset(const FVector& Offset)
@@ -140,8 +133,6 @@ void UArmTimelineWidget::SetTimelineOffset(const FVector& Offset)
 	// Add 180° Y rotation to flip text right-side up
 	SetRelativeRotation(FRotator(90.0f, 180.0f, 0.0f));
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetTimelineOffset - (%.2f, %.2f, %.2f)"), 
-		Offset.X, Offset.Y, Offset.Z);
 }
 
 void UArmTimelineWidget::InitializeWidget()
@@ -153,15 +144,11 @@ void UArmTimelineWidget::InitializeWidget()
 	}
 	
 	// Create the widget instance
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: Creating widget instance with class: %s"), 
-		TimelineWidgetClass ? *TimelineWidgetClass->GetName() : TEXT("NULL"));
 	
 	TimelineWidgetInstance = CreateWidget<UUserWidget>(GetWorld(), TimelineWidgetClass);
 	if (TimelineWidgetInstance)
 	{
 		SetWidget(TimelineWidgetInstance);
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: Widget instance created successfully - %s"), 
-			TimelineWidgetClass ? *TimelineWidgetClass->GetName() : TEXT("Unknown"));
 		
 		// If it's an ArmTimelineUMGWidget, we can call its specific functions
 		if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
@@ -171,7 +158,6 @@ void UArmTimelineWidget::InitializeWidget()
 			UMGWidget->SetDefaultCommandTexture(DefaultCommandTexture);
 			UMGWidget->SetIconSize(IconSize);
 			UMGWidget->SetIconBackgroundColor(IconBackgroundColor);
-			UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: Connected to UMG widget with %d textures, icon size %.1f"), CommandTextures.Num(), IconSize);
 		}
 		else
 		{
@@ -276,13 +262,10 @@ void UArmTimelineWidget::SetTimelineWidgetClass(TSubclassOf<UUserWidget> NewWidg
 			{
 				UMGWidget->SetIconSize(IconSize);
 				UMGWidget->SetIconBackgroundColor(IconBackgroundColor);
-				UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: Applied stored icon properties to new widget - size %.1f"), IconSize);
 			}
 		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetTimelineWidgetClass - %s"), 
-		TimelineWidgetClass ? *TimelineWidgetClass->GetName() : TEXT("None"));
 }
 
 
@@ -394,8 +377,6 @@ void UArmTimelineWidget::SetDefaultCommandTexture(UTexture2D* DefaultTexture)
 {
 	DefaultCommandTexture = DefaultTexture;
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetDefaultCommandTexture - %s"), 
-		DefaultTexture ? *DefaultTexture->GetName() : TEXT("None"));
 	
 	if (TimelineWidgetInstance)
 	{
@@ -406,36 +387,54 @@ void UArmTimelineWidget::SetDefaultCommandTexture(UTexture2D* DefaultTexture)
 void UArmTimelineWidget::SetIconSize(float NewIconSize)
 {
 	IconSize = NewIconSize;
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetIconSize - %.1f"), IconSize);
 	
 	// Pass to UMG widget if it's the right type
 	if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
 	{
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: Successfully cast to UMG widget, calling SetIconSize"));
 		UMGWidget->SetIconSize(IconSize);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("ArmTimelineWidget: TimelineWidgetInstance is not UArmTimelineUMGWidget type. Actual type: %s"), 
-			TimelineWidgetInstance ? *TimelineWidgetInstance->GetClass()->GetName() : TEXT("NULL"));
 	}
 }
 
 void UArmTimelineWidget::SetIconBackgroundColor(const FLinearColor& NewIconBackgroundColor)
 {
 	IconBackgroundColor = NewIconBackgroundColor;
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: SetIconBackgroundColor - R=%.2f G=%.2f B=%.2f A=%.2f"), 
-		IconBackgroundColor.R, IconBackgroundColor.G, IconBackgroundColor.B, IconBackgroundColor.A);
 	
 	// Pass to UMG widget if it's the right type
 	if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
 	{
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineWidget: Successfully cast to UMG widget, calling SetIconBackgroundColor"));
 		UMGWidget->SetIconBackgroundColor(IconBackgroundColor);
 	}
-	else
+}
+
+void UArmTimelineWidget::SetNormalCommandColor(const FLinearColor& NormalColor)
+{
+	NormalCommandColor = NormalColor;
+	
+	// Pass to UMG widget if it's the right type
+	if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ArmTimelineWidget: TimelineWidgetInstance is not UArmTimelineUMGWidget type. Actual type: %s"), 
-			TimelineWidgetInstance ? *TimelineWidgetInstance->GetClass()->GetName() : TEXT("NULL"));
+		UMGWidget->SetNormalCommandColor(NormalColor);
+	}
+}
+
+void UArmTimelineWidget::SetCurrentCommandColor(const FLinearColor& CurrentColor)
+{
+	CurrentCommandColor = CurrentColor;
+	
+	// Pass to UMG widget if it's the right type
+	if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
+	{
+		UMGWidget->SetCurrentCommandColor(CurrentColor);
+	}
+}
+
+void UArmTimelineWidget::SetCompletedCommandColor(const FLinearColor& CompletedColor)
+{
+	CompletedCommandColor = CompletedColor;
+	
+	// Pass to UMG widget if it's the right type
+	if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
+	{
+		UMGWidget->SetCompletedCommandColor(CompletedColor);
 	}
 }

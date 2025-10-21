@@ -58,6 +58,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetIconBackgroundColor(const FLinearColor& IconBackgroundColor);
 
+	/** Set the normal command color */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetNormalCommandColor(const FLinearColor& NormalColor);
+
+	/** Set the current command color */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetCurrentCommandColor(const FLinearColor& CurrentColor);
+
+	/** Set the completed command color */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetCompletedCommandColor(const FLinearColor& CompletedColor);
+
 protected:
 	/** Called when the widget is constructed */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Arm Timeline")

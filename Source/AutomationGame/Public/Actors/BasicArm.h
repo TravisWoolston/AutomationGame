@@ -369,12 +369,13 @@ public:
 	FRotator GripPivotLocalRotation = FRotator::ZeroRotator; // RESTORED
 
 	// ------------ Timeline Widget ------------
-	/** Timeline widget component for displaying command sequence */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	// NOTE: Timeline settings are controlled by GameManager, not individual arms
+	// Use GameManager's "Arm Timeline" category to configure all timeline properties
+	
+	/** Timeline widget component for displaying command sequence (controlled by GameManager) */
 	UArmTimelineWidget* TimelineWidget = nullptr;
 
-	/** Whether to show the timeline widget */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	/** Whether to show the timeline widget (controlled by GameManager) */
 	bool bShowTimeline = false;
 
 	/** Initialize timeline widget */

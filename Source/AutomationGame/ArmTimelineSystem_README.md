@@ -85,8 +85,9 @@ void UpdateTimelineWidget();
 
 ### 3. Configuring Arms
 1. Each arm automatically gets a timeline widget component
-2. Timeline visibility can be controlled per arm or globally
-3. Timeline position and scale can be customized
+2. **Timeline settings are controlled by GameManager, not individual arms**
+3. Individual arm timeline properties are private and read-only
+4. Use GameManager's "Arm Timeline" category for all configuration
 
 ### 4. Runtime Control
 ```cpp
@@ -99,6 +100,24 @@ GameManager->UpdateArmTimeline(Arm, CommandIndex, Progress);
 // Control individual arm timeline
 Arm->SetTimelineVisible(false);
 ```
+
+## ⚠️ Important Configuration Notes
+
+### Timeline Settings Control
+- **GameManager**: Controls ALL timeline settings globally
+- **Individual Arms**: Timeline properties are private and read-only
+- **Blueprint Access**: Use GameManager's "Arm Timeline" category for configuration
+
+### What Changed
+- Arm timeline properties (`TimelineWidget`, `bShowTimeline`) are now **completely private**
+- These properties are **not visible in the editor** and controlled by GameManager only
+- This prevents confusion and ensures consistent behavior across all arms
+
+### How to Configure
+1. **Open GameManager Blueprint**
+2. **Navigate to "Arm Timeline" category**
+3. **Configure all timeline settings there**
+4. **Do NOT modify timeline settings in individual arm blueprints**
 
 ## Command Types Supported
 

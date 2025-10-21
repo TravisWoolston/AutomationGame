@@ -27,7 +27,6 @@ void UArmTimelineUMGWidget::NativeConstruct()
 	
 	InitializeWidget();
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: NativeConstruct"));
 }
 
 void UArmTimelineUMGWidget::NativeDestruct()
@@ -44,7 +43,6 @@ void UArmTimelineUMGWidget::NativeDestruct()
 	}
 	CommandIconWidgets.Empty();
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: NativeDestruct"));
 }
 
 void UArmTimelineUMGWidget::SetArmProgram(const TArray<FArmInstr>& Program)
@@ -67,7 +65,6 @@ void UArmTimelineUMGWidget::SetArmProgram(const TArray<FArmInstr>& Program)
 		CommandIconWidgets.Empty();
 		bIconsCreated = false; // Reset caching flag since program changed
 		
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetArmProgram - %d commands"), Program.Num());
 		
 		UpdateWidgetContent();
 		OnProgramChanged();
@@ -107,7 +104,6 @@ void UArmTimelineUMGWidget::SetCommandTextures(const TMap<EArmCmd, UTexture2D*>&
 	static bool bLoggedTextures = false;
 	if (!bLoggedTextures)
 	{
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetCommandTextures - %d textures set"), Textures.Num());
 		bLoggedTextures = true;
 	}
 	
@@ -122,8 +118,6 @@ void UArmTimelineUMGWidget::SetDefaultCommandTexture(UTexture2D* DefaultTexture)
 	{
 		DefaultCommandTexture = DefaultTexture;
 		
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetDefaultCommandTexture - %s"), 
-			DefaultTexture ? *DefaultTexture->GetName() : TEXT("None"));
 		
 		UpdateWidgetContent();
 	}
@@ -133,7 +127,6 @@ void UArmTimelineUMGWidget::SetMaxDisplayedCommands(int32 MaxCommands)
 {
 	MaxDisplayedCommands = FMath::Clamp(MaxCommands, 1, 20);
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetMaxDisplayedCommands - %d"), MaxDisplayedCommands);
 	
 	UpdateWidgetContent();
 }
@@ -144,7 +137,6 @@ void UArmTimelineUMGWidget::SetCommandColors(const FLinearColor& CurrentColor, c
 	NormalCommandColor = NormalColor;
 	CompletedCommandColor = CompletedColor;
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetCommandColors"));
 	
 	UpdateWidgetContent();
 }
@@ -153,7 +145,6 @@ void UArmTimelineUMGWidget::SetIconSize(float NewIconSize)
 {
 	IconSize = FMath::Clamp(NewIconSize, 16.0f, 128.0f);
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetIconSize - New: %.1f, Set to: %.1f"), NewIconSize, IconSize);
 	
 	UpdateWidgetContent();
 }
@@ -162,8 +153,6 @@ void UArmTimelineUMGWidget::SetIconBackgroundColor(const FLinearColor& NewIconBa
 {
 	IconBackgroundColor = NewIconBackgroundColor;
 	
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetIconBackgroundColor - R=%.2f G=%.2f B=%.2f A=%.2f"), 
-		IconBackgroundColor.R, IconBackgroundColor.G, IconBackgroundColor.B, IconBackgroundColor.A);
 	
 	UpdateWidgetContent();
 }
@@ -171,7 +160,6 @@ void UArmTimelineUMGWidget::SetIconBackgroundColor(const FLinearColor& NewIconBa
 void UArmTimelineUMGWidget::InitializeWidget()
 {
 	// Initialize any default values or setup
-	UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: InitializeWidget"));
 	
 	OnWidgetConstructed();
 }
@@ -206,8 +194,6 @@ void UArmTimelineUMGWidget::UpdateWidgetContent()
 		if (FMath::Abs(CurrentIconCount - ProgramSize) > 2)
 		{
 			bNeedsRecreation = true;
-			UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: Program size changed significantly (%d -> %d), recreating icons"), 
-				CurrentIconCount, ProgramSize);
 		}
 	}
 	
@@ -216,7 +202,6 @@ void UArmTimelineUMGWidget::UpdateWidgetContent()
 		// No icons exist or program changed significantly, create them
 		CreateCommandIcons();
 		bIconsCreated = true;
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: Created %d command icons"), ArmProgram.Num());
 	}
 	else
 	{
@@ -364,13 +349,6 @@ void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Comma
 	{
 		// UE_LOG(LogTemp, Warning, TEXT("ArmTimelineUMGWidget: UpdateCommandIcon called for index %d, size=%.1f, color=(%.2f,%.2f,%.2f,%.2f)"), 
 		// 	Index, IconSize, IconBackgroundColor.R, IconBackgroundColor.G, IconBackgroundColor.B, IconBackgroundColor.A);
-		// Update the texture
-		UTexture2D* CommandTexture = GetTextureForCommand(Command);
-		if (CommandTexture)
-		{
-			ImageWidget->SetBrushFromTexture(CommandTexture);
-		}
-		
 		// Update visual state based on progress
 		FLinearColor IconColor = NormalCommandColor;
 		if (bIsCompleted)
@@ -390,9 +368,18 @@ void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Comma
 		//	IconColor.R, IconColor.G, IconColor.B, IconColor.A,
 		//	FinalColor.R, FinalColor.G, FinalColor.B, FinalColor.A);
 		
+		// Update the texture and apply color in the correct order
+		UTexture2D* CommandTexture = GetTextureForCommand(Command);
+		if (CommandTexture)
+		{
+			ImageWidget->SetBrushFromTexture(CommandTexture);
+		}
+		
+		// Apply tint color after setting texture to ensure it's not overridden
 		FSlateBrush Brush = ImageWidget->GetBrush();
 		Brush.TintColor = FinalColor;
 		ImageWidget->SetBrush(Brush);
+		
 		
 		// Apply size based on command state
 		if (!bIsCurrent)
@@ -416,4 +403,19 @@ void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Comma
 	
 	// Call Blueprint implementation for any additional customizations
 	OnUpdateCommandIcon(IconWidget, Command, Index, bIsCurrent, bIsCompleted, Progress);
+}
+
+void UArmTimelineUMGWidget::SetNormalCommandColor(const FLinearColor& NormalColor)
+{
+	NormalCommandColor = NormalColor;
+}
+
+void UArmTimelineUMGWidget::SetCurrentCommandColor(const FLinearColor& CurrentColor)
+{
+	CurrentCommandColor = CurrentColor;
+}
+
+void UArmTimelineUMGWidget::SetCompletedCommandColor(const FLinearColor& CompletedColor)
+{
+	CompletedCommandColor = CompletedColor;
 }

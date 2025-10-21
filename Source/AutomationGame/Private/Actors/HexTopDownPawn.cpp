@@ -276,7 +276,6 @@ void AHexTopDownPawn::ToggleArmTimelines()
 		// Toggle the timeline visibility
 		bool bNewVisibility = !GameManager->bShowArmTimelines;
 		GameManager->SetTimelineVisibility(bNewVisibility);
-		UE_LOG(LogTemp, Log, TEXT("ToggleArmTimelines: Set timeline visibility to %s"), bNewVisibility ? TEXT("true") : TEXT("false"));
 	}
 	else
 	{
@@ -307,8 +306,6 @@ void AHexTopDownPawn::ToggleArmTimeline(ABasicArm* Arm)
 		// Toggle the timeline visibility using the public method
 		bool bCurrentVisibility = Arm->TimelineWidget->bTimelineVisible;
 		Arm->TimelineWidget->SetTimelineWidgetVisible(!bCurrentVisibility);
-		UE_LOG(LogTemp, Log, TEXT("ToggleArmTimeline: %s timeline for arm at (%d,%d)"), 
-			!bCurrentVisibility ? TEXT("Showed") : TEXT("Hid"), Arm->Q, Arm->R);
 	}
 }
 

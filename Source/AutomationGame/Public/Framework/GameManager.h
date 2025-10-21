@@ -111,6 +111,9 @@ public:
 	float GetEffectiveSphereRadius() const { return bAutoSphereRadius ? (TileSizeUU * Radius * SphereRadiusScale) : SphereRadiusOverrideUU; }
 
 	// ------------ Arm Timeline System ------------
+	// NOTE: These settings control ALL arm timeline widgets globally
+	// Individual arm timeline properties are private and controlled by GameManager
+	
 	/** Command textures for arm timeline display */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	TMap<EArmCmd, UTexture2D*> CommandTextures;
@@ -146,6 +149,18 @@ public:
 	/** Background color for command icons */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	FLinearColor TimelineIconBackgroundColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+
+	/** Normal command color */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	FLinearColor TimelineNormalCommandColor = FLinearColor::White;
+
+	/** Current command color */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	FLinearColor TimelineCurrentCommandColor = FLinearColor::Yellow;
+
+	/** Completed command color */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	FLinearColor TimelineCompletedCommandColor = FLinearColor::Green;
 
 	/** Set command textures for timeline display */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
