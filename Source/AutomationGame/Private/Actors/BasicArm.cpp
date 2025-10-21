@@ -9,6 +9,8 @@
 #include "Rendering/OrbRenderer.h"
 #include "EngineUtils.h"
 #include "Data/OrbMaterialManager.h"
+#include "UI/ArmTimelineWidget.h"
+#include "Framework/GameManager.h"
 
 static inline float NormDeg(float D) { return FMath::UnwindDegrees(D); }
 namespace { inline int32 Mod6(int32 V) { return (V % 6 + 6) % 6; } }
@@ -52,6 +54,10 @@ ABasicArm::ABasicArm()
 
 	GripPivotComp = CreateDefaultSubobject<USceneComponent>(TEXT("GripPivot"));
 	GripPivotComp->SetupAttachment(BaseComp);
+
+	// Initialize timeline widget
+	TimelineWidget = CreateDefaultSubobject<UArmTimelineWidget>(TEXT("TimelineWidget"));
+	TimelineWidget->SetupAttachment(GetRootComponent());
 }
 
 void ABasicArm::OnConstruction(const FTransform& Transform)
@@ -121,6 +127,9 @@ void ABasicArm::BeginPlay()
 
 	EffectiveReachStart = EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
 	LastExtensionSegmentMultiplier = ExtensionSegmentMultiplier;
+
+	// Initialize timeline widget
+	InitializeTimelineWidget();
 }
 void ABasicArm::Tick(float DeltaSeconds)
 {
@@ -226,6 +235,8 @@ void ABasicArm::Tick(float DeltaSeconds)
 	}
 
 	RefreshPose(StepAlpha);
+
+	// Timeline widgets update on simulation steps for performance
 }
 
 void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
@@ -251,7 +262,8 @@ void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
 	// This ensures consistent timing across all systems
 	RefreshPose(0.f);
 
-
+	// Update timeline widget on simulation step for performance
+	UpdateTimelineWidget();
 }
 
 void ABasicArm::EnsureComps()
@@ -1593,4 +1605,167 @@ float ABasicArm::GetBondedOrbScale() const
 		}
 	}
 	return 0.15f; // Default fallback
+}
+
+// ------------ Timeline Widget Implementation ------------
+
+void ABasicArm::InitializeTimelineWidget()
+{
+	if (!TimelineWidget)
+	{
+		UE_LOG(LogAGArm, Warning, TEXT("BasicArm '%s': TimelineWidget is null"), *GetName());
+		return;
+	}
+
+	// Set up the timeline widget
+	// Get program from simulation state if available, otherwise use local Program
+	TArray<FArmInstr> ProgramToUse = Program;
+	if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
+	{
+		const FArmState& SimState = Sim->Arms[SimArmIndex];
+		// Convert simulation tape back to arm instructions for display
+		ProgramToUse = ConvertTapeToArmInstructions(SimState.Tape);
+		UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Using simulation program (%d instructions) for timeline"), 
+			*GetName(), ProgramToUse.Num());
+	}
+	else
+	{
+		UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Using local program (%d instructions) for timeline"), 
+			*GetName(), Program.Num());
+	}
+	
+	TimelineWidget->SetArmProgram(ProgramToUse);
+	TimelineWidget->SetTimelineWidgetVisible(bShowTimeline);
+	TimelineWidget->SetTimelineScale(1.0f);
+	
+	// Position timeline widget above the arm for top-down view
+	// Use actual arm position for positioning
+	TimelineWidget->SetTimelineOffset(FVector(0.0f, 0.0f, 150.0f));
+	
+	// Set initial position using arm's world position (hex-based coordinates)
+	FVector ArmWorldPosition = GetArmWorldPosition();
+	TimelineWidget->UpdateWidgetPosition(ArmWorldPosition, GetActorRotation());
+	
+	UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Timeline widget positioned at (%.2f, %.2f, %.2f)"), 
+		*GetName(), ArmWorldPosition.X, ArmWorldPosition.Y, ArmWorldPosition.Z);
+
+	// Get command textures and widget class from GameManager
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager)
+			{
+				UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Found GameManager, setting timeline properties"), *GetName());
+				UE_LOG(LogAGArm, Log, TEXT("  - ArmTimelineWidgetClass: %s"), 
+					GameManager->ArmTimelineWidgetClass ? *GameManager->ArmTimelineWidgetClass->GetName() : TEXT("NULL"));
+				UE_LOG(LogAGArm, Log, TEXT("  - bShowArmTimelines: %s"), GameManager->bShowArmTimelines ? TEXT("true") : TEXT("false"));
+				UE_LOG(LogAGArm, Log, TEXT("  - CommandTextures: %d"), GameManager->CommandTextures.Num());
+				
+				TimelineWidget->SetCommandTextures(GameManager->CommandTextures);
+				TimelineWidget->SetDefaultCommandTexture(GameManager->DefaultCommandTexture);
+				TimelineWidget->SetIconSize(GameManager->TimelineIconSize);
+				TimelineWidget->SetIconBackgroundColor(GameManager->TimelineIconBackgroundColor);
+				TimelineWidget->SetTimelineWidgetClass(GameManager->ArmTimelineWidgetClass);
+				TimelineWidget->SetTimelineScale(GameManager->TimelineWidgetScale);
+				TimelineWidget->SetTimelineOffset(GameManager->TimelineWidgetOffset);
+				break;
+			}
+		}
+	}
+	else
+	{
+		UE_LOG(LogAGArm, Warning, TEXT("BasicArm '%s': No World found for GameManager lookup"), *GetName());
+	}
+
+	UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': TimelineWidget initialized"), *GetName());
+}
+
+TArray<FArmInstr> ABasicArm::ConvertTapeToArmInstructions(const TArray<FOp>& Tape) const
+{
+	TArray<FArmInstr> Instructions;
+	
+	for (const FOp& Op : Tape)
+	{
+		FArmInstr Instr;
+		Instr.Arg = Op.Arg;
+		
+		switch (Op.Cmd)
+		{
+		case ECmd::Wait:      Instr.Cmd = EArmCmd::Wait; break;
+		case ECmd::Grab:      Instr.Cmd = EArmCmd::Grab; break;
+		case ECmd::Drop:      Instr.Cmd = EArmCmd::Drop; break;
+		case ECmd::RotateR:   Instr.Cmd = EArmCmd::RotateCW; break;
+		case ECmd::RotateL:   Instr.Cmd = EArmCmd::RotateCCW; break;
+		case ECmd::Extend:    Instr.Cmd = EArmCmd::Extend; break;
+		case ECmd::Retract:   Instr.Cmd = EArmCmd::Retract; break;
+		case ECmd::Reset:     Instr.Cmd = EArmCmd::Reset; break;
+		case ECmd::RotateHeldL: Instr.Cmd = EArmCmd::RotateHeldCCW; break;
+		case ECmd::RotateHeldR: Instr.Cmd = EArmCmd::RotateHeldCW; break;
+		case ECmd::WaitForBond: Instr.Cmd = EArmCmd::WaitForBond; break;
+		default:              Instr.Cmd = EArmCmd::NoOp; break;
+		}
+		
+		Instructions.Add(Instr);
+	}
+	
+	return Instructions;
+}
+
+void ABasicArm::UpdateTimelineWidget()
+{
+	if (!TimelineWidget || !bShowTimeline)
+	{
+		return;
+	}
+
+	// Use the original program, not the simulation tape (which includes Reset-generated commands)
+	// This ensures Reset commands don't appear in the timeline
+	TArray<FArmInstr> ProgramToUse = Program;
+	TimelineWidget->SetArmProgram(ProgramToUse);
+
+	// Update current command and progress
+	int32 CurrentCommandIndex = PC;
+	float CommandProgress = 0.0f;
+
+	// Calculate progress based on current state
+	if (WaitLeft > 0)
+	{
+		// We're in a wait command, calculate progress
+		const FArmInstr& CurrentInstr = (ProgramToUse.Num() > 0 && PC < ProgramToUse.Num()) ? ProgramToUse[PC] : FArmInstr();
+		if (CurrentInstr.Cmd == EArmCmd::Wait && CurrentInstr.Arg > 0)
+		{
+			CommandProgress = 1.0f - (float(WaitLeft) / float(CurrentInstr.Arg));
+		}
+	}
+	else
+	{
+		// We're executing a command, use StepAlpha for smooth progress
+		CommandProgress = StepAlpha;
+	}
+
+	TimelineWidget->SetCurrentCommand(CurrentCommandIndex, CommandProgress);
+	
+	// Update position to ensure widgets stay with arms (in case of any movement)
+	FVector ArmWorldPosition = GetArmWorldPosition();
+	TimelineWidget->UpdateWidgetPosition(ArmWorldPosition, GetActorRotation());
+}
+
+void ABasicArm::SetTimelineVisible(bool bVisible)
+{
+	bShowTimeline = bVisible;
+	
+	if (TimelineWidget)
+	{
+		TimelineWidget->SetTimelineWidgetVisible(bVisible);
+	}
+	
+	UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Timeline visibility set to %s"), *GetName(), bVisible ? TEXT("true") : TEXT("false"));
+}
+
+FVector ABasicArm::GetArmWorldPosition() const
+{
+	// Get the arm's world position based on its hex coordinates
+	return HexToWorld(FHex(Q, R)) + FVector(0, 0, BaseZ);
 }

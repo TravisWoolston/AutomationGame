@@ -369,12 +369,7 @@ void USimWorldHex::StepBelts()
 			bool bPrevCanMove = bCanMove;
 			bCanMove = bCanMove && bOutputGateOpen;
 			
-			// Debug log for belt collision detection on output tiles
-			UE_LOG(LogTemp, Warning, TEXT("Belt collision check - From(%d,%d) To(%d,%d) GateState=%s bCanMove=%s->%s"), 
-				FromHex.Q, FromHex.R, ToHex.Q, ToHex.R, 
-				bOutputGateOpen ? TEXT("OPEN") : TEXT("CLOSED"),
-				bPrevCanMove ? TEXT("TRUE") : TEXT("FALSE"),
-				bCanMove ? TEXT("TRUE") : TEXT("FALSE"));
+
 		}
 		else if (bCanMove && ItemMap.Contains(ToHex))
 		{
@@ -504,9 +499,6 @@ void USimWorldHex::StepBelts()
 				}
 				if (!bOutputGateOpen)
 				{
-					// Gate is closed, destination is blocked
-					UE_LOG(LogTemp, Warning, TEXT("Cluster validation FAILED - ConnectedId=%d destination (%d,%d) gate is CLOSED"), 
-						ConnectedId, ConnectedToHex.Q, ConnectedToHex.R);
 					bCanMoveCluster = false;
 					break;
 				}
@@ -746,12 +738,10 @@ void USimWorldHex::StepBelts()
 			// Skip if already processed
 			if (ProcessedInThisIteration.Contains(MoveOp.ItemId)) 
 			{
-				UE_LOG(LogTemp, Warning, TEXT("Skipping MoveOp ItemId=%d - already processed in this iteration"), MoveOp.ItemId);
 				continue;
 			}
 			
-			UE_LOG(LogTemp, Warning, TEXT("Executing MoveOp ItemId=%d From(%d,%d) To(%d,%d)"), 
-				MoveOp.ItemId, MoveOp.FromHex.Q, MoveOp.FromHex.R, MoveOp.ToHex.Q, MoveOp.ToHex.R);
+
 			
 			// Check if this move can be executed given current positions
 			bool bCanMove = true;

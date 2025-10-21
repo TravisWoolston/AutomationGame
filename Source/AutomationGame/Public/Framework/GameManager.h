@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Actors/BasicArm.h"
+#include "Sim/ArmTypes.h"
 #include "GameManager.generated.h"
 
 class AGameTickManager;
@@ -11,6 +12,8 @@ class UStaticMesh;
 class UMaterialInterface;
 class AOrbSimDriver;
 class UGoldbergGrid; // NEW
+class UTexture2D;
+class UArmTimelineWidget;
 /** Lightweight coordinator that also renders a simple hex or Goldberg grid via ISM. */
 UCLASS(BlueprintType)
 class AUTOMATIONGAME_API AGameManager : public AActor
@@ -106,6 +109,63 @@ public:
 	/** Current effective sphere radius (auto or override). */
 	UFUNCTION(BlueprintPure, Category="Grid|Sphere")
 	float GetEffectiveSphereRadius() const { return bAutoSphereRadius ? (TileSizeUU * Radius * SphereRadiusScale) : SphereRadiusOverrideUU; }
+
+	// ------------ Arm Timeline System ------------
+	/** Command textures for arm timeline display */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	TMap<EArmCmd, UTexture2D*> CommandTextures;
+
+	/** Default texture for unknown commands */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	UTexture2D* DefaultCommandTexture = nullptr;
+
+	/** Widget class for arm timeline display */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	TSubclassOf<UUserWidget> ArmTimelineWidgetClass;
+
+	/** Whether to show timeline widgets for arms */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	bool bShowArmTimelines = true;
+
+	/** Scale for timeline widgets */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineWidgetScale = 1.0f;
+
+	/** Offset for timeline widgets from arm position */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	FVector TimelineWidgetOffset = FVector(0.0f, 0.0f, 150.0f);
+
+	/** Whether to rotate widgets for top-down view */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	bool bRotateWidgetsForTopDown = true;
+
+	/** Size of command icons in timeline widgets */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineIconSize = 48.0f;
+
+	/** Background color for command icons */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	FLinearColor TimelineIconBackgroundColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+
+	/** Set command textures for timeline display */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Textures);
+
+	/** Get texture for a specific command */
+	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+	UTexture2D* GetTextureForCommand(EArmCmd Command) const;
+
+	/** Toggle timeline visibility for all arms */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetTimelineVisibility(bool bVisible);
+
+	/** Update timeline for a specific arm */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void UpdateArmTimeline(ABasicArm* Arm, int32 CommandIndex, float Progress);
+
+	/** Update all existing arms with the current widget class */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void UpdateAllArmTimelineWidgets();
 
 	// ------------ Editor / Control ------------
 	UFUNCTION(BlueprintCallable, Category = "Grid")

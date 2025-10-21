@@ -10,6 +10,8 @@
 #include "DrawDebugHelpers.h"
 #include "Sim/HexTypes.h" // <-- ADDED for HexUtil
 #include "Geometry/GoldbergGrid.h" // NEW
+#include "UI/ArmTimelineWidget.h"
+#include "Engine/Texture2D.h"
 
 // Local helper to build orthonormal basis from Up + arbitrary forward (similar to HexFactoryActor)
 namespace { inline void BuildSafeBasisGM(const FVector& InUpRaw, const FVector& InForwardRaw, FVector& OutF, FVector& OutR, FVector& OutU)
@@ -35,6 +37,11 @@ namespace { inline void BuildSafeBasisGM(const FVector& InUpRaw, const FVector& 
 AGameManager::AGameManager()
 {
 	PrimaryActorTick.bCanEverTick = true; // needed for auto-recenter
+	
+	// Initialize timeline system defaults
+	bShowArmTimelines = true;
+	TimelineWidgetScale = 1.0f;
+	TimelineWidgetOffset = FVector(0.0f, 0.0f, 100.0f);
 }
 
 void AGameManager::BeginPlay()
@@ -318,4 +325,106 @@ FVector AGameManager::GetWorldForHex(const FHex& H) const
 	const FVector2D XY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), S, GridOrientation);
 	const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
 	return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
+}
+
+// ------------ Arm Timeline System Implementation ------------
+
+void AGameManager::SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Textures)
+{
+	CommandTextures = Textures;
+	
+	UE_LOG(LogTemp, Log, TEXT("GameManager: SetCommandTextures - %d textures set"), Textures.Num());
+	
+	// Update all existing arm timeline widgets
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicArm> It(World); It; ++It)
+		{
+			ABasicArm* Arm = *It;
+			if (Arm && Arm->IsValidLowLevel())
+			{
+				UArmTimelineWidget* TimelineWidget = Arm->FindComponentByClass<UArmTimelineWidget>();
+				if (TimelineWidget)
+				{
+					TimelineWidget->SetCommandTextures(CommandTextures);
+				}
+			}
+		}
+	}
+}
+
+UTexture2D* AGameManager::GetTextureForCommand(EArmCmd Command) const
+{
+	if (const UTexture2D* const* FoundTexture = CommandTextures.Find(Command))
+	{
+		return const_cast<UTexture2D*>(*FoundTexture);
+	}
+	
+	return DefaultCommandTexture;
+}
+
+void AGameManager::SetTimelineVisibility(bool bVisible)
+{
+	bShowArmTimelines = bVisible;
+	
+	UE_LOG(LogTemp, Log, TEXT("GameManager: SetTimelineVisibility - %s"), bVisible ? TEXT("true") : TEXT("false"));
+	
+	// Update all existing arm timeline widgets
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicArm> It(World); It; ++It)
+		{
+			ABasicArm* Arm = *It;
+			if (Arm && Arm->IsValidLowLevel())
+			{
+				UArmTimelineWidget* TimelineWidget = Arm->FindComponentByClass<UArmTimelineWidget>();
+				if (TimelineWidget)
+				{
+					TimelineWidget->SetTimelineWidgetVisible(bVisible);
+					TimelineWidget->SetTimelineWidgetClass(ArmTimelineWidgetClass);
+				}
+			}
+		}
+	}
+}
+
+void AGameManager::UpdateArmTimeline(ABasicArm* Arm, int32 CommandIndex, float Progress)
+{
+	if (!Arm || !bShowArmTimelines)
+	{
+		return;
+	}
+	
+	UArmTimelineWidget* TimelineWidget = Arm->FindComponentByClass<UArmTimelineWidget>();
+	if (TimelineWidget)
+	{
+		TimelineWidget->SetCurrentCommand(CommandIndex, Progress);
+	}
+}
+
+void AGameManager::UpdateAllArmTimelineWidgets()
+{
+	UE_LOG(LogTemp, Log, TEXT("GameManager: UpdateAllArmTimelineWidgets"));
+	
+	// Update all existing arm timeline widgets with current settings
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicArm> It(World); It; ++It)
+		{
+			ABasicArm* Arm = *It;
+			if (Arm && Arm->IsValidLowLevel())
+			{
+				UArmTimelineWidget* TimelineWidget = Arm->FindComponentByClass<UArmTimelineWidget>();
+				if (TimelineWidget)
+				{
+					TimelineWidget->SetCommandTextures(CommandTextures);
+					TimelineWidget->SetDefaultCommandTexture(DefaultCommandTexture);
+					TimelineWidget->SetIconSize(TimelineIconSize);
+					TimelineWidget->SetIconBackgroundColor(TimelineIconBackgroundColor);
+					TimelineWidget->SetTimelineWidgetClass(ArmTimelineWidgetClass);
+					TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
+				}
+			}
+		}
+	}
 }

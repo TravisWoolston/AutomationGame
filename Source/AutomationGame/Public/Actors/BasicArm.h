@@ -12,6 +12,7 @@ class AOrbSimDriver;
 class AGameTickManager;
 class UStaticMeshComponent;
 class USimWorldHex;
+class UArmTimelineWidget;
 
 /** Discrete arm instructions (Opus Magnum–style, kept simple to start) */
 UENUM(BlueprintType)
@@ -207,6 +208,7 @@ public:
 	void PushProgramToSim();
 	void PushRuntimePropertiesToSim();
 	TArray<FOp> BuildOpsFromProgram(const TArray<FArmInstr>& InProgram) const;
+	TArray<FArmInstr> ConvertTapeToArmInstructions(const TArray<FOp>& Tape) const;
 	/** If true, cluster sub-orb offsets are multiplied by TileSize (grid units -> UU). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")
 	bool bScaleClusterOffsetsByTile = true;
@@ -365,6 +367,31 @@ public:
 	/** Local rotation applied to the procedural grip pivot after its location update. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm|Grip")
 	FRotator GripPivotLocalRotation = FRotator::ZeroRotator; // RESTORED
+
+	// ------------ Timeline Widget ------------
+	/** Timeline widget component for displaying command sequence */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	UArmTimelineWidget* TimelineWidget = nullptr;
+
+	/** Whether to show the timeline widget */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
+	bool bShowTimeline = true;
+
+	/** Initialize timeline widget */
+	UFUNCTION(BlueprintCallable, Category = "Timeline")
+	void InitializeTimelineWidget();
+
+	/** Update timeline widget with current command */
+	UFUNCTION(BlueprintCallable, Category = "Timeline")
+	void UpdateTimelineWidget();
+
+	/** Set timeline visibility */
+	UFUNCTION(BlueprintCallable, Category = "Timeline")
+	void SetTimelineVisible(bool bVisible);
+
+	/** Get the arm's current world position based on hex coordinates */
+	UFUNCTION(BlueprintPure, Category = "Timeline")
+	FVector GetArmWorldPosition() const;
 
 protected:
 	UPROPERTY(Transient)
