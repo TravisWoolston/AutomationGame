@@ -148,6 +148,9 @@ private:
 	UPROPERTY()
 	TArray<UWidget*> CommandIconWidgets;
 
+	/** Whether icons have been created and are stable */
+	bool bIconsCreated = false;
+
 	/** Initialize the widget */
 	void InitializeWidget();
 

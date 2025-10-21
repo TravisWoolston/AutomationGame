@@ -125,7 +125,7 @@ public:
 
 	/** Whether to show timeline widgets for arms */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	bool bShowArmTimelines = true;
+	bool bShowArmTimelines = false;
 
 	/** Scale for timeline widgets */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")

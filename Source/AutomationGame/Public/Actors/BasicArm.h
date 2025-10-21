@@ -375,7 +375,7 @@ public:
 
 	/** Whether to show the timeline widget */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline")
-	bool bShowTimeline = true;
+	bool bShowTimeline = false;
 
 	/** Initialize timeline widget */
 	UFUNCTION(BlueprintCallable, Category = "Timeline")

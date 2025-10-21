@@ -104,7 +104,7 @@ public:
 
 	/** Whether the timeline is visible */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	bool bTimelineVisible = true;
+	bool bTimelineVisible = false;
 
 	/** Maximum number of commands to display */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline", meta = (ClampMin = "1", ClampMax = "20"))

@@ -189,6 +189,25 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		}
 	}
 
+	// Check if location is already occupied (except for Empty tiles which are allowed to clear)
+	if (T.Kind != ETileKind::Empty && Sim->TileMap.Contains(Root))
+	{
+		const FTile* ExistingTile = Sim->TileMap.Find(Root);
+		if (ExistingTile && ExistingTile->Kind != ETileKind::Empty)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place %s at (%d,%d) - location already occupied by %s"), 
+				*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
+				Root.Q, Root.R,
+				*StaticEnum<ETileKind>()->GetNameStringByValue((int64)ExistingTile->Kind));
+			if (GEngine)
+				GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Red,
+					FString::Printf(TEXT("Cannot place %s - location occupied by %s"), 
+						*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
+						*StaticEnum<ETileKind>()->GetNameStringByValue((int64)ExistingTile->Kind)));
+			return;
+		}
+	}
+
 	// Attempt placement
 	const bool bPlaced = Sim->PlaceTile(Root, T);
 	if (!bPlaced)

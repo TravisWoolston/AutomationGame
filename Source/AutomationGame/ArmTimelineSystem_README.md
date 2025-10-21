@@ -91,7 +91,7 @@ void UpdateTimelineWidget();
 ### 4. Runtime Control
 ```cpp
 // Show/hide timelines globally
-GameManager->SetTimelineVisibility(true);
+GameManager->SetTimelineVisibility(false);
 
 // Update specific arm timeline
 GameManager->UpdateArmTimeline(Arm, CommandIndex, Progress);

@@ -39,7 +39,7 @@ AGameManager::AGameManager()
 	PrimaryActorTick.bCanEverTick = true; // needed for auto-recenter
 	
 	// Initialize timeline system defaults
-	bShowArmTimelines = true;
+	bShowArmTimelines = false;
 	TimelineWidgetScale = 1.0f;
 	TimelineWidgetOffset = FVector(0.0f, 0.0f, 100.0f);
 }
@@ -59,6 +59,9 @@ void AGameManager::BeginPlay()
 		TickManager ? *TickManager->GetName() : TEXT("null"),
 		OrbSimDriver ? *OrbSimDriver->GetName() : TEXT("null"),
 		AnchorLoc.X, AnchorLoc.Y, AnchorLoc.Z, TileSizeUU, Radius);
+	
+	// Apply timeline visibility settings to all existing arms
+	UpdateAllArmTimelineWidgets();
 }
 
 void AGameManager::Tick(float DeltaSeconds)
@@ -300,6 +303,19 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("GameManager: Arm spawned visually but Sim is null; program will not run."));
+	}
+
+	// Apply timeline settings to the newly spawned arm
+	if (UArmTimelineWidget* TimelineWidget = Arm->FindComponentByClass<UArmTimelineWidget>())
+	{
+		TimelineWidget->SetCommandTextures(CommandTextures);
+		TimelineWidget->SetDefaultCommandTexture(DefaultCommandTexture);
+		TimelineWidget->SetIconSize(TimelineIconSize);
+		TimelineWidget->SetIconBackgroundColor(TimelineIconBackgroundColor);
+		TimelineWidget->SetTimelineWidgetClass(ArmTimelineWidgetClass);
+		TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
+		TimelineWidget->SetTimelineScale(TimelineWidgetScale);
+		TimelineWidget->SetTimelineOffset(TimelineWidgetOffset);
 	}
 
 	return Arm;

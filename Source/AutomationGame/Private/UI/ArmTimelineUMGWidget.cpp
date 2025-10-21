@@ -49,14 +49,29 @@ void UArmTimelineUMGWidget::NativeDestruct()
 
 void UArmTimelineUMGWidget::SetArmProgram(const TArray<FArmInstr>& Program)
 {
-	ArmProgram = Program;
-	CurrentCommandIndex = -1;
-	CurrentCommandProgress = 0.0f;
-	
-	// UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetArmProgram - %d commands"), Program.Num());
-	
-	UpdateWidgetContent();
-	OnProgramChanged();
+	// Only update if the program actually changed
+	if (ArmProgram != Program)
+	{
+		ArmProgram = Program;
+		CurrentCommandIndex = -1;
+		CurrentCommandProgress = 0.0f;
+		
+		// Clear existing icons so they get recreated with new program
+		for (UWidget* Widget : CommandIconWidgets)
+		{
+			if (Widget && Widget->IsValidLowLevel())
+			{
+				Widget->RemoveFromParent();
+			}
+		}
+		CommandIconWidgets.Empty();
+		bIconsCreated = false; // Reset caching flag since program changed
+		
+		UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: SetArmProgram - %d commands"), Program.Num());
+		
+		UpdateWidgetContent();
+		OnProgramChanged();
+	}
 }
 
 void UArmTimelineUMGWidget::SetCurrentCommand(int32 CommandIndex, float Progress)
@@ -67,8 +82,21 @@ void UArmTimelineUMGWidget::SetCurrentCommand(int32 CommandIndex, float Progress
 	// UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: SetCurrentCommand - Index %d, Progress %.2f"), 
 	// 	CurrentCommandIndex, CurrentCommandProgress);
 	
-	UpdateWidgetContent();
-	OnCurrentCommandChanged();
+	// Only update if the command index actually changed or progress changed significantly
+	static int32 LastCommandIndex = -1;
+	static float LastProgress = 0.0f;
+	
+	bool bCommandChanged = (CurrentCommandIndex != LastCommandIndex);
+	bool bProgressChanged = FMath::Abs(CurrentCommandProgress - LastProgress) > 0.1f; // Only update if progress changed by more than 10%
+	
+	if (bCommandChanged || bProgressChanged)
+	{
+		UpdateWidgetContent();
+		OnCurrentCommandChanged();
+		
+		LastCommandIndex = CurrentCommandIndex;
+		LastProgress = CurrentCommandProgress;
+	}
 }
 
 void UArmTimelineUMGWidget::SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Textures)
@@ -167,21 +195,37 @@ void UArmTimelineUMGWidget::UpdateWidgetContent()
 		ProgressText->SetText(FText::FromString(ProgressString));
 	}
 
-	// Create or update command icons
-	if (CommandIconWidgets.Num() != ArmProgram.Num())
+	// Use caching flag to prevent unnecessary recreation
+	bool bNeedsRecreation = !bIconsCreated || (CommandIconWidgets.Num() == 0);
+	
+	// Check if program size changed significantly (more than 2 commands difference)
+	if (!bNeedsRecreation && ArmProgram.Num() > 0)
 	{
-		// Program size changed, recreate all icons
+		int32 CurrentIconCount = CommandIconWidgets.Num();
+		int32 ProgramSize = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
+		if (FMath::Abs(CurrentIconCount - ProgramSize) > 2)
+		{
+			bNeedsRecreation = true;
+			UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: Program size changed significantly (%d -> %d), recreating icons"), 
+				CurrentIconCount, ProgramSize);
+		}
+	}
+	
+	if (bNeedsRecreation)
+	{
+		// No icons exist or program changed significantly, create them
 		CreateCommandIcons();
-		UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: Recreated %d command icons"), ArmProgram.Num());
+		bIconsCreated = true;
+		UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: Created %d command icons"), ArmProgram.Num());
 	}
 	else
 	{
-		// Program size same, just update existing icons
+		// Icons exist and program is stable, just update them
 		UpdateCommandIcons();
 	}
 	
-	UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: UpdateWidgetContent - %d commands, current %d"), 
-		ArmProgram.Num(), CurrentCommandIndex);
+	// UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: UpdateWidgetContent - %d commands, current %d"), 
+	//	ArmProgram.Num(), CurrentCommandIndex);
 }
 
 UTexture2D* UArmTimelineUMGWidget::GetTextureForCommand(EArmCmd Command) const
@@ -284,7 +328,13 @@ UWidget* UArmTimelineUMGWidget::CreateCommandIcon(EArmCmd Command, int32 Index)
 		else
 		{
 			// Use a default texture or create a colored rectangle
-			UE_LOG(LogTemp, Warning, TEXT("ArmTimelineUMGWidget: No texture found for command %d"), (int32)Command);
+			// Only log this warning once per command type to reduce spam
+			static TSet<EArmCmd> LoggedMissingTextures;
+			if (!LoggedMissingTextures.Contains(Command))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("ArmTimelineUMGWidget: No texture found for command %d"), (int32)Command);
+				LoggedMissingTextures.Add(Command);
+			}
 		}
 		
 		// Set size using configurable IconSize

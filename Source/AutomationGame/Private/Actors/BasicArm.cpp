@@ -1635,7 +1635,7 @@ void ABasicArm::InitializeTimelineWidget()
 	}
 	
 	TimelineWidget->SetArmProgram(ProgramToUse);
-	TimelineWidget->SetTimelineWidgetVisible(bShowTimeline);
+	// Timeline visibility will be set by GameManager based on bShowArmTimelines
 	TimelineWidget->SetTimelineScale(1.0f);
 	
 	// Position timeline widget above the arm for top-down view
@@ -1670,6 +1670,7 @@ void ABasicArm::InitializeTimelineWidget()
 				TimelineWidget->SetTimelineWidgetClass(GameManager->ArmTimelineWidgetClass);
 				TimelineWidget->SetTimelineScale(GameManager->TimelineWidgetScale);
 				TimelineWidget->SetTimelineOffset(GameManager->TimelineWidgetOffset);
+				TimelineWidget->SetTimelineWidgetVisible(GameManager->bShowArmTimelines);
 				break;
 			}
 		}
@@ -1715,7 +1716,7 @@ TArray<FArmInstr> ABasicArm::ConvertTapeToArmInstructions(const TArray<FOp>& Tap
 
 void ABasicArm::UpdateTimelineWidget()
 {
-	if (!TimelineWidget || !bShowTimeline)
+	if (!TimelineWidget)
 	{
 		return;
 	}

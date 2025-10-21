@@ -21,6 +21,9 @@ UArmTimelineWidget::UArmTimelineWidget()
 	SetDrawSize(FVector2D(400.0f, 100.0f));
 	SetPivot(FVector2D(0.5f, 0.5f));
 	
+	// Start hidden by default - visibility will be controlled by GameManager
+	SetVisibility(false);
+	
 	// Initialize default command textures (will be set by GameManager)
 	CommandTextures.Empty();
 }

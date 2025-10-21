@@ -112,6 +112,16 @@ private:
 		} else if (bDeletionMode && !bDeletionSelectionActive) {
 			StartDeletionSelection();
 		} else if (Placer) {
+			// Check if there's an arm at the target location first
+			if (Placer->IsHoverValid()) {
+				FHex TargetHex = Placer->GetHoverHex();
+				ABasicArm* ArmAtLocation = FindArmAtHex(TargetHex);
+				if (ArmAtLocation) {
+					// Toggle the individual arm's timeline
+					ToggleArmTimeline(ArmAtLocation);
+					return;
+				}
+			}
 			Placer->HandlePlace(true); 
 		}
 	}
@@ -204,6 +214,13 @@ private:
 	
 	// Simulation control - advance one tick
 	void NextTick();
+	
+	// Timeline control - toggle all arm timelines
+	void ToggleArmTimelines();
+	
+	// Helper functions for arm timeline toggling
+	ABasicArm* FindArmAtHex(const FHex& Hex);
+	void ToggleArmTimeline(ABasicArm* Arm);
 	
 	// Handler for pausing after next tick
 	UFUNCTION()

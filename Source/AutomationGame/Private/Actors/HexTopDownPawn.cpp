@@ -14,6 +14,7 @@
 #include "UI/AutomationGameHUD.h"
 #include "Framework/GameManager.h"
 #include "Framework/GameTickManager.h"
+#include "UI/ArmTimelineWidget.h"
 #include "EngineUtils.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
@@ -202,6 +203,9 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	
 	// Simulation control
 	IC->BindAction("NextTick", IE_Pressed, this, &AHexTopDownPawn::NextTick);
+	
+	// Timeline control
+	IC->BindAction("ToggleArmTimelines", IE_Pressed, this, &AHexTopDownPawn::ToggleArmTimelines);
 }
 
 void AHexTopDownPawn::SetInputMode1() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Input); }
@@ -253,6 +257,61 @@ void AHexTopDownPawn::HandleNextTickStop(float StepSeconds)
 		bPauseOnNextTick = false;
 	}
 }
+
+void AHexTopDownPawn::ToggleArmTimelines()
+{
+	// Find the GameManager
+	AGameManager* GameManager = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			GameManager = *It;
+			break;
+		}
+	}
+	
+	if (GameManager)
+	{
+		// Toggle the timeline visibility
+		bool bNewVisibility = !GameManager->bShowArmTimelines;
+		GameManager->SetTimelineVisibility(bNewVisibility);
+		UE_LOG(LogTemp, Log, TEXT("ToggleArmTimelines: Set timeline visibility to %s"), bNewVisibility ? TEXT("true") : TEXT("false"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ToggleArmTimelines: No GameManager found"));
+	}
+}
+
+ABasicArm* AHexTopDownPawn::FindArmAtHex(const FHex& Hex)
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicArm> It(World); It; ++It)
+		{
+			ABasicArm* Arm = *It;
+			if (Arm && Arm->Q == Hex.Q && Arm->R == Hex.R)
+			{
+				return Arm;
+			}
+		}
+	}
+	return nullptr;
+}
+
+void AHexTopDownPawn::ToggleArmTimeline(ABasicArm* Arm)
+{
+	if (Arm && Arm->TimelineWidget)
+	{
+		// Toggle the timeline visibility using the public method
+		bool bCurrentVisibility = Arm->TimelineWidget->bTimelineVisible;
+		Arm->TimelineWidget->SetTimelineWidgetVisible(!bCurrentVisibility);
+		UE_LOG(LogTemp, Log, TEXT("ToggleArmTimeline: %s timeline for arm at (%d,%d)"), 
+			!bCurrentVisibility ? TEXT("Showed") : TEXT("Hid"), Arm->Q, Arm->R);
+	}
+}
+
 
 void AHexTopDownPawn::StartSelection()
 {
