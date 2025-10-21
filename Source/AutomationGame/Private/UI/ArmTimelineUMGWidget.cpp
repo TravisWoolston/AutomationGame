@@ -261,22 +261,65 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 		return;
 	}
 
-	// Create icons for the displayed commands
-	int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
-	for (int32 i = 0; i < NumCommandsToShow; ++i)
+	// Add a border around the entire command list
+	UBorder* CommandListBorder = NewObject<UBorder>(this);
+	if (CommandListBorder)
 	{
-		UWidget* IconWidget = CreateCommandIcon(ArmProgram[i].Cmd, i);
-		if (IconWidget)
+		// Set border properties for the command list
+		FLinearColor BorderColor(0.2f, 0.2f, 0.2f, 0.8f); // Dark gray border
+		CommandListBorder->SetBrushColor(BorderColor);
+		CommandListBorder->SetPadding(FMargin(8.0f)); // Border thickness
+		
+		// Create a horizontal box inside the border to arrange icons
+		UHorizontalBox* InnerHorizontalBox = NewObject<UHorizontalBox>(this);
+		if (InnerHorizontalBox)
 		{
-			CommandIconWidgets.Add(IconWidget);
+			// Add the horizontal box to the border
+			CommandListBorder->AddChild(InnerHorizontalBox);
 			
-			// Add to horizontal box
-			UHorizontalBoxSlot* BoxSlot = CommandIconsBox->AddChildToHorizontalBox(IconWidget);
-			if (BoxSlot)
+			// Add the border to the command icons box
+			CommandIconsBox->AddChild(CommandListBorder);
+			
+			// Create icons for the displayed commands
+			int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
+			for (int32 i = 0; i < NumCommandsToShow; ++i)
 			{
-				BoxSlot->SetPadding(FMargin(5.0f, 0.0f, 5.0f, 0.0f));
-				BoxSlot->SetHorizontalAlignment(HAlign_Center);
-				BoxSlot->SetVerticalAlignment(VAlign_Center);
+				UWidget* IconWidget = CreateCommandIcon(ArmProgram[i].Cmd, i);
+				if (IconWidget)
+				{
+					CommandIconWidgets.Add(IconWidget);
+					
+					// Add to the inner horizontal box with proper spacing
+					UHorizontalBoxSlot* BoxSlot = InnerHorizontalBox->AddChildToHorizontalBox(IconWidget);
+					if (BoxSlot)
+					{
+						BoxSlot->SetPadding(FMargin(5.0f, 0.0f, 5.0f, 0.0f));
+						BoxSlot->SetHorizontalAlignment(HAlign_Center);
+						BoxSlot->SetVerticalAlignment(VAlign_Center);
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		// Fallback: create icons directly in the horizontal box
+		int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
+		for (int32 i = 0; i < NumCommandsToShow; ++i)
+		{
+			UWidget* IconWidget = CreateCommandIcon(ArmProgram[i].Cmd, i);
+			if (IconWidget)
+			{
+				CommandIconWidgets.Add(IconWidget);
+				
+				// Add to horizontal box
+				UHorizontalBoxSlot* BoxSlot = CommandIconsBox->AddChildToHorizontalBox(IconWidget);
+				if (BoxSlot)
+				{
+					BoxSlot->SetPadding(FMargin(5.0f, 0.0f, 5.0f, 0.0f));
+					BoxSlot->SetHorizontalAlignment(HAlign_Center);
+					BoxSlot->SetVerticalAlignment(VAlign_Center);
+				}
 			}
 		}
 	}
@@ -300,74 +343,122 @@ void UArmTimelineUMGWidget::UpdateCommandIcons()
 
 UWidget* UArmTimelineUMGWidget::CreateCommandIcon(EArmCmd Command, int32 Index)
 {
-	// Create a simple image widget for the command icon
-	UImage* ImageWidget = NewObject<UImage>(this);
-	if (ImageWidget)
+	// Create a border widget to wrap the icon
+	UBorder* BorderWidget = NewObject<UBorder>(this);
+	if (!BorderWidget)
 	{
-		// Get the texture for this command
-		UTexture2D* CommandTexture = GetTextureForCommand(Command);
-		if (CommandTexture)
-		{
-			ImageWidget->SetBrushFromTexture(CommandTexture);
-		}
-		else
-		{
-			// Use a default texture or create a colored rectangle
-			// Only log this warning once per command type to reduce spam
-			static TSet<EArmCmd> LoggedMissingTextures;
-			if (!LoggedMissingTextures.Contains(Command))
-			{
-				UE_LOG(LogTemp, Warning, TEXT("ArmTimelineUMGWidget: No texture found for command %d"), (int32)Command);
-				LoggedMissingTextures.Add(Command);
-			}
-		}
-		
-		// Set size using configurable IconSize
-		ImageWidget->SetDesiredSizeOverride(FVector2D(IconSize, IconSize));
-		
-		// Add background color to make icons more visible
-		ImageWidget->SetColorAndOpacity(IconBackgroundColor);
-		
-		// Set initial state
-		bool bIsCurrent = (Index == CurrentCommandIndex);
-		bool bIsCompleted = (Index < CurrentCommandIndex);
-		float Progress = (bIsCurrent) ? CurrentCommandProgress : (bIsCompleted ? 1.0f : 0.0f);
-		
-		// Call Blueprint implementation or use C++ fallback
-		UpdateCommandIcon(ImageWidget, Command, Index, bIsCurrent, bIsCompleted, Progress);
-		
-		// UE_LOG(LogTemp, Log, TEXT("ArmTimelineUMGWidget: Created icon for command %d at index %d"), (int32)Command, Index);
+		return nullptr;
 	}
 	
-	return ImageWidget;
+	// Create the image widget for the command icon
+	UImage* ImageWidget = NewObject<UImage>(this);
+	if (!ImageWidget)
+	{
+		return nullptr;
+	}
+	
+	// Get the texture for this command
+	UTexture2D* CommandTexture = GetTextureForCommand(Command);
+	if (CommandTexture)
+	{
+		ImageWidget->SetBrushFromTexture(CommandTexture);
+	}
+	else
+	{
+		// Use a default texture or create a colored rectangle
+		// Only log this warning once per command type to reduce spam
+		static TSet<EArmCmd> LoggedMissingTextures;
+		if (!LoggedMissingTextures.Contains(Command))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ArmTimelineUMGWidget: No texture found for command %d"), (int32)Command);
+			LoggedMissingTextures.Add(Command);
+		}
+	}
+	
+	// Set size using configurable IconSize
+	ImageWidget->SetDesiredSizeOverride(FVector2D(IconSize, IconSize));
+	
+	// Add the image widget to the border
+	BorderWidget->AddChild(ImageWidget);
+	
+	// Set initial state
+	bool bIsCurrent = (Index == CurrentCommandIndex);
+	bool bIsCompleted = (Index < CurrentCommandIndex);
+	float Progress = (bIsCurrent) ? CurrentCommandProgress : (bIsCompleted ? 1.0f : 0.0f);
+	
+	// Call Blueprint implementation or use C++ fallback
+	UpdateCommandIcon(BorderWidget, Command, Index, bIsCurrent, bIsCompleted, Progress);
+	
+	return BorderWidget;
 }
 
 void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Command, int32 Index, bool bIsCurrent, bool bIsCompleted, float Progress)
 {
-	// C++ implementation - this should take precedence
-	if (UImage* ImageWidget = Cast<UImage>(IconWidget))
+	// Handle border widget (which contains the image widget)
+	if (UBorder* BorderWidget = Cast<UBorder>(IconWidget))
 	{
-		// UE_LOG(LogTemp, Warning, TEXT("ArmTimelineUMGWidget: UpdateCommandIcon called for index %d, size=%.1f, color=(%.2f,%.2f,%.2f,%.2f)"), 
-		// 	Index, IconSize, IconBackgroundColor.R, IconBackgroundColor.G, IconBackgroundColor.B, IconBackgroundColor.A);
-		// Update visual state based on progress
-		FLinearColor IconColor = NormalCommandColor;
-		if (bIsCompleted)
+		// Get the image widget from the border
+		UImage* ImageWidget = nullptr;
+		if (BorderWidget->GetChildrenCount() > 0)
 		{
-			IconColor = CompletedCommandColor;
-		}
-		else if (bIsCurrent)
-		{
-			IconColor = FLinearColor::LerpUsingHSV(NormalCommandColor, CurrentCommandColor, Progress);
+			ImageWidget = Cast<UImage>(BorderWidget->GetChildAt(0));
 		}
 		
-		// Apply background color for visibility, but keep current command size unchanged
-		FLinearColor FinalColor = FLinearColor::LerpUsingHSV(IconBackgroundColor, IconColor, 0.7f);
+		if (ImageWidget)
+		{
+			// Update the texture
+			UTexture2D* CommandTexture = GetTextureForCommand(Command);
+			if (CommandTexture)
+			{
+				ImageWidget->SetBrushFromTexture(CommandTexture);
+			}
+			
+			// Apply size based on command state
+			if (!bIsCurrent)
+			{
+				// Non-current commands use configurable size
+				ImageWidget->SetDesiredSizeOverride(FVector2D(IconSize, IconSize));
+			}
+			else
+			{
+				// Current command uses configurable size with slight scaling
+				float SizeMultiplier = 1.0f + Progress * 0.2f;
+				float FinalSize = IconSize * SizeMultiplier;
+				ImageWidget->SetDesiredSizeOverride(FVector2D(FinalSize, FinalSize));
+			}
+		}
 		
-		// UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: Icon %d color - Background: R=%.2f G=%.2f B=%.2f A=%.2f, Command: R=%.2f G=%.2f B=%.2f A=%.2f, Final: R=%.2f G=%.2f B=%.2f A=%.2f"), 
-		//	Index, IconBackgroundColor.R, IconBackgroundColor.G, IconBackgroundColor.B, IconBackgroundColor.A,
-		//	IconColor.R, IconColor.G, IconColor.B, IconColor.A,
-		//	FinalColor.R, FinalColor.G, FinalColor.B, FinalColor.A);
+		// Set border properties based on command state
+		FLinearColor BorderColor;
+		float BorderThickness = 2.0f;
 		
+		if (bIsCurrent)
+		{
+			// Current command gets a bright border
+			BorderColor = FLinearColor::Yellow;
+			BorderThickness = 3.0f;
+		}
+		else if (bIsCompleted)
+		{
+			// Completed commands get a green border
+			BorderColor = FLinearColor::Green;
+		}
+		else
+		{
+			// Regular commands get a subtle border
+			BorderColor = FLinearColor(0.5f, 0.5f, 0.5f, 0.8f);
+		}
+		
+		// Apply border color and thickness
+		BorderWidget->SetBrushColor(BorderColor);
+		
+		// Set border thickness using padding
+		BorderWidget->SetPadding(FMargin(BorderThickness));
+		
+	}
+	// Fallback for direct image widgets (shouldn't happen with new structure)
+	else if (UImage* ImageWidget = Cast<UImage>(IconWidget))
+	{
 		// Update the texture and apply color in the correct order
 		UTexture2D* CommandTexture = GetTextureForCommand(Command);
 		if (CommandTexture)
@@ -375,18 +466,11 @@ void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Comma
 			ImageWidget->SetBrushFromTexture(CommandTexture);
 		}
 		
-		// Apply tint color after setting texture to ensure it's not overridden
-		FSlateBrush Brush = ImageWidget->GetBrush();
-		Brush.TintColor = FinalColor;
-		ImageWidget->SetBrush(Brush);
-		
-		
 		// Apply size based on command state
 		if (!bIsCurrent)
 		{
 			// Non-current commands use configurable size
 			ImageWidget->SetDesiredSizeOverride(FVector2D(IconSize, IconSize));
-			// UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: Set non-current icon size to %.1f"), IconSize);
 		}
 		else
 		{
@@ -394,11 +478,7 @@ void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Comma
 			float SizeMultiplier = 1.0f + Progress * 0.2f;
 			float FinalSize = IconSize * SizeMultiplier;
 			ImageWidget->SetDesiredSizeOverride(FVector2D(FinalSize, FinalSize));
-			// UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: Set current icon size to %.1f (base %.1f * %.2f)"), FinalSize, IconSize, SizeMultiplier);
 		}
-		
-		// UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: Updated icon %d - Current: %s, Completed: %s, Progress: %.2f"), 
-		//	Index, bIsCurrent ? TEXT("Yes") : TEXT("No"), bIsCompleted ? TEXT("Yes") : TEXT("No"), Progress);
 	}
 	
 	// Call Blueprint implementation for any additional customizations
