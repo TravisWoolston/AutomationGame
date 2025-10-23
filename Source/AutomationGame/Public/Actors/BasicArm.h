@@ -309,7 +309,7 @@ private:
 	bool bExecutingExtendRetract = false;  // true when executing Extend or Retract commands
 	
 	// HoloscopicGear3 rotation tracking for continuous spinning
-	float HoloscopicGear3CurrRoll = 0.f;     // accumulated rotation (never resets)
+	float HoloscopicGear3CurrYaw = 0.f;     // accumulated Yaw rotation (never resets)
 
 	// --- Orb mesh/material mapping ---
 

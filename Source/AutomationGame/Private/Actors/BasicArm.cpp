@@ -151,52 +151,58 @@ void ABasicArm::Tick(float DeltaSeconds)
 		const bool bLenChanged = (SimLen != ReachTiles);
 		const bool bMultiplierChanged = !FMath::IsNearlyEqual(ExtensionSegmentMultiplier, LastExtendSegmentMultiplier);
 
-		// Track extension state for BaseGear7 rotation direction
-		if (bLenChanged)
+		// Set extension state based on current program instruction and execution state
+		if (PC < Program.Num())
 		{
-			bIsExtending = (SimLen > ReachTiles);
-			// When length changes, we're executing an Extend/Retract command
-			bExecutingExtendRetract = true;
-			if (bDebugLogs)
+			const FArmInstr& CurrentInstr = Program[PC];
+			if (CurrentInstr.Cmd == EArmCmd::Extend)
 			{
-				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Extension state changed - bIsExtending=%d, bExecutingExtendRetract=%d (SimLen=%d, ReachTiles=%d)"), 
-					*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0, SimLen, ReachTiles);
+				bExecutingExtendRetract = true;
+				bIsExtending = true;
+				if (bDebugLogs)
+				{
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Executing Extend command - bIsExtending=%d, bExecutingExtendRetract=%d"), 
+						*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0);
+				}
+			}
+			else if (CurrentInstr.Cmd == EArmCmd::Retract)
+			{
+				bExecutingExtendRetract = true;
+				bIsExtending = false;
+				if (bDebugLogs)
+				{
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Executing Retract command - bIsExtending=%d, bExecutingExtendRetract=%d"), 
+						*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0);
+				}
+			}
+			else
+			{
+				// Not executing Extend/Retract command
+				bExecutingExtendRetract = false;
+				// Keep bIsExtending as is (don't reset it)
 			}
 		}
-		else if (bExecutingExtendRetract)
+		else
 		{
-			// Continue executing Extend/Retract if we're in the middle of an operation
-			// Update extension state based on current simulation length vs current reach
+			// No program or program finished
+			bExecutingExtendRetract = false;
+			// Keep bIsExtending as is (don't reset it)
+		}
+		
+		// Also check if we're in the middle of an Extend/Retract operation based on length changes
+		// This ensures we continue rotating during the entire visual animation
+		if (bLenChanged)
+		{
+			bExecutingExtendRetract = true;
 			bIsExtending = (SimLen > ReachTiles);
 			if (bDebugLogs)
 			{
-				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Continuing Extend/Retract execution - bIsExtending=%d, bExecutingExtendRetract=%d (SimLen=%d, ReachTiles=%d)"), 
+				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Length change detected - bIsExtending=%d, bExecutingExtendRetract=%d (SimLen=%d, ReachTiles=%d)"), 
 					*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0, SimLen, ReachTiles);
 			}
 		}
 		
-		// Check if we should stop executing Extend/Retract
-		// Stop when we're not in a wait state and the length has stabilized
-		if (bExecutingExtendRetract && WaitLeft == 0 && !bLenChanged)
-		{
-			// Check if we're currently executing an Extend/Retract command by looking at the program
-			bool bCurrentlyExtendRetract = false;
-			if (PC < Program.Num())
-			{
-				const FArmInstr& CurrentInstr = Program[PC];
-				bCurrentlyExtendRetract = (CurrentInstr.Cmd == EArmCmd::Extend || CurrentInstr.Cmd == EArmCmd::Retract);
-			}
-			
-			// If we're not currently executing an Extend/Retract command, stop
-			if (!bCurrentlyExtendRetract)
-			{
-				bExecutingExtendRetract = false;
-				if (bDebugLogs)
-				{
-					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Stopping Extend/Retract execution - command completed"), *GetName());
-				}
-			}
-		}
+		// Extension state is now set directly based on program instruction above
 
 		if (bHaveSim && (bLenChanged || bMultiplierChanged))
 		{
@@ -650,17 +656,24 @@ void ABasicArm::UpdateBoneRotations(float InAlpha)
 				// Add continuous rotation based on extension direction for smooth spinning cog
 				// When extending: rotate in positive direction
 				// When retracting: rotate in negative direction
-				float RotationDelta = bIsExtending ? 0.5f : -0.5f; // Smaller increment for smoother spinning
-				HoloscopicGear3CurrRoll += RotationDelta;
+				float RotationDelta = bIsExtending ? 1.f : -1.f; // Smaller increment for smoother spinning
+				HoloscopicGear3CurrYaw += RotationDelta;
 				
-				// Apply the accumulated rotation
-				FRotator HoloscopicGear3Rotation = FRotator(0.f, HoloscopicGear3CurrRoll, 0.f) + HoloscopicGear3RotationOffset;
+				// Debug: Log the extension state and rotation
+				if (bDebugLogs)
+				{
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': HoloscopicGear3 Debug - bIsExtending=%d, RotationDelta=%.2f"), 
+						*GetName(), bIsExtending ? 1 : 0, RotationDelta);
+				}
+				
+				// Apply the accumulated rotation (same format as BaseGear7 to avoid gimbal lock)
+				FRotator HoloscopicGear3Rotation = FRotator(0.f, HoloscopicGear3CurrYaw, 0.f) + HoloscopicGear3RotationOffset;
 				BaseComp->SetBoneRotationByName(HoloscopicGear3BoneName, HoloscopicGear3Rotation, EBoneSpaces::ComponentSpace);
 				
 				if (bDebugLogs)
 				{
-					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Spinning HoloscopicGear3 bone - CurrentRoll=%.2f, Delta=%.2f (ExecutingExtendRetract=%d, Extending=%d)"), 
-						*GetName(), HoloscopicGear3CurrRoll, RotationDelta, bExecutingExtendRetract ? 1 : 0, bIsExtending ? 1 : 0);
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Spinning HoloscopicGear3 bone - CurrentYaw=%.2f, Delta=%.2f (ExecutingExtendRetract=%d, Extending=%d)"), 
+						*GetName(), HoloscopicGear3CurrYaw, RotationDelta, bExecutingExtendRetract ? 1 : 0, bIsExtending ? 1 : 0);
 				}
 			}
 			// When not executing Extend/Retract, maintain current rotation (never reset)
