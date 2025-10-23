@@ -2,6 +2,8 @@
 #include "Actors/OrbSimDriver.h"
 #include "Framework/GameTickManager.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Engine/World.h"
 #include "AGLogChannels.h"
 #include "Sim/SimWorldHex.h"
@@ -43,7 +45,7 @@ ABasicArm::ABasicArm()
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("ArmRoot"));
 	SetRootComponent(Root);
 
-	BaseComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ArmBase"));
+	BaseComp = CreateDefaultSubobject<UPoseableMeshComponent>(TEXT("ArmBase"));
 	BaseComp->SetupAttachment(Root);
 	BaseComp->SetMobility(EComponentMobility::Movable);
 
@@ -148,6 +150,53 @@ void ABasicArm::Tick(float DeltaSeconds)
 		const int32 SimLen = bHaveSim ? Sim->Arms[SimArmIndex].ArmLen : ReachTiles;
 		const bool bLenChanged = (SimLen != ReachTiles);
 		const bool bMultiplierChanged = !FMath::IsNearlyEqual(ExtensionSegmentMultiplier, LastExtendSegmentMultiplier);
+
+		// Track extension state for BaseGear7 rotation direction
+		if (bLenChanged)
+		{
+			bIsExtending = (SimLen > ReachTiles);
+			// When length changes, we're executing an Extend/Retract command
+			bExecutingExtendRetract = true;
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Extension state changed - bIsExtending=%d, bExecutingExtendRetract=%d (SimLen=%d, ReachTiles=%d)"), 
+					*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0, SimLen, ReachTiles);
+			}
+		}
+		else if (bExecutingExtendRetract)
+		{
+			// Continue executing Extend/Retract if we're in the middle of an operation
+			// Update extension state based on current simulation length vs current reach
+			bIsExtending = (SimLen > ReachTiles);
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Continuing Extend/Retract execution - bIsExtending=%d, bExecutingExtendRetract=%d (SimLen=%d, ReachTiles=%d)"), 
+					*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0, SimLen, ReachTiles);
+			}
+		}
+		
+		// Check if we should stop executing Extend/Retract
+		// Stop when we're not in a wait state and the length has stabilized
+		if (bExecutingExtendRetract && WaitLeft == 0 && !bLenChanged)
+		{
+			// Check if we're currently executing an Extend/Retract command by looking at the program
+			bool bCurrentlyExtendRetract = false;
+			if (PC < Program.Num())
+			{
+				const FArmInstr& CurrentInstr = Program[PC];
+				bCurrentlyExtendRetract = (CurrentInstr.Cmd == EArmCmd::Extend || CurrentInstr.Cmd == EArmCmd::Retract);
+			}
+			
+			// If we're not currently executing an Extend/Retract command, stop
+			if (!bCurrentlyExtendRetract)
+			{
+				bExecutingExtendRetract = false;
+				if (bDebugLogs)
+				{
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Stopping Extend/Retract execution - command completed"), *GetName());
+				}
+			}
+		}
 
 		if (bHaveSim && (bLenChanged || bMultiplierChanged))
 		{
@@ -276,7 +325,7 @@ void ABasicArm::EnsureComps()
 	}
 	if (!BaseComp)
 	{
-		BaseComp = NewObject<UStaticMeshComponent>(this, TEXT("ArmBase"));
+		BaseComp = NewObject<UPoseableMeshComponent>(this, TEXT("ArmBase"));
 		BaseComp->SetupAttachment(GetRootComponent());
 		BaseComp->RegisterComponent();
 	}
@@ -299,7 +348,7 @@ void ABasicArm::EnsureComps()
 
 void ABasicArm::RefreshMeshes()
 {
-	if (BaseComp) { BaseComp->SetStaticMesh(BaseMesh); BaseComp->SetRelativeScale3D(BaseScale); }
+	if (BaseComp) { BaseComp->SetSkinnedAssetAndUpdate(ArmSkeletalMesh); BaseComp->SetRelativeScale3D(BaseScale); }
 
 	if (HeldOrbComp)
 	{
@@ -352,7 +401,9 @@ void ABasicArm::RefreshPose(float InAlpha)
 	const bool bFlat = (Driver && Driver->GetGridOrientation() == EHexOrientation::FlatTop);
 	const float OriOffset = bFlat ? 30.f : 0.f;
 
-	FRotator BaseRot(0.f, Yaw + BaseYawOffsetDeg + OriOffset, 0.f);
+	// For skeletal mesh, we only set the world location and base rotation
+	// Individual bone rotations are handled in UpdateBoneRotations
+	FRotator BaseRot(0.f, BaseYawOffsetDeg + OriOffset, 0.f);
 	const bool bSphere = (Driver && Driver->IsSphereEnabled());
 	if (bSphere)
 	{
@@ -379,7 +430,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 		BaseRot = M.Rotator();
 		BaseRot.Add(0.f, BaseYawOffsetDeg + OriOffset, 0.f);
 	}
-	if (BaseComp) { BaseComp->SetWorldLocation(BaseWorld); BaseComp->SetWorldRotation(BaseRot); }
+	if (BaseComp) { BaseComp->SetWorldLocation(BaseWorld); /* BaseComp->SetWorldRotation(BaseRot); */ }
 
 	FVector InterpolatedHandWorld = BaseWorld;
 	{
@@ -426,7 +477,34 @@ void ABasicArm::RefreshPose(float InAlpha)
 	if (GripPivotComp && !bUseGripSocket)
 	{
 		GripPivotComp->SetWorldLocation(InterpolatedHandWorld);
-		GripPivotComp->SetWorldRotation(BaseRot + GripPivotLocalRotation);
+		
+		// For skeletal mesh, use the actual bone rotation instead of BaseRot
+		FRotator GripRotation = BaseRot + GripPivotLocalRotation;
+		
+		// If we have a skeletal mesh with RotatingBase2 bone, use its rotation for grip
+		if (BaseComp && BaseComp->GetSkinnedAsset() && RotatingBase2BoneName != NAME_None)
+		{
+			const int32 BoneIndex = BaseComp->GetBoneIndex(RotatingBase2BoneName);
+			if (BoneIndex != INDEX_NONE)
+			{
+				// Get the current bone transform and extract its rotation
+				FTransform BoneTransform = BaseComp->GetBoneTransform(RotatingBase2BoneName);
+				FRotator BoneRotation = BoneTransform.Rotator();
+				
+				// Use the bone's Y rotation for the grip, but preserve the base rotation for other axes
+				FRotator BaseRotation = BaseRot;
+				BaseRotation.Yaw = BoneRotation.Yaw;
+				GripRotation = BaseRotation + GripPivotLocalRotation;
+				
+				if (bDebugLogs)
+				{
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Using bone rotation for grip - Bone Yaw=%.2f, Grip Yaw=%.2f"), 
+						*GetName(), BoneRotation.Yaw, GripRotation.Yaw);
+				}
+			}
+		}
+		
+		GripPivotComp->SetWorldRotation(GripRotation);
 	}
 	// (retain existing debug + cluster code below unchanged)
 	if (bDebugHandLocation && GetWorld())
@@ -448,6 +526,9 @@ void ABasicArm::RefreshPose(float InAlpha)
 	}
 
 	UpdateHeldClusterTransforms(EasedAlpha);
+
+	// Update skeletal mesh bone rotations
+	UpdateBoneRotations(EasedAlpha);
 
 	if (bDebugSpheres && bHolding && HeldOrb.bIsCluster && GetWorld())
 	{
@@ -492,6 +573,109 @@ void ABasicArm::RefreshPose(float InAlpha)
 				nullptr, DebugColor, 0.f, true, 1.2f);
 		}
 	}
+}
+
+void ABasicArm::UpdateBoneRotations(float InAlpha)
+{
+	if (!BaseComp || !BaseComp->GetSkinnedAsset())
+	{
+		return;
+	}
+
+	// Calculate the interpolated yaw based on current animation state
+	const float StartYaw = NormDeg(LastYawDeg);
+	const float TargetYaw = NormDeg(CurrYawDeg);
+	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
+	const float Yaw = NormDeg(StartYaw + Delta * InAlpha);
+
+	// Rotate RotatingBase2 joint on Y-axis for FacingDir
+	if (RotatingBase2BoneName != NAME_None)
+	{
+		const int32 BoneIndex = BaseComp->GetBoneIndex(RotatingBase2BoneName);
+		if (BoneIndex != INDEX_NONE)
+		{
+			// Apply Y-axis rotation for FacingDir plus the rotation offset
+			FRotator RotatingBase2Rotation = FRotator(0.f, Yaw, 0.f) + RotatingBase2RotationOffset;
+			BaseComp->SetBoneRotationByName(RotatingBase2BoneName, RotatingBase2Rotation, EBoneSpaces::ComponentSpace);
+			
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Rotating RotatingBase2 bone to Yaw=%.2f (Offset: P=%.2f Y=%.2f R=%.2f)"), 
+					*GetName(), Yaw, RotatingBase2RotationOffset.Pitch, RotatingBase2RotationOffset.Yaw, RotatingBase2RotationOffset.Roll);
+			}
+		}
+		else
+		{
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': RotatingBase2 bone '%s' not found"), *GetName(), *RotatingBase2BoneName.ToString());
+			}
+		}
+	}
+
+	// Rotate BaseGear7 in opposite direction of RotatingBase2
+	if (BaseGear7BoneName != NAME_None)
+	{
+		const int32 BoneIndex = BaseComp->GetBoneIndex(BaseGear7BoneName);
+		if (BoneIndex != INDEX_NONE)
+		{
+		// Apply rotation for BaseGear7 (opposite direction of RotatingBase2)
+		FRotator BaseGear7Rotation = FRotator(0.f, -Yaw, 0.f) + BaseGear7RotationOffset;
+			BaseComp->SetBoneRotationByName(BaseGear7BoneName, BaseGear7Rotation, EBoneSpaces::ComponentSpace);
+			
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Rotating BaseGear7 bone to Yaw=%.2f (Offset: P=%.2f Y=%.2f R=%.2f)"), 
+					*GetName(), -Yaw, BaseGear7RotationOffset.Pitch, BaseGear7RotationOffset.Yaw, BaseGear7RotationOffset.Roll);
+			}
+		}
+		else
+		{
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': BaseGear7 bone '%s' not found"), *GetName(), *BaseGear7BoneName.ToString());
+			}
+		}
+	}
+
+	// Rotate HoloscopicGear3 continuously during Extend/Retract commands (spinning cog effect)
+	if (HoloscopicGear3BoneName != NAME_None)
+	{
+		const int32 BoneIndex = BaseComp->GetBoneIndex(HoloscopicGear3BoneName);
+		if (BoneIndex != INDEX_NONE)
+		{
+			// Only rotate during Extend/Retract commands, never reset
+			if (bExecutingExtendRetract)
+			{
+				// Add continuous rotation based on extension direction for smooth spinning cog
+				// When extending: rotate in positive direction
+				// When retracting: rotate in negative direction
+				float RotationDelta = bIsExtending ? 0.5f : -0.5f; // Smaller increment for smoother spinning
+				HoloscopicGear3CurrRoll += RotationDelta;
+				
+				// Apply the accumulated rotation
+				FRotator HoloscopicGear3Rotation = FRotator(0.f, HoloscopicGear3CurrRoll, 0.f) + HoloscopicGear3RotationOffset;
+				BaseComp->SetBoneRotationByName(HoloscopicGear3BoneName, HoloscopicGear3Rotation, EBoneSpaces::ComponentSpace);
+				
+				if (bDebugLogs)
+				{
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Spinning HoloscopicGear3 bone - CurrentRoll=%.2f, Delta=%.2f (ExecutingExtendRetract=%d, Extending=%d)"), 
+						*GetName(), HoloscopicGear3CurrRoll, RotationDelta, bExecutingExtendRetract ? 1 : 0, bIsExtending ? 1 : 0);
+				}
+			}
+			// When not executing Extend/Retract, maintain current rotation (never reset)
+		}
+		else
+		{
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': HoloscopicGear3 bone '%s' not found"), *GetName(), *HoloscopicGear3BoneName.ToString());
+			}
+		}
+	}
+
+	// Base1 remains stationary (no rotation applied)
+	// This is handled by not setting any rotation on Base1BoneName
 }
 
 void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= true*/)

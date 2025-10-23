@@ -9,7 +9,7 @@ public class AutomationGame : ModuleRules
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
         PublicDependencyModuleNames.AddRange(new string[] {
-    "Core", "CoreUObject", "Engine", "InputCore", "Json", "JsonUtilities", "UMG"
+    "Core", "CoreUObject", "Engine", "InputCore", "Json", "JsonUtilities", "UMG", "AnimationCore"
 });
 
 

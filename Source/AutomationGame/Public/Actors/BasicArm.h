@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Sim/HexTypes.h"     // FHex
 #include "Sim/HexCoord.h"     // Axial<->XY helpers
 #include "Sim/OrbTypes.h"    // FOrb
@@ -92,7 +94,7 @@ public:
 
 	// --- Visuals ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
-	UStaticMesh* BaseMesh = nullptr;
+	USkeletalMesh* ArmSkeletalMesh = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	UStaticMesh* HandMesh = nullptr;
@@ -117,6 +119,29 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector HandScale = FVector(0.4f);
+
+	/** Bone names for skeletal mesh control */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	FName RotatingBase2BoneName = TEXT("RotatingBase2");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	FName BaseGear7BoneName = TEXT("BaseGear7");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	FName HoloscopicGear3BoneName = TEXT("HoloscopicGear3");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	FName Base1BoneName = TEXT("Base1");
+
+	/** Bone rotation offsets to compensate for initial skeletal mesh orientations */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual|BoneOffsets")
+	FRotator RotatingBase2RotationOffset = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual|BoneOffsets")
+	FRotator BaseGear7RotationOffset = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual|BoneOffsets")
+	FRotator HoloscopicGear3RotationOffset = FRotator::ZeroRotator;
 
 	/** Additive yaw (degrees) applied to the base mesh only, after grid yaw + facing. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
@@ -234,7 +259,7 @@ protected:
 
 private:
 	// Components
-	UPROPERTY(Transient) UStaticMeshComponent* BaseComp = nullptr;
+	UPROPERTY(Transient) UPoseableMeshComponent* BaseComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* HandComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* HeldOrbComp = nullptr;
 
@@ -276,6 +301,15 @@ private:
 
 	// Remember where Reset should point us
 	uint8 StartFacingDir = 0;     // captured at BeginPlay
+	
+	// Track extension state for BaseGear7 rotation direction
+	bool bIsExtending = false;    // true when arm is extending, false when retracting
+	
+	// Track when executing Extend/Retract commands for HoloscopicGear3
+	bool bExecutingExtendRetract = false;  // true when executing Extend or Retract commands
+	
+	// HoloscopicGear3 rotation tracking for continuous spinning
+	float HoloscopicGear3CurrRoll = 0.f;     // accumulated rotation (never resets)
 
 	// --- Orb mesh/material mapping ---
 
@@ -284,6 +318,7 @@ private:
 	void EnsureComps();
 	void RefreshMeshes();
 	void RefreshPose(float InAlpha);                 // update transforms
+	void UpdateBoneRotations(float InAlpha);          // update skeletal mesh bone rotations
 	FVector HexToWorld(const FHex& H) const;         // grid → world
 	float   DirToYaw(uint8 Dir) const;               // grid yaw + 60° steps
 
