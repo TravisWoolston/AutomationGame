@@ -170,17 +170,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	int32 MaxTimelineIcons = 10;
 
-	/** Whether to use distance-based scaling for timeline widgets */
+	/** Whether to use camera zoom-based scaling for timeline widgets */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	bool bUseDistanceBasedScaling = true;
 
-	/** Minimum distance for timeline scaling (close distance) */
+	/** Minimum camera arm length for timeline scaling (close zoom) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	float TimelineMinDistance = 200.0f;
+	float TimelineMinDistance = 600.0f;
 
-	/** Maximum distance for timeline scaling (far distance) */
+	/** Maximum camera arm length for timeline scaling (far zoom) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	float TimelineMaxDistance = 2000.0f;
+	float TimelineMaxDistance = 6000.0f;
 
 	/** Minimum scale when timeline is far away */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")

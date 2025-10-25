@@ -4,6 +4,7 @@
 #include "Components/WidgetComponent.h"
 #include "Sim/ArmTypes.h"
 #include "Actors/BasicArm.h"
+#include "Actors/HexTopDownPawn.h"
 #include "Framework/GameManager.h"
 #include "UI/ArmTimelineUMGWidget.h"
 #include "AGLogChannels.h"
@@ -580,10 +581,10 @@ float UArmTimelineWidget::CalculateDistanceBasedScale(const FVector& WidgetLocat
 {
 	// Check if distance-based scaling is enabled
 	bool bDistanceScalingEnabled = true;
-	float MinDistance = 200.0f;
-	float MaxDistance = 2000.0f;
-	float MinScale = 0.3f;
-	float MaxScale = 1.5f;
+	float MinArmLength = 600.0f;
+	float MaxArmLength = 6000.0f;
+	float MinScale = 0.2f;
+	float MaxScale = 2.0f;
 	
 	// Get settings from GameManager
 	if (UWorld* World = GetWorld())
@@ -594,8 +595,8 @@ float UArmTimelineWidget::CalculateDistanceBasedScale(const FVector& WidgetLocat
 			if (GameManager)
 			{
 				bDistanceScalingEnabled = GameManager->bUseDistanceBasedScaling;
-				MinDistance = GameManager->TimelineMinDistance;
-				MaxDistance = GameManager->TimelineMaxDistance;
+				MinArmLength = GameManager->TimelineMinDistance;
+				MaxArmLength = GameManager->TimelineMaxDistance;
 				MinScale = GameManager->TimelineMinScale;
 				MaxScale = GameManager->TimelineMaxScale;
 				break;
@@ -609,32 +610,31 @@ float UArmTimelineWidget::CalculateDistanceBasedScale(const FVector& WidgetLocat
 		return 1.0f;
 	}
 	
-	// Get the player's camera position
-	FVector PlayerLocation;
+	// Get the player's camera arm length from HexTopDownPawn
+	float CameraArmLength = 3000.0f; // Default fallback
 	if (UWorld* World = GetWorld())
 	{
 		APlayerController* PC = World->GetFirstPlayerController();
 		if (PC && PC->GetPawn())
 		{
-			PlayerLocation = PC->GetPawn()->GetActorLocation();
+			// Try to cast to HexTopDownPawn to get the SpringArm length
+			if (AHexTopDownPawn* HexPawn = Cast<AHexTopDownPawn>(PC->GetPawn()))
+			{
+				if (HexPawn->SpringArm)
+				{
+					CameraArmLength = HexPawn->SpringArm->TargetArmLength;
+				}
+			}
 		}
 	}
 	
-	// If we couldn't get player info, use default scale
-	if (PlayerLocation.IsZero())
-	{
-		return 1.0f;
-	}
+	// Clamp arm length to our range
+	CameraArmLength = FMath::Clamp(CameraArmLength, MinArmLength, MaxArmLength);
 	
-	// Calculate distance from player to widget
-	float Distance = FVector::Dist(PlayerLocation, WidgetLocation);
-	
-	// Clamp distance to our range
-	Distance = FMath::Clamp(Distance, MinDistance, MaxDistance);
-	
-	// Calculate scale based on distance (closer = larger scale)
-	float NormalizedDistance = (Distance - MinDistance) / (MaxDistance - MinDistance);
-	float Scale = FMath::Lerp(MaxScale, MinScale, NormalizedDistance);
+	// Calculate scale based on camera arm length (closer = larger scale)
+	// Note: Shorter arm length = closer camera = larger timeline scale
+	float NormalizedArmLength = (CameraArmLength - MinArmLength) / (MaxArmLength - MinArmLength);
+	float Scale = FMath::Lerp(MaxScale, MinScale, NormalizedArmLength);
 	
 	return Scale;
 }
