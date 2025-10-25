@@ -170,6 +170,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	int32 MaxTimelineIcons = 10;
 
+	/** Whether to use distance-based scaling for timeline widgets */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	bool bUseDistanceBasedScaling = true;
+
+	/** Minimum distance for timeline scaling (close distance) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineMinDistance = 200.0f;
+
+	/** Maximum distance for timeline scaling (far distance) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineMaxDistance = 2000.0f;
+
+	/** Minimum scale when timeline is far away */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineMinScale = 0.2f;
+
+	/** Maximum scale when timeline is close */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineMaxScale = 2.0f;
+
 	/** Set command textures for timeline display */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Textures);

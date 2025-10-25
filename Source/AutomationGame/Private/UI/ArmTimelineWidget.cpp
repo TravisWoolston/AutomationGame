@@ -308,8 +308,12 @@ void UArmTimelineWidget::UpdateWidgetPosition(const FVector& ArmLocation, const 
 	SetWorldLocation(WidgetLocation);
 	SetWorldRotation(WidgetRotation);
 	
+	// Calculate distance-based scaling
+	float DistanceBasedScale = CalculateDistanceBasedScale(WidgetLocation);
+	float FinalScale = TimelineScale * DistanceBasedScale;
+	
 	// Apply scale
-	SetWorldScale3D(FVector(TimelineScale, TimelineScale, TimelineScale));
+	SetWorldScale3D(FVector(FinalScale, FinalScale, FinalScale));
 }
 
 void UArmTimelineWidget::UpdateWidgetPositionFromHex(const FHex& HexCoord, float BaseZ, const FRotator& ArmRotation)
@@ -372,8 +376,12 @@ void UArmTimelineWidget::UpdateWidgetPositionFromHex(const FHex& HexCoord, float
 	SetWorldLocation(WidgetLocation);
 	SetWorldRotation(WidgetRotation);
 	
+	// Calculate distance-based scaling
+	float DistanceBasedScale = CalculateDistanceBasedScale(WidgetLocation);
+	float FinalScale = TimelineScale * DistanceBasedScale;
+	
 	// Apply scale
-	SetWorldScale3D(FVector(TimelineScale, TimelineScale, TimelineScale));
+	SetWorldScale3D(FVector(FinalScale, FinalScale, FinalScale));
 }
 
 void UArmTimelineWidget::SetDefaultCommandTexture(UTexture2D* DefaultTexture)
@@ -566,4 +574,67 @@ void UArmTimelineWidget::SetMaxCommandIcons(int32 MaxIcons)
 	{
 		UMGWidget->SetMaxDisplayedCommands(MaxDisplayedCommands);
 	}
+}
+
+float UArmTimelineWidget::CalculateDistanceBasedScale(const FVector& WidgetLocation)
+{
+	// Check if distance-based scaling is enabled
+	bool bDistanceScalingEnabled = true;
+	float MinDistance = 200.0f;
+	float MaxDistance = 2000.0f;
+	float MinScale = 0.3f;
+	float MaxScale = 1.5f;
+	
+	// Get settings from GameManager
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager)
+			{
+				bDistanceScalingEnabled = GameManager->bUseDistanceBasedScaling;
+				MinDistance = GameManager->TimelineMinDistance;
+				MaxDistance = GameManager->TimelineMaxDistance;
+				MinScale = GameManager->TimelineMinScale;
+				MaxScale = GameManager->TimelineMaxScale;
+				break;
+			}
+		}
+	}
+	
+	// If distance scaling is disabled, return default scale
+	if (!bDistanceScalingEnabled)
+	{
+		return 1.0f;
+	}
+	
+	// Get the player's camera position
+	FVector PlayerLocation;
+	if (UWorld* World = GetWorld())
+	{
+		APlayerController* PC = World->GetFirstPlayerController();
+		if (PC && PC->GetPawn())
+		{
+			PlayerLocation = PC->GetPawn()->GetActorLocation();
+		}
+	}
+	
+	// If we couldn't get player info, use default scale
+	if (PlayerLocation.IsZero())
+	{
+		return 1.0f;
+	}
+	
+	// Calculate distance from player to widget
+	float Distance = FVector::Dist(PlayerLocation, WidgetLocation);
+	
+	// Clamp distance to our range
+	Distance = FMath::Clamp(Distance, MinDistance, MaxDistance);
+	
+	// Calculate scale based on distance (closer = larger scale)
+	float NormalizedDistance = (Distance - MinDistance) / (MaxDistance - MinDistance);
+	float Scale = FMath::Lerp(MaxScale, MinScale, NormalizedDistance);
+	
+	return Scale;
 }

@@ -104,6 +104,9 @@ public:
 	/** Calculate optimal timeline position to avoid blocking line of sight */
 	FVector CalculateOptimalTimelinePosition(const FVector& ArmLocation);
 
+	/** Calculate distance-based scale for timeline widget */
+	float CalculateDistanceBasedScale(const FVector& WidgetLocation);
+
 	/** Set the maximum number of command icons to display */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetMaxCommandIcons(int32 MaxIcons);

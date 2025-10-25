@@ -338,7 +338,7 @@ void ABasicArm::UpdateAnimationBlueprintExtend(float DeltaSeconds)
 		FProperty* CurrentExtendProperty = ArmAnimInstance->GetClass()->FindPropertyByName(TEXT("CurrentExtend"));
 			FDoubleProperty* DoubleProperty = CastField<FDoubleProperty>(CurrentExtendProperty);
 
-				DoubleProperty->SetPropertyValue_InContainer(ArmAnimInstance, (double)ReachTiles);
+				DoubleProperty->SetPropertyValue_InContainer(ArmAnimInstance, (double)EffectiveReachEnd);
 			
 
 
@@ -679,7 +679,7 @@ void ABasicArm::UpdateBoneRotations(float InAlpha)
 		return;
 	}
 
-	// Calculate the interpolated yaw based on current animation state
+	// Calculate the exact interpolated yaw value (same as rotation system)
 	const float StartYaw = NormDeg(LastYawDeg);
 	const float TargetYaw = NormDeg(CurrYawDeg);
 	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
@@ -688,33 +688,20 @@ void ABasicArm::UpdateBoneRotations(float InAlpha)
 	// Ensure we have the Animation Blueprint instance
 	EnsureAnimationBlueprintInstance();
 	
-	// For USkeletalMeshComponent, we'll pass the rotation values to the Animation Blueprint
-	// The Animation Blueprint will handle the actual bone rotations
+	// Pass the exact interpolated value to Animation Blueprint
+	// This ensures no additional interpolation happens in the Blueprint
 	if (ArmAnimInstance)
 	{
-		if (bDebugLogs)
-		{
-			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Updated Animation Blueprint - Yaw=%.2f, ExtendRetract=%d, Extending=%d"), 
-				*GetName(), Yaw, bExecutingExtendRetract ? 1 : 0, bIsExtending ? 1 : 0);
-		}
-		
-		// Set rotation values for the Animation Blueprint to use
+
+		// Set the exact interpolated rotation value
 		FProperty* YawProperty = ArmAnimInstance->GetClass()->FindPropertyByName(TEXT("CurrentYaw"));
-		if (YawProperty)
-		{
-			// Try both FloatProperty and DoubleProperty
-			FFloatProperty* FloatProperty = CastField<FFloatProperty>(YawProperty);
-			FDoubleProperty* DoubleProperty = CastField<FDoubleProperty>(YawProperty);
+
 			
-			if (FloatProperty)
-			{
-				FloatProperty->SetPropertyValue_InContainer(ArmAnimInstance, Yaw);
-			}
-			else if (DoubleProperty)
-			{
+			FDoubleProperty* DoubleProperty = CastField<FDoubleProperty>(YawProperty);
+
 				DoubleProperty->SetPropertyValue_InContainer(ArmAnimInstance, (double)Yaw);
-			}
-		}
+
+		
 		
 		// Set extension state for HoloscopicGear3 rotation
 		FProperty* ExecutingExtendRetractProperty = ArmAnimInstance->GetClass()->FindPropertyByName(TEXT("bExecutingExtendRetract"));
