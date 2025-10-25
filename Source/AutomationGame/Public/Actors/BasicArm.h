@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Components/PoseableMeshComponent.h"
 #include "Sim/HexTypes.h"     // FHex
 #include "Sim/HexCoord.h"     // Axial<->XY helpers
 #include "Sim/OrbTypes.h"    // FOrb
@@ -95,6 +94,27 @@ public:
 	// --- Visuals ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	USkeletalMesh* ArmSkeletalMesh = nullptr;
+	
+	// Animation Blueprint class for the arm
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	TSubclassOf<UAnimInstance> ArmAnimationBlueprintClass = nullptr;
+	
+	// Extension range for alpha calculation
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+	float MinExtensionReach = 1.0f;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+	float MaxExtensionReach = 3.0f;
+	
+	// Rapid command response settings
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+	float RapidCommandSpeedMultiplier = 3.0f; // Speed multiplier for rapid command changes
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+	float TargetChangeThreshold = 0.1f; // Threshold for detecting significant changes
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+	bool bUseInstantResponse = false; // If true, skip interpolation for instant response
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	UStaticMesh* HandMesh = nullptr;
@@ -132,6 +152,16 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FName Base1BoneName = TEXT("Base1");
+
+	// Telescopic arm bone names (largest to smallest)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	FName ArmBase4BoneName = TEXT("ArmBase4");
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	FName ArmMid5BoneName = TEXT("ArmMid5");
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+	FName ArmTip6BoneName = TEXT("ArmTip6");
 
 	/** Bone rotation offsets to compensate for initial skeletal mesh orientations */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual|BoneOffsets")
@@ -259,7 +289,11 @@ protected:
 
 private:
 	// Components
-	UPROPERTY(Transient) UPoseableMeshComponent* BaseComp = nullptr;
+	UPROPERTY(Transient) USkeletalMeshComponent* BaseComp = nullptr;
+	
+	// Animation Blueprint instance for telescopic bone control
+	UPROPERTY(Transient) UAnimInstance* ArmAnimInstance = nullptr;
+	
 	UPROPERTY(Transient) UStaticMeshComponent* HandComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* HeldOrbComp = nullptr;
 
@@ -270,6 +304,18 @@ private:
 
 	// Track last applied multiplier to update interpolation smoothly
 	float LastExtensionSegmentMultiplier = 1.0f;
+	
+	// Animation Blueprint lerp variables (like rotation system)
+	float LastExtendValue = 0.0f;  // Start position for interpolation
+	float CurrExtendValue = 0.0f;  // Target position for interpolation
+	float CurrentExtendValue = 0.0f; // Current interpolated position
+	float ExtendLerpSpeed = 5.0f; // How fast to lerp to target
+	
+	// Animation Blueprint update function
+	void UpdateAnimationBlueprintExtend(float DeltaSeconds);
+	
+	// Ensure Animation Blueprint instance is available
+	void EnsureAnimationBlueprintInstance();
 
 	// --- Held cluster visual support ---
 	UPROPERTY(Transient)
@@ -318,7 +364,8 @@ private:
 	void EnsureComps();
 	void RefreshMeshes();
 	void RefreshPose(float InAlpha);                 // update transforms
-	void UpdateBoneRotations(float InAlpha);          // update skeletal mesh bone rotations
+	void UpdateBoneRotations(float InAlpha);         // update skeletal mesh bone rotations
+
 	FVector HexToWorld(const FHex& H) const;         // grid → world
 	float   DirToYaw(uint8 Dir) const;               // grid yaw + 60° steps
 

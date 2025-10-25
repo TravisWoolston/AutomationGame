@@ -337,7 +337,7 @@ void AHexTopDownPawn::StartSelection()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Failed to get mouse position for selection"));
+		// UE_LOG(LogTemp, Warning, TEXT("Failed to get mouse position for selection"));
 	}
 }
 
@@ -558,8 +558,7 @@ void AHexTopDownPawn::CreateBlueprint()
 				FBlueprintTile BlueprintTile(LocalHex, (uint8)ArmState.HomeFacing, ArmState.HomeArmLen, StartingRot, StartingRch, CapturedProgram, true); // Assume looping for now
 				BlueprintTiles.Add(BlueprintTile);
 				
-				UE_LOG(LogTemp, Warning, TEXT("Blueprint: Captured arm at (%d,%d) - CurrentFacing=%d HomeFacing=%d (using HomeFacing for blueprint)"), 
-					Hex.Q, Hex.R, (int32)ArmState.Facing, (int32)ArmState.HomeFacing);
+
 				bFoundArm = true;
 				break;
 			}
@@ -1085,7 +1084,7 @@ void AHexTopDownPawn::StartDeletionSelection()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Failed to get mouse position for deletion selection"));
+		// UE_LOG(LogTemp, Warning, TEXT("Failed to get mouse position for deletion selection"));
 	}
 }
 
@@ -1392,16 +1391,12 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 		
 		if (BlueprintTile.bIsArm)
 		{
-			// For arms, we need to get the arm preview mesh from the placer
-			if (Placer && Placer->ArmBasePreviewMesh)
+			// For arms, use ArmBasePreviewMesh from HexPlacementComponent
+			if (Placer)
 			{
-				PreviewMesh = Placer->ArmBasePreviewMesh;
+				PreviewMesh = Placer->ArmBasePreviewMesh ? Placer->ArmBasePreviewMesh : Placer->GenericTilePreviewMesh;
 			}
-			else if (Placer)
-			{
-				PreviewMesh = Placer->GenericTilePreviewMesh;
-			}
-			// Apply arm rotation using StartingRotation
+			// Apply arm rotation using StartingRotation (facing direction)
 			PreviewYaw = (BlueprintTile.StartingRotation + BlueprintRotation) * 60.0f;
 			if (Placer)
 			{
@@ -1410,19 +1405,19 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 		}
 		else
 		{
-			// Get mesh based on tile type
+			// Get mesh based on tile type - use actual meshes like single tile placement does
 			switch (BlueprintTile.TileType)
 			{
 			case ETileKind::Input:
 				if (Placer)
 				{
-					PreviewMesh = Placer->GenericTilePreviewMesh;
+					PreviewMesh = Placer->GetActualOrbMesh();
 				}
 				break;
 			case ETileKind::Output:
 				if (Placer)
 				{
-					PreviewMesh = Placer->GenericTilePreviewMesh;
+					PreviewMesh = Placer->GetActualOutputOrbMesh();
 					// For output tiles, handle grid orientation
 					if (Orientation == EHexOrientation::FlatTop)
 					{
@@ -1433,31 +1428,23 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 			case ETileKind::Belt:
 				if (Placer)
 				{
-					PreviewMesh = Placer->BeltMeshPreview ? Placer->BeltMeshPreview : Placer->GenericTilePreviewMesh;
+					PreviewMesh = Placer->GetActualBeltMesh();
 				}
 				// Apply belt direction rotation
 				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;
 				break;
 			case ETileKind::Bond:
-				if (Placer && Placer->BondPreviewMesh)
+				if (Placer)
 				{
-					PreviewMesh = Placer->BondPreviewMesh;
-				}
-				else if (Placer)
-				{
-					PreviewMesh = Placer->GenericTilePreviewMesh;
+					PreviewMesh = Placer->BondPreviewMesh ? Placer->BondPreviewMesh : Placer->GenericTilePreviewMesh;
 				}
 				// Apply bond direction rotation
 				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;
 				break;
 			case ETileKind::Unbond:
-				if (Placer && Placer->UnbondPreviewMesh)
+				if (Placer)
 				{
-					PreviewMesh = Placer->UnbondPreviewMesh;
-				}
-				else if (Placer)
-				{
-					PreviewMesh = Placer->GenericTilePreviewMesh;
+					PreviewMesh = Placer->UnbondPreviewMesh ? Placer->UnbondPreviewMesh : Placer->GenericTilePreviewMesh;
 				}
 				// Apply unbond direction rotation
 				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;

@@ -2,6 +2,7 @@
 #include "Actors/OrbSimDriver.h"
 #include "Sim/SimWorldHex.h"
 #include "Sim/Tiles.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Sim/HexCoord.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Actor.h"
@@ -498,6 +499,25 @@ void UHexPlacementComponent::EnsurePreviewComponent()
 	}
 }
 
+void UHexPlacementComponent::EnsureSkeletalPreviewComponent()
+{
+	if (SkeletalPreviewComp) return;
+
+	AActor* Owner = GetOwner();
+	if (!Owner) return;
+
+	SkeletalPreviewComp = NewObject<UPoseableMeshComponent>(Owner);
+	SkeletalPreviewComp->SetupAttachment(Owner->GetRootComponent());
+	SkeletalPreviewComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SkeletalPreviewComp->SetMobility(EComponentMobility::Movable);
+	SkeletalPreviewComp->SetCastShadow(false);
+	SkeletalPreviewComp->SetHiddenInGame(false);
+	SkeletalPreviewComp->bUseAsOccluder = false;
+	SkeletalPreviewComp->RegisterComponent();
+
+	UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Created skeletal preview component - Owner: %s"), Owner ? *Owner->GetName() : TEXT("NULL"));
+}
+
 UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 {
 	switch (PlaceKind)
@@ -516,6 +536,51 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 		return UnbondPreviewMesh ? UnbondPreviewMesh : GenericTilePreviewMesh;
 	default:
 		return GenericTilePreviewMesh;
+	}
+}
+
+USkeletalMesh* UHexPlacementComponent::SelectSkeletalPreviewMesh() const
+{
+	switch (PlaceKind)
+	{
+	case EPlaceKind::Arm:
+		if (bUseActualArmAssets)
+		{
+			// Get the skeletal mesh directly from GameManager's BasicArmClass blueprint
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<AGameManager> It(World); It; ++It)
+				{
+					AGameManager* GameManager = *It;
+					if (GameManager && GameManager->BasicArmClass)
+					{
+						// Get the skeletal mesh from the BasicArm class blueprint
+						ABasicArm* DefaultArm = GameManager->BasicArmClass->GetDefaultObject<ABasicArm>();
+						if (DefaultArm && DefaultArm->ArmSkeletalMesh)
+						{
+							UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Using actual arm skeletal mesh: %s"), *DefaultArm->ArmSkeletalMesh->GetName());
+							return DefaultArm->ArmSkeletalMesh;
+						}
+						else
+						{
+							UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: BasicArm class found but ArmSkeletalMesh is null"));
+						}
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: GameManager or BasicArmClass not found"));
+					}
+					break; // Only check the first GameManager found
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: No world found"));
+			}
+		}
+		return nullptr;
+	default:
+		return nullptr;
 	}
 }
 
@@ -681,6 +746,7 @@ void UHexPlacementComponent::UpdateHoverHex()
 
 	if (!Driver && !Sim)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: UpdateHoverHex - No Driver or Sim available"));
 		bHoverValid = false;
 		return;
 	}
@@ -721,6 +787,10 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		if (PreviewComp)
 		{
 			PreviewComp->SetVisibility(false);
+		}
+		if (SkeletalPreviewComp)
+		{
+			SkeletalPreviewComp->SetVisibility(false);
 		}
 		return;
 	}
@@ -769,96 +839,172 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 	// Mesh preview (now also for Input, Output, Belt, Arm, Bond, and Unbond)
 	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
 	{
-		EnsurePreviewComponent();
-		if (!PreviewComp) return;
 
-		UStaticMesh* Mesh = SelectPreviewMesh();
-		if (!Mesh)
-		{
-			PreviewComp->SetVisibility(false);
-			return;
-		}
-		if (PreviewComp->GetStaticMesh() != Mesh)
-			PreviewComp->SetStaticMesh(Mesh);
-
-		const uint8 EffectiveDir = BeltDir % 6;
-		const float Yaw = ComputeDirYawFromNeighbor(this, HoverHex, EffectiveDir);
-
-		float FixedYaw = Yaw;
+		// For now, use static mesh preview for arms (ArmBasePreviewMesh)
 		if (PlaceKind == EPlaceKind::Arm)
 		{
-			FixedYaw = FMath::UnwindDegrees(FixedYaw + ArmPreviewFacingFixDeg);
-		}
-		else if (PlaceKind == EPlaceKind::Output)
-		{
-			// For output tiles, we need to match the grid orientation
-			// If the grid is using FlatTop orientation, rotate the tile mesh 30 degrees
-			const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
-			if (Ori == EHexOrientation::FlatTop)
+			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Using static mesh for arm preview"));
+			// Use static mesh preview for arm
+			EnsurePreviewComponent();
+			if (!PreviewComp) 
 			{
-				FixedYaw = FMath::UnwindDegrees(FixedYaw + 30.0f);
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Failed to create preview component"));
+				return;
 			}
-		}
 
-		FVector UseLoc = CenterA;
-		FVector UseScale(PreviewScale);
-
-		if (PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
-		{
-			// Midpoint between the two hex centers
-			const FHex NeighborHex = HexUtil::Neighbor(HoverHex, (EHexDir)EffectiveDir);
-			const FVector CenterB = HexToWorld(NeighborHex) + FVector(0, 0, PreviewZOffset);
-			UseLoc = (CenterA + CenterB) * 0.5f;
-			// Assume authored size fits two hexes; let user adjust in editor via mesh or PreviewScale
-			UseScale = FVector(PreviewScale);
-		}
-
-		PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw, 0.f));
-		PreviewComp->SetWorldScale3D(UseScale);
-		PreviewComp->SetVisibility(true);
-
-		// Set material based on placement type
-		if (PlaceKind == EPlaceKind::Input)
-		{
-			// For input tiles, use the actual orb material
-			UMaterialInterface* OrbMaterial = GetActualOrbMaterial();
-			if (OrbMaterial)
+			UStaticMesh* Mesh = SelectPreviewMesh();
+			if (!Mesh)
 			{
-				PreviewComp->SetMaterial(0, OrbMaterial);
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: No mesh selected for arm preview"));
+				PreviewComp->SetVisibility(false);
+				return;
 			}
-		}
-		else if (PlaceKind == EPlaceKind::Output)
-		{
-			// For output tiles, use the actual orb material with half opacity
-			UMaterialInterface* OrbMaterial = GetActualOutputOrbMaterial();
-			if (OrbMaterial)
+			
+			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Found arm preview mesh: %s"), *Mesh->GetName());
+			
+			if (PreviewComp->GetStaticMesh() != Mesh)
 			{
-				// Create a dynamic material instance for opacity control
-				UMaterialInstanceDynamic* OutputMID = UMaterialInstanceDynamic::Create(OrbMaterial, this);
-				if (OutputMID)
+				PreviewComp->SetStaticMesh(Mesh);
+				UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Arm preview mesh set successfully"));
+			}
+
+			const uint8 EffectiveDir = BeltDir % 6;
+			const float Yaw = ComputeDirYawFromNeighbor(this, HoverHex, EffectiveDir);
+
+			// Apply arm preview facing fix
+			float FixedYaw = FMath::UnwindDegrees(Yaw + ArmPreviewFacingFixDeg);
+
+			FVector UseLoc = CenterA;
+			FVector UseScale(PreviewScale);
+
+			PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw, 0.f));
+			PreviewComp->SetWorldScale3D(UseScale);
+			PreviewComp->SetVisibility(true);
+			
+			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Set arm preview location: %s, rotation: %.2f, scale: %s"), 
+				*UseLoc.ToString(), FixedYaw, *UseScale.ToString());
+
+			// Set material for arm preview
+			if (PreviewMID)
+			{
+				const FLinearColor Col = bPlaceOK
+					? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
+					: FLinearColor(0.9f, 0.f, 0.f, 0.6f);
+				PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
+			}
+
+			// Hide skeletal mesh component
+			if (SkeletalPreviewComp)
+			{
+				SkeletalPreviewComp->SetVisibility(false);
+			}
+			
+			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Arm preview component made visible"));
+		}
+		else
+		{
+			// Use static mesh preview for other types
+			EnsurePreviewComponent();
+			if (!PreviewComp) return;
+
+			UStaticMesh* Mesh = SelectPreviewMesh();
+			if (!Mesh)
+			{
+				PreviewComp->SetVisibility(false);
+				return;
+			}
+			if (PreviewComp->GetStaticMesh() != Mesh)
+				PreviewComp->SetStaticMesh(Mesh);
+
+			const uint8 EffectiveDir = BeltDir % 6;
+			const float Yaw = ComputeDirYawFromNeighbor(this, HoverHex, EffectiveDir);
+
+			float FixedYaw = Yaw;
+			if (PlaceKind == EPlaceKind::Arm)
+			{
+				FixedYaw = FMath::UnwindDegrees(FixedYaw + ArmPreviewFacingFixDeg);
+			}
+			else if (PlaceKind == EPlaceKind::Output)
+			{
+				// For output tiles, we need to match the grid orientation
+				// If the grid is using FlatTop orientation, rotate the tile mesh 30 degrees
+				const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+				if (Ori == EHexOrientation::FlatTop)
 				{
-					// Set half opacity (0.5 alpha)
-					OutputMID->SetScalarParameterValue(FName("Opacity"), 0.5f);
-					PreviewComp->SetMaterial(0, OutputMID);
+					FixedYaw = FMath::UnwindDegrees(FixedYaw + 30.0f);
 				}
-				else
+			}
+
+			FVector UseLoc = CenterA;
+			FVector UseScale(PreviewScale);
+
+			if (PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
+			{
+				// Midpoint between the two hex centers
+				const FHex NeighborHex = HexUtil::Neighbor(HoverHex, (EHexDir)EffectiveDir);
+				const FVector CenterB = HexToWorld(NeighborHex) + FVector(0, 0, PreviewZOffset);
+				UseLoc = (CenterA + CenterB) * 0.5f;
+				// Assume authored size fits two hexes; let user adjust in editor via mesh or PreviewScale
+				UseScale = FVector(PreviewScale);
+			}
+
+			PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw, 0.f));
+			PreviewComp->SetWorldScale3D(UseScale);
+			PreviewComp->SetVisibility(true);
+
+			// Set material based on placement type
+			if (PlaceKind == EPlaceKind::Input)
+			{
+				// For input tiles, use the actual orb material
+				UMaterialInterface* OrbMaterial = GetActualOrbMaterial();
+				if (OrbMaterial)
 				{
 					PreviewComp->SetMaterial(0, OrbMaterial);
 				}
 			}
-		}
-		else if (PreviewMID)
-		{
-			// For other types, use the tinted material
-			const FLinearColor Col = bPlaceOK
-				? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
-				: FLinearColor(0.9f, 0.f, 0.f, 0.6f);
-			PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
+			else if (PlaceKind == EPlaceKind::Output)
+			{
+				// For output tiles, use the actual orb material with half opacity
+				UMaterialInterface* OrbMaterial = GetActualOutputOrbMaterial();
+				if (OrbMaterial)
+				{
+					// Create a dynamic material instance for opacity control
+					UMaterialInstanceDynamic* OutputMID = UMaterialInstanceDynamic::Create(OrbMaterial, this);
+					if (OutputMID)
+					{
+						// Set half opacity (0.5 alpha)
+						OutputMID->SetScalarParameterValue(FName("Opacity"), 0.5f);
+						PreviewComp->SetMaterial(0, OutputMID);
+					}
+					else
+					{
+						PreviewComp->SetMaterial(0, OrbMaterial);
+					}
+				}
+			}
+			else if (PreviewMID)
+			{
+				// For other types, use the tinted material
+				const FLinearColor Col = bPlaceOK
+					? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
+					: FLinearColor(0.9f, 0.f, 0.f, 0.6f);
+				PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
+			}
+
+			// Hide skeletal mesh component
+			if (SkeletalPreviewComp)
+			{
+				SkeletalPreviewComp->SetVisibility(false);
+			}
 		}
 	}
 	else if (PreviewComp)
 	{
 		PreviewComp->SetVisibility(false);
+	}
+	if (SkeletalPreviewComp)
+	{
+		SkeletalPreviewComp->SetVisibility(false);
 	}
 }
 
@@ -915,4 +1061,63 @@ UMaterialInterface* UHexPlacementComponent::GetActualOutputOrbMaterial() const
 	
 	// Final fallback
 	return nullptr;
+}
+
+void UHexPlacementComponent::UpdateArmPreviewBoneRotations(float Yaw)
+{
+	if (!SkeletalPreviewComp || !SkeletalPreviewComp->GetSkinnedAsset())
+	{
+		return;
+	}
+
+	// Get bone names and rotation offsets from the actual BasicArm class
+	FName RotatingBase2BoneName = TEXT("RotatingBase2");
+	FName BaseGear7BoneName = TEXT("BaseGear7");
+	FName Base1BoneName = TEXT("Base1");
+	FRotator RotatingBase2RotationOffset = FRotator::ZeroRotator;
+	FRotator BaseGear7RotationOffset = FRotator::ZeroRotator;
+
+	if (bUseActualArmAssets)
+	{
+		// Get the actual bone names and offsets from BasicArm class blueprint
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				AGameManager* GameManager = *It;
+				if (GameManager && GameManager->BasicArmClass)
+				{
+					ABasicArm* DefaultArm = GameManager->BasicArmClass->GetDefaultObject<ABasicArm>();
+					if (DefaultArm)
+					{
+						RotatingBase2BoneName = DefaultArm->RotatingBase2BoneName;
+						BaseGear7BoneName = DefaultArm->BaseGear7BoneName;
+						Base1BoneName = DefaultArm->Base1BoneName;
+						RotatingBase2RotationOffset = DefaultArm->RotatingBase2RotationOffset;
+						BaseGear7RotationOffset = DefaultArm->BaseGear7RotationOffset;
+						
+						UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Using actual arm bone settings - RotatingBase2: %s, BaseGear7: %s"), 
+							*RotatingBase2BoneName.ToString(), *BaseGear7BoneName.ToString());
+					}
+					break; // Only check the first GameManager found
+				}
+			}
+		}
+	}
+
+	// Rotate RotatingBase2 bone (Y-axis rotation for facing direction)
+	if (RotatingBase2BoneName != NAME_None)
+	{
+		FRotator RotatingBase2Rotation = FRotator(0.f, Yaw, 0.f) + RotatingBase2RotationOffset;
+		SkeletalPreviewComp->SetBoneRotationByName(RotatingBase2BoneName, RotatingBase2Rotation, EBoneSpaces::ComponentSpace);
+	}
+
+	// Rotate BaseGear7 bone (opposite direction of RotatingBase2)
+	if (BaseGear7BoneName != NAME_None)
+	{
+		FRotator BaseGear7Rotation = FRotator(0.f, -Yaw, 0.f) + BaseGear7RotationOffset;
+		SkeletalPreviewComp->SetBoneRotationByName(BaseGear7BoneName, BaseGear7Rotation, EBoneSpaces::ComponentSpace);
+	}
+
+	// Base1 remains stationary (no rotation applied)
 }

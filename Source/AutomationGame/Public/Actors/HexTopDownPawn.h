@@ -180,11 +180,17 @@ private:
 	// Helper function to get hexes within a selection area
 	void GetHexesInSelectionArea(const FHex& HexStart, const FHex& HexEnd, const FVector& WorldStart, const FVector& WorldEnd, TArray<FHex>& OutHexes);
 
+	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode1();
+	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode2();
+	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode3();
+	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode4();
+	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode5();
+	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode6();
 	void RotCW() { 
 		if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0) {

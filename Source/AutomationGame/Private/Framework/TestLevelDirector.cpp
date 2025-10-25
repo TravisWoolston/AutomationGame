@@ -278,8 +278,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 
 			ArmIndex = Sim->AddArm(ArmState);
 			A.Spawned->SimArmIndex = ArmIndex;
-			UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Added scenario arm at (%d,%d) SimIndex=%d StartingRot=%d"),
-				A.Q, A.R, ArmIndex, A.StartingRotation);
+
 		}
 
 		// Finish spawn now that SimArmIndex is valid
@@ -312,8 +311,8 @@ void ATestLevelDirector::SpawnScenarioPreview()
 		if (!ArmSpec.Spawned && ArmClass)
 		{
 			FVector WorldPos = GetWorldPositionForHex(ArmSpec.Q, ArmSpec.R);
-			FRotator WorldRot(0.f, Driver->GetGridYaw() + 60.f * (ArmSpec.Facing % 6), 0.f);
-			FTransform Tm(WorldRot, WorldPos);
+			// Spawn at neutral rotation - bone rotation system will handle facing direction
+			FTransform Tm(FRotator::ZeroRotator, WorldPos);
 			ArmSpec.Spawned = World->SpawnActor<ABasicArm>(ArmClass, Tm);
 		}
 	}
@@ -747,17 +746,13 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			NewArmSpec.Spawned = Arm; // Keep reference
 			Scenario.Arms.Add(NewArmSpec);
 
-			// Enhanced logging to debug program capture
-			UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Captured arm at (%d,%d) SimIndex=%d with %d instructions"),
-				Arm->Q, Arm->R, Arm->SimArmIndex, Arm->Program.Num());
+
 			for (int32 i = 0; i < FMath::Min(3, Arm->Program.Num()); i++)
 			{
 				const FArmInstr& Instr = Arm->Program[i];
-				UE_LOG(LogTemp, Log, TEXT("  [%d]: Cmd=%d Arg=%d"), i, (int32)Instr.Cmd, Instr.Arg);
 			}
 		}
 
-		UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Captured %d tiles and %d arms to scenario"),
-			Scenario.Tiles.Num(), Scenario.Arms.Num());
+
 	}
 }

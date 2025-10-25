@@ -3,8 +3,8 @@
 #include "Framework/GameTickManager.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Components/PoseableMeshComponent.h"
 #include "Engine/World.h"
+#include "UObject/UnrealType.h"
 #include "AGLogChannels.h"
 #include "Sim/SimWorldHex.h"
 #include "DrawDebugHelpers.h"
@@ -45,7 +45,7 @@ ABasicArm::ABasicArm()
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("ArmRoot"));
 	SetRootComponent(Root);
 
-	BaseComp = CreateDefaultSubobject<UPoseableMeshComponent>(TEXT("ArmBase"));
+	BaseComp = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ArmBase"));
 	BaseComp->SetupAttachment(Root);
 	BaseComp->SetMobility(EComponentMobility::Movable);
 
@@ -110,8 +110,7 @@ void ABasicArm::BeginPlay()
 	{
 		M->OnFixedTick.RemoveDynamic(this, &ABasicArm::HandleFixedTickSeconds);
 		M->OnFixedTick.AddDynamic(this, &ABasicArm::HandleFixedTickSeconds);
-		UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Bound to GameTickManager '%s'"),
-			*GetName(), *M->GetName()); // <— add this line
+
 	}
 	else
 	{
@@ -124,6 +123,9 @@ void ABasicArm::BeginPlay()
 	CurrYawDeg = DirToYaw(FacingDir);
 	LastYawDeg = CurrYawDeg;
 	RefreshPose(1.f);
+	
+	// Update skeletal mesh bone rotations
+	UpdateBoneRotations(1.f);
 
 	PushRuntimePropertiesToSim(); // NEW
 
@@ -132,10 +134,17 @@ void ABasicArm::BeginPlay()
 
 	// Initialize timeline widget
 	InitializeTimelineWidget();
+		// Ensure we have the Animation Blueprint instance
+		EnsureAnimationBlueprintInstance();
 }
 void ABasicArm::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	
+	if (bDebugLogs)
+	{
+		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Tick called - DeltaSeconds=%.3f"), *GetName(), DeltaSeconds);
+	}
 
 	// Sync all state from simulation immediately
 	if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
@@ -161,8 +170,8 @@ void ABasicArm::Tick(float DeltaSeconds)
 				bIsExtending = true;
 				if (bDebugLogs)
 				{
-					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Executing Extend command - bIsExtending=%d, bExecutingExtendRetract=%d"), 
-						*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0);
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Executing Extend command - bIsExtending=%d, bExecutingExtendRetract=%d, PC=%d"), 
+						*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0, PC);
 				}
 			}
 			else if (CurrentInstr.Cmd == EArmCmd::Retract)
@@ -171,8 +180,8 @@ void ABasicArm::Tick(float DeltaSeconds)
 				bIsExtending = false;
 				if (bDebugLogs)
 				{
-					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Executing Retract command - bIsExtending=%d, bExecutingExtendRetract=%d"), 
-						*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0);
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Executing Retract command - bIsExtending=%d, bExecutingExtendRetract=%d, PC=%d"), 
+						*GetName(), bIsExtending ? 1 : 0, bExecutingExtendRetract ? 1 : 0, PC);
 				}
 			}
 			else
@@ -180,6 +189,11 @@ void ABasicArm::Tick(float DeltaSeconds)
 				// Not executing Extend/Retract command
 				bExecutingExtendRetract = false;
 				// Keep bIsExtending as is (don't reset it)
+				if (bDebugLogs && (CurrentInstr.Cmd == EArmCmd::Reset || CurrentInstr.Cmd == EArmCmd::Wait))
+				{
+					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Non-Extend/Retract command - %s, bExecutingExtendRetract=%d, PC=%d"), 
+						*GetName(), CmdName(CurrentInstr.Cmd), bExecutingExtendRetract ? 1 : 0, PC);
+				}
 			}
 		}
 		else
@@ -291,7 +305,54 @@ void ABasicArm::Tick(float DeltaSeconds)
 
 	RefreshPose(StepAlpha);
 
+	// Update Animation Blueprint CurrentExtend variable
+	UpdateAnimationBlueprintExtend(DeltaSeconds);
+
 	// Timeline widgets update on simulation steps for performance
+}
+
+void ABasicArm::UpdateAnimationBlueprintExtend(float DeltaSeconds)
+{
+	// Calculate alpha value (0.0 to 1.0) for lerping between min and max extension
+	const float ClampedReach = FMath::Clamp(ReachTiles, MinExtensionReach, MaxExtensionReach);
+	float NewTargetExtendValue = (ClampedReach - MinExtensionReach) / (MaxExtensionReach - MinExtensionReach); // Normalize to 0.0-1.0
+	
+	// Only update target during Extend/Retract commands
+	if (bExecutingExtendRetract && !FMath::IsNearlyEqual(CurrExtendValue, NewTargetExtendValue, 0.001f))
+	{
+		// New target - start interpolation from current position
+		LastExtendValue = CurrentExtendValue;
+		CurrExtendValue = NewTargetExtendValue;
+	}
+	
+	// Linear interpolation using the same StepAlpha as rotation system
+	// Interpolate from last position to current target
+	CurrentExtendValue = FMath::Lerp(LastExtendValue, CurrExtendValue, StepAlpha);
+	
+
+	
+	// Update Animation Blueprint if available
+	if (ArmAnimInstance)
+	{
+		// Set the CurrentExtend variable in the Animation Blueprint
+		FProperty* CurrentExtendProperty = ArmAnimInstance->GetClass()->FindPropertyByName(TEXT("CurrentExtend"));
+			FDoubleProperty* DoubleProperty = CastField<FDoubleProperty>(CurrentExtendProperty);
+
+				DoubleProperty->SetPropertyValue_InContainer(ArmAnimInstance, (double)ReachTiles);
+			
+
+
+		
+		if (bDebugLogs)
+		{
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': CurrentExtend: %.3f (Reach: %d)"), 
+				*GetName(), CurrentExtendValue, ReachTiles);
+		}
+	}
+	else if (bDebugLogs)
+	{
+		UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': Animation Blueprint instance not found"), *GetName());
+	}
 }
 
 void ABasicArm::HandleFixedTickSeconds(float StepSeconds)
@@ -331,9 +392,32 @@ void ABasicArm::EnsureComps()
 	}
 	if (!BaseComp)
 	{
-		BaseComp = NewObject<UPoseableMeshComponent>(this, TEXT("ArmBase"));
+		BaseComp = NewObject<USkeletalMeshComponent>(this, TEXT("ArmBase"));
 		BaseComp->SetupAttachment(GetRootComponent());
 		BaseComp->RegisterComponent();
+		
+		// Set the skeletal mesh
+		if (ArmSkeletalMesh)
+		{
+			BaseComp->SetSkeletalMesh(ArmSkeletalMesh);
+		}
+		
+		// Set the Animation Blueprint class
+		if (ArmAnimationBlueprintClass)
+		{
+			BaseComp->SetAnimInstanceClass(ArmAnimationBlueprintClass);
+		}
+		
+		// Get the Animation Blueprint instance (may be null initially)
+		ArmAnimInstance = BaseComp->GetAnimInstance();
+		
+		if (bDebugLogs)
+		{
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': EnsureComps - ArmAnimInstance=%s, AnimClass=%s"), 
+				*GetName(), 
+				ArmAnimInstance ? TEXT("Found") : TEXT("NULL"),
+				BaseComp->GetAnimClass() ? *BaseComp->GetAnimClass()->GetName() : TEXT("NULL"));
+		}
 	}
 	if (!HeldOrbComp)
 	{
@@ -396,6 +480,11 @@ float ABasicArm::GetVisualYawDeg() const
 
 void ABasicArm::RefreshPose(float InAlpha)
 {
+	if (bDebugLogs)
+	{
+		UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': RefreshPose called - InAlpha=%.2f"), *GetName(), InAlpha);
+	}
+	
 	float EasedAlpha = InAlpha;
 	const FVector BaseWorld = HexToWorld(FHex(Q, R)) + FVector(0, 0, BaseZ);
 	const float StartYaw = NormDeg(LastYawDeg);
@@ -535,6 +624,8 @@ void ABasicArm::RefreshPose(float InAlpha)
 
 	// Update skeletal mesh bone rotations
 	UpdateBoneRotations(EasedAlpha);
+	
+
 
 	if (bDebugSpheres && bHolding && HeldOrb.bIsCluster && GetWorld())
 	{
@@ -594,102 +685,101 @@ void ABasicArm::UpdateBoneRotations(float InAlpha)
 	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
 	const float Yaw = NormDeg(StartYaw + Delta * InAlpha);
 
-	// Rotate RotatingBase2 joint on Y-axis for FacingDir
-	if (RotatingBase2BoneName != NAME_None)
+	// Ensure we have the Animation Blueprint instance
+	EnsureAnimationBlueprintInstance();
+	
+	// For USkeletalMeshComponent, we'll pass the rotation values to the Animation Blueprint
+	// The Animation Blueprint will handle the actual bone rotations
+	if (ArmAnimInstance)
 	{
-		const int32 BoneIndex = BaseComp->GetBoneIndex(RotatingBase2BoneName);
-		if (BoneIndex != INDEX_NONE)
+		if (bDebugLogs)
 		{
-			// Apply Y-axis rotation for FacingDir plus the rotation offset
-			FRotator RotatingBase2Rotation = FRotator(0.f, Yaw, 0.f) + RotatingBase2RotationOffset;
-			BaseComp->SetBoneRotationByName(RotatingBase2BoneName, RotatingBase2Rotation, EBoneSpaces::ComponentSpace);
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Updated Animation Blueprint - Yaw=%.2f, ExtendRetract=%d, Extending=%d"), 
+				*GetName(), Yaw, bExecutingExtendRetract ? 1 : 0, bIsExtending ? 1 : 0);
+		}
+		
+		// Set rotation values for the Animation Blueprint to use
+		FProperty* YawProperty = ArmAnimInstance->GetClass()->FindPropertyByName(TEXT("CurrentYaw"));
+		if (YawProperty)
+		{
+			// Try both FloatProperty and DoubleProperty
+			FFloatProperty* FloatProperty = CastField<FFloatProperty>(YawProperty);
+			FDoubleProperty* DoubleProperty = CastField<FDoubleProperty>(YawProperty);
 			
-			if (bDebugLogs)
+			if (FloatProperty)
 			{
-				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Rotating RotatingBase2 bone to Yaw=%.2f (Offset: P=%.2f Y=%.2f R=%.2f)"), 
-					*GetName(), Yaw, RotatingBase2RotationOffset.Pitch, RotatingBase2RotationOffset.Yaw, RotatingBase2RotationOffset.Roll);
+				FloatProperty->SetPropertyValue_InContainer(ArmAnimInstance, Yaw);
+			}
+			else if (DoubleProperty)
+			{
+				DoubleProperty->SetPropertyValue_InContainer(ArmAnimInstance, (double)Yaw);
 			}
 		}
-		else
+		
+		// Set extension state for HoloscopicGear3 rotation
+		FProperty* ExecutingExtendRetractProperty = ArmAnimInstance->GetClass()->FindPropertyByName(TEXT("bExecutingExtendRetract"));
+		if (ExecutingExtendRetractProperty)
 		{
-			if (bDebugLogs)
+			FBoolProperty* BoolProperty = CastField<FBoolProperty>(ExecutingExtendRetractProperty);
+			if (BoolProperty)
 			{
-				UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': RotatingBase2 bone '%s' not found"), *GetName(), *RotatingBase2BoneName.ToString());
+				BoolProperty->SetPropertyValue_InContainer(ArmAnimInstance, bExecutingExtendRetract);
 			}
+		}
+		
+		FProperty* IsExtendingProperty = ArmAnimInstance->GetClass()->FindPropertyByName(TEXT("bIsExtending"));
+		if (IsExtendingProperty)
+		{
+			FBoolProperty* BoolProperty = CastField<FBoolProperty>(IsExtendingProperty);
+			if (BoolProperty)
+			{
+				BoolProperty->SetPropertyValue_InContainer(ArmAnimInstance, bIsExtending);
+			}
+		}
+		
+		if (bDebugLogs)
+		{
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Updated Animation Blueprint - Yaw=%.2f, ExtendRetract=%d, Extending=%d"), 
+				*GetName(), Yaw, bExecutingExtendRetract ? 1 : 0, bIsExtending ? 1 : 0);
 		}
 	}
-
-	// Rotate BaseGear7 in opposite direction of RotatingBase2
-	if (BaseGear7BoneName != NAME_None)
+	else if (bDebugLogs)
 	{
-		const int32 BoneIndex = BaseComp->GetBoneIndex(BaseGear7BoneName);
-		if (BoneIndex != INDEX_NONE)
-		{
-		// Apply rotation for BaseGear7 (opposite direction of RotatingBase2)
-		FRotator BaseGear7Rotation = FRotator(0.f, -Yaw, 0.f) + BaseGear7RotationOffset;
-			BaseComp->SetBoneRotationByName(BaseGear7BoneName, BaseGear7Rotation, EBoneSpaces::ComponentSpace);
-			
-			if (bDebugLogs)
-			{
-				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Rotating BaseGear7 bone to Yaw=%.2f (Offset: P=%.2f Y=%.2f R=%.2f)"), 
-					*GetName(), -Yaw, BaseGear7RotationOffset.Pitch, BaseGear7RotationOffset.Yaw, BaseGear7RotationOffset.Roll);
-			}
-		}
-		else
-		{
-			if (bDebugLogs)
-			{
-				UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': BaseGear7 bone '%s' not found"), *GetName(), *BaseGear7BoneName.ToString());
-			}
-		}
+		UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': Animation Blueprint instance not found for bone rotations"), *GetName());
 	}
-
-	// Rotate HoloscopicGear3 continuously during Extend/Retract commands (spinning cog effect)
-	if (HoloscopicGear3BoneName != NAME_None)
-	{
-		const int32 BoneIndex = BaseComp->GetBoneIndex(HoloscopicGear3BoneName);
-		if (BoneIndex != INDEX_NONE)
-		{
-			// Only rotate during Extend/Retract commands, never reset
-			if (bExecutingExtendRetract)
-			{
-				// Add continuous rotation based on extension direction for smooth spinning cog
-				// When extending: rotate in positive direction
-				// When retracting: rotate in negative direction
-				float RotationDelta = bIsExtending ? 1.f : -1.f; // Smaller increment for smoother spinning
-				HoloscopicGear3CurrYaw += RotationDelta;
-				
-				// Debug: Log the extension state and rotation
-				if (bDebugLogs)
-				{
-					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': HoloscopicGear3 Debug - bIsExtending=%d, RotationDelta=%.2f"), 
-						*GetName(), bIsExtending ? 1 : 0, RotationDelta);
-				}
-				
-				// Apply the accumulated rotation (same format as BaseGear7 to avoid gimbal lock)
-				FRotator HoloscopicGear3Rotation = FRotator(0.f, HoloscopicGear3CurrYaw, 0.f) + HoloscopicGear3RotationOffset;
-				BaseComp->SetBoneRotationByName(HoloscopicGear3BoneName, HoloscopicGear3Rotation, EBoneSpaces::ComponentSpace);
-				
-				if (bDebugLogs)
-				{
-					UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Spinning HoloscopicGear3 bone - CurrentYaw=%.2f, Delta=%.2f (ExecutingExtendRetract=%d, Extending=%d)"), 
-						*GetName(), HoloscopicGear3CurrYaw, RotationDelta, bExecutingExtendRetract ? 1 : 0, bIsExtending ? 1 : 0);
-				}
-			}
-			// When not executing Extend/Retract, maintain current rotation (never reset)
-		}
-		else
-		{
-			if (bDebugLogs)
-			{
-				UE_LOG(LogAGArm, Warning, TEXT("Arm '%s': HoloscopicGear3 bone '%s' not found"), *GetName(), *HoloscopicGear3BoneName.ToString());
-			}
-		}
-	}
-
-	// Base1 remains stationary (no rotation applied)
-	// This is handled by not setting any rotation on Base1BoneName
 }
+
+void ABasicArm::EnsureAnimationBlueprintInstance()
+{
+	// Try to get the Animation Blueprint instance if we don't have it
+	if (!ArmAnimInstance && BaseComp)
+	{
+		// If no Animation Blueprint class is set, try to set it
+		if (!BaseComp->GetAnimClass() && ArmAnimationBlueprintClass)
+		{
+			BaseComp->SetAnimInstanceClass(ArmAnimationBlueprintClass);
+			
+			if (bDebugLogs)
+			{
+				UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Set Animation Blueprint class to %s"), 
+					*GetName(), *ArmAnimationBlueprintClass->GetName());
+			}
+		}
+		
+		ArmAnimInstance = BaseComp->GetAnimInstance();
+		
+		if (bDebugLogs)
+		{
+			UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': EnsureAnimationBlueprintInstance - ArmAnimInstance=%s, AnimClass=%s, BaseComp=%s"), 
+				*GetName(), 
+				ArmAnimInstance ? TEXT("Found") : TEXT("Still NULL"),
+				BaseComp->GetAnimClass() ? *BaseComp->GetAnimClass()->GetName() : TEXT("NULL"),
+				BaseComp ? TEXT("Valid") : TEXT("NULL"));
+		}
+	}
+}
+
+
 
 void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= true*/)
 {
@@ -770,7 +860,7 @@ void ABasicArm::PushProgramToSim()
 		*GetName(), Program.Num(), S.Tape.Num());
 
 	// Always log tape contents after Reset expansion for debugging
-	UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Program pushed (TapeLen=%d)"), *GetName(), S.Tape.Num());
+	// UE_LOG(LogAGArm, Log, TEXT("Arm '%s': Program pushed (TapeLen=%d)"), *GetName(), S.Tape.Num());
 	for (int32 i = 0; i < S.Tape.Num(); i++)
 	{
 		const FOp& Op = S.Tape[i];
@@ -792,8 +882,8 @@ void ABasicArm::PushProgramToSim()
 		UE_LOG(LogAGArm, Log, TEXT("  [%d]: %s %d"), i, *CmdName, Op.Arg);
 	}
 
-	UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Program pushed (TapeLen=%d Holding(sim)=%d)"),
-		*GetName(), S.Tape.Num(), S.bHolding ? 1 : 0);
+	// UE_LOG(LogAGArm, Verbose, TEXT("Arm '%s': Program pushed (TapeLen=%d Holding(sim)=%d)"),
+	// 	*GetName(), S.Tape.Num(), S.bHolding ? 1 : 0);
 }
 
 void ABasicArm::PushRuntimePropertiesToSim()
@@ -962,6 +1052,9 @@ void ABasicArm::SyncDebugSettingsFromDriver()
 		bDebugLogs = Driver->bDebugLogs;
 		bDebugSpheres = Driver->bDebugSpheres;
 		bDebugLines = Driver->bDebugLines;
+		
+		// Temporary: Force enable debug logs for HoloscopicGear3 testing
+		bDebugLogs = true;
 		UE_LOG(LogAGArm, Log, TEXT("BasicArm '%s': Synced debug settings from driver - Logs=%d Spheres=%d Lines=%d"),
 			*GetName(), bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0);
 	}

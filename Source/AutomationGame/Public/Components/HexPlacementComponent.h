@@ -1,6 +1,7 @@
 #pragma once
 #include "AutomationGameMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Components/PoseableMeshComponent.h"
 #include "Sim/HexTypes.h"  // for FHex
 #include "Sim/OrbTypes.h"  // for EOrbType
 #include "HexPlacementComponent.generated.h"
@@ -44,6 +45,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	UMaterialInterface* PreviewBaseMaterial = nullptr;
 
+	/** Optional material specifically for skeletal mesh previews (should have skeletal mesh usage flag). */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	UMaterialInterface* SkeletalPreviewMaterial = nullptr;
+
 	/** Mesh used for Input/Output tiles if no board tile mesh is available. */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	UStaticMesh* GenericTilePreviewMesh = nullptr;
@@ -59,6 +64,10 @@ public:
 	/** Optional mesh specifically for arm base preview (falls back to GenericTilePreviewMesh). */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	UStaticMesh* ArmBasePreviewMesh = nullptr;
+
+	/** Use actual arm skeletal mesh from BasicArm class instead of separate preview mesh. */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	bool bUseActualArmAssets = true;
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	UStaticMesh* BondPreviewMesh = nullptr;
 
@@ -147,6 +156,7 @@ private:
 
 	// --- New preview state ---
 	UPROPERTY(Transient) UStaticMeshComponent* PreviewComp = nullptr;
+	UPROPERTY(Transient) UPoseableMeshComponent* SkeletalPreviewComp = nullptr;
 	UPROPERTY(Transient) UMaterialInstanceDynamic* PreviewMID = nullptr;
 	FHex HoverHex{ INT32_MAX, INT32_MAX };   // invalid sentinel
 	bool bHoverValid = false;
@@ -165,17 +175,13 @@ private:
 	void DoRemoveAt(const FVector& World);
 
 	void EnsurePreviewComponent();
+	void EnsureSkeletalPreviewComponent();
 	void UpdateHoverHex();          // derive HoverHex from cursor each tick
 	void UpdatePreviewVisual();     // position + mesh + color
+	void UpdateArmPreviewBoneRotations(float Yaw);
 	bool CanPlaceAt(const FHex& Hex) const;
 	UStaticMesh* SelectPreviewMesh() const;
-	UStaticMesh* GetActualBeltMesh() const;
-	UMaterialInterface* GetActualBeltMaterial() const;
-	UStaticMesh* GetActualOrbMesh() const;
-	UMaterialInterface* GetActualOrbMaterial() const;
-	
-	UStaticMesh* GetActualOutputOrbMesh() const;
-	UMaterialInterface* GetActualOutputOrbMaterial() const;
+	USkeletalMesh* SelectSkeletalPreviewMesh() const;
 	
 	/** Get the list of orb types that have materials assigned (not using DefaultOrbMaterial) */
 	TArray<EOrbType> GetValidOrbTypes() const;
@@ -183,6 +189,13 @@ private:
 	FORCEINLINE AActor* GetAnchor() const;
 
 public:
+	// Public methods for accessing actual meshes from the world
+	UStaticMesh* GetActualBeltMesh() const;
+	UMaterialInterface* GetActualBeltMaterial() const;
+	UStaticMesh* GetActualOrbMesh() const;
+	UMaterialInterface* GetActualOrbMaterial() const;
+	UStaticMesh* GetActualOutputOrbMesh() const;
+	UMaterialInterface* GetActualOutputOrbMaterial() const;
 	UPROPERTY(EditAnywhere, Category = "Scenario") bool bAutoScenarioCapture = true;
 	UPROPERTY(Transient) ATestLevelDirector* CachedTLD = nullptr;
 	

@@ -389,11 +389,6 @@ void USimWorldHex::StepBelts()
 		if (RecentlyDroppedByArm.Contains(Item.Id))
 		{
 			bCanMove = false;
-			if (bDebugLogs && GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Yellow,
-					FString::Printf(TEXT("Belt blocked: Item %d was recently dropped by arm"), Item.Id));
-			}
 		}
 		
 		// Special case for bond/unbond tiles - can move there if empty

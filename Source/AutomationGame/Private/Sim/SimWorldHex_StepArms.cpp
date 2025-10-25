@@ -297,29 +297,16 @@ void USimWorldHex::StepArms()
 				if (S.WaitCounter == 0)
 				{
 					S.WaitCounter = (Op.Arg == 0 ? 1 : Op.Arg);
-					if (bDebugLogs && GEngine)
-					{
-						GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow,
-							FString::Printf(TEXT("Arm %d: Starting wait for %d ticks"), ArmIndex, S.WaitCounter));
-					}
+
 				}
 				--S.WaitCounter;
 				if (S.WaitCounter > 0)
 				{
-					// Still waiting - don't advance PC, just continue to next arm
-					if (bDebugLogs && GEngine)
-					{
-						GEngine->AddOnScreenDebugMessage(-1, 0.1f, FColor::Cyan,
-							FString::Printf(TEXT("Arm %d: Waiting... %d ticks left"), ArmIndex, S.WaitCounter));
-					}
+
 					break; // Exit switch without advancing PC
 				}
 				S.WaitCounter = 0;
-				if (bDebugLogs && GEngine)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-						FString::Printf(TEXT("Arm %d: Wait complete, advancing to next instruction"), ArmIndex));
-				}
+
 			} break;
 
 			case ECmd::Grab:

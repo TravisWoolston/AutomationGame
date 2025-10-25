@@ -70,7 +70,6 @@ void AOrbSimDriver::BeginPlay()
 		{
 			M->OnFixedTick.AddDynamic(this, &AOrbSimDriver::HandleFixedTickSeconds);
 			bSubscribed = true;
-			UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Bound to GameTickManager::OnFixedTick."));
 		}
 	}
 	else

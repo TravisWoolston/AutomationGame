@@ -261,7 +261,8 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 	float Yaw = OrbSimDriver->GetGridYaw() + 60.f * float(Facing % 6);
 
 	FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	ABasicArm* Arm = GetWorld()->SpawnActor<ABasicArm>(BasicArmClass, FTransform(FRotator(0, Yaw, 0), Loc), S);
+	// Spawn at neutral rotation - bone rotation system will handle facing direction
+	ABasicArm* Arm = GetWorld()->SpawnActor<ABasicArm>(BasicArmClass, FTransform(FRotator::ZeroRotator, Loc), S);
 	if (!Arm) return nullptr;
 
 	// Initialize actor-side data
