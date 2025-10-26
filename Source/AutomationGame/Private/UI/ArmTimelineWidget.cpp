@@ -631,10 +631,10 @@ float UArmTimelineWidget::CalculateDistanceBasedScale(const FVector& WidgetLocat
 	// Clamp arm length to our range
 	CameraArmLength = FMath::Clamp(CameraArmLength, MinArmLength, MaxArmLength);
 	
-	// Calculate scale based on camera arm length (closer = larger scale)
-	// Note: Shorter arm length = closer camera = larger timeline scale
+	// Calculate scale based on camera arm length (closer = smaller scale)
+	// Note: Shorter arm length = closer camera = smaller timeline scale
 	float NormalizedArmLength = (CameraArmLength - MinArmLength) / (MaxArmLength - MinArmLength);
-	float Scale = FMath::Lerp(MaxScale, MinScale, NormalizedArmLength);
+	float Scale = FMath::Lerp(MinScale, MaxScale, NormalizedArmLength);
 	
 	return Scale;
 }

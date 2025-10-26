@@ -182,11 +182,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	float TimelineMaxDistance = 6000.0f;
 
-	/** Minimum scale when timeline is far away */
+	/** Minimum scale when timeline is close (zoomed in) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	float TimelineMinScale = 0.2f;
 
-	/** Maximum scale when timeline is close */
+	/** Maximum scale when timeline is far (zoomed out) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	float TimelineMaxScale = 2.0f;
 
