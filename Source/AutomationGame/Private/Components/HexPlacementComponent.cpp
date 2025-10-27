@@ -881,8 +881,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			PreviewComp->SetWorldScale3D(UseScale);
 			PreviewComp->SetVisibility(true);
 			
-			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Set arm preview location: %s, rotation: %.2f, scale: %s"), 
-				*UseLoc.ToString(), FixedYaw, *UseScale.ToString());
+
 
 			// Set material for arm preview
 			if (PreviewMID)

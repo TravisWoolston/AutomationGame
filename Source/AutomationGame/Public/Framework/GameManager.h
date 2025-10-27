@@ -206,6 +206,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	class ABasicArm* GetActiveArm() const;
 
+	/** Active timeline widget being edited (public for direct access) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Timeline Editor", Transient)
+	class UArmTimelineWidget* ActiveTimelineWidget = nullptr;
+
 	/** Get texture for a specific command */
 	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
 	UTexture2D* GetTextureForCommand(EArmCmd Command) const;
@@ -253,8 +257,4 @@ private:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* ISM = nullptr;
 	FVector LastGridCenter = FVector::ZeroVector;
 	UPROPERTY(Transient) UGoldbergGrid* GoldbergGrid = nullptr; // NEW
-
-	/** Active timeline widget being edited */
-	UPROPERTY(Transient)
-	class UArmTimelineWidget* ActiveTimelineWidget = nullptr;
 };

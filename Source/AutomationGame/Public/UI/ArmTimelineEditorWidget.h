@@ -39,11 +39,16 @@ struct FCommandSlotConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Command Config")
 	int32 DefaultArg = 0;
 
+	/** Button widget associated with this command slot (auto-filled in Blueprint) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Command Config")
+	class UButton* ButtonWidget = nullptr;
+
 	FCommandSlotConfig()
 		: Command(ECmd::Wait)
 		, Icon(nullptr)
 		, InputKey(EKeys::Invalid)
 		, DefaultArg(0)
+		, ButtonWidget(nullptr)
 	{
 	}
 };
@@ -132,14 +137,62 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	void OnCommandButtonClicked(int32 SlotIndex);
 
+	/** Set a button for a specific command slot (call this in OnInitialized to persist assignments) */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void SetCommandSlotButton(int32 SlotIndex, class UButton* Button);
+
+	/** Generate buttons from command slot configs into the assigned VerticalBox */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void GenerateCommandButtons();
+
+	/** Debug function to check if there's an active arm being edited */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void DebugPrintActiveArmInfo();
+
+	/** Get button widget for a specific slot index (use after GenerateCommandButtons) */
+	UFUNCTION(BlueprintPure, Category = "Timeline Editor")
+	class UButton* GetCommandButton(int32 SlotIndex) const;
+
+	/** Execute command at the specified slot index */
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot0();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot1();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot2();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot3();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot4();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot5();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot6();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot7();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot8();
+	
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteCommandAtSlot9();
+
+
 public:
-	/** Command slot configurations (icons and input keys for each command) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+	/** Command slot configurations (icons, input keys, and button widgets for each command) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Timeline Editor")
 	TArray<FCommandSlotConfig> CommandSlotConfigs;
 
-	/** Optional: Manually set button widgets for each command slot */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Timeline Editor")
-	TArray<class UButton*> CommandButtons;
+	/** VerticalBox to generate command buttons into */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+	class UVerticalBox* CommandButtonsContainer = nullptr;
 
 protected:
 	/** Get the GameManager from the world */
@@ -147,6 +200,12 @@ protected:
 
 	/** Get the UMG widget instance from the active timeline */
 	UArmTimelineUMGWidget* GetActiveUMGWidget() const;
+
+	/** Get display name for a command enum */
+	FString GetCommandDisplayName(ECmd Command) const;
+
+	/** Convert ECmd to EArmCmd for insertion */
+	EArmCmd ConvertECmdToEArmCmd(ECmd Cmd) const;
 
 private:
 	/** Cached reference to GameManager */

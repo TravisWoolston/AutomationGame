@@ -85,6 +85,14 @@ public:
 	UPROPERTY(VisibleAnywhere, Category = "Blueprint Preview")
 	TArray<UStaticMeshComponent*> BlueprintPreviewComponents;
 
+	// Timeline editor widget class
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+	TSubclassOf<class UUserWidget> TimelineEditorWidgetClass = nullptr;
+	
+	// Timeline editor widget instance (read-only)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Timeline Editor")
+	class UArmTimelineEditorWidget* TimelineEditorWidget = nullptr;
+
 private:
 	float AxisX = 0.f, AxisY = 0.f, AxisZoom = 0.f;
 	bool bTypeSelectionActive = false;  // For cycling orb types (Alt key)
@@ -236,6 +244,22 @@ private:
 	UFUNCTION()
 	void HandleNextTickStop(float StepSeconds);
 	
+	// Timeline editor widget for command editing
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void ShowTimelineEditor(bool bShow);
+	
+	// Get the timeline editor widget
+	UFUNCTION(BlueprintPure, Category = "Timeline Editor")
+	class UArmTimelineEditorWidget* GetTimelineEditorWidget() const { return TimelineEditorWidget; }
+	
+	// Set active timeline for editing (call when clicking on an arm)
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void SetActiveTimelineForEditing(class ABasicArm* Arm);
+	
+	// Update editor visibility based on timeline visibility (call this tick or when timeline visibility changes)
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void UpdateTimelineEditorVisibility();
+
 	// Flag to pause on next GTM tick
 	bool bPauseOnNextTick = false;
 };

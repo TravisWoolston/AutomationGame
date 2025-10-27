@@ -16,6 +16,7 @@
 #include "Framework/GameTickManager.h"
 #include "UI/ArmTimelineWidget.h"
 #include "UI/ArmTimelineUMGWidget.h"
+#include "UI/ArmTimelineEditorWidget.h"
 #include "EngineUtils.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
@@ -54,11 +55,16 @@ void AHexTopDownPawn::BeginPlay()
 	{
 		TickManager->OnFixedTick.AddDynamic(this, &AHexTopDownPawn::HandleNextTickStop);
 	}
+	
+	// Check if timelines should be shown and show editor if needed
+	UpdateTimelineEditorVisibility();
 }
 
 void AHexTopDownPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	
+	// Editor visibility is now managed by explicit calls to UpdateTimelineEditorVisibility()
 
 	AGameManager* GM = nullptr; 
 	if (UWorld* W = GetWorld()) 
@@ -281,6 +287,9 @@ void AHexTopDownPawn::ToggleArmTimelines()
 		// Toggle the timeline visibility
 		bool bNewVisibility = !GameManager->bShowArmTimelines;
 		GameManager->SetTimelineVisibility(bNewVisibility);
+		
+		// Update editor visibility based on new state
+		UpdateTimelineEditorVisibility();
 	}
 	else
 	{
@@ -366,6 +375,142 @@ ABasicArm* AHexTopDownPawn::FindArmAtHex(const FHex& Hex)
 	return nullptr;
 }
 
+void AHexTopDownPawn::ShowTimelineEditor(bool bShow)
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+	
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC)
+	{
+		return;
+	}
+	
+	if (bShow)
+	{
+		// Remove existing editor if it exists
+		if (TimelineEditorWidget)
+		{
+			TimelineEditorWidget->RemoveFromParent();
+			TimelineEditorWidget = nullptr;
+		}
+		
+		// Create new editor widget
+		if (TimelineEditorWidgetClass)
+		{
+			TimelineEditorWidget = CreateWidget<UArmTimelineEditorWidget>(GetWorld(), TimelineEditorWidgetClass);
+			if (TimelineEditorWidget)
+			{
+				TimelineEditorWidget->AddToViewport();
+				
+				// Use GameAndUI mode to allow both game and widget interaction
+				FInputModeGameAndUI InputMode;
+				PC->SetInputMode(InputMode);
+				PC->bShowMouseCursor = true;
+			}
+		}
+	}
+	else
+	{
+		// Remove the editor widget from viewport
+		if (TimelineEditorWidget)
+		{
+			TimelineEditorWidget->RemoveFromParent();
+			TimelineEditorWidget = nullptr;
+			
+			// Restore GameOnly mode when editor is hidden
+			FInputModeGameOnly InputMode;
+			PC->SetInputMode(InputMode);
+			PC->bShowMouseCursor = true;
+		}
+	}
+}
+
+void AHexTopDownPawn::SetActiveTimelineForEditing(ABasicArm* Arm)
+{
+	if (!Arm || !Arm->TimelineWidget)
+	{
+		return;
+	}
+	
+	// Find the GameManager and set the active timeline
+	AGameManager* GameManager = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			GameManager = *It;
+			break;
+		}
+	}
+	
+	if (GameManager)
+	{
+		// Set this arm's timeline as the active one
+		GameManager->SetActiveTimeline(Arm->TimelineWidget);
+	}
+}
+
+void AHexTopDownPawn::UpdateTimelineEditorVisibility()
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+	
+	// Find the GameManager
+	AGameManager* GameManager = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			GameManager = *It;
+			break;
+		}
+	}
+	
+	if (!GameManager)
+	{
+		return;
+	}
+	
+	// Check if any individual timelines are visible
+	bool bAnyTimelineVisible = GameManager->bShowArmTimelines;
+	
+	// Also check for individual arm timelines that might be visible
+	if (!bAnyTimelineVisible)
+	{
+		// Scan for any arm with visible timeline
+		for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It)
+		{
+			ABasicArm* Arm = *It;
+			if (Arm && Arm->TimelineWidget && Arm->TimelineWidget->bTimelineVisible)
+			{
+				bAnyTimelineVisible = true;
+				break;
+			}
+		}
+	}
+	
+	if (bAnyTimelineVisible && TimelineEditorWidgetClass)
+	{
+		// Show or create the editor
+		if (!TimelineEditorWidget)
+		{
+			// Create and show the editor
+			ShowTimelineEditor(true);
+		}
+		// Editor already exists, no need to recreate it
+	}
+	else if (!bAnyTimelineVisible && TimelineEditorWidget)
+	{
+		// Hide the editor
+		ShowTimelineEditor(false);
+	}
+}
+
 void AHexTopDownPawn::ToggleArmTimeline(ABasicArm* Arm)
 {
 	if (Arm && Arm->TimelineWidget)
@@ -373,6 +518,56 @@ void AHexTopDownPawn::ToggleArmTimeline(ABasicArm* Arm)
 		// Toggle the timeline visibility using the public method
 		bool bCurrentVisibility = Arm->TimelineWidget->bTimelineVisible;
 		Arm->TimelineWidget->SetTimelineWidgetVisible(!bCurrentVisibility);
+		
+		// If making timeline visible, set it as the active timeline and show the editor
+		if (!bCurrentVisibility)
+		{
+			SetActiveTimelineForEditing(Arm);
+			UpdateTimelineEditorVisibility();
+			
+			// Enable editing mode on the UMG widget when timeline becomes visible
+			if (UUserWidget* WidgetInstance = Arm->TimelineWidget->GetTimelineWidgetInstance())
+			{
+				if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(WidgetInstance))
+				{
+					UMGWidget->EnableEditingMode();
+				}
+			}
+		}
+		else
+		{
+			// Making timeline invisible - clear the active timeline and update editor visibility
+			AGameManager* GameManager = nullptr;
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<AGameManager> It(World); It; ++It)
+				{
+					GameManager = *It;
+					break;
+				}
+			}
+			
+			if (GameManager)
+			{
+				// Clear the active timeline if it's the one being hidden
+				UArmTimelineWidget* ActiveTimeline = GameManager->GetActiveTimeline();
+				if (ActiveTimeline == Arm->TimelineWidget)
+				{
+					GameManager->SetActiveTimeline(nullptr);
+				}
+			}
+			
+			// Disable editing mode on the UMG widget when timeline becomes hidden
+			if (UUserWidget* WidgetInstance = Arm->TimelineWidget->GetTimelineWidgetInstance())
+			{
+				if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(WidgetInstance))
+				{
+					UMGWidget->DisableEditingMode();
+				}
+			}
+			
+			UpdateTimelineEditorVisibility();
+		}
 	}
 }
 

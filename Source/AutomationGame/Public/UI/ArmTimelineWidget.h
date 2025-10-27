@@ -111,6 +111,12 @@ public:
 	/** Calculate distance-based scale for timeline widget */
 	float CalculateDistanceBasedScale(const FVector& WidgetLocation);
 
+	/** Cached scale value to prevent recalculating every tick */
+	float CachedDistanceScale = 1.0f;
+	
+	/** Last tick when scale was updated */
+	float LastScaleUpdateTime = 0.0f;
+
 	/** Set the maximum number of command icons to display */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetMaxCommandIcons(int32 MaxIcons);

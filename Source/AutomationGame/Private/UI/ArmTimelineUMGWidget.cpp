@@ -1,4 +1,5 @@
 #include "UI/ArmTimelineUMGWidget.h"
+#include "UI/ArmTimelineWidget.h"
 #include "Engine/Texture2D.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
@@ -6,8 +7,11 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Sim/ArmTypes.h"
 #include "Actors/BasicArm.h"
+#include "Framework/GameManager.h"
 #include "AGLogChannels.h"
 #include "UMG.h"
+#include "Components/ActorComponent.h"
+#include "EngineUtils.h"
 
 UArmTimelineUMGWidget::UArmTimelineUMGWidget(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -166,6 +170,22 @@ void UArmTimelineUMGWidget::InitializeWidget()
 
 void UArmTimelineUMGWidget::UpdateWidgetContent()
 {
+	// Don't create icons if there are no commands
+	if (ArmProgram.Num() == 0)
+	{
+		// Clear any existing icons
+		for (UWidget* Widget : CommandIconWidgets)
+		{
+			if (Widget && Widget->IsValidLowLevel())
+			{
+				Widget->RemoveFromParent();
+			}
+		}
+		CommandIconWidgets.Empty();
+		bIconsCreated = false;
+		return;
+	}
+
 	// Update text displays
 	if (CurrentCommandText)
 	{
@@ -186,12 +206,12 @@ void UArmTimelineUMGWidget::UpdateWidgetContent()
 	// Use caching flag to prevent unnecessary recreation
 	bool bNeedsRecreation = !bIconsCreated || (CommandIconWidgets.Num() == 0);
 	
-	// Check if program size changed significantly (more than 2 commands difference)
+	// Check if program size changed (recreate if size is different)
 	if (!bNeedsRecreation && ArmProgram.Num() > 0)
 	{
 		int32 CurrentIconCount = CommandIconWidgets.Num();
 		int32 ProgramSize = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
-		if (FMath::Abs(CurrentIconCount - ProgramSize) > 2)
+		if (CurrentIconCount != ProgramSize)
 		{
 			bNeedsRecreation = true;
 		}
@@ -199,7 +219,7 @@ void UArmTimelineUMGWidget::UpdateWidgetContent()
 	
 	if (bNeedsRecreation)
 	{
-		// No icons exist or program changed significantly, create them
+		// No icons exist or program changed, create them
 		CreateCommandIcons();
 		bIconsCreated = true;
 	}
@@ -551,8 +571,10 @@ bool UArmTimelineUMGWidget::InsertCommandAtCursor(EArmCmd Command, int32 Arg)
 	// Move cursor to next position
 	CursorPosition++;
 	
-	// Update the widget content
-	bIconsCreated = false;
+	// Synchronize the program back to the arm
+	SyncProgramToArm();
+	
+	// Update the widget content (check if recreation is needed)
 	UpdateWidgetContent();
 	UpdateCursorIndicator();
 	
@@ -575,6 +597,9 @@ bool UArmTimelineUMGWidget::RemoveCommandAt(int32 Index)
 	{
 		CursorPosition = ArmProgram.Num();
 	}
+	
+	// Synchronize the program back to the arm
+	SyncProgramToArm();
 	
 	// Update the widget content
 	bIconsCreated = false;
@@ -637,8 +662,11 @@ void UArmTimelineUMGWidget::DisableEditingMode()
 
 void UArmTimelineUMGWidget::UpdateCursorIndicator()
 {
-	// TODO: Implement cursor indicator visual update
-	// This will be implemented in Blueprint to add a cursor line at CursorPosition
+	// Clamp cursor position to valid range
+	CursorPosition = FMath::Clamp(CursorPosition, 0, ArmProgram.Num());
+	
+	// Notify Blueprint to update the cursor visual
+	OnCursorPositionChanged(CursorPosition);
 }
 
 ABasicArm* UArmTimelineUMGWidget::GetAssociatedArm() const
@@ -649,4 +677,67 @@ ABasicArm* UArmTimelineUMGWidget::GetAssociatedArm() const
 void UArmTimelineUMGWidget::SetAssociatedArm(ABasicArm* Arm)
 {
 	AssociatedArm = Arm;
+}
+
+UBorder* UArmTimelineUMGWidget::GetCursorLine() const
+{
+	return Cast<UBorder>(CursorIndicator);
+}
+
+void UArmTimelineUMGWidget::CheckEditingMode()
+{
+	// Enable editing mode by default when cursor position is valid
+	if (!bIsEditingMode && CursorPosition >= 0)
+	{
+		EnableEditingMode();
+	}
+}
+
+void UArmTimelineUMGWidget::SyncProgramToArm()
+{
+	// Only sync if we're in editing mode
+	if (!bIsEditingMode)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SyncProgramToArm: Editing mode not enabled (bIsEditingMode=false)"));
+		return;
+	}
+	
+	// Get the associated arm and update its Program
+	// If AssociatedArm is not set, try to get it from the GameManager's active timeline
+	if (!AssociatedArm)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SyncProgramToArm: AssociatedArm not set, attempting to find from GameManager active timeline..."));
+		
+		// Try to get the arm from the GameManager's active timeline
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				AGameManager* GameManager = *It;
+				if (GameManager)
+				{
+					ABasicArm* ActiveArm = GameManager->GetActiveArm();
+					if (ActiveArm)
+					{
+						AssociatedArm = ActiveArm;
+						UE_LOG(LogTemp, Log, TEXT("SyncProgramToArm: Found associated arm from GameManager: %s"), *ActiveArm->GetName());
+						break;
+					}
+				}
+			}
+		}
+		
+		if (!AssociatedArm)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SyncProgramToArm: Could not find associated arm from GameManager"));
+			return;
+		}
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("SyncProgramToArm: Syncing %d commands to arm '%s'"), ArmProgram.Num(), *AssociatedArm->GetName());
+	UE_LOG(LogTemp, Log, TEXT("SyncProgramToArm: Current arm Program has %d commands"), AssociatedArm->Program.Num());
+	
+	AssociatedArm->SetProgram(ArmProgram, AssociatedArm->bLoopProgram);
+	
+	UE_LOG(LogTemp, Log, TEXT("SyncProgramToArm: After SetProgram, arm Program has %d commands"), AssociatedArm->Program.Num());
 }

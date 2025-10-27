@@ -87,6 +87,10 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Arm Timeline")
 	void OnCommandTexturesUpdated();
 
+	/** Called when cursor position changes (implement in Blueprint to update visual) */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Timeline Editor")
+	void OnCursorPositionChanged(int32 NewPosition);
+
 	/** Create a command icon widget */
 	UWidget* CreateCommandIcon(EArmCmd Command, int32 Index);
 
@@ -179,6 +183,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	void DisableEditingMode();
 
+	/** Get the cursor visual line widget */
+	UFUNCTION(BlueprintPure, Category = "Timeline Editor")
+	class UBorder* GetCursorLine() const;
+
+	/** Synchronize the current ArmProgram back to the associated arm's Program */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void SyncProgramToArm();
+
+	/** Get the associated arm */
+	UFUNCTION(BlueprintPure, Category = "Timeline Editor")
+	class ABasicArm* GetAssociatedArm() const;
+
+	/** Set the associated arm */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void SetAssociatedArm(class ABasicArm* Arm);
+
 	/** Cursor position in the command list (where commands will be inserted) */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Timeline Editor")
 	int32 CursorPosition = 0;
@@ -225,6 +245,9 @@ private:
 	/** Update the widget content */
 	void UpdateWidgetContent();
 
+	/** Check if editing mode should be active based on timeline visibility */
+	void CheckEditingMode();
+
 	/** Get texture for a command type */
 	UTexture2D* GetTextureForCommand(EArmCmd Command) const;
 
@@ -239,12 +262,6 @@ private:
 
 	/** Update the cursor indicator position */
 	void UpdateCursorIndicator();
-
-	/** Get the associated arm */
-	class ABasicArm* GetAssociatedArm() const;
-
-	/** Set the associated arm */
-	void SetAssociatedArm(class ABasicArm* Arm);
 
 private:
 	/** Pointer to the arm this timeline is associated with */

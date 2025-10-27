@@ -12,6 +12,7 @@
 #include "EngineUtils.h"
 #include "Data/OrbMaterialManager.h"
 #include "UI/ArmTimelineWidget.h"
+#include "UI/ArmTimelineUMGWidget.h"
 #include "Framework/GameManager.h"
 
 static inline float NormDeg(float D) { return FMath::UnwindDegrees(D); }
@@ -778,6 +779,9 @@ void ABasicArm::SetProgram(const TArray<FArmInstr>& InProgram, bool bLoop /*= tr
 	PC = 0;
 	WaitLeft = 0;
 	PushProgramToSim(); // NEW
+	
+	// Update timeline widget immediately to reflect the new program
+	UpdateTimelineWidget();
 }
 
 TArray<FOp> ABasicArm::BuildOpsFromProgram(const TArray<FArmInstr>& InProgram) const
@@ -1912,6 +1916,16 @@ void ABasicArm::InitializeTimelineWidget()
 	}
 	
 	TimelineWidget->SetArmProgram(ProgramToUse);
+	
+	// Set the associated arm in the UMG widget so it can sync changes back
+	if (UUserWidget* WidgetInstance = TimelineWidget->GetTimelineWidgetInstance())
+	{
+		if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(WidgetInstance))
+		{
+			UMGWidget->SetAssociatedArm(this);
+		}
+	}
+	
 	// Timeline visibility will be set by GameManager based on bShowArmTimelines
 	TimelineWidget->SetTimelineScale(1.0f);
 	

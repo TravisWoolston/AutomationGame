@@ -309,9 +309,16 @@ void UArmTimelineWidget::UpdateWidgetPosition(const FVector& ArmLocation, const 
 	SetWorldLocation(WidgetLocation);
 	SetWorldRotation(WidgetRotation);
 	
-	// Calculate distance-based scaling
-	float DistanceBasedScale = CalculateDistanceBasedScale(WidgetLocation);
-	float FinalScale = TimelineScale * DistanceBasedScale;
+	// Only update scale if enough time has passed (to prevent excessive updates)
+	float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	if (FMath::Abs(CurrentTime - LastScaleUpdateTime) > 0.1f)
+	{
+		// Calculate distance-based scaling
+		CachedDistanceScale = CalculateDistanceBasedScale(WidgetLocation);
+		LastScaleUpdateTime = CurrentTime;
+	}
+	
+	float FinalScale = TimelineScale * CachedDistanceScale;
 	
 	// Apply scale
 	SetWorldScale3D(FVector(FinalScale, FinalScale, FinalScale));
@@ -377,9 +384,16 @@ void UArmTimelineWidget::UpdateWidgetPositionFromHex(const FHex& HexCoord, float
 	SetWorldLocation(WidgetLocation);
 	SetWorldRotation(WidgetRotation);
 	
-	// Calculate distance-based scaling
-	float DistanceBasedScale = CalculateDistanceBasedScale(WidgetLocation);
-	float FinalScale = TimelineScale * DistanceBasedScale;
+	// Only update scale if enough time has passed (to prevent excessive updates)
+	float CurrentTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	if (FMath::Abs(CurrentTime - LastScaleUpdateTime) > 0.1f)
+	{
+		// Calculate distance-based scaling
+		CachedDistanceScale = CalculateDistanceBasedScale(WidgetLocation);
+		LastScaleUpdateTime = CurrentTime;
+	}
+	
+	float FinalScale = TimelineScale * CachedDistanceScale;
 	
 	// Apply scale
 	SetWorldScale3D(FVector(FinalScale, FinalScale, FinalScale));
