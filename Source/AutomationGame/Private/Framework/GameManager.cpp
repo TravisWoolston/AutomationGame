@@ -451,3 +451,40 @@ void AGameManager::UpdateAllArmTimelineWidgets()
 		}
 	}
 }
+
+void AGameManager::SetActiveTimeline(UArmTimelineWidget* Timeline)
+{
+	ActiveTimelineWidget = Timeline;
+}
+
+UArmTimelineWidget* AGameManager::GetActiveTimeline() const
+{
+	return ActiveTimelineWidget;
+}
+
+ABasicArm* AGameManager::GetActiveArm() const
+{
+	if (!ActiveTimelineWidget)
+	{
+		return nullptr;
+	}
+	
+	// Find the arm that owns this timeline widget
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicArm> It(World); It; ++It)
+		{
+			ABasicArm* Arm = *It;
+			if (Arm && Arm->IsValidLowLevel())
+			{
+				UArmTimelineWidget* TimelineWidget = Arm->FindComponentByClass<UArmTimelineWidget>();
+				if (TimelineWidget == ActiveTimelineWidget)
+				{
+					return Arm;
+				}
+			}
+		}
+	}
+	
+	return nullptr;
+}

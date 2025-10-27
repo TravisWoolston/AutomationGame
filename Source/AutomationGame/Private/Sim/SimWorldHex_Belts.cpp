@@ -792,8 +792,8 @@ void USimWorldHex::StepBelts()
 							if (!bOutputGateOpen)
 							{
 								bCanMove = false;
-								break;
-							}
+											break;
+										}
 							// Gate is open, so the destination is available even if there's an orb there
 							// (the orb will be processed by ProcessOutputs on the next tick)
 						}
@@ -831,11 +831,11 @@ void USimWorldHex::StepBelts()
 					{
 						FHex NewPos(PosKV.Key.Q + MoveOffset.Q, PosKV.Key.R + MoveOffset.R);
 						Updates.Add(TPair<FHex, int32>(NewPos, ItemId));
-											break;
+								break;
+							}
+						}
 					}
-				}
-			}
-			
+
 			// Remove old positions
 			for (int32 ItemId : MoveOp.ConnectedItemIds)
 			{

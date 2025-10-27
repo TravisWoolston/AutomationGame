@@ -53,6 +53,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
 	float GetCurrentCommandProgress() const { return CurrentCommandProgress; }
 
+	/** Get the timeline widget instance */
+	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+	UUserWidget* GetTimelineWidgetInstance() const { return TimelineWidgetInstance; }
+
 	/** Set widget visibility */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetTimelineWidgetVisible(bool bIsVisible);

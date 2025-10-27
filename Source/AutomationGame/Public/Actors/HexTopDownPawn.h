@@ -224,6 +224,10 @@ private:
 	// Timeline control - toggle all arm timelines
 	void ToggleArmTimelines();
 	
+	// Timeline cursor control
+	void NextCommand();
+	void PrevCommand();
+	
 	// Helper functions for arm timeline toggling
 	ABasicArm* FindArmAtHex(const FHex& Hex);
 	void ToggleArmTimeline(ABasicArm* Arm);

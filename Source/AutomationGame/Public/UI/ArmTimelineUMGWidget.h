@@ -143,6 +143,54 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
 	FLinearColor IconBackgroundColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
 
+	/** Insert a command at the cursor position */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	bool InsertCommandAtCursor(EArmCmd Command, int32 Arg = 0);
+
+	/** Remove a command at the specified index */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	bool RemoveCommandAt(int32 Index);
+
+	/** Get the command at a specific index */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	FArmInstr GetCommandAt(int32 Index) const;
+
+	/** Move cursor to the left */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void MoveCursorLeft();
+
+	/** Move cursor to the right */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void MoveCursorRight();
+
+	/** Set cursor to a specific position */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void SetCursorPosition(int32 Position);
+
+	/** Get cursor position */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	int32 GetCursor() const;
+
+	/** Enable editing mode */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void EnableEditingMode();
+
+	/** Disable editing mode */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void DisableEditingMode();
+
+	/** Cursor position in the command list (where commands will be inserted) */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Timeline Editor")
+	int32 CursorPosition = 0;
+
+	/** Whether the timeline is in editing mode */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Timeline Editor")
+	bool bIsEditingMode = false;
+
+	/** Command icon textures for editing interface */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Timeline Editor")
+	TMap<EArmCmd, UTexture2D*> EditorCommandIcons;
+
 	/** Horizontal box containing command icons */
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	UHorizontalBox* CommandIconsBox = nullptr;
@@ -154,6 +202,14 @@ public:
 	/** Text block showing progress */
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	UTextBlock* ProgressText = nullptr;
+
+	/** Cursor indicator widget (visual line showing where commands will be inserted) */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+	UWidget* CursorIndicator = nullptr;
+
+	/** Horizontal box for cursor indicator */
+	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
+	UHorizontalBox* CursorBox = nullptr;
 
 private:
 	/** Array of command icon widgets */
@@ -180,4 +236,18 @@ private:
 
 	/** Update command icon widgets */
 	void UpdateCommandIcons();
+
+	/** Update the cursor indicator position */
+	void UpdateCursorIndicator();
+
+	/** Get the associated arm */
+	class ABasicArm* GetAssociatedArm() const;
+
+	/** Set the associated arm */
+	void SetAssociatedArm(class ABasicArm* Arm);
+
+private:
+	/** Pointer to the arm this timeline is associated with */
+	UPROPERTY()
+	class ABasicArm* AssociatedArm = nullptr;
 };

@@ -15,6 +15,7 @@
 #include "Framework/GameManager.h"
 #include "Framework/GameTickManager.h"
 #include "UI/ArmTimelineWidget.h"
+#include "UI/ArmTimelineUMGWidget.h"
 #include "EngineUtils.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
@@ -206,6 +207,10 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	
 	// Timeline control
 	IC->BindAction("ToggleArmTimelines", IE_Pressed, this, &AHexTopDownPawn::ToggleArmTimelines);
+	
+	// Timeline editing - cursor control
+	IC->BindAction("NextCommand", IE_Pressed, this, &AHexTopDownPawn::NextCommand);
+	IC->BindAction("PrevCommand", IE_Pressed, this, &AHexTopDownPawn::PrevCommand);
 }
 
 void AHexTopDownPawn::SetInputMode1() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Input); }
@@ -270,7 +275,7 @@ void AHexTopDownPawn::ToggleArmTimelines()
 			break;
 		}
 	}
-	
+
 	if (GameManager)
 	{
 		// Toggle the timeline visibility
@@ -280,6 +285,68 @@ void AHexTopDownPawn::ToggleArmTimelines()
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("ToggleArmTimelines: No GameManager found"));
+	}
+}
+
+void AHexTopDownPawn::NextCommand()
+{
+	// Find the GameManager and get the active timeline
+	AGameManager* GameManager = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			GameManager = *It;
+			break;
+		}
+	}
+	
+	if (GameManager)
+	{
+		UArmTimelineWidget* ActiveTimeline = GameManager->GetActiveTimeline();
+		if (ActiveTimeline)
+		{
+			UUserWidget* WidgetInstance = ActiveTimeline->GetTimelineWidgetInstance();
+			if (WidgetInstance)
+			{
+				UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(WidgetInstance);
+				if (UMGWidget)
+				{
+					UMGWidget->MoveCursorRight();
+				}
+			}
+		}
+	}
+}
+
+void AHexTopDownPawn::PrevCommand()
+{
+	// Find the GameManager and get the active timeline
+	AGameManager* GameManager = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			GameManager = *It;
+			break;
+		}
+	}
+	
+	if (GameManager)
+	{
+		UArmTimelineWidget* ActiveTimeline = GameManager->GetActiveTimeline();
+		if (ActiveTimeline)
+		{
+			UUserWidget* WidgetInstance = ActiveTimeline->GetTimelineWidgetInstance();
+			if (WidgetInstance)
+			{
+				UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(WidgetInstance);
+				if (UMGWidget)
+				{
+					UMGWidget->MoveCursorLeft();
+				}
+			}
+		}
 	}
 }
 

@@ -534,3 +534,119 @@ void UArmTimelineUMGWidget::SetCompletedCommandColor(const FLinearColor& Complet
 {
 	CompletedCommandColor = CompletedColor;
 }
+
+bool UArmTimelineUMGWidget::InsertCommandAtCursor(EArmCmd Command, int32 Arg)
+{
+	// Clamp cursor position to valid range
+	CursorPosition = FMath::Clamp(CursorPosition, 0, ArmProgram.Num());
+	
+	// Create the new instruction
+	FArmInstr NewInstr;
+	NewInstr.Cmd = Command;
+	NewInstr.Arg = Arg;
+	
+	// Insert at cursor position
+	ArmProgram.Insert(NewInstr, CursorPosition);
+	
+	// Move cursor to next position
+	CursorPosition++;
+	
+	// Update the widget content
+	bIconsCreated = false;
+	UpdateWidgetContent();
+	UpdateCursorIndicator();
+	
+	return true;
+}
+
+bool UArmTimelineUMGWidget::RemoveCommandAt(int32 Index)
+{
+	// Check if index is valid
+	if (Index < 0 || Index >= ArmProgram.Num())
+	{
+		return false;
+	}
+	
+	// Remove the command
+	ArmProgram.RemoveAt(Index);
+	
+	// Adjust cursor position if needed
+	if (CursorPosition >= ArmProgram.Num())
+	{
+		CursorPosition = ArmProgram.Num();
+	}
+	
+	// Update the widget content
+	bIconsCreated = false;
+	UpdateWidgetContent();
+	UpdateCursorIndicator();
+	
+	return true;
+}
+
+FArmInstr UArmTimelineUMGWidget::GetCommandAt(int32 Index) const
+{
+	if (Index >= 0 && Index < ArmProgram.Num())
+	{
+		return ArmProgram[Index];
+	}
+	
+	return FArmInstr();
+}
+
+void UArmTimelineUMGWidget::MoveCursorLeft()
+{
+	if (CursorPosition > 0)
+	{
+		CursorPosition--;
+		UpdateCursorIndicator();
+	}
+}
+
+void UArmTimelineUMGWidget::MoveCursorRight()
+{
+	if (CursorPosition < ArmProgram.Num())
+	{
+		CursorPosition++;
+		UpdateCursorIndicator();
+	}
+}
+
+void UArmTimelineUMGWidget::SetCursorPosition(int32 Position)
+{
+	CursorPosition = FMath::Clamp(Position, 0, ArmProgram.Num());
+	UpdateCursorIndicator();
+}
+
+int32 UArmTimelineUMGWidget::GetCursor() const
+{
+	return CursorPosition;
+}
+
+void UArmTimelineUMGWidget::EnableEditingMode()
+{
+	bIsEditingMode = true;
+	UpdateCursorIndicator();
+}
+
+void UArmTimelineUMGWidget::DisableEditingMode()
+{
+	bIsEditingMode = false;
+	UpdateCursorIndicator();
+}
+
+void UArmTimelineUMGWidget::UpdateCursorIndicator()
+{
+	// TODO: Implement cursor indicator visual update
+	// This will be implemented in Blueprint to add a cursor line at CursorPosition
+}
+
+ABasicArm* UArmTimelineUMGWidget::GetAssociatedArm() const
+{
+	return AssociatedArm;
+}
+
+void UArmTimelineUMGWidget::SetAssociatedArm(ABasicArm* Arm)
+{
+	AssociatedArm = Arm;
+}
