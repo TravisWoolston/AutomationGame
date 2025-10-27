@@ -501,6 +501,9 @@ void AHexTopDownPawn::UpdateTimelineEditorVisibility()
 		{
 			// Create and show the editor
 			ShowTimelineEditor(true);
+			UE_LOG(LogTemp, Log, TEXT("UpdateTimelineEditorVisibility: Editor created and shown"));
+		} else {
+			UE_LOG(LogTemp, Log, TEXT("UpdateTimelineEditorVisibility: Editor already exists"));
 		}
 		// Editor already exists, no need to recreate it
 	}
@@ -508,6 +511,7 @@ void AHexTopDownPawn::UpdateTimelineEditorVisibility()
 	{
 		// Hide the editor
 		ShowTimelineEditor(false);
+		UE_LOG(LogTemp, Log, TEXT("UpdateTimelineEditorVisibility: Editor hidden"));
 	}
 }
 

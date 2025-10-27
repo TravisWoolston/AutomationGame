@@ -19,41 +19,43 @@ void USimWorldHex::StepArms()
 	}
 	
 	// Check for predictive collision - if executing all arms simultaneously would cause held cluster overlap
-	// If so, make the arm with the higher index wait (arbitrary but consistent ordering)
+	// Use the collision debug data to determine which arms are actually colliding
 	if (WouldCauseHeldClusterOverlap())
 	{
-		// Find the highest index arm that's about to execute a movement command
-		int32 ArmToWait = -1;
-		for (int32 ArmIndex = Arms.Num() - 1; ArmIndex >= 0; --ArmIndex)
+		// Use the predictive collision debug data to find which arms are colliding
+		// The debug data contains the actual colliding arm indices
+		for (const FPredictiveCollisionInfo& CollisionInfo : PredictiveCollisionDebugData)
 		{
-			FArmState& S = Arms[ArmIndex];
-			if (S.WaitCounter > 0 || S.Tape.Num() == 0) continue;
+			// ArmIndexB is the higher index arm in the collision pair
+			// Make ArmIndexB wait (arbitrary but consistent ordering)
+			int32 ArmToWait = CollisionInfo.ArmIndexB;
 			
-			if (S.PC >= S.Tape.Num()) continue;
-			const FOp& Op = S.Tape[S.PC];
-			
-			// Check if this is a movement command that could cause collision
-			if (Op.Cmd == ECmd::RotateL || Op.Cmd == ECmd::RotateR || 
-				Op.Cmd == ECmd::Extend || Op.Cmd == ECmd::Retract)
+			if (ArmToWait >= 0 && ArmToWait < Arms.Num())
 			{
-				ArmToWait = ArmIndex;
-				break;
-			}
-		}
-		
-		// Make the selected arm wait
-		if (ArmToWait >= 0)
-		{
-			FArmState& WaitingArm = Arms[ArmToWait];
-			if (WaitingArm.WaitCounter == 0)
-			{
-				WaitingArm.WaitCounter = 1;
-			}
-			
-			if (bDebugLogs && GEngine)
-			{
-				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange,
-					FString::Printf(TEXT("Predictive collision detected - Arm %d waiting"), ArmToWait));
+				FArmState& WaitingArm = Arms[ArmToWait];
+				
+				// Only add wait if the arm is about to execute a movement command
+				if (WaitingArm.WaitCounter == 0 && WaitingArm.Tape.Num() > 0)
+				{
+					if (WaitingArm.PC < WaitingArm.Tape.Num())
+					{
+						const FOp& Op = WaitingArm.Tape[WaitingArm.PC];
+						
+						// Check if this is a movement command that could cause collision
+						if (Op.Cmd == ECmd::RotateL || Op.Cmd == ECmd::RotateR || 
+							Op.Cmd == ECmd::Extend || Op.Cmd == ECmd::Retract)
+						{
+							WaitingArm.WaitCounter = 1;
+							
+							if (bDebugLogs && GEngine)
+							{
+								GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange,
+									FString::Printf(TEXT("Predictive collision between arms %d and %d - Arm %d waiting"), 
+										CollisionInfo.ArmIndexA, CollisionInfo.ArmIndexB, ArmToWait));
+							}
+						}
+					}
+				}
 			}
 		}
 	}

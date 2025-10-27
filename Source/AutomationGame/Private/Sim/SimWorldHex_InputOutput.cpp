@@ -169,6 +169,18 @@ bool USimWorldHex::TryArmPickItem(const FHex& From, FItem& OutItem)
 			FItem NewItem = FItem::MakeSingle(O);
 			NewItem.Id = NextItemId++;
 			OutItem = NewItem;
+			
+			// Create ascending animation for the input tile
+			// This ensures the next orb spawns after the animation completes
+			FAnimatedOrb AscendAnimation;
+			AscendAnimation.bActive = true;
+			AscendAnimation.bIsInput = true;
+			AscendAnimation.Hex = From;
+			AscendAnimation.Item = OutItem;
+			AscendAnimation.StartStep = StepCounter;
+			AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
+			AnimatedOrbs.Add(AscendAnimation);
+			
 			return true;
 		}
 	}
