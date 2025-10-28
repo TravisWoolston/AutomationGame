@@ -406,8 +406,11 @@ void AHexTopDownPawn::ShowTimelineEditor(bool bShow)
 				TimelineEditorWidget->AddToViewport();
 				
 				// Use GameAndUI mode to allow both game and widget interaction
-				FInputModeGameAndUI InputMode;
-				PC->SetInputMode(InputMode);
+				// Don't lock mouse to viewport or capture focus
+				// FInputModeGameAndUI InputMode;
+				// InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+				// InputMode.SetHideCursorDuringCapture(false);
+				// PC->SetInputMode(InputMode);
 				PC->bShowMouseCursor = true;
 			}
 		}
@@ -420,10 +423,13 @@ void AHexTopDownPawn::ShowTimelineEditor(bool bShow)
 			TimelineEditorWidget->RemoveFromParent();
 			TimelineEditorWidget = nullptr;
 			
-			// Restore GameOnly mode when editor is hidden
-			FInputModeGameOnly InputMode;
-			PC->SetInputMode(InputMode);
-			PC->bShowMouseCursor = true;
+			// Keep GameAndUI mode since we might open another timeline
+			// This prevents the double-click issue
+			// FInputModeGameAndUI InputMode;
+			// InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+			// InputMode.SetHideCursorDuringCapture(false);
+			// PC->SetInputMode(InputMode);
+			// PC->bShowMouseCursor = true;
 		}
 	}
 }

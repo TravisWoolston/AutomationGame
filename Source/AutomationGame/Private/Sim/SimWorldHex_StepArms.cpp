@@ -1070,31 +1070,181 @@ void USimWorldHex::StepArms()
 			break;
 
 			case ECmd::Extend:
-			{
-				const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
-				const int32 OldLen = S.ArmLen;
-				S.ArmLen = FMath::Clamp<int32>(S.ArmLen + Delta, 1, MAX_ARM_LEN);
-				// Defer simulation reach to next fixed tick
-				PendingArmLenByArm.Add(ArmIndex, S.ArmLen);
-
-				if (bDevDebugArms && GEngine && S.ArmLen != OldLen)
-				{
-					FHex Hand = S.BaseHex;
-					for (int i = 0; i < S.ArmLen; ++i)
-						Hand = HexUtil::Neighbor(Hand, S.Facing);
-					// GEngine->AddOnScreenDebugMessage(
-					// 	-1, 1.5f, FColor::Green,
-					// 	FString::Printf(TEXT("[Arm %d] EXTEND (Δ=%d) Len=%d Hand=(%d,%d)"),
-					// 		ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
-				}
-			}
-			break;
-
 			case ECmd::Retract:
 			{
+				// If we were told to wait (from a previously blocked extend/retract) count it down and retry next tick.
+				if (S.WaitCounter > 0)
+				{
+					--S.WaitCounter;
+					// Do NOT advance PC; retry this same extend/retract instruction.
+					continue;
+				}
+
 				const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);
+				const int32 NewLen = (Op.Cmd == ECmd::Extend)
+					? FMath::Clamp<int32>(S.ArmLen + Delta, 1, MAX_ARM_LEN)
+					: FMath::Clamp<int32>(S.ArmLen - Delta, 1, MAX_ARM_LEN);
+
+				// Calculate old and new hand positions
+				auto ComputeGripHex = [](const FArmState& A, EHexDir Facing, int32 Len)->FHex
+					{
+						FHex Grip = A.BaseHex;
+						for (int i = 0; i < Len; ++i)
+							Grip = HexUtil::Neighbor(Grip, Facing);
+						return Grip;
+					};
+
+				FHex OldHand = ComputeGripHex(S, S.Facing, S.ArmLen);
+				FHex NewHand = ComputeGripHex(S, S.Facing, NewLen);
+
+				// Collision detection: check if new hand position is blocked
+				bool bBlocked = false;
+				
+				// Occupancy: world items
+				TSet<FHex> WorldOcc;
+				for (const auto& KV : ItemMap)
+					WorldOcc.Add(KV.Key);
+
+				// Helper to compute hand hex for other arms
+				auto ComputeOtherGripHex = [](const FArmState& A)->FHex
+					{
+						FHex Grip = A.BaseHex;
+						for (int i = 0; i < A.ArmLen; ++i)
+							Grip = HexUtil::Neighbor(Grip, A.Facing);
+						return Grip;
+					};
+
+				// Build occupancy for other arms' held orbs (and their hands)
+				TSet<FHex> OtherHeldOcc;
+				// Build occupancy for other arms themselves (base positions only)
+				TSet<FHex> OtherArmOcc;
+				
+				// Helper for rotation
+				auto Rot60 = [](FHex D, uint8 StepsCCW)
+					{
+						for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+						{
+							const int32 q = D.Q;
+							const int32 r = D.R;
+							D.Q = -r;
+							D.R = q + r;
+						}
+						return D;
+					};
+				
+				for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx)
+				{
+					if (OtherIdx == ArmIndex) continue;
+					const FArmState& O = Arms[OtherIdx];
+					
+					// Only include the arm's base position
+					OtherArmOcc.Add(O.BaseHex);
+					
+					if (!O.bHolding) continue;
+
+					// Don't include the hand hex itself, but include held cluster sub-orbs
+					if (O.Held.bIsCluster)
+					{
+						// Virtual positions of their sub-orbs at current facing
+						const FHex OHand = ComputeOtherGripHex(O);
+						const uint8 cur = (uint8)O.Facing % 6;
+						const int8 grab = (int8)O.Held.GrabFacing;
+						const uint8 facingDelta = (grab >= 0)
+							? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+							: cur;
+						const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+						for (const FOrbData& Sub : O.Held.Orbs)
+						{
+							// Skip the grabbed orb (dQ=0, dR=0) which would be at the hand position
+							if (Sub.dQ == 0 && Sub.dR == 0) continue;
+							
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex RotLocal = Rot60(Local, ccw);
+							OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R));
+						}
+					}
+					// Don't add single held orbs to OtherHeldOcc since they're at the hand position
+				}
+
+				// Get predicted bonds
+				TMap<FHex, int32> PredictedBonds = GetPredictedBondFormations();
+				
+				auto OverlapsAny = [&](const FHex& H)->bool
+					{
+						// Opus Magnum logic: don't consider board orbs as obstructions if they will bond to held clusters
+						if (PredictedBonds.Contains(H))
+						{
+							return false;
+						}
+						
+						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H);
+					};
+
+				// Check if the new hand position would be blocked
+				if (S.bHolding)
+				{
+					// Check if new hand position overlaps with board items or other arms' held items
+					if (WorldOcc.Contains(NewHand) || OtherHeldOcc.Contains(NewHand))
+					{
+						bBlocked = true;
+					}
+
+					// For clusters, also check if any sub-orb would be blocked
+					if (!bBlocked && S.Held.bIsCluster)
+					{
+						const FHex Grip = NewHand;
+						const uint8 cur = (uint8)S.Facing % 6;
+						const int8 grab = (int8)S.Held.GrabFacing;
+						const uint8 facingDelta = (grab >= 0)
+							? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+							: cur;
+						const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+						for (const FOrbData& Sub : S.Held.Orbs)
+						{
+							// Skip the grabbed orb (dQ=0, dR=0) which would be at the hand position
+							if (Sub.dQ == 0 && Sub.dR == 0) continue;
+							
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex RotLocal = Rot60(Local, ccw);
+							FHex WorldPos(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R);
+							
+							if (OverlapsAny(WorldPos))
+							{
+								bBlocked = true;
+								break;
+							}
+						}
+					}
+				}
+
+				if (bBlocked)
+				{
+					// Find the actual obstacle hex
+					FHex ObstacleHex = NewHand;
+					
+					// Record collision debug info
+					FCollisionDebugInfo CollisionInfo;
+					CollisionInfo.ArmIndex = ArmIndex;
+					CollisionInfo.ArmBaseHex = S.BaseHex;
+					CollisionInfo.ArmGripHex = NewHand;
+					CollisionInfo.BlockedHex = ObstacleHex;
+					CollisionInfo.Reason = FString::Printf(TEXT("%s blocked"), Op.Cmd == ECmd::Extend ? TEXT("Extend") : TEXT("Retract"));
+					CollisionDebugData.Add(CollisionInfo);
+					
+					// Arm cannot extend/retract this tick; set a 1‑tick wait and retry SAME instruction.
+					if (S.WaitCounter == 0)
+					{
+						S.WaitCounter = 1;
+					}
+					// Do NOT advance PC; keep pointing at this extend/retract op.
+					continue;
+				}
+
+				// Safe to extend/retract - commit the change
 				const int32 OldLen = S.ArmLen;
-				S.ArmLen = FMath::Clamp<int32>(S.ArmLen - Delta, 1, MAX_ARM_LEN);
+				S.ArmLen = NewLen;
 				// Defer simulation reach to next fixed tick
 				PendingArmLenByArm.Add(ArmIndex, S.ArmLen);
 
@@ -1104,9 +1254,10 @@ void USimWorldHex::StepArms()
 					for (int i = 0; i < S.ArmLen; ++i)
 						Hand = HexUtil::Neighbor(Hand, S.Facing);
 					// GEngine->AddOnScreenDebugMessage(
-					// 	-1, 1.5f, FColor::Orange,
-					// 	FString::Printf(TEXT("[Arm %d] RETRACT (Δ=%d) Len=%d Hand=(%d,%d)"),
-					// 		ArmIndex, Delta, S.ArmLen, Hand.Q, Hand.R));
+					// 	-1, 1.5f, Op.Cmd == ECmd::Extend ? FColor::Green : FColor::Orange,
+					// 	FString::Printf(TEXT("[Arm %d] %s (Δ=%d) Len=%d Hand=(%d,%d)"),
+					// 		ArmIndex, Op.Cmd == ECmd::Extend ? TEXT("EXTEND") : TEXT("RETRACT"), 
+					// 		Delta, S.ArmLen, Hand.Q, Hand.R));
 				}
 			}
 			break;

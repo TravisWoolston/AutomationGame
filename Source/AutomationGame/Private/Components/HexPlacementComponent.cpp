@@ -843,8 +843,6 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		// For now, use static mesh preview for arms (ArmBasePreviewMesh)
 		if (PlaceKind == EPlaceKind::Arm)
 		{
-			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Using static mesh for arm preview"));
-			// Use static mesh preview for arm
 			EnsurePreviewComponent();
 			if (!PreviewComp) 
 			{
@@ -860,12 +858,12 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 				return;
 			}
 			
-			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Found arm preview mesh: %s"), *Mesh->GetName());
+
 			
 			if (PreviewComp->GetStaticMesh() != Mesh)
 			{
 				PreviewComp->SetStaticMesh(Mesh);
-				UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Arm preview mesh set successfully"));
+
 			}
 
 			const uint8 EffectiveDir = BeltDir % 6;
@@ -898,7 +896,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 				SkeletalPreviewComp->SetVisibility(false);
 			}
 			
-			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Arm preview component made visible"));
+
 		}
 		else
 		{

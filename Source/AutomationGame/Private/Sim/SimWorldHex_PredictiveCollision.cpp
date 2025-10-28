@@ -71,13 +71,9 @@ TArray<USimWorldHex::FPredictiveArmState> USimWorldHex::SimulateAllArmsExecution
 		}
 	}
 	
-	for (const auto& KV : PendingArmLenByArm)
-	{
-		if (KV.Key >= 0 && KV.Key < PredictedStates.Num())
-		{
-			PredictedStates[KV.Key].ArmLen = KV.Value;
-		}
-	}
+	// Note: We don't apply PendingArmLenByArm here because extend/retract commands
+	// will use the current arm length from CurrentState, and we want to predict what
+	// happens AFTER the extend/retract command executes
 	
 	// Now simulate what each arm would do if it executed its current command (ONE TICK AHEAD ONLY)
 	for (int32 ArmIndex = 0; ArmIndex < PredictedStates.Num(); ++ArmIndex)
@@ -117,8 +113,8 @@ TArray<USimWorldHex::FPredictiveArmState> USimWorldHex::SimulateAllArmsExecution
 		}
 		case ECmd::Extend:
 		{
-			// Simulate extension
-			int32 NewArmLen = PredictedState.ArmLen + CurrentOp.Arg;
+			// Simulate extension - use current state's actual arm length
+			int32 NewArmLen = CurrentState.ArmLen + CurrentOp.Arg;
 			NewArmLen = FMath::Max(1, FMath::Min(NewArmLen, 10)); // Clamp to reasonable range
 			PredictedState.ArmLen = NewArmLen;
 			// Don't advance PC - this is just for collision prediction
@@ -126,8 +122,8 @@ TArray<USimWorldHex::FPredictiveArmState> USimWorldHex::SimulateAllArmsExecution
 		}
 		case ECmd::Retract:
 		{
-			// Simulate retraction
-			int32 NewArmLen = PredictedState.ArmLen - CurrentOp.Arg;
+			// Simulate retraction - use current state's actual arm length
+			int32 NewArmLen = CurrentState.ArmLen - CurrentOp.Arg;
 			NewArmLen = FMath::Max(1, FMath::Min(NewArmLen, 10)); // Clamp to reasonable range
 			PredictedState.ArmLen = NewArmLen;
 			// Don't advance PC - this is just for collision prediction
@@ -157,6 +153,14 @@ bool USimWorldHex::WouldHeldClustersOverlap(const FPredictiveArmState& ArmA, con
 	bool ArmBRotating = (CurrentB.PC < CurrentB.Tape.Num() && 
 		(CurrentB.Tape[CurrentB.PC].Cmd == ECmd::RotateL || CurrentB.Tape[CurrentB.PC].Cmd == ECmd::RotateR) &&
 		CurrentB.WaitCounter == 0);
+	
+	// Check if either arm is performing an extend or retract
+	bool ArmAExtending = (CurrentA.PC < CurrentA.Tape.Num() && 
+		(CurrentA.Tape[CurrentA.PC].Cmd == ECmd::Extend || CurrentA.Tape[CurrentA.PC].Cmd == ECmd::Retract) &&
+		CurrentA.WaitCounter == 0);
+	bool ArmBExtending = (CurrentB.PC < CurrentB.Tape.Num() && 
+		(CurrentB.Tape[CurrentB.PC].Cmd == ECmd::Extend || CurrentB.Tape[CurrentB.PC].Cmd == ECmd::Retract) &&
+		CurrentB.WaitCounter == 0);
 		
 	// If both arms are rotating, check their sweeps
 	if (ArmARotating && ArmBRotating)
@@ -174,9 +178,27 @@ bool USimWorldHex::WouldHeldClustersOverlap(const FPredictiveArmState& ArmA, con
 		// Check B's sweep against A's current position
 		return WouldRotationSweepOverlapStatic(CurrentB, ArmB, CurrentA);
 	}
+	// If both arms are extending/retracting or one is and other is not rotating, check positions
+	else if (ArmAExtending || ArmBExtending)
+	{
+		// Check final positions after extend/retract
+		TArray<FHex> PositionsA = GetHeldClusterPositions(ArmA);
+		TArray<FHex> PositionsB = GetHeldClusterPositions(ArmB);
+		
+		for (const FHex& PosA : PositionsA)
+		{
+			for (const FHex& PosB : PositionsB)
+			{
+				if (PosA.Q == PosB.Q && PosA.R == PosB.R)
+				{
+					return true;
+				}
+			}
+		}
+	}
 	else
 	{
-		// Neither is rotating, just check final positions
+		// Neither is rotating or extending, just check final positions
 		TArray<FHex> PositionsA = GetHeldClusterPositions(ArmA);
 		TArray<FHex> PositionsB = GetHeldClusterPositions(ArmB);
 		

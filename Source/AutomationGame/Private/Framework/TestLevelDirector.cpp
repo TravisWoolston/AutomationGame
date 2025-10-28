@@ -563,9 +563,10 @@ void ATestLevelDirector::HandleEndPIE(bool /*bIsSimulating*/)
 
 void ATestLevelDirector::SyncAllRuntimeArmEdits()
 {
-	for (FScenarioSpec& Sc : Scenarios)
+	// Only sync the active scenario - other scenarios should not be overwritten
+	if (Scenarios.IsValidIndex(ActiveScenarioIndex))
 	{
-		SyncPreviewEditsIntoScenarioFiltered(Sc);
+		SyncPreviewEditsIntoScenarioFiltered(Scenarios[ActiveScenarioIndex]);
 	}
 }
 

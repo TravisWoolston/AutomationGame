@@ -4,6 +4,7 @@
 #include "Framework/GameManager.h"
 #include "Actors/BasicArm.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Blueprint/SlateBlueprintLibrary.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
