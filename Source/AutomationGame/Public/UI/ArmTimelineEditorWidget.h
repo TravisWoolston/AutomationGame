@@ -66,7 +66,7 @@ public:
 	UArmTimelineEditorWidget(const FObjectInitializer& ObjectInitializer);
 
 	virtual void NativeConstruct() override;
-	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+	// virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 	// IArmTimelineEditor Interface Implementation
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Timeline Editor")

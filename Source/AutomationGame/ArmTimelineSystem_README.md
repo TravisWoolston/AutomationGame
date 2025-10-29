@@ -75,8 +75,6 @@ void UpdateTimelineWidget();
 1. Create a Blueprint widget class based on `UArmTimelineUMGWidget`
 2. Design the UI layout with:
    - `CommandIconsBox` (HorizontalBox) for command icons
-   - `CurrentCommandText` (TextBlock) for current command name
-   - `ProgressText` (TextBlock) for progress display
 3. Implement the Blueprint events:
    - `OnWidgetConstructed`
    - `OnProgramChanged`

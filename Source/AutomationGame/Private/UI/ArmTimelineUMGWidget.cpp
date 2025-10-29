@@ -153,6 +153,12 @@ void UArmTimelineUMGWidget::SetIconSize(float NewIconSize)
 	UpdateWidgetContent();
 }
 
+void UArmTimelineUMGWidget::SetIconSpacing(float InIconSpacing)
+{
+    IconSpacing = FMath::Max(0.0f, InIconSpacing);
+    UpdateWidgetContent();
+}
+
 void UArmTimelineUMGWidget::SetIconBackgroundColor(const FLinearColor& NewIconBackgroundColor)
 {
 	IconBackgroundColor = NewIconBackgroundColor;
@@ -186,22 +192,9 @@ void UArmTimelineUMGWidget::UpdateWidgetContent()
 		return;
 	}
 
-	// Update text displays
-	if (CurrentCommandText)
-	{
-		FString CommandName = TEXT("None");
-		if (CurrentCommandIndex >= 0 && CurrentCommandIndex < ArmProgram.Num())
-		{
-			CommandName = GetCommandDisplayName(ArmProgram[CurrentCommandIndex].Cmd);
-		}
-		CurrentCommandText->SetText(FText::FromString(CommandName));
-	}
 
-	if (ProgressText)
-	{
-		FString ProgressString = FString::Printf(TEXT("Progress: %.1f%%"), CurrentCommandProgress * 100.0f);
-		ProgressText->SetText(FText::FromString(ProgressString));
-	}
+
+
 
 	// Use caching flag to prevent unnecessary recreation
 	bool bNeedsRecreation = !bIconsCreated || (CommandIconWidgets.Num() == 0);
@@ -301,8 +294,8 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 			CommandIconsBox->AddChild(CommandListBorder);
 			
 			// Create icons for the displayed commands using sliding window around current command
-			int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
-			int32 StartIndex = 0;
+            int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
+            int32 StartIndex = 0;
 			
 			// Show a window around the current command
 			if (CurrentCommandIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
@@ -312,7 +305,11 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 				StartIndex = FMath::Min(StartIndex, ArmProgram.Num() - MaxDisplayedCommands);
 			}
 			
-			for (int32 i = 0; i < NumCommandsToShow; ++i)
+            // Cache metrics for cursor math
+            CommandListLeftPadding = 8.0f; // border padding set above
+            VisibleStartIndex = StartIndex;
+
+            for (int32 i = 0; i < NumCommandsToShow; ++i)
 			{
 				int32 CommandIndex = StartIndex + i;
 				UWidget* IconWidget = CreateCommandIcon(ArmProgram[CommandIndex].Cmd, CommandIndex);
@@ -320,11 +317,12 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 				{
 					CommandIconWidgets.Add(IconWidget);
 					
-					// Add to the inner horizontal box with proper spacing
+                    // Add to the inner horizontal box with proper spacing
 					UHorizontalBoxSlot* BoxSlot = InnerHorizontalBox->AddChildToHorizontalBox(IconWidget);
 					if (BoxSlot)
 					{
-						BoxSlot->SetPadding(FMargin(5.0f, 0.0f, 5.0f, 0.0f));
+                        const float HalfGap = IconSpacing * 0.5f;
+                        BoxSlot->SetPadding(FMargin(HalfGap, 0.0f, HalfGap, 0.0f));
 						BoxSlot->SetHorizontalAlignment(HAlign_Center);
 						BoxSlot->SetVerticalAlignment(VAlign_Center);
 					}
@@ -335,8 +333,8 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 	else
 	{
 		// Fallback: create icons directly in the horizontal box using sliding window
-		int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
-		int32 StartIndex = 0;
+        int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
+        int32 StartIndex = 0;
 		
 		// Show a window around the current command
 		if (CurrentCommandIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
@@ -346,7 +344,11 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 			StartIndex = FMath::Min(StartIndex, ArmProgram.Num() - MaxDisplayedCommands);
 		}
 		
-		for (int32 i = 0; i < NumCommandsToShow; ++i)
+        // Cache metrics for cursor math (no outer border used here)
+        CommandListLeftPadding = 0.0f;
+        VisibleStartIndex = StartIndex;
+
+        for (int32 i = 0; i < NumCommandsToShow; ++i)
 		{
 			int32 CommandIndex = StartIndex + i;
 			UWidget* IconWidget = CreateCommandIcon(ArmProgram[CommandIndex].Cmd, CommandIndex);
@@ -354,11 +356,12 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 			{
 				CommandIconWidgets.Add(IconWidget);
 				
-				// Add to horizontal box
+                // Add to horizontal box
 				UHorizontalBoxSlot* BoxSlot = CommandIconsBox->AddChildToHorizontalBox(IconWidget);
 				if (BoxSlot)
 				{
-					BoxSlot->SetPadding(FMargin(5.0f, 0.0f, 5.0f, 0.0f));
+                    const float HalfGap = IconSpacing * 0.5f;
+                    BoxSlot->SetPadding(FMargin(HalfGap, 0.0f, HalfGap, 0.0f));
 					BoxSlot->SetHorizontalAlignment(HAlign_Center);
 					BoxSlot->SetVerticalAlignment(VAlign_Center);
 				}
@@ -370,7 +373,7 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 void UArmTimelineUMGWidget::UpdateCommandIcons()
 {
 	// Calculate the sliding window start index around the current command
-	int32 StartIndex = 0;
+    int32 StartIndex = 0;
 	if (CurrentCommandIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
 	{
 		// Center the window around the current command
@@ -378,7 +381,10 @@ void UArmTimelineUMGWidget::UpdateCommandIcons()
 		StartIndex = FMath::Min(StartIndex, ArmProgram.Num() - MaxDisplayedCommands);
 	}
 	
-	// Update existing icons
+    // Cache metrics for cursor math
+    VisibleStartIndex = StartIndex;
+
+    // Update existing icons
 	for (int32 i = 0; i < CommandIconWidgets.Num(); ++i)
 	{
 		if (CommandIconWidgets[i])
@@ -633,6 +639,10 @@ void UArmTimelineUMGWidget::MoveCursorRight()
 	if (CursorPosition < ArmProgram.Num())
 	{
 		CursorPosition++;
+		UpdateCursorIndicator();
+	}
+	else {
+		CursorPosition = 0;
 		UpdateCursorIndicator();
 	}
 }

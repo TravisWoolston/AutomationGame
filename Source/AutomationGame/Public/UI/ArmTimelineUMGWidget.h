@@ -54,6 +54,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetIconSize(float IconSize);
 
+    /** Set spacing between command icons (in pixels) */
+    UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+    void SetIconSpacing(float InIconSpacing);
+
 	/** Set the background color for command icons */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetIconBackgroundColor(const FLinearColor& IconBackgroundColor);
@@ -143,9 +147,21 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
 	float IconSize = 32.0f;
 
+    /** Spacing between command icons (total gap between neighbors) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+    float IconSpacing = 10.0f;
+
 	/** Background color for command icons */
 	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
 	FLinearColor IconBackgroundColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+
+	/** Cached left padding used for the command list visual */
+	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
+	float CommandListLeftPadding = 0.0f;
+
+	/** Cached first visible index (used by sliding window) */
+	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
+	int32 VisibleStartIndex = 0;
 
 	/** Insert a command at the cursor position */
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
@@ -187,6 +203,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Timeline Editor")
 	class UBorder* GetCursorLine() const;
 
+	/** Width of one command cell (icon + spacing) for cursor math */
+	UFUNCTION(BlueprintPure, Category = "Timeline Editor")
+	float GetUnitWidth() const { return IconSize + IconSpacing; }
+
+	/** Left padding applied before the first icon for cursor math */
+	UFUNCTION(BlueprintPure, Category = "Timeline Editor")
+	float GetListLeftPadding() const { return CommandListLeftPadding; }
+
+	/** First visible program index in the current sliding window */
+	UFUNCTION(BlueprintPure, Category = "Timeline Editor")
+	int32 GetVisibleStartIndex() const { return VisibleStartIndex; }
+
 	/** Synchronize the current ArmProgram back to the associated arm's Program */
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	void SyncProgramToArm();
@@ -215,13 +243,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	UHorizontalBox* CommandIconsBox = nullptr;
 
-	/** Text block showing current command name */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
-	UTextBlock* CurrentCommandText = nullptr;
 
-	/** Text block showing progress */
-	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
-	UTextBlock* ProgressText = nullptr;
+
+
 
 	/** Cursor indicator widget (visual line showing where commands will be inserted) */
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))

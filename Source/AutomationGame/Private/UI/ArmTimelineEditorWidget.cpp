@@ -29,14 +29,14 @@ void UArmTimelineEditorWidget::NativeConstruct()
 	SetVisibility(ESlateVisibility::Visible);
 }
 
-FReply UArmTimelineEditorWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
-{
-	// Handle key input for command insertion
-	HandleKeyInput(InKeyEvent.GetKey());
+// FReply UArmTimelineEditorWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+// {
+// 	// Handle key input for command insertion
+// 	HandleKeyInput(InKeyEvent.GetKey());
 	
-	// Always handled
-	return FReply::Handled();
-}
+// 	// Always handled
+// 	return FReply::Handled();
+// }
 
 UArmTimelineWidget* UArmTimelineEditorWidget::GetActiveTimeline_Implementation() const
 {

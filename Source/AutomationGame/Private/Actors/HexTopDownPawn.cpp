@@ -321,6 +321,7 @@ void AHexTopDownPawn::NextCommand()
 				UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(WidgetInstance);
 				if (UMGWidget)
 				{
+					UE_LOG(LogTemp, Log, TEXT("NextCommand: Moving cursor right"));
 					UMGWidget->MoveCursorRight();
 				}
 			}
