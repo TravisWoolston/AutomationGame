@@ -10,7 +10,11 @@ enum class ETileKind : uint8
     Output,
     Belt,
     Bond,     // NEW: two?hex bonding glyph
-    Unbond    // NEW: two?hex unbonding glyph
+    Unbond,   // NEW: two?hex unbonding glyph
+    InputBond,  // NEW: bond between input tiles - orbs spawn pre-bonded
+    OutputBond,  // NEW: bond between output tiles - requires bonded orbs
+    ClusterInput,  // NEW: spawns pre-defined clusters based on template
+    ClusterOutput  // NEW: accepts specific cluster patterns
 };
 
 USTRUCT(BlueprintType)

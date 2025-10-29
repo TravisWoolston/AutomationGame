@@ -83,21 +83,43 @@ void USimWorldHex::StepBelts()
 		{
 			if (!SourceTile) return false;
 
-			// Handle input tiles
-			if (SourceTile->Kind == ETileKind::Input)
+			// Handle input tiles (both regular and cluster)
+			if (SourceTile->Kind == ETileKind::Input || SourceTile->Kind == ETileKind::ClusterInput)
 			{
 				const FItem* InputItem = ItemMap.Find(SourceHex);
 				if (InputItem && InputItem->Id > 0)
 				{
 					FItem MovingItem = *InputItem;
-					ItemMap.Remove(SourceHex);
-					OrbAt.Remove(SourceHex);
+					
+					// For cluster inputs, we need to move all connected items
+					if (SourceTile->Kind == ETileKind::ClusterInput && MovingItem.bIsCluster)
+					{
+						// Remove entire cluster and its bonds from the board
+						ItemMap.Remove(SourceHex);
+						OrbAt.Remove(SourceHex);
+						
+						// Track all sub-orb IDs for movement tracking
+						for (const FOrbData& SubOrb : MovingItem.Orbs)
+						{
+							if (SubOrb.ItemId > 0)
+							{
+								ItemsMovedLastStep.Add(SubOrb.ItemId);
+								OrbsMovedThisTick.Add(SubOrb.ItemId);
+							}
+						}
+					}
+					else
+					{
+						// Regular single item movement
+						ItemMap.Remove(SourceHex);
+						OrbAt.Remove(SourceHex);
+						ItemsMovedLastStep.Add(MovingItem.Id);
+						OrbsMovedThisTick.Add(MovingItem.Id);
+					}
+					
+					// Place item/cluster at belt position
 					ItemMap.Add(BeltHex, MovingItem);
 					OrbAt.Add(BeltHex, KindFromItem(MovingItem));
-					ItemsMovedLastStep.Add(MovingItem.Id);
-					
-					// Mark this orb as having moved this tick
-					OrbsMovedThisTick.Add(MovingItem.Id);
 
 					// Mark this input to skip spawning this frame
 					SkipInputThisFrame.Add(SourceHex);
@@ -112,6 +134,22 @@ void USimWorldHex::StepBelts()
 					AscendAnimation.Item = MovingItem; // Use the actual item for correct material
 					AscendAnimation.StartStep = StepCounter;
 					AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
+					
+					// Check if this input tile has an InputBond partner
+					if (SourceTile->Kind == ETileKind::Input && IOBondPartners.Find(SourceHex))
+					{
+						if (const FHex* PartnerHex = IOBondPartners.Find(SourceHex))
+						{
+							// Check if partner also has an item (both inputs should spawn bonded)
+							if (const FItem* PartnerItem = ItemMap.Find(*PartnerHex))
+							{
+								AscendAnimation.bIsBonded = true;
+								AscendAnimation.PartnerHex = *PartnerHex;
+								AscendAnimation.PartnerItemId = PartnerItem->Id;
+							}
+						}
+					}
+					
 					AnimatedOrbs.Add(AscendAnimation);
 
 					return true;

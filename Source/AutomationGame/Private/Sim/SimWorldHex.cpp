@@ -229,20 +229,53 @@ bool USimWorldHex::TryTakeItem(const FHex& H, FItem& Out)
 
 bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 {
+	// Create a mutable copy of the tile to potentially convert Bond -> InputBond/OutputBond
+	FTile TileToPlace = T;
+	
 	if (T.Kind == ETileKind::Bond)
 	{
 		const FHex Partner = HexUtil::Neighbor(H, (EHexDir)(T.Arg % 6));
-		if (TileMap.Contains(Partner) &&
-			TileMap[Partner].Kind != ETileKind::Empty &&
-			TileMap[Partner].Kind != ETileKind::Bond)
+		const FTile* PartnerTile = TileMap.Find(Partner);
+		const FTile* CurrentTile = TileMap.Find(H);
+		
+		// Auto-convert Bond tiles based on what they're placed between
+		if (PartnerTile)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Bond placement blocked: partner hex occupied."));
-			return false;
+			// Check if placing on Input tile with Input partner -> InputBond
+			if (CurrentTile && CurrentTile->Kind == ETileKind::Input && PartnerTile->Kind == ETileKind::Input)
+			{
+				TileToPlace.Kind = ETileKind::InputBond;
+				UE_LOG(LogTemp, Log, TEXT("Bond placed on Input tile with Input partner - converting to InputBond"));
+			}
+			// Check if placing on Output tile with Output partner -> OutputBond
+			else if (CurrentTile && CurrentTile->Kind == ETileKind::Output && PartnerTile->Kind == ETileKind::Output)
+			{
+				TileToPlace.Kind = ETileKind::OutputBond;
+				UE_LOG(LogTemp, Log, TEXT("Bond placed on Output tile with Output partner - converting to OutputBond"));
+			}
+			// Check if placing on empty with Input partner -> InputBond
+			else if ((!CurrentTile || CurrentTile->Kind == ETileKind::Empty) && PartnerTile->Kind == ETileKind::Input)
+			{
+				TileToPlace.Kind = ETileKind::InputBond;
+				UE_LOG(LogTemp, Log, TEXT("Bond placed between Input tiles - converting to InputBond"));
+			}
+			// Check if placing on empty with Output partner -> OutputBond
+			else if ((!CurrentTile || CurrentTile->Kind == ETileKind::Empty) && PartnerTile->Kind == ETileKind::Output)
+			{
+				TileToPlace.Kind = ETileKind::OutputBond;
+				UE_LOG(LogTemp, Log, TEXT("Bond placed between Output tiles - converting to OutputBond"));
+			}
+			// Standard Bond tile validation (not Input or Output)
+			else if (PartnerTile->Kind != ETileKind::Empty && PartnerTile->Kind != ETileKind::Bond)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Bond placement blocked: partner hex occupied."));
+				return false;
+			}
 		}
 	}
-	if (T.Kind == ETileKind::Unbond)
+	if (TileToPlace.Kind == ETileKind::Unbond)
 	{
-		const FHex Partner = HexUtil::Neighbor(H, (EHexDir)(T.Arg % 6));
+		const FHex Partner = HexUtil::Neighbor(H, (EHexDir)(TileToPlace.Arg % 6));
 		if (TileMap.Contains(Partner) &&
 			TileMap[Partner].Kind != ETileKind::Empty &&
 			TileMap[Partner].Kind != ETileKind::Unbond)
@@ -251,7 +284,35 @@ bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 			return false;
 		}
 	}
-	if (T.Kind == ETileKind::Empty)
+	if (TileToPlace.Kind == ETileKind::InputBond)
+	{
+		const FHex Partner = HexUtil::Neighbor(H, (EHexDir)(TileToPlace.Arg % 6));
+		// Verify partner tile is an Input tile
+		const FTile* PartnerTile = TileMap.Find(Partner);
+		if (!PartnerTile || PartnerTile->Kind != ETileKind::Input)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("InputBond placement blocked: partner must be an Input tile."));
+			return false;
+		}
+		// Register the bond partnership
+		IOBondPartners.Add(H, Partner);
+		IOBondPartners.Add(Partner, H);
+	}
+	if (TileToPlace.Kind == ETileKind::OutputBond)
+	{
+		const FHex Partner = HexUtil::Neighbor(H, (EHexDir)(TileToPlace.Arg % 6));
+		// Verify partner tile is an Output tile
+		const FTile* PartnerTile = TileMap.Find(Partner);
+		if (!PartnerTile || PartnerTile->Kind != ETileKind::Output)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("OutputBond placement blocked: partner must be an Output tile."));
+			return false;
+		}
+		// Register the bond partnership
+		IOBondPartners.Add(H, Partner);
+		IOBondPartners.Add(Partner, H);
+	}
+	if (TileToPlace.Kind == ETileKind::Empty)
 	{
 		const bool bHad = TileMap.Remove(H) > 0;
 		if (bHad)
@@ -260,13 +321,61 @@ bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 			// Bonds now persist until explicitly broken by a glyph.
 			ItemMap.Remove(H);
 			OrbAt.Remove(H);
+			
+			// Remove any IO bond partnerships
+			if (const FHex* Partner = IOBondPartners.Find(H))
+			{
+				IOBondPartners.Remove(*Partner);
+				IOBondPartners.Remove(H);
+			}
+			
 			++TileRevision;
 		}
 		return true;
 	}
 
-	TileMap.Add(H, T);
+	TileMap.Add(H, TileToPlace);
 	++TileRevision;
+	return true;
+}
+
+// --- Cluster Template API ---
+void USimWorldHex::RegisterClusterTemplate(uint8 TemplateId, const TArray<FOrbData>& Orbs, const TArray<TPair<int32, int32>>& BondPairs, const FString& Name)
+{
+	FClusterTemplate NewTemplate;
+	NewTemplate.Orbs = Orbs;
+	NewTemplate.Bonds = BondPairs;
+	NewTemplate.Name = Name;
+	ClusterTemplates.Add(TemplateId, NewTemplate);
+	
+	UE_LOG(LogTemp, Log, TEXT("Registered cluster template %d: %s with %d orbs and %d bonds"), 
+		TemplateId, *Name, Orbs.Num(), BondPairs.Num());
+}
+
+bool USimWorldHex::ValidateClusterAgainstTemplate(const FItem& Cluster, uint8 TemplateId) const
+{
+	const FClusterTemplate* Template = ClusterTemplates.Find(TemplateId);
+	if (!Template) return false;
+	
+	if (!Cluster.bIsCluster) return false;
+	if (Cluster.Orbs.Num() != Template->Orbs.Num()) return false;
+	
+	// TODO: Implement full pattern matching with rotation support
+	// For now, just check orb count and types
+	for (int32 i = 0; i < Template->Orbs.Num(); i++)
+	{
+		bool bFoundMatch = false;
+		for (const FOrbData& ClusterOrb : Cluster.Orbs)
+		{
+			if (ClusterOrb.Type == Template->Orbs[i].Type)
+			{
+				bFoundMatch = true;
+				break;
+			}
+		}
+		if (!bFoundMatch) return false;
+	}
+	
 	return true;
 }
 

@@ -1,6 +1,9 @@
 #include "Blueprints/BoardBlueprintLibrary.h"
 #include "Actors/HexBoardActor.h"
 #include "Engine/World.h"
+#include "Sim/SimWorldHex.h"
+#include "Sim/OrbTypes.h"
+#include "Sim/Tiles.h"
 
 static AHexBoardActor* FindBoard(const UObject* Wco)
 {

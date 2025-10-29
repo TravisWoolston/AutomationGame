@@ -2,6 +2,8 @@
 
 #include "AutomationGameMinimal.h"
 #include "Containers/Set.h"
+#include "Containers/Map.h"
+#include "Templates/Tuple.h"
 #include "Sim/HexTypes.h"
 #include "Sim/Tiles.h"
 #include "Sim/ArmTypes.h"
@@ -94,6 +96,10 @@ public:
 	// Build API
 	UFUNCTION(BlueprintCallable, Category = "Build") bool  PlaceTile(const FHex& H, const FTile& T);
 	UFUNCTION(BlueprintCallable, Category = "Build") int32 AddArm(const FArmState& Arm);
+	
+	// Cluster template API (C++ only - TPair is not Blueprint-compatible)
+	void RegisterClusterTemplate(uint8 TemplateId, const TArray<FOrbData>& Orbs, const TArray<TPair<int32, int32>>& BondPairs, const FString& Name);
+	bool ValidateClusterAgainstTemplate(const FItem& Cluster, uint8 TemplateId) const;
 
 	// Item helpers
 	bool TryPutItem(const FHex& H, const FItem& I);
@@ -149,6 +155,9 @@ public:
 
 		bool bIsInput = false; // true for input (ascending), false for output (descending)
 		bool bActive = true;
+		bool bIsBonded = false; // true if this animated orb should show a bond to a partner
+		FHex PartnerHex; // hex of the bonded partner (if bIsBonded is true)
+		int32 PartnerItemId = 0; // item ID of the bonded partner (if bIsBonded is true)
 	};
 
 	/** Get animated orbs for rendering */
@@ -197,7 +206,7 @@ private:
 	FVector WorldAnchor = FVector::ZeroVector;
 	float   GridYawDeg = 0.f;
 	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
-
+	int OUTPUT_DESCEND_TICKS = 3;
 	// One-frame skip sets
 	TSet<FHex> SkipInputThisFrame;
 	TSet<FHex> SkipOutputThisFrame;
@@ -235,6 +244,33 @@ private:
 
 	// Held items last board position (for future bond persistence if needed)
 	TMap<int32, FHex> HeldItemLastHex;
+	
+	// Input/Output bond tiles - maps tile hex to partner hex
+	// For InputBond tiles: both input tiles spawn orbs pre-bonded
+	// For OutputBond tiles: both output tiles require bonded orbs
+	TMap<FHex, FHex> IOBondPartners;
+	
+	// Cluster template structure
+	struct FClusterTemplate
+	{
+		// Orbs in the cluster with their relative positions
+		TArray<FOrbData> Orbs;
+		
+		// Bond connections between orbs (pairs of indices into Orbs array)
+		TArray<TPair<int32, int32>> Bonds;
+		
+		// Name/ID for this template
+		FString Name;
+		
+		// Whether this template should auto-rotate to match output orientation
+		bool bAutoRotate = false;
+	};
+	
+	// Cluster templates mapped by template ID (Tile.Arg stores the template ID)
+	TMap<uint8, FClusterTemplate> ClusterTemplates;
+	
+	// Track which cluster output tiles have accepted clusters (for gating)
+	TMap<FHex, bool> ClusterOutputGates;
 
 	// Pending bond formations waiting for arm rotation to complete
 	struct FPendingBondFormation

@@ -913,8 +913,8 @@ void AHexFactoryActor::RebuildOutputs()
 		if (OutputISM)
 		{
 			OutputISM->AddInstance(Transform);
-			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Added output instance at (%d,%d) with type %d"), 
-				H.Q, H.R, (int32)OutputType);
+			// UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Added output instance at (%d,%d) with type %d"), 
+			// 	H.Q, H.R, (int32)OutputType);
 		}
 		else
 		{

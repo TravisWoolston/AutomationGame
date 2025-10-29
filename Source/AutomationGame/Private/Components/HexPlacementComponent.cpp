@@ -196,16 +196,23 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		const FTile* ExistingTile = Sim->TileMap.Find(Root);
 		if (ExistingTile && ExistingTile->Kind != ETileKind::Empty)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place %s at (%d,%d) - location already occupied by %s"), 
-				*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
-				Root.Q, Root.R,
-				*StaticEnum<ETileKind>()->GetNameStringByValue((int64)ExistingTile->Kind));
-			if (GEngine)
-				GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Red,
-					FString::Printf(TEXT("Cannot place %s - location occupied by %s"), 
-						*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
-						*StaticEnum<ETileKind>()->GetNameStringByValue((int64)ExistingTile->Kind)));
-			return;
+			// Allow Bond tiles to be placed on Input/Output tiles (they will auto-convert to InputBond/OutputBond)
+			bool bAllowBondOnInputOutput = (T.Kind == ETileKind::Bond && 
+				(ExistingTile->Kind == ETileKind::Input || ExistingTile->Kind == ETileKind::Output));
+			
+			if (!bAllowBondOnInputOutput)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place %s at (%d,%d) - location already occupied by %s"), 
+					*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
+					Root.Q, Root.R,
+					*StaticEnum<ETileKind>()->GetNameStringByValue((int64)ExistingTile->Kind));
+				if (GEngine)
+					GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Red,
+						FString::Printf(TEXT("Cannot place %s - location occupied by %s"), 
+							*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
+							*StaticEnum<ETileKind>()->GetNameStringByValue((int64)ExistingTile->Kind)));
+				return;
+			}
 		}
 	}
 
