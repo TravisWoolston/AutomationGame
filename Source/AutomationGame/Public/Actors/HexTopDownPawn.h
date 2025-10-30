@@ -247,6 +247,10 @@ private:
 	// Timeline editor widget for command editing
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	void ShowTimelineEditor(bool bShow);
+
+	// Toggle the editor UI independently of arm timelines
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void ToggleEditorUI();
 	
 	// Get the timeline editor widget
 	UFUNCTION(BlueprintPure, Category = "Timeline Editor")

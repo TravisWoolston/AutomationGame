@@ -145,6 +145,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	void GenerateCommandButtons();
 
+	/** Execute removal at current cursor index */
+	UFUNCTION(Category = "Timeline Editor")
+	void ExecuteRemoveAtCursor();
+
 	/** Debug function to check if there's an active arm being edited */
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	void DebugPrintActiveArmInfo();
@@ -189,6 +193,18 @@ public:
 	/** Command slot configurations (icons, input keys, and button widgets for each command) */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Timeline Editor")
 	TArray<FCommandSlotConfig> CommandSlotConfigs;
+
+	/** Icon for the remove (X) button */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+	UTexture2D* RemoveButtonIcon = nullptr;
+
+	/** The single remove button placed at index CommandSlotConfigs.Num() */
+	UPROPERTY(BlueprintReadOnly, Category = "Timeline Editor")
+	class UButton* RemoveButtonWidget = nullptr;
+
+	/** Optional input key to trigger remove at cursor */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+	FKey RemoveButtonInputKey = EKeys::Invalid;
 
 	/** VerticalBox to generate command buttons into */
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))

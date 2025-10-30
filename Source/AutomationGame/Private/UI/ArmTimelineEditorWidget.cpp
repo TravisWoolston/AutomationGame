@@ -8,6 +8,8 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Sim/ArmTypes.h"
@@ -212,10 +214,11 @@ void UArmTimelineEditorWidget::HandleCommandInput(ECmd Command, int32 Arg)
 	
 	UE_LOG(LogTemp, Log, TEXT("HandleCommandInput: Found UMG widget"));
 	
-	// Get cursor position
-	int32 CursorPos = CurrentCursorPosition;
-	
-	UE_LOG(LogTemp, Log, TEXT("HandleCommandInput: Cursor position=%d"), CursorPos);
+	// Get live cursor position from the UMG widget (avoid stale local value)
+	int32 CursorPos = UMGWidget->GetCursor();
+	CurrentCursorPosition = CursorPos;
+
+	UE_LOG(LogTemp, Log, TEXT("HandleCommandInput: Cursor position (live)=%d"), CursorPos);
 	
 	// Insert command at cursor (convert ECmd to EArmCmd)
 	EArmCmd ArmCommand = ConvertECmdToEArmCmd(Command);
@@ -230,6 +233,13 @@ void UArmTimelineEditorWidget::HandleCommandInput(ECmd Command, int32 Arg)
 
 void UArmTimelineEditorWidget::HandleKeyInput(const FKey& PressedKey)
 {
+    // Remove key takes priority
+    if (RemoveButtonInputKey.IsValid() && PressedKey == RemoveButtonInputKey)
+    {
+        ExecuteRemoveAtCursor();
+        return;
+    }
+
 	// Search for matching command slot
 	for (const FCommandSlotConfig& Config : CommandSlotConfigs)
 	{
@@ -293,23 +303,58 @@ void UArmTimelineEditorWidget::GenerateCommandButtons()
 	// Clear existing buttons
 	CommandButtonsContainer->ClearChildren();
 
-	// Generate a button for each command slot
+    // Generate a button for each command slot
 	for (int32 i = 0; i < CommandSlotConfigs.Num(); ++i)
 	{
 		const FCommandSlotConfig& Config = CommandSlotConfigs[i];
 
-		// Create button
-		UButton* Button = NewObject<UButton>(this);
-		if (Button)
-		{
-			// Create image for icon
-			UImage* IconImage = NewObject<UImage>(this);
-			if (IconImage && Config.Icon)
-			{
-				IconImage->SetBrushFromTexture(Config.Icon);
-				IconImage->SetDesiredSizeOverride(FVector2D(48.0f, 48.0f));
-				Button->SetContent(IconImage);
-			}
+        // Create button
+        UButton* Button = NewObject<UButton>(this);
+        if (Button)
+        {
+            // Create overlay to stack icon and input key label
+            UOverlay* Overlay = NewObject<UOverlay>(this);
+            if (Overlay)
+            {
+                // Icon image
+                if (Config.Icon)
+                {
+                    UImage* IconImage = NewObject<UImage>(this);
+                    if (IconImage)
+                    {
+                        IconImage->SetBrushFromTexture(Config.Icon);
+                        IconImage->SetDesiredSizeOverride(FVector2D(48.0f, 48.0f));
+                        Overlay->AddChild(IconImage);
+                    }
+                }
+
+                // Key label (lower-left)
+                if (Config.InputKey.IsValid())
+                {
+                    UTextBlock* KeyText = NewObject<UTextBlock>(this);
+                    if (KeyText)
+                    {
+                        const FText KeyName = Config.InputKey.GetDisplayName();
+                        KeyText->SetText(KeyName);
+                        KeyText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+                        KeyText->SetShadowOffset(FVector2D(1.f, 1.f));
+                        KeyText->SetShadowColorAndOpacity(FLinearColor(0.f, 0.f, 0.f, 0.75f));
+                        FSlateFontInfo FontInfo = KeyText->GetFont();
+                        FontInfo.Size = 10;
+                        KeyText->SetFont(FontInfo);
+
+                        UOverlaySlot* LabelSlot = Overlay->AddChildToOverlay(KeyText);
+                        if (LabelSlot)
+                        {
+                            LabelSlot->SetHorizontalAlignment(HAlign_Left);
+                            LabelSlot->SetVerticalAlignment(VAlign_Bottom);
+                            LabelSlot->SetPadding(FMargin(4.f, 0.f, 0.f, 4.f));
+                        }
+                    }
+                }
+
+                Button->SetContent(Overlay);
+            }
 
 			// Store the button in the config
 			CommandSlotConfigs[i].ButtonWidget = Button;
@@ -343,6 +388,51 @@ void UArmTimelineEditorWidget::GenerateCommandButtons()
 				ButtonSlot->SetVerticalAlignment(VAlign_Center);
 				ButtonSlot->SetPadding(FMargin(5.0f, 5.0f, 5.0f, 5.0f));
 			}
+
+    // Append a single remove button after command slots (at index CommandSlotConfigs.Num())
+    if(i == CommandSlotConfigs.Num() - 1) {
+        // Destroy previous if any to avoid duplicates
+        RemoveButtonWidget = nullptr;
+
+        UButton* RemoveButton = NewObject<UButton>(this);
+        if (RemoveButton)
+        {
+            // Prefer icon if provided, otherwise simple X text
+            if (RemoveButtonIcon)
+            {
+                UImage* XImage = NewObject<UImage>(this);
+                if (XImage)
+                {
+                    XImage->SetBrushFromTexture(RemoveButtonIcon);
+                    XImage->SetDesiredSizeOverride(FVector2D(48.0f, 48.0f));
+                    RemoveButton->SetContent(XImage);
+                }
+            }
+            else
+            {
+                UTextBlock* XText = NewObject<UTextBlock>(this);
+                if (XText)
+                {
+                    XText->SetText(FText::FromString(TEXT("X")));
+                    RemoveButton->SetContent(XText);
+                }
+            }
+
+            FScriptDelegate RemoveDelegate;
+            RemoveDelegate.BindUFunction(this, FName(TEXT("ExecuteRemoveAtCursor")));
+            RemoveButton->OnClicked.Add(RemoveDelegate);
+
+            UVerticalBoxSlot* RemoveButtonSlot = CommandButtonsContainer->AddChildToVerticalBox(RemoveButton);
+            if (RemoveButtonSlot)
+            {
+                RemoveButtonSlot->SetHorizontalAlignment(HAlign_Fill);
+                RemoveButtonSlot->SetVerticalAlignment(VAlign_Center);
+                RemoveButtonSlot->SetPadding(FMargin(5.0f, 10.0f, 5.0f, 5.0f)); // extra top gap
+            }
+
+            RemoveButtonWidget = RemoveButton;
+        }
+    }
 		}
 	}
 }
@@ -354,6 +444,30 @@ UButton* UArmTimelineEditorWidget::GetCommandButton(int32 SlotIndex) const
 		return CommandSlotConfigs[SlotIndex].ButtonWidget;
 	}
 	return nullptr;
+}
+
+void UArmTimelineEditorWidget::ExecuteRemoveAtCursor()
+{
+    UArmTimelineUMGWidget* UMGWidget = GetActiveUMGWidget();
+    if (!UMGWidget)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ExecuteRemoveAtCursor: No active UMG widget"));
+        return;
+    }
+
+    const int32 ProgramLength = UMGWidget->ArmProgram.Num();
+    if (ProgramLength <= 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("ExecuteRemoveAtCursor: Program is empty"));
+        return;
+    }
+
+    // Remove at the current cursor index; clamp to last valid index if cursor is after the end
+    int32 IndexToRemove = FMath::Clamp(UMGWidget->GetCursor(), 0, ProgramLength - 1);
+
+    const bool bRemoved = UMGWidget->RemoveCommandAt(IndexToRemove);
+    UE_LOG(LogTemp, Log, TEXT("ExecuteRemoveAtCursor: Remove at index %d -> %s (program size after: %d)"),
+        IndexToRemove, bRemoved ? TEXT("Success") : TEXT("Fail"), UMGWidget->ArmProgram.Num());
 }
 
 void UArmTimelineEditorWidget::ExecuteCommandAtSlot0() { OnCommandButtonClicked(0); }

@@ -259,14 +259,20 @@ FString UArmTimelineUMGWidget::GetCommandDisplayName(EArmCmd Command) const
 void UArmTimelineUMGWidget::CreateCommandIcons()
 {
 	// Clear existing icons
-	for (UWidget* Widget : CommandIconWidgets)
-	{
-		if (Widget && Widget->IsValidLowLevel())
-		{
-			Widget->RemoveFromParent();
-		}
-	}
-	CommandIconWidgets.Empty();
+    for (UWidget* Widget : CommandIconWidgets)
+    {
+        if (Widget && Widget->IsValidLowLevel())
+        {
+            Widget->RemoveFromParent();
+        }
+    }
+    CommandIconWidgets.Empty();
+
+    // Also clear the container so borders/inner boxes don't accumulate
+    if (CommandIconsBox)
+    {
+        CommandIconsBox->ClearChildren();
+    }
 
 	if (!CommandIconsBox)
 	{

@@ -39,6 +39,12 @@ AHexTopDownPawn::AHexTopDownPawn()
 	Placer->bUseInputPolling = false; // we drive it via input events
 }
 
+void AHexTopDownPawn::ToggleEditorUI()
+{
+    const bool bShouldShow = (TimelineEditorWidget == nullptr);
+    ShowTimelineEditor(bShouldShow);
+}
+
 void AHexTopDownPawn::BeginPlay()
 {
 	Super::BeginPlay();
@@ -56,15 +62,40 @@ void AHexTopDownPawn::BeginPlay()
 		TickManager->OnFixedTick.AddDynamic(this, &AHexTopDownPawn::HandleNextTickStop);
 	}
 	
-	// Check if timelines should be shown and show editor if needed
-	UpdateTimelineEditorVisibility();
+    // Editor UI now toggled explicitly via action
 }
 
 void AHexTopDownPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	
-	// Editor visibility is now managed by explicit calls to UpdateTimelineEditorVisibility()
+    // Editor visibility is now managed by explicit calls to UpdateTimelineEditorVisibility()
+
+    // Forward Timeline Editor hotkeys without needing input actions
+    if (TimelineEditorWidget)
+    {
+        APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+        if (PC)
+        {
+            // Remove key first so it can override
+            if (TimelineEditorWidget->RemoveButtonInputKey.IsValid() &&
+                PC->WasInputKeyJustPressed(TimelineEditorWidget->RemoveButtonInputKey))
+            {
+                TimelineEditorWidget->HandleKeyInput(TimelineEditorWidget->RemoveButtonInputKey);
+            }
+
+            // Command slot keys
+            const TArray<FCommandSlotConfig> SlotConfigs = TimelineEditorWidget->GetCommandSlotConfigs();
+            for (const FCommandSlotConfig& Cfg : SlotConfigs)
+            {
+                if (Cfg.InputKey.IsValid() && PC->WasInputKeyJustPressed(Cfg.InputKey))
+                {
+                    TimelineEditorWidget->HandleKeyInput(Cfg.InputKey);
+                    // Do not break; allow multiple keys same frame if user pressed them
+                }
+            }
+        }
+    }
 
 	AGameManager* GM = nullptr; 
 	if (UWorld* W = GetWorld()) 
@@ -170,10 +201,13 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	IC->BindAxis("MoveForward", this, &AHexTopDownPawn::MoveY);
 	IC->BindAxis("Zoom", this, &AHexTopDownPawn::Zoom);
 
-	// Actions
+    // Actions
 	IC->BindAction("Place", IE_Pressed, this, &AHexTopDownPawn::PlacePressed);
 	IC->BindAction("Place", IE_Released, this, &AHexTopDownPawn::PlaceReleased);
 	IC->BindAction("Remove", IE_Pressed, this, &AHexTopDownPawn::RemovePressed);
+
+    // Editor UI toggle (user assigns key in Project Settings)
+    IC->BindAction("EditorUIToggle", IE_Pressed, this, &AHexTopDownPawn::ToggleEditorUI);
 	
 	// Blueprint mode (hold to select, toggle for placement)
 	IC->BindAction("BlueprintMode", IE_Pressed, this, &AHexTopDownPawn::BlueprintModePressed);
@@ -284,12 +318,10 @@ void AHexTopDownPawn::ToggleArmTimelines()
 
 	if (GameManager)
 	{
-		// Toggle the timeline visibility
+        // Toggle the timeline visibility
 		bool bNewVisibility = !GameManager->bShowArmTimelines;
 		GameManager->SetTimelineVisibility(bNewVisibility);
-		
-		// Update editor visibility based on new state
-		UpdateTimelineEditorVisibility();
+        // Editor UI no longer auto-toggles here
 	}
 	else
 	{
@@ -462,64 +494,7 @@ void AHexTopDownPawn::SetActiveTimelineForEditing(ABasicArm* Arm)
 
 void AHexTopDownPawn::UpdateTimelineEditorVisibility()
 {
-	if (!GetWorld())
-	{
-		return;
-	}
-	
-	// Find the GameManager
-	AGameManager* GameManager = nullptr;
-	if (UWorld* World = GetWorld())
-	{
-		for (TActorIterator<AGameManager> It(World); It; ++It)
-		{
-			GameManager = *It;
-			break;
-		}
-	}
-	
-	if (!GameManager)
-	{
-		return;
-	}
-	
-	// Check if any individual timelines are visible
-	bool bAnyTimelineVisible = GameManager->bShowArmTimelines;
-	
-	// Also check for individual arm timelines that might be visible
-	if (!bAnyTimelineVisible)
-	{
-		// Scan for any arm with visible timeline
-		for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It)
-		{
-			ABasicArm* Arm = *It;
-			if (Arm && Arm->TimelineWidget && Arm->TimelineWidget->bTimelineVisible)
-			{
-				bAnyTimelineVisible = true;
-				break;
-			}
-		}
-	}
-	
-	if (bAnyTimelineVisible && TimelineEditorWidgetClass)
-	{
-		// Show or create the editor
-		if (!TimelineEditorWidget)
-		{
-			// Create and show the editor
-			ShowTimelineEditor(true);
-			UE_LOG(LogTemp, Log, TEXT("UpdateTimelineEditorVisibility: Editor created and shown"));
-		} else {
-			UE_LOG(LogTemp, Log, TEXT("UpdateTimelineEditorVisibility: Editor already exists"));
-		}
-		// Editor already exists, no need to recreate it
-	}
-	else if (!bAnyTimelineVisible && TimelineEditorWidget)
-	{
-		// Hide the editor
-		ShowTimelineEditor(false);
-		UE_LOG(LogTemp, Log, TEXT("UpdateTimelineEditorVisibility: Editor hidden"));
-	}
+    // No-op: editor UI is toggled explicitly via EditorUIToggle action
 }
 
 void AHexTopDownPawn::ToggleArmTimeline(ABasicArm* Arm)
@@ -530,11 +505,10 @@ void AHexTopDownPawn::ToggleArmTimeline(ABasicArm* Arm)
 		bool bCurrentVisibility = Arm->TimelineWidget->bTimelineVisible;
 		Arm->TimelineWidget->SetTimelineWidgetVisible(!bCurrentVisibility);
 		
-		// If making timeline visible, set it as the active timeline and show the editor
+        // If making timeline visible, set it as the active timeline (editor UI is independent)
 		if (!bCurrentVisibility)
 		{
 			SetActiveTimelineForEditing(Arm);
-			UpdateTimelineEditorVisibility();
 			
 			// Enable editing mode on the UMG widget when timeline becomes visible
 			if (UUserWidget* WidgetInstance = Arm->TimelineWidget->GetTimelineWidgetInstance())
@@ -577,7 +551,7 @@ void AHexTopDownPawn::ToggleArmTimeline(ABasicArm* Arm)
 				}
 			}
 			
-			UpdateTimelineEditorVisibility();
+            // Editor UI visibility is independent; do nothing here
 		}
 	}
 }
