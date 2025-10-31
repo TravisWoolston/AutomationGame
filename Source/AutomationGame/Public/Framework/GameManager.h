@@ -82,6 +82,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Grid", meta = (EditCondition = "bAutoExpandAtRuntime"))
 	float RecenterThresholdUU = 800.f;
 
+	/** Scale multiplier for ClusterOutput tiles (larger than regular Output tiles). */
+	UPROPERTY(EditAnywhere, Category = "Grid", meta = (ClampMin = "1.0", ClampMax = "3.0"))
+	float ClusterOutputScale = 1.3f;
+
 	/** If true, map hex grid onto a sphere surface instead of a plane. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere")
 	bool bSphereGrid = false;

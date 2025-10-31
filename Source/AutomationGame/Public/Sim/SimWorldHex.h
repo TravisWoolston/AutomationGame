@@ -12,6 +12,16 @@
 #include "UObject/Object.h"
 #include "SimWorldHex.generated.h"
 
+/** Merged tile info for rendering cluster outputs */
+struct FMergedTileInfo
+{
+	FHex Hex1;
+	FHex Hex2;
+	uint8 OrbType1;
+	uint8 OrbType2;
+	uint8 TemplateId;
+};
+
 /** Authoritative deterministic hex simulation world. */
 UCLASS(BlueprintType)
 class AUTOMATIONGAME_API USimWorldHex : public UObject
@@ -98,8 +108,57 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Build") int32 AddArm(const FArmState& Arm);
 	
 	// Cluster template API (C++ only - TPair is not Blueprint-compatible)
+	// Cluster template structure (must be public for external access)
+	struct FClusterTemplate
+	{
+		// Orbs in the cluster with their relative positions
+		TArray<FOrbData> Orbs;
+		
+		// Bond connections between orbs (pairs of indices into Orbs array)
+		TArray<TPair<int32, int32>> Bonds;
+		
+		// Name/ID for this template
+		FString Name;
+		
+		// Whether this template should auto-rotate to match output orientation
+		bool bAutoRotate = false;
+	};
+	
 	void RegisterClusterTemplate(uint8 TemplateId, const TArray<FOrbData>& Orbs, const TArray<TPair<int32, int32>>& BondPairs, const FString& Name);
 	bool ValidateClusterAgainstTemplate(const FItem& Cluster, uint8 TemplateId) const;
+	
+	// Auto-generate a cluster template for two adjacent output tiles
+	uint8 AutoGenerateClusterTemplateForOutputs(const FHex& Hex1, const FHex& Hex2, uint8 OrbType1, uint8 OrbType2);
+	
+	// Auto-convert Output tiles when placed adjacent to other Output or ClusterOutput tiles
+	void AutoConvertAdjacentOutputsToCluster(const FHex& NewOutputHex, uint8 NewOrbType);
+	
+	// Expand an existing cluster template by rebuilding it with all tiles
+	uint8 ExpandClusterTemplate(uint8 ExistingTemplateId, const FHex& OldBaseHex, const FHex& NewBaseHex, const TArray<FHex>& AllClusterHexes, const TMap<FHex, uint8>& HexToOrbType);
+	
+	// Find all tiles that are part of a cluster (connected via IOBondPartners)
+	TArray<FHex> FindAllTilesInCluster(const FHex& StartHex) const;
+	
+	// Get merged cluster output info for rendering
+	const TMap<FHex, ::FMergedTileInfo>& GetMergedClusterOutputs() const { return MergedClusterOutputs; }
+	TMap<FHex, ::FMergedTileInfo>& GetMergedClusterOutputsMutable() { return MergedClusterOutputs; }
+	
+	// Get cluster templates map for template ID lookup
+	const TMap<uint8, FClusterTemplate>& GetClusterTemplates() const { return ClusterTemplates; }
+	
+	// Get IO bond partners map (for ClusterOutput partnerships)
+	const TMap<FHex, FHex>& GetIOBondPartners() const { return IOBondPartners; }
+	TMap<FHex, FHex>& GetIOBondPartnersMutable() { return IOBondPartners; }
+	
+	// Generate a new unique template ID
+	uint8 GenerateNewTemplateId() { return NextAutoTemplateId++; }
+	
+	// Rebuild cluster output relationships after loading (reconstructs IOBondPartners and MergedClusterOutputs)
+	UFUNCTION(BlueprintCallable, Category = "Simulation")
+	void RebuildClusterOutputRelationships();
+	
+	// C++ version with saved orb types parameter
+	void RebuildClusterOutputRelationships(const TMap<FHex, uint8>& SavedOrbTypes);
 
 	// Item helpers
 	bool TryPutItem(const FHex& H, const FItem& I);
@@ -250,27 +309,17 @@ private:
 	// For OutputBond tiles: both output tiles require bonded orbs
 	TMap<FHex, FHex> IOBondPartners;
 	
-	// Cluster template structure
-	struct FClusterTemplate
-	{
-		// Orbs in the cluster with their relative positions
-		TArray<FOrbData> Orbs;
-		
-		// Bond connections between orbs (pairs of indices into Orbs array)
-		TArray<TPair<int32, int32>> Bonds;
-		
-		// Name/ID for this template
-		FString Name;
-		
-		// Whether this template should auto-rotate to match output orientation
-		bool bAutoRotate = false;
-	};
-	
 	// Cluster templates mapped by template ID (Tile.Arg stores the template ID)
 	TMap<uint8, FClusterTemplate> ClusterTemplates;
 	
 	// Track which cluster output tiles have accepted clusters (for gating)
 	TMap<FHex, bool> ClusterOutputGates;
+	
+	// Counter for auto-generated cluster template IDs (starts at 128 to avoid conflicts with manual templates)
+	uint8 NextAutoTemplateId = 128;
+	
+	// Track merged cluster output tiles for rendering (keyed by the "primary" hex - lower Q, or lower R if Q equal)
+	TMap<FHex, FMergedTileInfo> MergedClusterOutputs;
 
 	// Pending bond formations waiting for arm rotation to complete
 	struct FPendingBondFormation

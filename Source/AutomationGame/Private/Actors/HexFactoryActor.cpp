@@ -1,6 +1,7 @@
 #include "Actors/HexFactoryActor.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "Actors/OrbSimDriver.h"
 #include "Actors/HexBoardActor.h"
 #include "Sim/SimWorldHex.h"
@@ -127,6 +128,16 @@ void AHexFactoryActor::EnsureComponents()
 	EnsureISM(OutputBaseCISM, TEXT("OutputBaseCISM_Runtime"));
 	EnsureISM(OutputMetalAISM, TEXT("OutputMetalAISM_Runtime"));
 	EnsureISM(OutputCatalystXISM, TEXT("OutputCatalystXISM_Runtime"));
+	
+	// Ensure procedural mesh for merged outputs
+	if (!MergedOutputMesh)
+	{
+		MergedOutputMesh = NewObject<UProceduralMeshComponent>(this, TEXT("MergedOutputMesh_Runtime"));
+		MergedOutputMesh->SetupAttachment(GetRootComponent());
+		MergedOutputMesh->RegisterComponent();
+		MergedOutputMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	MergedOutputMesh->SetVisibility(true, true);
 }
 
 AActor* AHexFactoryActor::GetAnchor() const
@@ -834,7 +845,7 @@ void AHexFactoryActor::RebuildOutputs()
 		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Using tile mesh for outputs"));
+	// UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Using tile mesh for outputs"));
 	
 	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
 	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
@@ -881,10 +892,10 @@ void AHexFactoryActor::RebuildOutputs()
 			// Clear instances for this type
 			OutputISM->ClearInstances();
 			
-			UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Set up ISM for type %d with mesh %s and material %s"), 
-				(int32)OrbType, 
-				BaseTileMesh ? TEXT("valid") : TEXT("null"),
-				TypeMaterial ? TEXT("valid") : TEXT("null"));
+			// UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Set up ISM for type %d with mesh %s and material %s"), 
+			// 	(int32)OrbType, 
+			// 	BaseTileMesh ? TEXT("valid") : TEXT("null"),
+			// 	TypeMaterial ? TEXT("valid") : TEXT("null"));
 		}
 		else
 		{
@@ -892,38 +903,56 @@ void AHexFactoryActor::RebuildOutputs()
 		}
 	}
 	
+	// Get ClusterOutput scale from GameManager
+	float ClusterScale = 1.3f; // Default
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			ClusterScale = (*It)->ClusterOutputScale;
+			break;
+		}
+	}
+	
 	int32 OutputCount = 0;
-
+	
+	// Render all output tiles (both regular Output and ClusterOutput)
 	for (const auto& KV : Sim->TileMap)
 	{
 		const FHex& H = KV.Key;
 		const FTile& T = KV.Value;
-		if (T.Kind != ETileKind::Output) continue;
-
-		OutputCount++;
-		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
-		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-		const FTransform Transform(FRotator::ZeroRotator, Loc, FVector(1.f));
-
-		// Get the appropriate ISM for this output type
-		EOrbType OutputType = (EOrbType)T.Arg;
-		UInstancedStaticMeshComponent* OutputISM = GetOutputISMForType(OutputType);
 		
-		if (OutputISM)
+		// Handle both Output and ClusterOutput tiles
+		if (T.Kind == ETileKind::Output || T.Kind == ETileKind::ClusterOutput)
 		{
-			OutputISM->AddInstance(Transform);
-			// UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Added output instance at (%d,%d) with type %d"), 
-			// 	H.Q, H.R, (int32)OutputType);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No ISM found for output type %d at (%d,%d)"), 
-				(int32)OutputType, H.Q, H.R);
+			OutputCount++;
+			const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
+			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+			const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+			
+			// ClusterOutput tiles are scaled larger than regular Output tiles
+			float Scale = (T.Kind == ETileKind::ClusterOutput) ? ClusterScale : 1.0f;
+			const FTransform Transform(FRotator::ZeroRotator, Loc, FVector(Scale));
+
+			// Get orb type - for Output it's in Arg, for ClusterOutput it's also in Arg
+			EOrbType OutputType = (EOrbType)T.Arg;
+
+			// Get the appropriate ISM for this output type
+			UInstancedStaticMeshComponent* OutputISM = GetOutputISMForType(OutputType);
+			
+			if (OutputISM)
+			{
+				OutputISM->AddInstance(Transform);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No ISM found for output type %d at (%d,%d)"), 
+					(int32)OutputType, H.Q, H.R);
+			}
 		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Found %d outputs"), OutputCount);
+	UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Rendered %d output tiles"), OutputCount);
 }
 
 UInstancedStaticMeshComponent* AHexFactoryActor::GetOutputISMForType(EOrbType OrbType)
@@ -937,6 +966,138 @@ UInstancedStaticMeshComponent* AHexFactoryActor::GetOutputISMForType(EOrbType Or
 	case EOrbType::MetalA: return OutputMetalAISM;
 	case EOrbType::CatalystX: return OutputCatalystXISM;
 	default: return OutputBaseAISM; // Fallback
+	}
+}
+
+void AHexFactoryActor::GenerateMergedHexMesh(const FVector& Hex1Center, const FVector& Hex2Center, float HexRadius,
+	UMaterialInterface* Mat1, UMaterialInterface* Mat2, int32 SectionIndex)
+{
+	if (!MergedOutputMesh) return;
+	
+	// Generate vertices for a merged hex shape
+	// For pointy-top hexagons, we need 6 vertices per hex plus shared vertices
+	TArray<FVector> Vertices;
+	TArray<int32> Triangles;
+	TArray<FVector> Normals;
+	TArray<FVector2D> UV0;
+	TArray<FColor> VertexColors;
+	TArray<FProcMeshTangent> Tangents;
+	
+
+	
+	// Generate Hex1 vertices
+	for (int32 i = 0; i < 6; i++)
+	{
+		float Angle = i * PI / 3.0f;
+		FVector LocalPos = FVector(FMath::Cos(Angle) * HexRadius, FMath::Sin(Angle) * HexRadius, 0);
+		Vertices.Add(Hex1Center + LocalPos);
+		Normals.Add(FVector::UpVector);
+		UV0.Add(FVector2D(0.25f, 0.5f)); // UV for first material
+		VertexColors.Add(FColor::White);
+		Tangents.Add(FProcMeshTangent(1, 0, 0));
+	}
+	
+	// Generate Hex2 vertices
+	for (int32 i = 0; i < 6; i++)
+	{
+		float Angle = i * PI / 3.0f;
+		FVector LocalPos = FVector(FMath::Cos(Angle) * HexRadius, FMath::Sin(Angle) * HexRadius, 0);
+		Vertices.Add(Hex2Center + LocalPos);
+		Normals.Add(FVector::UpVector);
+		UV0.Add(FVector2D(0.75f, 0.5f)); // UV for second material
+		VertexColors.Add(FColor::White);
+		Tangents.Add(FProcMeshTangent(1, 0, 0));
+	}
+	
+	// Generate triangles for Hex1 (fan triangulation from center)
+	// REVERSED winding order for correct facing direction (counter-clockwise when viewed from above)
+	FVector Hex1CenterVert = Hex1Center;
+	int32 Hex1CenterIdx = Vertices.Add(Hex1CenterVert);
+	Normals.Add(FVector::UpVector);
+	UV0.Add(FVector2D(0.25f, 0.5f));
+	VertexColors.Add(FColor::White);
+	Tangents.Add(FProcMeshTangent(1, 0, 0));
+	
+	for (int32 i = 0; i < 6; i++)
+	{
+		int32 Next = (i + 1) % 6;
+		// Reversed winding: center -> next -> current (instead of center -> current -> next)
+		Triangles.Add(Hex1CenterIdx);
+		Triangles.Add(Next);
+		Triangles.Add(i);
+	}
+	
+	// Generate triangles for Hex2 (fan triangulation from center)
+	// REVERSED winding order for correct facing direction
+	FVector Hex2CenterVert = Hex2Center;
+	int32 Hex2CenterIdx = Vertices.Add(Hex2CenterVert);
+	Normals.Add(FVector::UpVector);
+	UV0.Add(FVector2D(0.75f, 0.5f));
+	VertexColors.Add(FColor::White);
+	Tangents.Add(FProcMeshTangent(1, 0, 0));
+	
+	for (int32 i = 0; i < 6; i++)
+	{
+		int32 Next = (i + 1) % 6;
+		// Reversed winding: center -> next -> current
+		Triangles.Add(Hex2CenterIdx);
+		Triangles.Add(6 + Next);
+		Triangles.Add(6 + i);
+	}
+	
+	// Find the shared edge vertices and create bridging triangles
+	// The shared edge is where the two hexes touch
+	// For adjacent hexes, we need to find which vertices are closest
+	float MinDist1 = FLT_MAX, MinDist2 = FLT_MAX;
+	int32 SharedIdx1_A = -1, SharedIdx1_B = -1;
+	int32 SharedIdx2_A = -1, SharedIdx2_B = -1;
+	
+	// Find the two closest vertex pairs between the hexes
+	for (int32 i = 0; i < 6; i++)
+	{
+		for (int32 j = 0; j < 6; j++)
+		{
+			float Dist = FVector::Dist(Vertices[i], Vertices[6 + j]);
+			if (Dist < MinDist1)
+			{
+				MinDist2 = MinDist1;
+				SharedIdx2_A = SharedIdx1_A;
+				SharedIdx2_B = SharedIdx1_B;
+				
+				MinDist1 = Dist;
+				SharedIdx1_A = i;
+				SharedIdx1_B = 6 + j;
+			}
+			else if (Dist < MinDist2)
+			{
+				MinDist2 = Dist;
+				SharedIdx2_A = i;
+				SharedIdx2_B = 6 + j;
+			}
+		}
+	}
+	
+	// Create bridging quads between the shared edges
+	// REVERSED winding order for correct facing direction
+	if (SharedIdx1_A >= 0 && SharedIdx2_A >= 0)
+	{
+		// Bridge quad (two triangles) - reversed winding
+		Triangles.Add(SharedIdx1_A);
+		Triangles.Add(SharedIdx2_A);
+		Triangles.Add(SharedIdx1_B);
+		
+		Triangles.Add(SharedIdx2_A);
+		Triangles.Add(SharedIdx2_B);
+		Triangles.Add(SharedIdx1_B);
+	}
+	
+	// Create the mesh section
+	MergedOutputMesh->CreateMeshSection(SectionIndex, Vertices, Triangles, Normals, UV0, VertexColors, Tangents, true);
+	
+	// Set materials (for now, use Mat1 for the whole mesh - can be enhanced to use both)
+	if (Mat1)
+	{
+		MergedOutputMesh->SetMaterial(SectionIndex, Mat1);
 	}
 }
 

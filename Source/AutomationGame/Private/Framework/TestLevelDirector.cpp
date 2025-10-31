@@ -235,16 +235,36 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 
 	if (USimWorldHex* Sim = Driver->GetSim())
 	{
+		// Build a map of hex -> orb type for ClusterOutput tiles from the saved specs
+		TMap<FHex, uint8> ClusterOutputOrbTypes;
+		for (const FPlacedTileSpec& P : S.Tiles)
+		{
+			if (P.Kind == ETileKind::ClusterOutput)
+			{
+				ClusterOutputOrbTypes.Add(P.Hex, P.OrbType);
+			}
+		}
+		
 		for (const FPlacedTileSpec& P : S.Tiles)
 		{
 			FTile T; T.Kind = P.Kind; T.Arg = P.Dir;
 			Sim->PlaceTile(P.Hex, T);
 		}
+		
+		// Rebuild cluster output relationships after loading all tiles, using saved orb types
+		Sim->RebuildClusterOutputRelationships(ClusterOutputOrbTypes);
 	}
 
 	for (FArmSpawnSpec& A : const_cast<TArray<FArmSpawnSpec>&>(S.Arms))
 	{
 		if (!ArmClass) continue;
+		
+		// Skip if this arm is already spawned (shouldn't happen, but prevents duplicates)
+		if (A.Spawned && IsValid(A.Spawned))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: Arm at (%d,%d) already spawned, skipping"), A.Q, A.R);
+			continue;
+		}
 
 		// Spawn deferred so we can finish configuration before BeginPlay-style logic
 		FTransform Tm;
@@ -302,20 +322,10 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 
 void ATestLevelDirector::SpawnScenarioPreview()
 {
-	ClearArms();
-	UWorld* World = GetWorld();
-	if (!Driver) return;
-
-	for (FArmSpawnSpec& ArmSpec : Scenarios[ActiveScenarioIndex].Arms)
-	{
-		if (!ArmSpec.Spawned && ArmClass)
-		{
-			FVector WorldPos = GetWorldPositionForHex(ArmSpec.Q, ArmSpec.R);
-			// Spawn at neutral rotation - bone rotation system will handle facing direction
-			FTransform Tm(FRotator::ZeroRotator, WorldPos);
-			ArmSpec.Spawned = World->SpawnActor<ABasicArm>(ArmClass, Tm);
-		}
-	}
+	// DEPRECATED: This function caused duplicate arm spawning issues
+	// Arms are now only spawned through ApplyScenario during PIE
+	// Keeping this stub in case it's called from blueprints
+	UE_LOG(LogTemp, Warning, TEXT("SpawnScenarioPreview called but is deprecated - use BuildActiveScenario instead"));
 }
 
 FVector ATestLevelDirector::GetWorldPositionForHex(int32 Q, int32 R) const
@@ -417,6 +427,123 @@ void ATestLevelDirector::UpsertTileSpec(const FHex& Hex, ETileKind Kind, uint8 D
 #if WITH_EDITOR
 	MirrorScenarioEditsToEditor();
 #endif
+}
+
+void ATestLevelDirector::UpsertClusterOutputTileSpec(const FHex& Hex, uint8 TemplateId, uint8 OrbType)
+{
+	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
+	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+
+	for (FPlacedTileSpec& T : Sc.Tiles)
+	{
+		if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R)
+		{
+			T.Kind = ETileKind::ClusterOutput;
+			T.Dir = TemplateId;
+			T.OrbType = OrbType;
+			MarkActiveScenarioDirty();
+#if WITH_EDITOR
+			MirrorScenarioEditsToEditor();
+#endif
+			return;
+		}
+	}
+	FPlacedTileSpec NewSpec;
+	NewSpec.Hex = Hex;
+	NewSpec.Kind = ETileKind::ClusterOutput;
+	NewSpec.Dir = TemplateId;
+	NewSpec.OrbType = OrbType;
+	Sc.Tiles.Add(NewSpec);
+	MarkActiveScenarioDirty();
+#if WITH_EDITOR
+	MirrorScenarioEditsToEditor();
+#endif
+}
+
+void ATestLevelDirector::SyncClusterOutputTiles()
+{
+	if (!Driver) return;
+	USimWorldHex* Sim = Driver->GetSim();
+	if (!Sim) return;
+	
+	// Sync ALL ClusterOutput tiles, not just merged ones
+	// This ensures proper saving of orb types for all cluster configurations
+	const TMap<FHex, FTile>& TileMap = Sim->TileMap;
+	const TMap<uint8, USimWorldHex::FClusterTemplate>& Templates = Sim->GetClusterTemplates();
+	
+	// Group ClusterOutput tiles by template ID
+	TMap<uint8, TArray<FHex>> TilesByTemplate;
+	for (const auto& TileKV : TileMap)
+	{
+		if (TileKV.Value.Kind == ETileKind::ClusterOutput)
+		{
+			uint8 TemplateId = TileKV.Value.Arg;
+			TilesByTemplate.FindOrAdd(TemplateId).Add(TileKV.Key);
+		}
+	}
+	
+	// For each template group, find the BaseHex and sync orb types
+	for (const auto& TemplateGroup : TilesByTemplate)
+	{
+		uint8 TemplateId = TemplateGroup.Key;
+		const TArray<FHex>& Tiles = TemplateGroup.Value;
+		
+		if (Tiles.Num() == 0) continue;
+		
+		const USimWorldHex::FClusterTemplate* Template = Templates.Find(TemplateId);
+		if (!Template) continue;
+		
+		// Find the center-most tile as BaseHex (same logic as RebuildClusterOutputRelationships)
+		int32 SumQ = 0;
+		int32 SumR = 0;
+		for (const FHex& H : Tiles)
+		{
+			SumQ += H.Q;
+			SumR += H.R;
+		}
+		
+		int32 CenterQ = FMath::RoundToInt((float)SumQ / Tiles.Num());
+		int32 CenterR = FMath::RoundToInt((float)SumR / Tiles.Num());
+		
+		FHex BaseHex = Tiles[0];
+		int32 MinDist = INT_MAX;
+		for (const FHex& H : Tiles)
+		{
+			int32 dQ = H.Q - CenterQ;
+			int32 dR = H.R - CenterR;
+			int32 dist = FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR);
+			if (dist < MinDist)
+			{
+				MinDist = dist;
+				BaseHex = H;
+			}
+		}
+		
+		// Now update each tile with its orb type from the template
+		for (const FHex& TileHex : Tiles)
+		{
+			// Calculate this tile's relative position from BaseHex
+			int32 RelQ = TileHex.Q - BaseHex.Q;
+			int32 RelR = TileHex.R - BaseHex.R;
+			
+			// Find matching orb in template
+			uint8 OrbType = 0;
+			for (const FOrbData& TemplateOrb : Template->Orbs)
+			{
+				if (TemplateOrb.dQ == RelQ && TemplateOrb.dR == RelR)
+				{
+					OrbType = TemplateOrb.Type;
+					break;
+				}
+			}
+			
+			// Update the scenario
+			UpsertClusterOutputTileSpec(TileHex, TemplateId, OrbType);
+			
+			UE_LOG(LogTemp, Log, TEXT("SyncClusterOutputTiles: Updated tile at (%d,%d) - Template %d, Type %d"), 
+				TileHex.Q, TileHex.R, TemplateId, OrbType);
+		}
+	}
 }
 
 bool ATestLevelDirector::RemoveTileSpec(const FHex& Hex)
@@ -602,8 +729,12 @@ void ATestLevelDirector::PostEditChangeProperty(FPropertyChangedEvent& Event)
 
 		if (Name == GET_MEMBER_NAME_CHECKED(ATestLevelDirector, ActiveScenarioIndex))
 		{
-			// Rebuild immediately when index changes (works in editor & PIE)
-			BuildActiveScenario();
+			// Only rebuild scenario when in PIE, not in editor
+			// Editor spawning causes duplicate arms when switching to PIE
+			if (GetWorld() && GetWorld()->IsPlayInEditor())
+			{
+				BuildActiveScenario();
+			}
 			MarkActiveScenarioDirty();
 		}
 		else if (Name == GET_MEMBER_NAME_CHECKED(ATestLevelDirector, Scenarios))
@@ -680,6 +811,26 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			TileSpec.Dir = Tile.Arg;
 			Scenario.Tiles.Add(TileSpec);
 			// UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured tile at (%d,%d) type %d"), Hex.Q, Hex.R, (int32)Tile.Kind);
+		}
+		
+		// Update ClusterOutput tiles with their orb types from MergedClusterOutputs
+		const TMap<FHex, FMergedTileInfo>& MergedOutputs = Sim->GetMergedClusterOutputs();
+		for (const auto& MergedKV : MergedOutputs)
+		{
+			const FMergedTileInfo& Info = MergedKV.Value;
+			
+			// Find and update the tile specs for both hexes
+			for (FPlacedTileSpec& TileSpec : Scenario.Tiles)
+			{
+				if (TileSpec.Hex == Info.Hex1)
+				{
+					TileSpec.OrbType = Info.OrbType1;
+				}
+				else if (TileSpec.Hex == Info.Hex2)
+				{
+					TileSpec.OrbType = Info.OrbType2;
+				}
+			}
 		}
 
 		// Build a map of existing arm specs to preserve their original facing (if not capturing runtime edits)

@@ -15,8 +15,9 @@ enum class EPlaceKind : uint8
 	Output,
 	Belt,
 	Arm,
-	Bond,     // place a Bond glyph (uses BeltDir for its direction)
-	Unbond    // place an Unbond glyph (uses BeltDir for its direction)
+	Bond,          // place a Bond glyph (uses BeltDir for its direction)
+	Unbond,        // place an Unbond glyph (uses BeltDir for its direction)
+	ClusterOutput  // place a ClusterOutput tile (cycles through registered templates)
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of truth). */
@@ -26,7 +27,8 @@ class AUTOMATIONGAME_API UHexPlacementComponent : public UActorComponent
 	GENERATED_BODY()
 public:
 	UHexPlacementComponent();
-
+	// Set the cluster template to a specific ID if it exists
+	void SetClusterTemplateToId(uint8 TemplateId);
 	/** Thing to place */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Place") EPlaceKind PlaceKind = EPlaceKind::Input;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Place") uint8 BeltDir = 0;
@@ -169,6 +171,12 @@ private:
 	// Output orb type management
 	UPROPERTY(EditAnywhere, Category = "Output", meta = (ClampMin = "0", ClampMax = "5"))
 	int32 CurrentOutputOrbTypeIndex = 0;
+	
+	// Cluster template management
+	UPROPERTY(EditAnywhere, Category = "ClusterOutput", meta = (ClampMin = "0"))
+	int32 CurrentClusterTemplateIndex = 0;
+	
+	
 
 	bool HitPlane(FVector& OutWorld) const;
 	void DoPlaceAt(const FVector& World);
@@ -185,6 +193,9 @@ private:
 	
 	/** Get the list of orb types that have materials assigned (not using DefaultOrbMaterial) */
 	TArray<EOrbType> GetValidOrbTypes() const;
+	
+	/** Get the list of registered cluster template IDs */
+	TArray<uint8> GetValidClusterTemplateIds() const;
 
 	FORCEINLINE AActor* GetAnchor() const;
 

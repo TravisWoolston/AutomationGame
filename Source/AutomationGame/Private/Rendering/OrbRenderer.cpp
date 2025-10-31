@@ -867,6 +867,98 @@ void UOrbRenderer::RebuildBondedOrbs()
 			BondedOrbISM->AddInstance(FTransform(Rotation, Midpoint, Scale));
 		}
 	}
+	
+	// Also render bonds for animated orbs (outputs descending, inputs ascending)
+	const TArray<USimWorldHex::FAnimatedOrb>& AnimatedOrbs = Sim->GetAnimatedOrbs();
+	
+	for (int32 AnimIdx = 0; AnimIdx < AnimatedOrbs.Num(); ++AnimIdx)
+	{
+		const USimWorldHex::FAnimatedOrb& AnimatedOrb = AnimatedOrbs[AnimIdx];
+		if (!AnimatedOrb.bActive || !AnimatedOrb.bIsBonded) continue;
+		
+		// Find the partner animation
+		int32 PartnerAnimIdx = -1;
+		for (int32 i = 0; i < AnimatedOrbs.Num(); ++i)
+		{
+			if (AnimatedOrbs[i].bActive && AnimatedOrbs[i].Item.Id == AnimatedOrb.PartnerItemId)
+			{
+				PartnerAnimIdx = i;
+				break;
+			}
+		}
+		
+		if (PartnerAnimIdx == -1) continue;
+		
+		const USimWorldHex::FAnimatedOrb& PartnerOrb = AnimatedOrbs[PartnerAnimIdx];
+		
+		// Only render bond once per pair (from lower index to higher)
+		if (AnimIdx > PartnerAnimIdx) continue;
+		
+		// Calculate positions for both orbs
+		const FHexAxial A1(AnimatedOrb.Hex.Q, AnimatedOrb.Hex.R);
+		const FVector2D LocalXY1 = HexCoord::AxialToXY(A1, Tile, Ori);
+		const FVector2D RotXY1 = HexCoord::Rotate2D(LocalXY1, Yaw);
+		const FVector BasePos1 = AnchorV + FVector(RotXY1.X, RotXY1.Y, 0.f);
+		
+		const FHexAxial A2(PartnerOrb.Hex.Q, PartnerOrb.Hex.R);
+		const FVector2D LocalXY2 = HexCoord::AxialToXY(A2, Tile, Ori);
+		const FVector2D RotXY2 = HexCoord::Rotate2D(LocalXY2, Yaw);
+		const FVector BasePos2 = AnchorV + FVector(RotXY2.X, RotXY2.Y, 0.f);
+		
+		// Calculate animation progress for both orbs
+		const int32 CurrentStep = Sim->GetStepCounter();
+		
+		auto CalcZOffset = [&](const USimWorldHex::FAnimatedOrb& Orb) -> float
+		{
+			float StepProgress = 0.f;
+			const int32 AnimationDuration = Orb.CompletionStep - Orb.StartStep;
+			
+			if (CurrentStep < Orb.StartStep)
+				StepProgress = 0.f;
+			else if (CurrentStep >= Orb.CompletionStep)
+				StepProgress = 1.f;
+			else
+			{
+				const int32 StepsElapsed = CurrentStep - Orb.StartStep;
+				StepProgress = (StepsElapsed + Alpha) / FMath::Max(1.0f, (float)AnimationDuration);
+			}
+			
+			const float Progress = FMath::Clamp(StepProgress, 0.f, 1.f);
+			
+			if (Orb.bIsInput)
+				return FMath::Lerp(-50.f, 0.f, Progress);
+			else
+				return FMath::Lerp(0.f, -50.f, Progress);
+		};
+		
+		const FVector FinalPos1 = BasePos1 + FVector(0.f, 0.f, CalcZOffset(AnimatedOrb));
+		const FVector FinalPos2 = BasePos2 + FVector(0.f, 0.f, CalcZOffset(PartnerOrb));
+		
+		// Calculate midpoint and direction for the bond mesh
+		const FVector Midpoint = (FinalPos1 + FinalPos2) * 0.5f;
+		const FVector Direction = (FinalPos2 - FinalPos1).GetSafeNormal();
+		const float Distance = FVector::Dist(FinalPos1, FinalPos2);
+		
+		if (Distance > 0.1f)
+		{
+			// Use same rotation calculation as static bonds
+			FVector Up = Direction;
+			FVector Right = FVector::CrossProduct(Up, FVector::UpVector).GetSafeNormal();
+			if (Right.IsNearlyZero())
+			{
+				Right = FVector::RightVector;
+			}
+			FVector Forward = FVector::CrossProduct(Right, Up).GetSafeNormal();
+			
+			FMatrix RotationMatrix = FMatrix(Forward, Right, Up, FVector::ZeroVector);
+			FRotator Rotation = FQuat(RotationMatrix).Rotator();
+			
+			// Use same scale as static bonds and held cluster bonds
+			FVector Scale = FVector(BondedOrbScale, BondedOrbScale, 1.f);
+			
+			BondedOrbISM->AddInstance(FTransform(Rotation, Midpoint, Scale));
+		}
+	}
 }
 
 void UOrbRenderer::RenderAnimatedOrbs()
@@ -981,4 +1073,6 @@ void UOrbRenderer::RenderAnimatedOrbs()
 			}
 		}
 	}
+	
+	// Animated bonds are now rendered in RebuildBondedOrbs() to avoid clearing issues
 }

@@ -385,34 +385,267 @@ void USimWorldHex::ProcessOutputs()
 		}
 		// If type doesn't match or bond requirement not met, leave the orb on the tile (no action needed)
 		}
-		// Handle cluster output tiles
-		else if (T.Kind == ETileKind::ClusterOutput)
+	// Handle cluster output tiles
+	else if (T.Kind == ETileKind::ClusterOutput)
+	{
+		// Find all tiles that are part of this cluster output (connected adjacent ClusterOutput tiles)
+		TArray<FHex> ClusterTiles;
+		TArray<uint8> ExpectedTypes;
+		
+		// Expected type is stored directly in Tile.Arg
+		uint8 CurrentExpectedType = T.Arg;
+		
+		// Add the current tile
+		ClusterTiles.Add(H);
+		ExpectedTypes.Add(CurrentExpectedType);
+		
+		// Find all adjacent ClusterOutput tiles recursively (forming a connected cluster)
+		TSet<FHex> VisitedTiles;
+		VisitedTiles.Add(H);
+		TArray<FHex> ToVisit;
+		ToVisit.Add(H);
+		
+		while (ToVisit.Num() > 0)
 		{
-			const uint8 TemplateId = T.Arg;
+			FHex CurrentHex = ToVisit.Pop();
 			
-			// Validate cluster matches template
-			if (ValidateClusterAgainstTemplate(*ItemPtr, TemplateId))
+			// Check all 6 neighbors
+			for (int32 Dir = 0; Dir < 6; Dir++)
 			{
-				// Create descending animation for the cluster
+				FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
+				
+				// Skip if already visited
+				if (VisitedTiles.Contains(NeighborHex))
+					continue;
+				
+				// Check if neighbor is a ClusterOutput tile
+				const FTile* NeighborTile = TileMap.Find(NeighborHex);
+				if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterOutput)
+				{
+					VisitedTiles.Add(NeighborHex);
+					ClusterTiles.Add(NeighborHex);
+					ToVisit.Add(NeighborHex);
+					
+					// Expected type for this neighbor is in its Arg
+					uint8 NeighborExpectedType = NeighborTile->Arg;
+					ExpectedTypes.Add(NeighborExpectedType);
+					
+					UE_LOG(LogTemp, Log, TEXT("ClusterOutput: Found adjacent cluster tile at (%d,%d) expecting type %d"), 
+						NeighborHex.Q, NeighborHex.R, NeighborExpectedType);
+				}
+			}
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("ClusterOutput: Found connected cluster of %d tiles starting from (%d,%d)"), 
+			ClusterTiles.Num(), H.Q, H.R);
+		
+		// Check if ALL tiles in the cluster have orbs of the correct type AND are bonded together
+		bool bAllTilesReady = true;
+		TArray<int32> OrbItemIds; // Store item IDs to check bonds later
+		
+		for (int32 i = 0; i < ClusterTiles.Num(); i++)
+		{
+			const FHex& TileHex = ClusterTiles[i];
+			const uint8 ExpectedType = ExpectedTypes[i];
+			
+			const FItem* TileItem = ItemMap.Find(TileHex);
+			if (!TileItem)
+			{
+				UE_LOG(LogTemp, Log, TEXT("  Tile (%d,%d) has no item - cluster not ready"), TileHex.Q, TileHex.R);
+				bAllTilesReady = false;
+				break;
+			}
+			
+			// ClusterOutput tiles expect single orbs, not clusters
+			if (TileItem->bIsCluster)
+			{
+				UE_LOG(LogTemp, Log, TEXT("  Tile (%d,%d) has a cluster item - not allowed"), TileHex.Q, TileHex.R);
+				bAllTilesReady = false;
+				break;
+			}
+			
+			// Single orb - check type from the Single field
+			uint8 ActualType = (uint8)TileItem->Single.Type;
+			if (ActualType != ExpectedType)
+			{
+				UE_LOG(LogTemp, Log, TEXT("  Tile (%d,%d) expected type %d but has type %d - cluster not ready"), 
+					TileHex.Q, TileHex.R, ExpectedType, ActualType);
+				bAllTilesReady = false;
+				break;
+			}
+			
+			UE_LOG(LogTemp, Log, TEXT("  Tile (%d,%d) has correct type %d ✓"), TileHex.Q, TileHex.R, ActualType);
+			OrbItemIds.Add(TileItem->Id);
+		}
+		
+		// Check if all orbs belong to the same cluster (are bonded together)
+		// AND that the cluster doesn't have any orbs on non-ClusterOutput tiles
+		if (bAllTilesReady && ClusterTiles.Num() > 1)
+		{
+			// Build a connectivity graph of ALL bonded orbs (including those outside the cluster)
+			TSet<int32> AllConnectedOrbs;
+			TArray<int32> ToVisitItems;
+			
+			// Start with the first orb
+			AllConnectedOrbs.Add(OrbItemIds[0]);
+			ToVisitItems.Add(OrbItemIds[0]);
+			
+			while (ToVisitItems.Num() > 0)
+			{
+				int32 CurrentItemId = ToVisitItems.Pop();
+				
+				// Check all bonds involving this orb
+				if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentItemId))
+				{
+					for (int32 BondIdx : *BondList)
+					{
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& Bond = Bonds[BondIdx];
+						if (!Bond.bActive) continue;
+						
+						// Find the other orb in this bond
+						int32 OtherItemId = (Bond.ItemA == CurrentItemId) ? Bond.ItemB : Bond.ItemA;
+						
+						// Add to connected set if not already visited
+						if (!AllConnectedOrbs.Contains(OtherItemId))
+						{
+							AllConnectedOrbs.Add(OtherItemId);
+							ToVisitItems.Add(OtherItemId);
+						}
+					}
+				}
+			}
+			
+			// Check if all orbs on our ClusterOutput tiles are connected
+			TSet<int32> OrbsOnClusterTiles;
+			for (int32 Id : OrbItemIds)
+			{
+				OrbsOnClusterTiles.Add(Id);
+			}
+			
+			for (int32 Id : OrbItemIds)
+			{
+				if (!AllConnectedOrbs.Contains(Id))
+				{
+					UE_LOG(LogTemp, Log, TEXT("  Orb %d on ClusterOutput is not connected - cluster not ready"), Id);
+					bAllTilesReady = false;
+					break;
+				}
+			}
+			
+			if (bAllTilesReady)
+			{
+				// Check if the bonded cluster has any orbs that are NOT on our ClusterOutput tiles
+				for (int32 ConnectedId : AllConnectedOrbs)
+				{
+					if (!OrbsOnClusterTiles.Contains(ConnectedId))
+					{
+						// This bonded orb is somewhere else (not on our ClusterOutput tiles)
+						UE_LOG(LogTemp, Log, TEXT("  Bonded cluster contains orb %d which is not on a ClusterOutput tile - cluster not ready"), 
+							ConnectedId);
+						bAllTilesReady = false;
+						break;
+					}
+				}
+				
+				if (bAllTilesReady)
+				{
+					UE_LOG(LogTemp, Log, TEXT("  All %d orbs are bonded together and all on ClusterOutput tiles ✓"), AllConnectedOrbs.Num());
+				}
+			}
+		}
+		
+		if (bAllTilesReady)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ClusterOutput: ALL %d tiles ready - creating descent animations!"), ClusterTiles.Num());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Log, TEXT("ClusterOutput: Cluster not ready yet"));
+		}
+		
+	// If all tiles are ready, create descent animations and remove items
+	if (bAllTilesReady)
+	{
+		// First pass: create all animations
+		TArray<FAnimatedOrb> NewAnimations;
+		for (const FHex& TileHex : ClusterTiles)
+		{
+			const FItem* TileItem = ItemMap.Find(TileHex);
+			if (TileItem)
+			{
+				// Create descending animation for this orb
 				FAnimatedOrb AnimatedOrb;
-				AnimatedOrb.Item = *ItemPtr;
-				AnimatedOrb.Hex = H;
+				AnimatedOrb.Item = *TileItem;
+				AnimatedOrb.Hex = TileHex;
 				AnimatedOrb.StartStep = StepCounter;
-				AnimatedOrb.CompletionStep = StepCounter + OUTPUT_DESCEND_TICKS;
+				AnimatedOrb.CompletionStep = StepCounter + 3;
 				AnimatedOrb.bIsInput = false;
 				AnimatedOrb.bActive = true;
+				AnimatedOrb.bIsBonded = false; // Will be set if bonded to another orb in cluster
 				
-				// Remove the cluster from the board
-				ItemMap.Remove(H);
-				
-				AnimatedOrbs.Add(AnimatedOrb);
-				++OutputCount;
-				
-				// Mark this output as having accepted a cluster (for gating purposes)
-				ClusterOutputGates.Add(H, true);
+				NewAnimations.Add(AnimatedOrb);
 			}
-			// If cluster doesn't match template, leave it on the tile
 		}
+		
+		// Second pass: check for bonds between orbs in the cluster
+		for (int32 i = 0; i < NewAnimations.Num(); i++)
+		{
+			FAnimatedOrb& AnimA = NewAnimations[i];
+			int32 ItemIdA = AnimA.Item.Id;
+			
+			// Check if this orb is bonded to any other orb in the cluster
+			for (int32 j = i + 1; j < NewAnimations.Num(); j++)
+			{
+				FAnimatedOrb& AnimB = NewAnimations[j];
+				int32 ItemIdB = AnimB.Item.Id;
+				
+				// Check if these two orbs are bonded to each other
+				if (const TArray<int32>* BondList = ItemToBonds.Find(ItemIdA))
+				{
+					for (int32 BondIdx : *BondList)
+					{
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& Bond = Bonds[BondIdx];
+						if (!Bond.bActive) continue;
+						
+						int32 OtherId = (Bond.ItemA == ItemIdA) ? Bond.ItemB : Bond.ItemA;
+						if (OtherId == ItemIdB)
+						{
+							// These orbs are bonded - mark both animations
+							AnimA.bIsBonded = true;
+							AnimA.PartnerHex = AnimB.Hex;
+							AnimA.PartnerItemId = ItemIdB;
+							
+							AnimB.bIsBonded = true;
+							AnimB.PartnerHex = AnimA.Hex;
+							AnimB.PartnerItemId = ItemIdA;
+							break;
+						}
+					}
+				}
+			}
+		}
+		
+		// Add all animations and remove items
+		for (const FAnimatedOrb& Anim : NewAnimations)
+		{
+			AnimatedOrbs.Add(Anim);
+			
+			// Remove the item from the board
+			ItemMap.Remove(Anim.Hex);
+			OrbAt.Remove(Anim.Hex);
+			
+			// Mark as processed
+			ProcessedOutputs.Add(Anim.Hex);
+			
+			++OutputCount;
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("ClusterOutput accepted: %d tiles processed"), ClusterTiles.Num());
+	}
+	// If not all tiles are ready, leave all orbs on their tiles
+}
 	}
 }
 

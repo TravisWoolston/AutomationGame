@@ -19,11 +19,18 @@ struct FPlacedTileSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex Hex { 0, 0 };
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) ETileKind Kind = ETileKind::Empty;
 	/** 
-	 * For Belt/Bond tiles: Direction (0-5)
-	 * For Input tiles: Orb Type (EOrbType enum value)
-	 * For Output tiles: Unused (0)
+	 * Multi-purpose field based on tile kind:
+	 * - Belt/Bond/Unbond tiles: Direction (0-5)
+	 * - Input/Output tiles: Orb Type (EOrbType enum value)
+	 * - ClusterOutput tiles: Template ID (uint8, can be 0-255)
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, ClampMax = 5)) uint8 Dir = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 Dir = 0;
+	
+	/** 
+	 * Optional metadata for ClusterOutput tiles: the actual orb type for this tile position.
+	 * This preserves the original Output tile's orb type after conversion to ClusterOutput.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 OrbType = 0;
 };
 
 USTRUCT(BlueprintType)
@@ -98,6 +105,15 @@ public:
 	// Runtime mutation API (used by placement component)
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	void UpsertTileSpec(const FHex& Hex, ETileKind Kind, uint8 Dir);
+	
+	// Specialized version for ClusterOutput tiles that includes orb type
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	void UpsertClusterOutputTileSpec(const FHex& Hex, uint8 TemplateId, uint8 OrbType);
+	
+	// Scan the simulation and sync all ClusterOutput tiles with their orb types
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	void SyncClusterOutputTiles();
+	
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	bool RemoveTileSpec(const FHex& Hex);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")

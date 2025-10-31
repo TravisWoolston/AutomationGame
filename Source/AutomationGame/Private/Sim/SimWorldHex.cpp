@@ -229,50 +229,449 @@ bool USimWorldHex::TryTakeItem(const FHex& H, FItem& Out)
 
 bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 {
-	// Create a mutable copy of the tile to potentially convert Bond -> InputBond/OutputBond
-	FTile TileToPlace = T;
-	
+		// Create a mutable copy of the tile to potentially convert Bond -> InputBond/OutputBond/ClusterOutput
+		FTile TileToPlace = T;
+
 	if (T.Kind == ETileKind::Bond)
 	{
 		const FHex Partner = HexUtil::Neighbor(H, (EHexDir)(T.Arg % 6));
-		const FTile* PartnerTile = TileMap.Find(Partner);
-		const FTile* CurrentTile = TileMap.Find(H);
-		
-		// Auto-convert Bond tiles based on what they're placed between
-		if (PartnerTile)
-		{
-			// Check if placing on Input tile with Input partner -> InputBond
-			if (CurrentTile && CurrentTile->Kind == ETileKind::Input && PartnerTile->Kind == ETileKind::Input)
+			const FTile* PartnerTile = TileMap.Find(Partner);
+			const FTile* CurrentTile = TileMap.Find(H);
+
+			// Auto-convert Bond tiles based on what they're placed between
+			if (PartnerTile)
 			{
-				TileToPlace.Kind = ETileKind::InputBond;
-				UE_LOG(LogTemp, Log, TEXT("Bond placed on Input tile with Input partner - converting to InputBond"));
-			}
-			// Check if placing on Output tile with Output partner -> OutputBond
+				// Check if placing on Input tile with Input partner -> InputBond
+				if (CurrentTile && CurrentTile->Kind == ETileKind::Input && PartnerTile->Kind == ETileKind::Input)
+				{
+					TileToPlace.Kind = ETileKind::InputBond;
+					UE_LOG(LogTemp, Log, TEXT("Bond placed on Input tile with Input partner - converting to InputBond"));
+				}
+			// Check if placing on Output tile with Output partner -> ClusterOutput (merged)
 			else if (CurrentTile && CurrentTile->Kind == ETileKind::Output && PartnerTile->Kind == ETileKind::Output)
 			{
-				TileToPlace.Kind = ETileKind::OutputBond;
-				UE_LOG(LogTemp, Log, TEXT("Bond placed on Output tile with Output partner - converting to OutputBond"));
+			// IMPORTANT: Save the orb types BEFORE modifying the TileMap!
+			// Once we modify the TileMap, the PartnerTile pointer may become invalid or point to modified data
+			uint8 CurrentOrbType = CurrentTile->Arg;
+			uint8 PartnerOrbType = PartnerTile->Arg;
+			
+			UE_LOG(LogTemp, Log, TEXT("PlaceTile: Converting Output+Output to ClusterOutput"));
+			UE_LOG(LogTemp, Log, TEXT("  CurrentTile at (%d,%d): Kind=%d Arg=%d"), H.Q, H.R, (int32)CurrentTile->Kind, CurrentOrbType);
+			UE_LOG(LogTemp, Log, TEXT("  PartnerTile at (%d,%d): Kind=%d Arg=%d"), Partner.Q, Partner.R, (int32)PartnerTile->Kind, PartnerOrbType);
+			
+			// Auto-generate a cluster template for these two outputs
+			uint8 TemplateId = AutoGenerateClusterTemplateForOutputs(H, Partner, CurrentOrbType, PartnerOrbType);
+			
+			TileToPlace.Kind = ETileKind::ClusterOutput;
+			TileToPlace.Arg = TemplateId;
+				
+				// Also convert the partner tile to ClusterOutput with the same template
+				FTile PartnerClusterTile = *PartnerTile;
+				PartnerClusterTile.Kind = ETileKind::ClusterOutput;
+				PartnerClusterTile.Arg = TemplateId;
+				TileMap.Add(Partner, PartnerClusterTile);
+				
+				// Register the partnership for merged rendering
+				IOBondPartners.Add(H, Partner);
+				IOBondPartners.Add(Partner, H);
+				
+			// Store merged tile info for rendering (use the "primary" hex as key)
+			FHex PrimaryHex = (H.Q < Partner.Q || (H.Q == Partner.Q && H.R < Partner.R)) ? H : Partner;
+			FMergedTileInfo MergedInfo;
+			MergedInfo.Hex1 = H;
+			MergedInfo.Hex2 = Partner;
+			MergedInfo.OrbType1 = CurrentOrbType;
+			MergedInfo.OrbType2 = PartnerOrbType;
+			MergedInfo.TemplateId = TemplateId;
+			MergedClusterOutputs.Add(PrimaryHex, MergedInfo);
+			
+			UE_LOG(LogTemp, Log, TEXT("Bond placed on Output tiles - converting to merged ClusterOutput with template %d"), TemplateId);
+			UE_LOG(LogTemp, Log, TEXT("  Hex1=(%d,%d) Type1=%d, Hex2=(%d,%d) Type2=%d, PrimaryKey=(%d,%d)"), 
+				H.Q, H.R, CurrentOrbType, Partner.Q, Partner.R, PartnerOrbType, PrimaryHex.Q, PrimaryHex.R);
 			}
-			// Check if placing on empty with Input partner -> InputBond
-			else if ((!CurrentTile || CurrentTile->Kind == ETileKind::Empty) && PartnerTile->Kind == ETileKind::Input)
+			// Check if placing on ClusterOutput tile with Output partner -> Expand cluster
+			else if (CurrentTile && CurrentTile->Kind == ETileKind::ClusterOutput && PartnerTile->Kind == ETileKind::Output)
 			{
-				TileToPlace.Kind = ETileKind::InputBond;
-				UE_LOG(LogTemp, Log, TEXT("Bond placed between Input tiles - converting to InputBond"));
+				uint8 ExistingTemplateId = CurrentTile->Arg;
+				uint8 NewOrbType = PartnerTile->Arg;
+				
+				// Find all tiles in the existing cluster
+				TArray<FHex> ExistingClusterTiles = FindAllTilesInCluster(H);
+				
+				// Find the center-most tile from EXISTING cluster
+				int32 OldSumQ = 0;
+				int32 OldSumR = 0;
+				for (const FHex& ClusterHex : ExistingClusterTiles)
+				{
+					OldSumQ += ClusterHex.Q;
+					OldSumR += ClusterHex.R;
+				}
+				
+				int32 OldCenterQ = FMath::RoundToInt((float)OldSumQ / ExistingClusterTiles.Num());
+				int32 OldCenterR = FMath::RoundToInt((float)OldSumR / ExistingClusterTiles.Num());
+				
+				FHex OldBaseHex = ExistingClusterTiles[0];
+				int32 OldMinDist = INT_MAX;
+				for (const FHex& ClusterHex : ExistingClusterTiles)
+				{
+					int32 dQ = ClusterHex.Q - OldCenterQ;
+					int32 dR = ClusterHex.R - OldCenterR;
+					int32 dist = FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR);
+					if (dist < OldMinDist)
+					{
+						OldMinDist = dist;
+						OldBaseHex = ClusterHex;
+					}
+				}
+				
+				// Build the new cluster including the new tile
+				TArray<FHex> AllClusterHexes = ExistingClusterTiles;
+				AllClusterHexes.Add(Partner);
+				
+				// Find the center-most tile from the EXPANDED cluster
+				int32 NewSumQ = OldSumQ + Partner.Q;
+				int32 NewSumR = OldSumR + Partner.R;
+				int32 NewCenterQ = FMath::RoundToInt((float)NewSumQ / AllClusterHexes.Num());
+				int32 NewCenterR = FMath::RoundToInt((float)NewSumR / AllClusterHexes.Num());
+				
+				FHex NewBaseHex = AllClusterHexes[0];
+				int32 NewMinDist = INT_MAX;
+				for (const FHex& ClusterHex : AllClusterHexes)
+				{
+					int32 dQ = ClusterHex.Q - NewCenterQ;
+					int32 dR = ClusterHex.R - NewCenterR;
+					int32 dist = FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR);
+					if (dist < NewMinDist)
+					{
+						NewMinDist = dist;
+						NewBaseHex = ClusterHex;
+					}
+				}
+				
+				// Build a map of hex -> orb type for all tiles
+				TMap<FHex, uint8> HexToOrbType;
+				for (const FHex& ClusterHex : ExistingClusterTiles)
+				{
+					// Get orb type from MergedClusterOutputs
+					for (const auto& MergedKV : MergedClusterOutputs)
+					{
+						if (MergedKV.Value.Hex1 == ClusterHex)
+						{
+							HexToOrbType.Add(ClusterHex, MergedKV.Value.OrbType1);
+							break;
+						}
+						else if (MergedKV.Value.Hex2 == ClusterHex)
+						{
+							HexToOrbType.Add(ClusterHex, MergedKV.Value.OrbType2);
+							break;
+						}
+					}
+				}
+				HexToOrbType.Add(Partner, NewOrbType);
+				
+				// Expand the template (overwrites same template ID)
+				uint8 ExpandedTemplateId = ExpandClusterTemplate(ExistingTemplateId, OldBaseHex, NewBaseHex, AllClusterHexes, HexToOrbType);
+				
+				// No need to update existing tiles - template ID stays the same!
+				UE_LOG(LogTemp, Warning, TEXT("→ Template %d expanded in place, %d existing tiles keep same ID"), ExpandedTemplateId, ExistingClusterTiles.Num());
+				
+				// Convert partner to ClusterOutput with the same template ID
+				FTile PartnerClusterTile = *PartnerTile;
+				PartnerClusterTile.Kind = ETileKind::ClusterOutput;
+				PartnerClusterTile.Arg = ExpandedTemplateId;
+				TileMap.Add(Partner, PartnerClusterTile);
+				
+				// Register partnership between H and Partner
+				IOBondPartners.Add(H, Partner);
+				IOBondPartners.Add(Partner, H);
+				
+				// Rebuild all MergedClusterOutputs for this cluster
+				// First, remove all old merged entries for this cluster
+				TArray<FHex> KeysToRemove;
+				for (const auto& MergedKV : MergedClusterOutputs)
+				{
+					if (ExistingClusterTiles.Contains(MergedKV.Value.Hex1) || ExistingClusterTiles.Contains(MergedKV.Value.Hex2))
+					{
+						KeysToRemove.Add(MergedKV.Key);
+					}
+				}
+				for (const FHex& Key : KeysToRemove)
+				{
+					MergedClusterOutputs.Remove(Key);
+				}
+				
+				// Now rebuild merged outputs for all connected pairs in the expanded cluster
+				TArray<FHex> AllClusterTiles = ExistingClusterTiles;
+				AllClusterTiles.Add(Partner);
+				
+				for (const FHex& TileHex : AllClusterTiles)
+				{
+					// Find all partners of this tile
+					for (const auto& PartnerKV : IOBondPartners)
+					{
+						if (PartnerKV.Key == TileHex && AllClusterTiles.Contains(PartnerKV.Value))
+						{
+							FHex PartnerHex = PartnerKV.Value;
+							
+							// Only create merged info once per pair (use the "primary" hex as key)
+							FHex PrimaryHex = (TileHex.Q < PartnerHex.Q || (TileHex.Q == PartnerHex.Q && TileHex.R < PartnerHex.R)) ? TileHex : PartnerHex;
+							
+							if (!MergedClusterOutputs.Contains(PrimaryHex))
+							{
+								// Get orb types from the template
+								const FClusterTemplate* Template = ClusterTemplates.Find(ExpandedTemplateId);
+								if (Template)
+								{
+									// Find the orb types for these two hexes
+									uint8 OrbType1 = 0;
+									uint8 OrbType2 = 0;
+									
+									for (const FOrbData& OrbData : Template->Orbs)
+									{
+										FHex OrbHex;
+										OrbHex.Q = NewBaseHex.Q + OrbData.dQ;
+										OrbHex.R = NewBaseHex.R + OrbData.dR;
+										
+										if (OrbHex == TileHex)
+											OrbType1 = OrbData.Type;
+										if (OrbHex == PartnerHex)
+											OrbType2 = OrbData.Type;
+									}
+									
+									FMergedTileInfo NewMergedInfo;
+									NewMergedInfo.Hex1 = TileHex;
+									NewMergedInfo.Hex2 = PartnerHex;
+									NewMergedInfo.OrbType1 = OrbType1;
+									NewMergedInfo.OrbType2 = OrbType2;
+									NewMergedInfo.TemplateId = ExpandedTemplateId;
+									MergedClusterOutputs.Add(PrimaryHex, NewMergedInfo);
+								}
+							}
+						}
+					}
+				}
+				
+				UE_LOG(LogTemp, Log, TEXT("Bond placed on ClusterOutput + Output - expanded cluster from template %d to %d with %d total tiles"), 
+					ExistingTemplateId, ExpandedTemplateId, AllClusterTiles.Num());
+				
+				// Don't place the bond tile - the ClusterOutput tile should remain as-is
+				return true;
 			}
-			// Check if placing on empty with Output partner -> OutputBond
+			// Check if placing on Output tile with ClusterOutput partner -> Expand cluster
+			else if (CurrentTile && CurrentTile->Kind == ETileKind::Output && PartnerTile->Kind == ETileKind::ClusterOutput)
+			{
+				uint8 ExistingTemplateId = PartnerTile->Arg;
+				uint8 NewOrbType = CurrentTile->Arg;
+				
+				// Find all tiles in the existing cluster
+				TArray<FHex> ExistingClusterTiles = FindAllTilesInCluster(Partner);
+				
+				// Find the center-most tile from EXISTING cluster
+				int32 OldSumQ = 0;
+				int32 OldSumR = 0;
+				for (const FHex& ClusterHex : ExistingClusterTiles)
+				{
+					OldSumQ += ClusterHex.Q;
+					OldSumR += ClusterHex.R;
+				}
+				
+				int32 OldCenterQ = FMath::RoundToInt((float)OldSumQ / ExistingClusterTiles.Num());
+				int32 OldCenterR = FMath::RoundToInt((float)OldSumR / ExistingClusterTiles.Num());
+				
+				FHex OldBaseHex = ExistingClusterTiles[0];
+				int32 OldMinDist = INT_MAX;
+				for (const FHex& ClusterHex : ExistingClusterTiles)
+				{
+					int32 dQ = ClusterHex.Q - OldCenterQ;
+					int32 dR = ClusterHex.R - OldCenterR;
+					int32 dist = FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR);
+					if (dist < OldMinDist)
+					{
+						OldMinDist = dist;
+						OldBaseHex = ClusterHex;
+					}
+				}
+				
+				// Build the new cluster including the new tile
+				TArray<FHex> AllClusterHexes = ExistingClusterTiles;
+				AllClusterHexes.Add(H);
+				
+				// Find the center-most tile from the EXPANDED cluster
+				int32 SumQ = 0;
+				int32 SumR = 0;
+				for (const FHex& ClusterHex : AllClusterHexes)
+				{
+					SumQ += ClusterHex.Q;
+					SumR += ClusterHex.R;
+				}
+				
+				int32 CenterQ = FMath::RoundToInt((float)SumQ / AllClusterHexes.Num());
+				int32 CenterR = FMath::RoundToInt((float)SumR / AllClusterHexes.Num());
+				
+				FHex NewBaseHex = AllClusterHexes[0];
+				int32 MinDist = INT_MAX;
+				for (const FHex& ClusterHex : AllClusterHexes)
+				{
+					int32 dQ = ClusterHex.Q - CenterQ;
+					int32 dR = ClusterHex.R - CenterR;
+					int32 dist = FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR);
+					if (dist < MinDist)
+					{
+						MinDist = dist;
+						NewBaseHex = ClusterHex;
+					}
+				}
+				
+				// Build a map of hex -> orb type for all tiles
+				TMap<FHex, uint8> HexToOrbType;
+				for (const FHex& ClusterHex : ExistingClusterTiles)
+				{
+					// Get orb type from MergedClusterOutputs
+					for (const auto& MergedKV : MergedClusterOutputs)
+					{
+						if (MergedKV.Value.Hex1 == ClusterHex)
+						{
+							HexToOrbType.Add(ClusterHex, MergedKV.Value.OrbType1);
+							break;
+						}
+						else if (MergedKV.Value.Hex2 == ClusterHex)
+						{
+							HexToOrbType.Add(ClusterHex, MergedKV.Value.OrbType2);
+							break;
+						}
+					}
+				}
+				HexToOrbType.Add(H, NewOrbType);
+				
+				// Expand the template to include all tiles
+				uint8 ExpandedTemplateId = ExpandClusterTemplate(ExistingTemplateId, OldBaseHex, NewBaseHex, AllClusterHexes, HexToOrbType);
+				
+				// Update ALL tiles in the existing cluster to use the new template ID
+				UE_LOG(LogTemp, Warning, TEXT("→ Updating %d existing tiles to use new template %d:"), ExistingClusterTiles.Num(), ExpandedTemplateId);
+				for (const FHex& ClusterHex : ExistingClusterTiles)
+				{
+					FTile* ClusterTile = TileMap.Find(ClusterHex);
+					if (ClusterTile && ClusterTile->Kind == ETileKind::ClusterOutput)
+					{
+						uint8 OldTemplateId = ClusterTile->Arg;
+						ClusterTile->Arg = ExpandedTemplateId;
+						UE_LOG(LogTemp, Warning, TEXT("  ✓ Tile (%d,%d): Template %d -> %d"), 
+							ClusterHex.Q, ClusterHex.R, OldTemplateId, ExpandedTemplateId);
+					}
+				}
+				
+				// Convert current tile to ClusterOutput with the new template
+				TileToPlace.Kind = ETileKind::ClusterOutput;
+				TileToPlace.Arg = ExpandedTemplateId;
+				
+				// Register partnership between H and Partner
+				IOBondPartners.Add(H, Partner);
+				IOBondPartners.Add(Partner, H);
+				
+				// Rebuild all MergedClusterOutputs for this cluster
+				// First, remove all old merged entries for this cluster
+				TArray<FHex> KeysToRemove;
+				for (const auto& MergedKV : MergedClusterOutputs)
+				{
+					if (ExistingClusterTiles.Contains(MergedKV.Value.Hex1) || ExistingClusterTiles.Contains(MergedKV.Value.Hex2))
+					{
+						KeysToRemove.Add(MergedKV.Key);
+					}
+				}
+				for (const FHex& Key : KeysToRemove)
+				{
+					MergedClusterOutputs.Remove(Key);
+				}
+				
+				// Now rebuild merged outputs for all connected pairs in the expanded cluster
+				TArray<FHex> AllClusterTiles = ExistingClusterTiles;
+				AllClusterTiles.Add(H);
+				
+				for (const FHex& TileHex : AllClusterTiles)
+				{
+					// Find all partners of this tile
+					for (const auto& PartnerKV : IOBondPartners)
+					{
+						if (PartnerKV.Key == TileHex && AllClusterTiles.Contains(PartnerKV.Value))
+						{
+							FHex PartnerHex = PartnerKV.Value;
+							
+							// Only create merged info once per pair (use the "primary" hex as key)
+							FHex PrimaryHex = (TileHex.Q < PartnerHex.Q || (TileHex.Q == PartnerHex.Q && TileHex.R < PartnerHex.R)) ? TileHex : PartnerHex;
+							
+							if (!MergedClusterOutputs.Contains(PrimaryHex))
+							{
+								// Get orb types from the template
+								const FClusterTemplate* Template = ClusterTemplates.Find(ExpandedTemplateId);
+								if (Template)
+								{
+									// Find the orb types for these two hexes
+									uint8 OrbType1 = 0;
+									uint8 OrbType2 = 0;
+									
+									for (const FOrbData& OrbData : Template->Orbs)
+									{
+										FHex OrbHex;
+										OrbHex.Q = NewBaseHex.Q + OrbData.dQ;
+										OrbHex.R = NewBaseHex.R + OrbData.dR;
+										
+										if (OrbHex == TileHex)
+											OrbType1 = OrbData.Type;
+										if (OrbHex == PartnerHex)
+											OrbType2 = OrbData.Type;
+									}
+									
+									FMergedTileInfo NewMergedInfo;
+									NewMergedInfo.Hex1 = TileHex;
+									NewMergedInfo.Hex2 = PartnerHex;
+									NewMergedInfo.OrbType1 = OrbType1;
+									NewMergedInfo.OrbType2 = OrbType2;
+									NewMergedInfo.TemplateId = ExpandedTemplateId;
+									MergedClusterOutputs.Add(PrimaryHex, NewMergedInfo);
+								}
+							}
+						}
+					}
+				}
+				
+				UE_LOG(LogTemp, Log, TEXT("Bond placed on Output + ClusterOutput - expanded cluster template %d to %d total tiles"), 
+					ExpandedTemplateId, AllClusterTiles.Num());
+			}
+				// Check if placing on empty with Input partner -> InputBond
+				else if ((!CurrentTile || CurrentTile->Kind == ETileKind::Empty) && PartnerTile->Kind == ETileKind::Input)
+				{
+					TileToPlace.Kind = ETileKind::InputBond;
+					UE_LOG(LogTemp, Log, TEXT("Bond placed between Input tiles - converting to InputBond"));
+				}
+			// Check if placing on empty with Output partner -> need another Output to make ClusterOutput
 			else if ((!CurrentTile || CurrentTile->Kind == ETileKind::Empty) && PartnerTile->Kind == ETileKind::Output)
 			{
+				// Can't create cluster output with only one output tile
 				TileToPlace.Kind = ETileKind::OutputBond;
-				UE_LOG(LogTemp, Log, TEXT("Bond placed between Output tiles - converting to OutputBond"));
+				UE_LOG(LogTemp, Log, TEXT("Bond placed on empty with Output partner - converting to OutputBond"));
+			}
+			// Check if placing on empty with ClusterOutput partner -> can't extend without an Output tile here
+			else if ((!CurrentTile || CurrentTile->Kind == ETileKind::Empty) && PartnerTile->Kind == ETileKind::ClusterOutput)
+			{
+				TileToPlace.Kind = ETileKind::OutputBond;
+				UE_LOG(LogTemp, Log, TEXT("Bond placed on empty with ClusterOutput partner - converting to OutputBond"));
 			}
 			// Standard Bond tile validation (not Input or Output)
-			else if (PartnerTile->Kind != ETileKind::Empty && PartnerTile->Kind != ETileKind::Bond)
+			// Allow bonds to be placed on/between: Empty, Bond, Input, Output, InputBond, OutputBond, ClusterInput, ClusterOutput
+			else if (PartnerTile->Kind != ETileKind::Empty && 
+					 PartnerTile->Kind != ETileKind::Bond &&
+					 PartnerTile->Kind != ETileKind::Input &&
+					 PartnerTile->Kind != ETileKind::Output &&
+					 PartnerTile->Kind != ETileKind::InputBond &&
+					 PartnerTile->Kind != ETileKind::OutputBond &&
+					 PartnerTile->Kind != ETileKind::ClusterInput &&
+					 PartnerTile->Kind != ETileKind::ClusterOutput)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("Bond placement blocked: partner hex occupied."));
-				return false;
-			}
+				UE_LOG(LogTemp, Warning, TEXT("Bond placement blocked: partner hex occupied by incompatible tile type."));
+			return false;
 		}
 	}
+		}
 	if (TileToPlace.Kind == ETileKind::Unbond)
 	{
 		const FHex Partner = HexUtil::Neighbor(H, (EHexDir)(TileToPlace.Arg % 6));
@@ -336,6 +735,9 @@ bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 
 	TileMap.Add(H, TileToPlace);
 	++TileRevision;
+	
+	// ClusterOutput tiles are now directly placeable, no auto-conversion
+	
 	return true;
 }
 
@@ -348,8 +750,21 @@ void USimWorldHex::RegisterClusterTemplate(uint8 TemplateId, const TArray<FOrbDa
 	NewTemplate.Name = Name;
 	ClusterTemplates.Add(TemplateId, NewTemplate);
 	
-	UE_LOG(LogTemp, Log, TEXT("Registered cluster template %d: %s with %d orbs and %d bonds"), 
-		TemplateId, *Name, Orbs.Num(), BondPairs.Num());
+	UE_LOG(LogTemp, Log, TEXT("======================================"));
+	UE_LOG(LogTemp, Log, TEXT("Registered cluster template %d: %s"), TemplateId, *Name);
+	UE_LOG(LogTemp, Log, TEXT("  Orbs: %d"), Orbs.Num());
+	for (int32 i = 0; i < Orbs.Num(); i++)
+	{
+		const FOrbData& Orb = Orbs[i];
+		UE_LOG(LogTemp, Log, TEXT("    [%d] Type=%d at relative (%d,%d)"), i, Orb.Type, Orb.dQ, Orb.dR);
+	}
+	UE_LOG(LogTemp, Log, TEXT("  Bonds: %d"), BondPairs.Num());
+	for (int32 i = 0; i < BondPairs.Num(); i++)
+	{
+		const TPair<int32, int32>& Bond = BondPairs[i];
+		UE_LOG(LogTemp, Log, TEXT("    Bond %d <-> %d"), Bond.Key, Bond.Value);
+	}
+	UE_LOG(LogTemp, Log, TEXT("======================================"));
 }
 
 bool USimWorldHex::ValidateClusterAgainstTemplate(const FItem& Cluster, uint8 TemplateId) const
@@ -377,6 +792,239 @@ bool USimWorldHex::ValidateClusterAgainstTemplate(const FItem& Cluster, uint8 Te
 	}
 	
 	return true;
+}
+
+uint8 USimWorldHex::AutoGenerateClusterTemplateForOutputs(const FHex& Hex1, const FHex& Hex2, uint8 OrbType1, uint8 OrbType2)
+{
+	// Calculate relative position of Hex2 from Hex1
+	int32 dQ = Hex2.Q - Hex1.Q;
+	int32 dR = Hex2.R - Hex1.R;
+	
+	// Create a 2-orb cluster template
+	TArray<FOrbData> Orbs;
+	
+	FOrbData Orb1;
+	Orb1.Type = OrbType1;
+	Orb1.dQ = 0;
+	Orb1.dR = 0;
+	Orbs.Add(Orb1);
+	
+	FOrbData Orb2;
+	Orb2.Type = OrbType2;
+	Orb2.dQ = dQ;
+	Orb2.dR = dR;
+	Orbs.Add(Orb2);
+	
+	// Create bond between the two orbs
+	TArray<TPair<int32, int32>> BondPairs;
+	BondPairs.Add(TPair<int32, int32>(0, 1));
+	
+	// Generate unique template ID
+	uint8 TemplateId = NextAutoTemplateId++;
+	
+	// Register the template
+	FString TemplateName = FString::Printf(TEXT("AutoGen_%d_%d_at_%d,%d"), OrbType1, OrbType2, Hex1.Q, Hex1.R);
+	RegisterClusterTemplate(TemplateId, Orbs, BondPairs, TemplateName);
+	
+	return TemplateId;
+}
+
+void USimWorldHex::AutoConvertAdjacentOutputsToCluster(const FHex& NewOutputHex, uint8 NewOrbType)
+{
+	// Check all 6 neighbors for Output or ClusterOutput tiles
+	TArray<FHex> AdjacentOutputs;
+	
+	for (int32 Dir = 0; Dir < 6; Dir++)
+	{
+		FHex NeighborHex = HexUtil::Neighbor(NewOutputHex, (EHexDir)Dir);
+		const FTile* NeighborTile = TileMap.Find(NeighborHex);
+		
+		if (NeighborTile && (NeighborTile->Kind == ETileKind::Output || NeighborTile->Kind == ETileKind::ClusterOutput))
+		{
+			AdjacentOutputs.Add(NeighborHex);
+		}
+	}
+	
+	// If no adjacent outputs, nothing to convert
+	if (AdjacentOutputs.Num() == 0)
+	{
+		return;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("AutoConvert: Output at (%d,%d) type %d has %d adjacent outputs/clusters"), 
+		NewOutputHex.Q, NewOutputHex.R, NewOrbType, AdjacentOutputs.Num());
+	
+	// Convert the newly placed output to ClusterOutput
+	FTile* NewTile = TileMap.Find(NewOutputHex);
+	if (NewTile)
+	{
+		NewTile->Kind = ETileKind::ClusterOutput;
+		NewTile->Arg = NewOrbType; // Keep the orb type
+	}
+	
+	// Convert all adjacent Output tiles to ClusterOutput (keeping their orb types)
+	for (const FHex& AdjacentHex : AdjacentOutputs)
+	{
+		FTile* AdjacentTile = TileMap.Find(AdjacentHex);
+		if (AdjacentTile)
+		{
+			if (AdjacentTile->Kind == ETileKind::Output)
+			{
+				// Convert Output to ClusterOutput, preserving the orb type
+				AdjacentTile->Kind = ETileKind::ClusterOutput;
+				// Arg already contains the orb type, so no change needed
+				
+				UE_LOG(LogTemp, Log, TEXT("  Converted adjacent Output at (%d,%d) type %d to ClusterOutput"), 
+					AdjacentHex.Q, AdjacentHex.R, AdjacentTile->Arg);
+			}
+			else if (AdjacentTile->Kind == ETileKind::ClusterOutput)
+			{
+				// Already a ClusterOutput, no change needed
+				UE_LOG(LogTemp, Log, TEXT("  Adjacent tile at (%d,%d) type %d already ClusterOutput"), 
+					AdjacentHex.Q, AdjacentHex.R, AdjacentTile->Arg);
+			}
+		}
+	}
+	
+	++TileRevision;
+}
+
+uint8 USimWorldHex::ExpandClusterTemplate(uint8 ExistingTemplateId, const FHex& OldBaseHex, const FHex& NewBaseHex, const TArray<FHex>& AllClusterHexes, const TMap<FHex, uint8>& HexToOrbType)
+{
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════"));
+	UE_LOG(LogTemp, Warning, TEXT("║ EXPANDING CLUSTER TEMPLATE %d"), ExistingTemplateId);
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════"));
+	
+	// Get the existing template
+	const FClusterTemplate* ExistingTemplate = ClusterTemplates.Find(ExistingTemplateId);
+	if (!ExistingTemplate)
+	{
+		UE_LOG(LogTemp, Error, TEXT("║ ERROR: Template %d not found!"), ExistingTemplateId);
+		UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════"));
+		return ExistingTemplateId;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("║ Old template had %d orbs, %d bonds"), ExistingTemplate->Orbs.Num(), ExistingTemplate->Bonds.Num());
+	UE_LOG(LogTemp, Warning, TEXT("║ OldBaseHex: (%d,%d)"), OldBaseHex.Q, OldBaseHex.R);
+	UE_LOG(LogTemp, Warning, TEXT("║ NewBaseHex: (%d,%d) %s"), 
+		NewBaseHex.Q, NewBaseHex.R, 
+		(OldBaseHex.Q == NewBaseHex.Q && OldBaseHex.R == NewBaseHex.R) ? TEXT("[SAME]") : TEXT("[CHANGED]"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Total cluster tiles: %d"), AllClusterHexes.Num());
+	
+	// Rebuild the entire template relative to the new BaseHex
+	// This ensures all coordinates are correct even if BaseHex changed
+	TArray<FOrbData> NewOrbs;
+	UE_LOG(LogTemp, Warning, TEXT("║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Rebuilding orbs relative to NewBaseHex:"));
+	for (const FHex& ClusterHex : AllClusterHexes)
+	{
+		FOrbData NewOrb;
+		const uint8* OrbType = HexToOrbType.Find(ClusterHex);
+		NewOrb.Type = OrbType ? *OrbType : 0;
+		NewOrb.dQ = ClusterHex.Q - NewBaseHex.Q;
+		NewOrb.dR = ClusterHex.R - NewBaseHex.R;
+		NewOrbs.Add(NewOrb);
+		
+		UE_LOG(LogTemp, Warning, TEXT("║   Orb %d: World(%d,%d) -> Relative(%d,%d) Type=%d"), 
+			NewOrbs.Num() - 1, ClusterHex.Q, ClusterHex.R, NewOrb.dQ, NewOrb.dR, NewOrb.Type);
+	}
+	
+	// Rebuild bonds between all adjacent tiles in the cluster
+	TArray<TPair<int32, int32>> NewBondPairs;
+	UE_LOG(LogTemp, Warning, TEXT("║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Rebuilding bonds between adjacent tiles:"));
+	for (int32 i = 0; i < AllClusterHexes.Num(); i++)
+	{
+		for (int32 j = i + 1; j < AllClusterHexes.Num(); j++)
+		{
+			const FHex& Hex1 = AllClusterHexes[i];
+			const FHex& Hex2 = AllClusterHexes[j];
+			
+			// Check if adjacent (hex distance == 1)
+			int32 dQ = Hex2.Q - Hex1.Q;
+			int32 dR = Hex2.R - Hex1.R;
+			int32 dist = (FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR)) / 2;
+			
+			if (dist == 1)
+			{
+				NewBondPairs.Add(TPair<int32, int32>(i, j));
+				UE_LOG(LogTemp, Warning, TEXT("║   Bond: Orb[%d] <-> Orb[%d]  (Hexes (%d,%d)-(%d,%d))"), 
+					i, j, Hex1.Q, Hex1.R, Hex2.Q, Hex2.R);
+			}
+		}
+	}
+	
+	// REUSE the existing template ID instead of generating a new one
+	UE_LOG(LogTemp, Warning, TEXT("║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ REUSING TEMPLATE ID: %d (keeping same ID)"), ExistingTemplateId);
+	UE_LOG(LogTemp, Warning, TEXT("║ Total orbs: %d"), NewOrbs.Num());
+	UE_LOG(LogTemp, Warning, TEXT("║ Total bonds: %d"), NewBondPairs.Num());
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════"));
+	
+	// Overwrite the existing template with the expanded one
+	FString TemplateName = FString::Printf(TEXT("Expanded_%d_%dorbs"), ExistingTemplateId, NewOrbs.Num());
+	RegisterClusterTemplate(ExistingTemplateId, NewOrbs, NewBondPairs, TemplateName);
+	
+	return ExistingTemplateId;
+}
+
+TArray<FHex> USimWorldHex::FindAllTilesInCluster(const FHex& StartHex) const
+{
+	TArray<FHex> ClusterTiles;
+	TSet<FHex> Visited;
+	TArray<FHex> ToVisit;
+	
+	ToVisit.Add(StartHex);
+	Visited.Add(StartHex);
+	
+	UE_LOG(LogTemp, Warning, TEXT("FindAllTilesInCluster: Starting from (%d,%d)"), StartHex.Q, StartHex.R);
+	
+	while (ToVisit.Num() > 0)
+	{
+		FHex CurrentHex = ToVisit.Pop();
+		ClusterTiles.Add(CurrentHex);
+		
+		UE_LOG(LogTemp, Warning, TEXT("  Processing tile (%d,%d)"), CurrentHex.Q, CurrentHex.R);
+		
+		// Find all partners of this hex (check BOTH directions since IOBondPartners is not symmetric)
+		for (const auto& PartnerKV : IOBondPartners)
+		{
+			FHex PartnerHex;
+			bool bFoundPartner = false;
+			
+			// Check if CurrentHex is the KEY (A->B, we're at A)
+			if (PartnerKV.Key == CurrentHex)
+			{
+				PartnerHex = PartnerKV.Value;
+				bFoundPartner = true;
+			}
+			// Check if CurrentHex is the VALUE (A->B, we're at B)
+			else if (PartnerKV.Value == CurrentHex)
+			{
+				PartnerHex = PartnerKV.Key;
+				bFoundPartner = true;
+			}
+			
+			if (bFoundPartner)
+			{
+				// Check if partner is a ClusterOutput tile
+				const FTile* PartnerTile = TileMap.Find(PartnerHex);
+				if (PartnerTile && PartnerTile->Kind == ETileKind::ClusterOutput)
+				{
+					if (!Visited.Contains(PartnerHex))
+					{
+						UE_LOG(LogTemp, Warning, TEXT("    Found connected tile: (%d,%d)"), PartnerHex.Q, PartnerHex.R);
+						Visited.Add(PartnerHex);
+						ToVisit.Add(PartnerHex);
+					}
+				}
+			}
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("  Total tiles found in cluster: %d"), ClusterTiles.Num());
+	
+	return ClusterTiles;
 }
 
 // --- Bond-breaking public API (called by future glyph logic) ---
@@ -1278,5 +1926,313 @@ void USimWorldHex::CancelPendingBondFormationsForArm(int32 ArmIndex)
 			PendingBondFormations.RemoveAt(i);
 		}
 	}
+}
+
+void USimWorldHex::RebuildClusterOutputRelationships()
+{
+	// Blueprint-callable version with no parameters
+	TMap<FHex, uint8> EmptyMap;
+	RebuildClusterOutputRelationships(EmptyMap);
+}
+
+void USimWorldHex::RebuildClusterOutputRelationships(const TMap<FHex, uint8>& SavedOrbTypes)
+{
+	// Clear existing cluster output relationships
+	TArray<FHex> BondPartnersToRemove;
+	for (const auto& PartnerKV : IOBondPartners)
+	{
+		const FTile* Tile1 = TileMap.Find(PartnerKV.Key);
+		const FTile* Tile2 = TileMap.Find(PartnerKV.Value);
+		if ((Tile1 && Tile1->Kind == ETileKind::ClusterOutput) || 
+		    (Tile2 && Tile2->Kind == ETileKind::ClusterOutput))
+		{
+			BondPartnersToRemove.Add(PartnerKV.Key);
+		}
+	}
+	for (const FHex& H : BondPartnersToRemove)
+	{
+		IOBondPartners.Remove(H);
+	}
+	MergedClusterOutputs.Empty();
+	
+	UE_LOG(LogTemp, Warning, TEXT("╔════════════════════════════════════════"));
+	UE_LOG(LogTemp, Warning, TEXT("║ REBUILDING CLUSTER OUTPUT RELATIONSHIPS"));
+	UE_LOG(LogTemp, Warning, TEXT("╠════════════════════════════════════════"));
+	UE_LOG(LogTemp, Warning, TEXT("║ %d saved orb types provided"), SavedOrbTypes.Num());
+	
+	// Find all unique connected clusters of ClusterOutput tiles
+	TSet<FHex> ProcessedTiles;
+	TArray<TArray<FHex>> ConnectedClusters;
+	
+	for (const auto& TileKV : TileMap)
+	{
+		if (TileKV.Value.Kind != ETileKind::ClusterOutput)
+			continue;
+			
+		const FHex& StartHex = TileKV.Key;
+		
+		if (ProcessedTiles.Contains(StartHex))
+			continue;
+		
+		// Find all tiles connected to this one (same template ID and adjacent)
+		uint8 TemplateId = TileKV.Value.Arg;
+		TArray<FHex> ClusterTiles;
+		TSet<FHex> Visited;
+		TArray<FHex> ToVisit;
+		ToVisit.Add(StartHex);
+		Visited.Add(StartHex);
+		
+		while (ToVisit.Num() > 0)
+		{
+			FHex CurrentHex = ToVisit.Pop();
+			ClusterTiles.Add(CurrentHex);
+			ProcessedTiles.Add(CurrentHex);
+			
+			// Check all 6 neighbors
+			for (int32 Dir = 0; Dir < 6; Dir++)
+			{
+				FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
+				const FTile* NeighborTile = TileMap.Find(NeighborHex);
+				
+				if (NeighborTile && 
+				    NeighborTile->Kind == ETileKind::ClusterOutput && 
+				    NeighborTile->Arg == TemplateId &&
+				    !Visited.Contains(NeighborHex))
+				{
+					Visited.Add(NeighborHex);
+					ToVisit.Add(NeighborHex);
+				}
+			}
+		}
+		
+		if (ClusterTiles.Num() > 0)
+		{
+			ConnectedClusters.Add(ClusterTiles);
+			UE_LOG(LogTemp, Warning, TEXT("║ Found cluster with %d tiles (Template %d)"), ClusterTiles.Num(), TemplateId);
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("║ Total unique clusters found: %d"), ConnectedClusters.Num());
+	UE_LOG(LogTemp, Warning, TEXT("║"));
+	
+	// For each connected cluster, rebuild bonds and templates
+	int32 TotalPartnerships = 0;
+	int32 TotalMergedOutputs = 0;
+	
+	for (const TArray<FHex>& ClusterTiles : ConnectedClusters)
+	{
+		if (ClusterTiles.Num() == 0)
+			continue;
+		
+		// Get the template ID from the first tile
+		const FTile* FirstTile = TileMap.Find(ClusterTiles[0]);
+		if (!FirstTile)
+			continue;
+		
+		uint8 TemplateId = FirstTile->Arg;
+		
+		UE_LOG(LogTemp, Warning, TEXT("║ Processing cluster: %d tiles, Template=%d"), ClusterTiles.Num(), TemplateId);
+		
+		// Find the BaseHex (center-most tile - geometric center of all tiles)
+		// This allows clusters to be placed/rotated around their center, like Blueprint mode
+		int32 SumQ = 0;
+		int32 SumR = 0;
+		for (const FHex& H : ClusterTiles)
+		{
+			SumQ += H.Q;
+			SumR += H.R;
+		}
+		
+		// Calculate average (center) position
+		int32 CenterQ = FMath::RoundToInt((float)SumQ / ClusterTiles.Num());
+		int32 CenterR = FMath::RoundToInt((float)SumR / ClusterTiles.Num());
+		
+		// Find the tile closest to the center
+		FHex BaseHex = ClusterTiles[0];
+		int32 MinDist = INT_MAX;
+		for (const FHex& H : ClusterTiles)
+		{
+			int32 dQ = H.Q - CenterQ;
+			int32 dR = H.R - CenterR;
+			int32 dist = FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR);
+			if (dist < MinDist)
+			{
+				MinDist = dist;
+				BaseHex = H;
+			}
+		}
+		
+		UE_LOG(LogTemp, Warning, TEXT("║ Calculated BaseHex: (%d,%d) as center-most tile"), BaseHex.Q, BaseHex.R);
+		
+		// Build orb data and bonds for this cluster
+		TArray<FOrbData> Orbs;
+		TArray<TPair<int32, int32>> BondPairs;
+		TMap<FHex, int32> HexToOrbIndex;
+		
+		// Get the existing template (if any) to extract orb types
+		const FClusterTemplate* ExistingTemplate = ClusterTemplates.Find(TemplateId);
+		
+		for (int32 i = 0; i < ClusterTiles.Num(); i++)
+		{
+			const FHex& H = ClusterTiles[i];
+			HexToOrbIndex.Add(H, i);
+			
+			FOrbData Orb;
+			Orb.dQ = H.Q - BaseHex.Q;
+			Orb.dR = H.R - BaseHex.R;
+			
+			// Get orb type from saved data, or from existing template if saved data not available
+			const uint8* SavedType = SavedOrbTypes.Find(H);
+			if (SavedType)
+			{
+				Orb.Type = *SavedType;
+			}
+			else if (ExistingTemplate)
+			{
+				// Try to find matching orb in existing template by relative position
+				bool bFound = false;
+				for (const FOrbData& TemplateOrb : ExistingTemplate->Orbs)
+				{
+					if (TemplateOrb.dQ == Orb.dQ && TemplateOrb.dR == Orb.dR)
+					{
+						Orb.Type = TemplateOrb.Type;
+						bFound = true;
+						break;
+					}
+				}
+				
+				if (!bFound)
+				{
+					Orb.Type = 0;
+					UE_LOG(LogTemp, Warning, TEXT("║   Tile (%d,%d): No saved type or template match, using 0"), H.Q, H.R);
+				}
+			}
+			else
+			{
+				Orb.Type = 0;
+				UE_LOG(LogTemp, Warning, TEXT("║   Tile (%d,%d): No saved type or template, using 0"), H.Q, H.R);
+			}
+			
+			Orbs.Add(Orb);
+		}
+		
+		// Build bonds between adjacent tiles
+		for (int32 i = 0; i < ClusterTiles.Num(); i++)
+		{
+			const FHex& Hex1 = ClusterTiles[i];
+			
+			// Check all neighbors
+			for (int32 j = i + 1; j < ClusterTiles.Num(); j++)
+			{
+				const FHex& Hex2 = ClusterTiles[j];
+				
+				// Check if adjacent
+				int32 dQ = Hex2.Q - Hex1.Q;
+				int32 dR = Hex2.R - Hex1.R;
+				int32 dist = (FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR)) / 2;
+				
+				if (dist == 1)
+				{
+					// Add partnership
+					IOBondPartners.Add(Hex1, Hex2);
+					TotalPartnerships++;
+					
+					// Add bond to template
+					BondPairs.Add(TPair<int32, int32>(i, j));
+				}
+			}
+		}
+		
+		// Only re-register the template if it doesn't exist or if orb data has changed
+		bool bNeedToRegister = false;
+		const FClusterTemplate* CurrentTemplate = ClusterTemplates.Find(TemplateId);
+		if (!CurrentTemplate)
+		{
+			bNeedToRegister = true;
+			UE_LOG(LogTemp, Warning, TEXT("║ Template %d doesn't exist, will register"), TemplateId);
+		}
+		else
+		{
+			// Check if orb data matches
+			if (CurrentTemplate->Orbs.Num() != Orbs.Num())
+			{
+				bNeedToRegister = true;
+				UE_LOG(LogTemp, Warning, TEXT("║ Template %d orb count changed (%d -> %d), will re-register"), 
+					TemplateId, CurrentTemplate->Orbs.Num(), Orbs.Num());
+			}
+			else
+			{
+				// Check if all orbs match
+				for (int32 i = 0; i < Orbs.Num(); i++)
+				{
+					bool bFound = false;
+					for (const FOrbData& CurrentOrb : CurrentTemplate->Orbs)
+					{
+						if (CurrentOrb.dQ == Orbs[i].dQ && CurrentOrb.dR == Orbs[i].dR && CurrentOrb.Type == Orbs[i].Type)
+						{
+							bFound = true;
+							break;
+						}
+					}
+					if (!bFound)
+					{
+						bNeedToRegister = true;
+						UE_LOG(LogTemp, Warning, TEXT("║ Template %d orb data changed, will re-register"), TemplateId);
+						break;
+					}
+				}
+			}
+		}
+		
+		if (bNeedToRegister)
+		{
+			FString TemplateName = FString::Printf(TEXT("Reconstructed_%d_%dorbs"), TemplateId, Orbs.Num());
+			RegisterClusterTemplate(TemplateId, Orbs, BondPairs, TemplateName);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("║ Template %d is already up-to-date, skipping re-registration"), TemplateId);
+		}
+		
+		// Create merged tile info for each adjacent pair
+		for (int32 i = 0; i < ClusterTiles.Num(); i++)
+		{
+			const FHex& Hex1 = ClusterTiles[i];
+			
+			for (int32 j = i + 1; j < ClusterTiles.Num(); j++)
+			{
+				const FHex& Hex2 = ClusterTiles[j];
+				
+				// Check if adjacent
+				int32 dQ = Hex2.Q - Hex1.Q;
+				int32 dR = Hex2.R - Hex1.R;
+				int32 dist = (FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR)) / 2;
+				
+				if (dist == 1)
+				{
+					// Create merged tile info
+					FHex PrimaryHex = (Hex1.Q < Hex2.Q || (Hex1.Q == Hex2.Q && Hex1.R < Hex2.R)) ? Hex1 : Hex2;
+					FHex SecondaryHex = (PrimaryHex == Hex1) ? Hex2 : Hex1;
+					
+					const uint8* Type1 = SavedOrbTypes.Find(Hex1);
+					const uint8* Type2 = SavedOrbTypes.Find(Hex2);
+					
+					FMergedTileInfo Info;
+					Info.Hex1 = PrimaryHex;
+					Info.Hex2 = SecondaryHex;
+					Info.OrbType1 = (PrimaryHex == Hex1) ? (Type1 ? *Type1 : 0) : (Type2 ? *Type2 : 0);
+					Info.OrbType2 = (PrimaryHex == Hex1) ? (Type2 ? *Type2 : 0) : (Type1 ? *Type1 : 0);
+					Info.TemplateId = TemplateId;
+					
+					MergedClusterOutputs.Add(PrimaryHex, Info);
+					TotalMergedOutputs++;
+				}
+			}
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("║"));
+	UE_LOG(LogTemp, Warning, TEXT("║ Rebuilt %d partnerships, %d merged outputs"), TotalPartnerships, TotalMergedOutputs);
+	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════"));
 }
 

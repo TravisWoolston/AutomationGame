@@ -145,6 +145,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	{
 	case EPlaceKind::Input:  T = FTile{ ETileKind::Input,  (uint8)GetCurrentInputOrbType() }; break;
 	case EPlaceKind::Output: T = FTile{ ETileKind::Output, (uint8)GetCurrentOutputOrbType() }; break;
+	case EPlaceKind::ClusterOutput: T = FTile{ ETileKind::ClusterOutput, (uint8)GetCurrentOutputOrbType() }; break;
 	case EPlaceKind::Belt:   T = FTile{ ETileKind::Belt,   (uint8)BeltDir }; break;
 	case EPlaceKind::Bond:   T = FTile{ ETileKind::Bond,   (uint8)BeltDir }; break;
 	case EPlaceKind::Unbond: T = FTile{ ETileKind::Unbond, (uint8)BeltDir }; break;
@@ -179,8 +180,8 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		return;
 	}
 
-	// For outputs, remove any existing tile first to avoid overlap
-	if (T.Kind == ETileKind::Output)
+	// For outputs and cluster outputs, remove any existing tile first to avoid overlap
+	if (T.Kind == ETileKind::Output || T.Kind == ETileKind::ClusterOutput)
 	{
 		// Check if there's already a tile at this location
 		if (Sim->TileMap.Contains(Root))
@@ -196,11 +197,16 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		const FTile* ExistingTile = Sim->TileMap.Find(Root);
 		if (ExistingTile && ExistingTile->Kind != ETileKind::Empty)
 		{
-			// Allow Bond tiles to be placed on Input/Output tiles (they will auto-convert to InputBond/OutputBond)
-			bool bAllowBondOnInputOutput = (T.Kind == ETileKind::Bond && 
-				(ExistingTile->Kind == ETileKind::Input || ExistingTile->Kind == ETileKind::Output));
-			
-			if (!bAllowBondOnInputOutput)
+		// Allow Bond tiles to be placed on Input/Output/ClusterOutput tiles (they will auto-convert or expand clusters)
+		bool bAllowBondOnInputOutput = (T.Kind == ETileKind::Bond && 
+			(ExistingTile->Kind == ETileKind::Input || 
+			 ExistingTile->Kind == ETileKind::Output ||
+			 ExistingTile->Kind == ETileKind::InputBond ||
+			 ExistingTile->Kind == ETileKind::OutputBond ||
+			 ExistingTile->Kind == ETileKind::ClusterInput ||
+			 ExistingTile->Kind == ETileKind::ClusterOutput));
+		
+		if (!bAllowBondOnInputOutput)
 			{
 				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place %s at (%d,%d) - location already occupied by %s"), 
 					*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
@@ -243,7 +249,15 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
 		if (CachedTLD)
 		{
-			CachedTLD->UpsertTileSpec(Root, T.Kind, T.Arg);
+			// For ClusterOutput tiles, save with orb type
+			if (T.Kind == ETileKind::ClusterOutput)
+			{
+				CachedTLD->UpsertClusterOutputTileSpec(Root, 0, T.Arg); // Template ID = 0 (not used), T.Arg = orb type
+			}
+			else
+			{
+				CachedTLD->UpsertTileSpec(Root, T.Kind, T.Arg);
+			}
 		}
 	}
 
@@ -356,6 +370,17 @@ void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) { PlaceKind = NewK
 
 void UHexPlacementComponent::CycleNextType()
 {
+	// Cycle cluster templates if in ClusterOutput mode
+	if (PlaceKind == EPlaceKind::ClusterOutput)
+	{
+		TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
+		if (ValidTemplates.Num() > 0)
+		{
+			CurrentClusterTemplateIndex = (CurrentClusterTemplateIndex + 1) % ValidTemplates.Num();
+		}
+		return;
+	}
+	
 	// Get the list of valid orb types (those with assigned materials)
 	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
 	if (ValidTypes.Num() == 0) return; // No valid types to cycle through
@@ -373,6 +398,17 @@ void UHexPlacementComponent::CycleNextType()
 
 void UHexPlacementComponent::CyclePreviousType()
 {
+	// Cycle cluster templates if in ClusterOutput mode
+	if (PlaceKind == EPlaceKind::ClusterOutput)
+	{
+		TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
+		if (ValidTemplates.Num() > 0)
+		{
+			CurrentClusterTemplateIndex = (CurrentClusterTemplateIndex - 1 + ValidTemplates.Num()) % ValidTemplates.Num();
+		}
+		return;
+	}
+	
 	// Get the list of valid orb types (those with assigned materials)
 	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
 	if (ValidTypes.Num() == 0) return; // No valid types to cycle through
@@ -457,6 +493,28 @@ TArray<EOrbType> UHexPlacementComponent::GetValidOrbTypes() const
 	return ValidTypes;
 }
 
+TArray<uint8> UHexPlacementComponent::GetValidClusterTemplateIds() const
+{
+	TArray<uint8> ValidTemplateIds;
+	
+	if (Sim)
+	{
+		// Get the cluster templates map from SimWorldHex via public accessor
+		const TMap<uint8, USimWorldHex::FClusterTemplate>& Templates = Sim->GetClusterTemplates();
+		
+		// Collect all registered template IDs
+		for (const auto& TemplatePair : Templates)
+		{
+			ValidTemplateIds.Add(TemplatePair.Key);
+		}
+		
+		// Sort by template ID for consistent ordering
+		ValidTemplateIds.Sort();
+	}
+	
+	return ValidTemplateIds;
+}
+
 EOrbType UHexPlacementComponent::GetCurrentInputOrbType() const
 {
 	// Get the list of valid orb types (those with assigned materials)
@@ -484,6 +542,28 @@ EOrbType UHexPlacementComponent::GetCurrentOutputOrbType() const
 	// Clamp the index to valid range
 	int32 ClampedIndex = FMath::Clamp(CurrentOutputOrbTypeIndex, 0, ValidTypes.Num() - 1);
 	return ValidTypes[ClampedIndex];
+}
+
+void UHexPlacementComponent::SetClusterTemplateToId(uint8 TemplateId)
+{
+	UWorld* W = GetWorld();
+	if ((!Driver || !Sim) && W) ReacquireSimIfNeeded(W, Driver, Sim);
+	if (!Sim) return;
+	
+	TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
+	
+	// Find the index of the desired template ID
+	for (int32 i = 0; i < ValidTemplates.Num(); i++)
+	{
+		if (ValidTemplates[i] == TemplateId)
+		{
+			CurrentClusterTemplateIndex = i;
+			UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Set cluster template to ID %d (index %d)"), TemplateId, i);
+			return;
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Template ID %d not found in valid templates"), TemplateId);
 }
 
 void UHexPlacementComponent::EnsurePreviewComponent()
@@ -541,6 +621,9 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 		return BondPreviewMesh ? BondPreviewMesh : GenericTilePreviewMesh;
 	case EPlaceKind::Unbond:
 		return UnbondPreviewMesh ? UnbondPreviewMesh : GenericTilePreviewMesh;
+	case EPlaceKind::ClusterOutput:
+		// ClusterOutput now uses same preview as Output
+		return GetActualOutputOrbMesh();
 	default:
 		return GenericTilePreviewMesh;
 	}
@@ -809,7 +892,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 
 	const FVector CenterA = HexToWorld(HoverHex) + FVector(0, 0, PreviewZOffset);
 
-	// Outline (keep single hex for non-bond, two for bond/unbond)
+	// Outline (keep single hex for non-bond, two for bond/unbond, multiple for ClusterOutput)
 	if (PlaceKind != EPlaceKind::Bond && PlaceKind != EPlaceKind::Unbond)
 	{
 		DrawDebugCircle(GetWorld(), CenterA, Tile * 0.95f, 6,
@@ -843,8 +926,8 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		}
 	}
 
-	// Mesh preview (now also for Input, Output, Belt, Arm, Bond, and Unbond)
-	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
+	// Mesh preview (for all placeable tiles)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
 	{
 
 		// For now, use static mesh preview for arms (ArmBasePreviewMesh)
@@ -928,7 +1011,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			{
 				FixedYaw = FMath::UnwindDegrees(FixedYaw + ArmPreviewFacingFixDeg);
 			}
-			else if (PlaceKind == EPlaceKind::Output)
+			else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
 			{
 				// For output tiles, we need to match the grid orientation
 				// If the grid is using FlatTop orientation, rotate the tile mesh 30 degrees
@@ -941,6 +1024,22 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 
 			FVector UseLoc = CenterA;
 			FVector UseScale(PreviewScale);
+			
+			// ClusterOutput tiles use larger scale
+			if (PlaceKind == EPlaceKind::ClusterOutput)
+			{
+				// Get ClusterOutputScale from GameManager
+				float ClusterScale = 1.3f; // Default
+				if (UWorld* World = GetWorld())
+				{
+					for (TActorIterator<AGameManager> It(World); It; ++It)
+					{
+						ClusterScale = (*It)->ClusterOutputScale;
+						break;
+					}
+				}
+				UseScale *= ClusterScale;
+			}
 
 			if (PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
 			{
@@ -966,13 +1065,21 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 					PreviewComp->SetMaterial(0, OrbMaterial);
 				}
 			}
-			else if (PlaceKind == EPlaceKind::Output)
+			else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
 			{
-				// For output tiles, use the actual orb material with half opacity
+				// For output/cluster tiles, use the actual orb material with half opacity
+				EOrbType CurrentType = GetCurrentOutputOrbType();
 				UMaterialInterface* OrbMaterial = GetActualOutputOrbMaterial();
+				
+				if (PlaceKind == EPlaceKind::ClusterOutput)
+				{
+					UE_LOG(LogTemp, Log, TEXT("ClusterOutput preview: CurrentType=%d, Material=%s"), 
+						(int32)CurrentType, OrbMaterial ? TEXT("valid") : TEXT("null"));
+				}
+				
 				if (OrbMaterial)
 				{
-					// Create a dynamic material instance for opacity control
+					// Create a NEW dynamic material instance for opacity control (recreated each frame)
 					UMaterialInstanceDynamic* OutputMID = UMaterialInstanceDynamic::Create(OrbMaterial, this);
 					if (OutputMID)
 					{

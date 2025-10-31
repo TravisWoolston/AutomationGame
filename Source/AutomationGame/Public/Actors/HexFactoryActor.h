@@ -8,6 +8,7 @@
 #include "HexFactoryActor.generated.h"
 
 class UInstancedStaticMeshComponent;
+class UProceduralMeshComponent;
 class USimWorldHex;
 class AOrbSimDriver;
 class AHexBoardActor;
@@ -91,6 +92,9 @@ protected:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputBaseCISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputMetalAISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputCatalystXISM = nullptr;
+	
+	// Procedural mesh for merged cluster outputs
+	UPROPERTY(Transient) UProceduralMeshComponent* MergedOutputMesh = nullptr;
 
 	// References
 	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
@@ -113,6 +117,10 @@ protected:
 	
 	// Helper functions for output type management
 	UInstancedStaticMeshComponent* GetOutputISMForType(EOrbType OrbType);
+	
+	// Generate a merged hex mesh between two adjacent hexagons
+	void GenerateMergedHexMesh(const FVector& Hex1Center, const FVector& Hex2Center, float HexRadius, 
+		UMaterialInterface* Mat1, UMaterialInterface* Mat2, int32 SectionIndex);
 
 private:
 	FVector HexToWorld(const FHex& H) const;

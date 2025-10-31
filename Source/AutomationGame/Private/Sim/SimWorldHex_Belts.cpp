@@ -990,7 +990,7 @@ void USimWorldHex::StepBelts()
 
 				// Check if moved to output tile
 				const FTile* NewTile = TileMap.Find(NewHex);
-				if (NewTile && NewTile->Kind == ETileKind::Output)
+				if (NewTile && (NewTile->Kind == ETileKind::Output || NewTile->Kind == ETileKind::ClusterOutput))
 				{
 					OrbsNewlyMovedToOutput.Add(NewHex);
 				}
