@@ -354,8 +354,17 @@ void USimWorldHex::StepBonds()
 		if (FItem* IB = ItemMap.Find(BHex)) BId = IB->Id;
 		else if (int32* HeldB = VirtualHeldItemAt.Find(BHex)) BId = *HeldB;
 
-		if (AId > 0 && BId > 0) BreakBondBetween(AId, BId);
+		if (AId > 0 && BId > 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Unbond at (%d,%d): Breaking bond %d <-> %d"), 
+				AHex.Q, AHex.R, AId, BId);
+			BreakBondBetween(AId, BId);
+		}
 	}
+
+	// Immediately check for held cluster splits after breaking bonds
+	// This ensures disconnected orbs are dropped right away
+	CheckAndRemoveDisconnectedOrbsFromHeldClusters();
 
 	ArmsReadyForUnbond.Empty();
 
