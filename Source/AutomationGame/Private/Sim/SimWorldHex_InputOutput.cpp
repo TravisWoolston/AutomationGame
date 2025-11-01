@@ -429,15 +429,12 @@ void USimWorldHex::ProcessOutputs()
 					// Expected type for this neighbor is in its Arg
 					uint8 NeighborExpectedType = NeighborTile->Arg;
 					ExpectedTypes.Add(NeighborExpectedType);
-					
-					UE_LOG(LogTemp, Log, TEXT("ClusterOutput: Found adjacent cluster tile at (%d,%d) expecting type %d"), 
-						NeighborHex.Q, NeighborHex.R, NeighborExpectedType);
+
 				}
 			}
 		}
 		
-		UE_LOG(LogTemp, Log, TEXT("ClusterOutput: Found connected cluster of %d tiles starting from (%d,%d)"), 
-			ClusterTiles.Num(), H.Q, H.R);
+
 		
 		// Check if ALL tiles in the cluster have orbs of the correct type AND are bonded together
 		bool bAllTilesReady = true;
@@ -451,7 +448,7 @@ void USimWorldHex::ProcessOutputs()
 			const FItem* TileItem = ItemMap.Find(TileHex);
 			if (!TileItem)
 			{
-				UE_LOG(LogTemp, Log, TEXT("  Tile (%d,%d) has no item - cluster not ready"), TileHex.Q, TileHex.R);
+
 				bAllTilesReady = false;
 				break;
 			}
@@ -459,7 +456,7 @@ void USimWorldHex::ProcessOutputs()
 			// ClusterOutput tiles expect single orbs, not clusters
 			if (TileItem->bIsCluster)
 			{
-				UE_LOG(LogTemp, Log, TEXT("  Tile (%d,%d) has a cluster item - not allowed"), TileHex.Q, TileHex.R);
+
 				bAllTilesReady = false;
 				break;
 			}
@@ -468,19 +465,21 @@ void USimWorldHex::ProcessOutputs()
 			uint8 ActualType = (uint8)TileItem->Single.Type;
 			if (ActualType != ExpectedType)
 			{
-				UE_LOG(LogTemp, Log, TEXT("  Tile (%d,%d) expected type %d but has type %d - cluster not ready"), 
-					TileHex.Q, TileHex.R, ExpectedType, ActualType);
 				bAllTilesReady = false;
 				break;
 			}
 			
-			UE_LOG(LogTemp, Log, TEXT("  Tile (%d,%d) has correct type %d ✓"), TileHex.Q, TileHex.R, ActualType);
-			OrbItemIds.Add(TileItem->Id);
+			// Add the item ID to the list for bond checking
+			if (TileItem->Id > 0)
+			{
+				OrbItemIds.Add(TileItem->Id);
+			}
+
 		}
 		
 		// Check if all orbs belong to the same cluster (are bonded together)
 		// AND that the cluster doesn't have any orbs on non-ClusterOutput tiles
-		if (bAllTilesReady && ClusterTiles.Num() > 1)
+		if (bAllTilesReady && ClusterTiles.Num() > 1 && OrbItemIds.Num() > 0)
 		{
 			// Build a connectivity graph of ALL bonded orbs (including those outside the cluster)
 			TSet<int32> AllConnectedOrbs;
@@ -527,7 +526,7 @@ void USimWorldHex::ProcessOutputs()
 			{
 				if (!AllConnectedOrbs.Contains(Id))
 				{
-					UE_LOG(LogTemp, Log, TEXT("  Orb %d on ClusterOutput is not connected - cluster not ready"), Id);
+					
 					bAllTilesReady = false;
 					break;
 				}
@@ -541,28 +540,16 @@ void USimWorldHex::ProcessOutputs()
 					if (!OrbsOnClusterTiles.Contains(ConnectedId))
 					{
 						// This bonded orb is somewhere else (not on our ClusterOutput tiles)
-						UE_LOG(LogTemp, Log, TEXT("  Bonded cluster contains orb %d which is not on a ClusterOutput tile - cluster not ready"), 
-							ConnectedId);
+
 						bAllTilesReady = false;
 						break;
 					}
 				}
-				
-				if (bAllTilesReady)
-				{
-					UE_LOG(LogTemp, Log, TEXT("  All %d orbs are bonded together and all on ClusterOutput tiles ✓"), AllConnectedOrbs.Num());
-				}
+
 			}
 		}
 		
-		if (bAllTilesReady)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("ClusterOutput: ALL %d tiles ready - creating descent animations!"), ClusterTiles.Num());
-		}
-		else
-		{
-			UE_LOG(LogTemp, Log, TEXT("ClusterOutput: Cluster not ready yet"));
-		}
+
 		
 	// If all tiles are ready, create descent animations and remove items
 	if (bAllTilesReady)
@@ -642,7 +629,7 @@ void USimWorldHex::ProcessOutputs()
 			++OutputCount;
 		}
 		
-		UE_LOG(LogTemp, Log, TEXT("ClusterOutput accepted: %d tiles processed"), ClusterTiles.Num());
+
 	}
 	// If not all tiles are ready, leave all orbs on their tiles
 }

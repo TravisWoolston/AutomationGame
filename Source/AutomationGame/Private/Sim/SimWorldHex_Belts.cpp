@@ -995,8 +995,9 @@ void USimWorldHex::StepBelts()
 					OrbsNewlyMovedToOutput.Add(NewHex);
 				}
 				
-				// Track all orbs that moved on belts for bond timing
-				OrbsNewlyMovedOnBelts.Add(ItemId);
+				// Track all orbs that were moved by belts this tick
+				// Used to prevent arms from grabbing them until visual movement completes
+				OrbsNewlyMovedByBelts.Add(ItemId);
 				
 				// Mark this orb as having moved this tick
 				OrbsMovedThisTick.Add(ItemId);

@@ -288,8 +288,9 @@ private:
 	// Hexes where orbs were newly moved to an output tile this tick
 	TSet<FHex> OrbsNewlyMovedToOutput;
 	
-	// Item IDs of orbs that were newly moved on belts this tick (for bond timing)
-	TSet<int32> OrbsNewlyMovedOnBelts;
+	// Item IDs of orbs that were moved by belts this tick
+	// Used to prevent arms from grabbing them until visual movement completes
+	TSet<int32> OrbsNewlyMovedByBelts;
 	
 	// Output tile gates - tracks whether output tiles are open for new orbs
 	// True = open for new orbs, False = blocked (incorrect type orb on tile)

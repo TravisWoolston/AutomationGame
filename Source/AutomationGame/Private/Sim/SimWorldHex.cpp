@@ -31,7 +31,7 @@ USimWorldHex::USimWorldHex()
 	PendingUnbonds.Empty();
 	RecentlyDroppedByArm.Empty();
 	OrbsNewlyMovedToOutput.Empty();
-	OrbsNewlyMovedOnBelts.Empty();
+	OrbsNewlyMovedByBelts.Empty();
 	OutputTileGates.Empty();
 	AnimatedOrbs.Empty();
 	HeldItemLastHex.Empty();
@@ -72,7 +72,7 @@ USimWorldHex::~USimWorldHex()
 	PendingUnbonds.Empty();
 	RecentlyDroppedByArm.Empty();
 	OrbsNewlyMovedToOutput.Empty();
-	OrbsNewlyMovedOnBelts.Empty();
+	OrbsNewlyMovedByBelts.Empty();
 	OutputTileGates.Empty();
 	AnimatedOrbs.Empty();
 	HeldItemLastHex.Empty();
@@ -1013,7 +1013,7 @@ TArray<FHex> USimWorldHex::FindAllTilesInCluster(const FHex& StartHex) const
 				{
 					if (!Visited.Contains(PartnerHex))
 					{
-						UE_LOG(LogTemp, Warning, TEXT("    Found connected tile: (%d,%d)"), PartnerHex.Q, PartnerHex.R);
+
 						Visited.Add(PartnerHex);
 						ToVisit.Add(PartnerHex);
 					}
@@ -1309,7 +1309,7 @@ void USimWorldHex::StepSim()
 	SkipInputThisFrame.Reset();
 	SkipOutputThisFrame.Reset();
 	OrbsNewlyMovedToOutput.Reset();
-	OrbsNewlyMovedOnBelts.Reset();
+	OrbsNewlyMovedByBelts.Reset();
 
 	// SpawnInputs();          // pass 1 (empty at start)
 	StepArms();

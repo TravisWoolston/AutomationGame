@@ -356,8 +356,7 @@ void USimWorldHex::StepBonds()
 
 		if (AId > 0 && BId > 0)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Unbond at (%d,%d): Breaking bond %d <-> %d"), 
-				AHex.Q, AHex.R, AId, BId);
+
 			BreakBondBetween(AId, BId);
 		}
 	}

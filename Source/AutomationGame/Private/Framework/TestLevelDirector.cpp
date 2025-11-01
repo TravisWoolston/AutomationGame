@@ -862,8 +862,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			{
 				// Use original facing from scenario to avoid rotation drift
 				NewArmSpec.Facing = ExistingArmSpecs[ArmHex].Facing;
-				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Preserved original facing %d for arm at (%d,%d)"),
-					NewArmSpec.Facing, Arm->Q, Arm->R);
+
 			}
 			else if (!bCaptureRuntimeFacingEdits)
 			{

@@ -156,7 +156,7 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 	}
 
 	// Zoom (disabled when TypeSelectionActive is held)
-	if (!bTypeSelectionActive)
+	if (bTypeSelectionActive)
 	{
 		SpringArm->TargetArmLength = FMath::Clamp(SpringArm->TargetArmLength - AxisZoom * ZoomSpeed * DeltaSeconds, MinArm, MaxArm);
 	}

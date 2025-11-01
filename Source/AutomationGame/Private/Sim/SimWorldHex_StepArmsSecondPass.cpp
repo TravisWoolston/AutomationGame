@@ -36,11 +36,22 @@ void USimWorldHex::StepArmsSecondPass()
 
 		// Try to grab again
 		FItem* Found = ItemMap.Find(Target);
+		// Don't allow grabbing orbs that just moved on belts this tick
+		// Allow them to visually complete their movement first
+		if (Found && Found->Id > 0 && OrbsNewlyMovedByBelts.Contains(Found->Id))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Grab: Orb %d just moved on belts this tick; skipping grab"), Found->Id);
+			// Orb just moved on belt, skip this deferred grab
+			continue;
+		}
 		if (!Found)
 		{
 			FItem Temp;
 			if (TryArmPickItem(Target, Temp))
 			{
+				// Don't allow grabbing orbs that just moved on belts this tick
+				if (OrbsNewlyMovedByBelts.Contains(Temp.Id)) continue;
+				
 				if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(Temp.Id))
 				{
 					if (*DroppedByArm == ArmIndex) continue;
@@ -92,6 +103,9 @@ void USimWorldHex::StepArmsSecondPass()
 				FItem SingleOut;
 				if (TryArmPickItem(Target, SingleOut))
 				{
+					// Don't allow grabbing orbs that just moved on belts this tick
+					if (OrbsNewlyMovedByBelts.Contains(SingleOut.Id)) continue;
+					
 					if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(SingleOut.Id))
 					{
 						if (*DroppedByArm == ArmIndex)
@@ -136,6 +150,13 @@ void USimWorldHex::StepArmsSecondPass()
 					}
 
 					if (!bItemFound)
+					{
+						bAllFound = false;
+						break;
+					}
+
+					// Don't allow grabbing orbs that just moved on belts this tick
+					if (OrbsNewlyMovedByBelts.Contains(ItemId))
 					{
 						bAllFound = false;
 						break;
@@ -342,12 +363,21 @@ void USimWorldHex::StepArmsSecondPass()
 				FHex Target = ComputeGripHex(S);
 				FItem* Found = ItemMap.Find(Target);
 
+				// Don't allow grabbing orbs that just moved on belts this tick
+				if (Found && Found->Id > 0 && OrbsNewlyMovedByBelts.Contains(Found->Id))
+				{
+					return false;
+				}
+
 				// Single first
 				if (!Found)
 				{
 					FItem Temp;
 					if (TryArmPickItem(Target, Temp))
 					{
+						// Don't allow grabbing orbs that just moved on belts this tick
+						if (OrbsNewlyMovedByBelts.Contains(Temp.Id)) return false;
+						
 						if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(Temp.Id)) { if (*DroppedByArm == ArmIndex) return false; }
 						S.Held = Temp; S.bHolding = true; S.PrevHeldOrbCount = 1; SimGrabFacingByArm.Add(ArmIndex, int8(-1));
 						S.PC = (S.PC + 1) % S.Tape.Num();
@@ -383,6 +413,9 @@ void USimWorldHex::StepArmsSecondPass()
 					FItem SingleOut;
 					if (TryArmPickItem(Target, SingleOut))
 					{
+						// Don't allow grabbing orbs that just moved on belts this tick
+						if (OrbsNewlyMovedByBelts.Contains(SingleOut.Id)) return false;
+						
 						if (const int32* DroppedByArm = RecentlyDroppedByArm.Find(SingleOut.Id)) { if (*DroppedByArm == ArmIndex) return false; }
 						S.Held = SingleOut; S.bHolding = true; S.PrevHeldOrbCount = 1; SimGrabFacingByArm.Add(ArmIndex, int8(-1));
 						S.PC = (S.PC + 1) % S.Tape.Num();
@@ -396,6 +429,13 @@ void USimWorldHex::StepArmsSecondPass()
 					bool bAllFound = true;
 					for (int32 ItemId : ClusterIds)
 					{
+						// Don't allow grabbing orbs that just moved on belts this tick
+						if (OrbsNewlyMovedByBelts.Contains(ItemId))
+						{
+							bAllFound = false;
+							break;
+						}
+						
 						FHex ItemHex; bool bItemFound = false;
 						for (const auto& KV : ItemMap) { if (KV.Value.Id == ItemId) { ItemHex = KV.Key; bItemFound = true; break; } }
 						if (!bItemFound) { bAllFound = false; break; }
