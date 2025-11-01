@@ -40,7 +40,6 @@ void USimWorldHex::StepArmsSecondPass()
 		// Allow them to visually complete their movement first
 		if (Found && Found->Id > 0 && OrbsNewlyMovedByBelts.Contains(Found->Id))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Grab: Orb %d just moved on belts this tick; skipping grab"), Found->Id);
 			// Orb just moved on belt, skip this deferred grab
 			continue;
 		}
