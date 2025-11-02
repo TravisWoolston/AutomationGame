@@ -370,17 +370,6 @@ void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) { PlaceKind = NewK
 
 void UHexPlacementComponent::CycleNextType()
 {
-	// Cycle cluster templates if in ClusterOutput mode
-	if (PlaceKind == EPlaceKind::ClusterOutput)
-	{
-		TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
-		if (ValidTemplates.Num() > 0)
-		{
-			CurrentClusterTemplateIndex = (CurrentClusterTemplateIndex + 1) % ValidTemplates.Num();
-		}
-		return;
-	}
-	
 	// Get the list of valid orb types (those with assigned materials)
 	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
 	if (ValidTypes.Num() == 0) return; // No valid types to cycle through
@@ -390,7 +379,7 @@ void UHexPlacementComponent::CycleNextType()
 	{
 		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
-	else if (PlaceKind == EPlaceKind::Output)
+	else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
 	{
 		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
@@ -398,17 +387,6 @@ void UHexPlacementComponent::CycleNextType()
 
 void UHexPlacementComponent::CyclePreviousType()
 {
-	// Cycle cluster templates if in ClusterOutput mode
-	if (PlaceKind == EPlaceKind::ClusterOutput)
-	{
-		TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
-		if (ValidTemplates.Num() > 0)
-		{
-			CurrentClusterTemplateIndex = (CurrentClusterTemplateIndex - 1 + ValidTemplates.Num()) % ValidTemplates.Num();
-		}
-		return;
-	}
-	
 	// Get the list of valid orb types (those with assigned materials)
 	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
 	if (ValidTypes.Num() == 0) return; // No valid types to cycle through
@@ -418,7 +396,7 @@ void UHexPlacementComponent::CyclePreviousType()
 	{
 		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
 	}
-	else if (PlaceKind == EPlaceKind::Output)
+	else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
 	{
 		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
 	}
@@ -542,6 +520,19 @@ EOrbType UHexPlacementComponent::GetCurrentOutputOrbType() const
 	// Clamp the index to valid range
 	int32 ClampedIndex = FMath::Clamp(CurrentOutputOrbTypeIndex, 0, ValidTypes.Num() - 1);
 	return ValidTypes[ClampedIndex];
+}
+
+uint8 UHexPlacementComponent::GetCurrentClusterTemplateId() const
+{
+	TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
+	if (ValidTemplates.Num() == 0)
+	{
+		return 0; // Fallback if no valid templates
+	}
+	
+	// Clamp the index to valid range
+	int32 ClampedIndex = FMath::Clamp(CurrentClusterTemplateIndex, 0, ValidTemplates.Num() - 1);
+	return ValidTemplates[ClampedIndex];
 }
 
 void UHexPlacementComponent::SetClusterTemplateToId(uint8 TemplateId)
@@ -1071,11 +1062,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 				EOrbType CurrentType = GetCurrentOutputOrbType();
 				UMaterialInterface* OrbMaterial = GetActualOutputOrbMaterial();
 				
-				if (PlaceKind == EPlaceKind::ClusterOutput)
-				{
-					UE_LOG(LogTemp, Log, TEXT("ClusterOutput preview: CurrentType=%d, Material=%s"), 
-						(int32)CurrentType, OrbMaterial ? TEXT("valid") : TEXT("null"));
-				}
+
 				
 				if (OrbMaterial)
 				{

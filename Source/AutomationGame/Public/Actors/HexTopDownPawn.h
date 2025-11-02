@@ -219,8 +219,9 @@ private:
 	}
 
 	// Type cycling (works for both Input and Output based on current placement mode)
-	void CycleInputTypeNext() { if (Placer) Placer->CycleNextType(); }
-	void CycleInputTypePrevious() { if (Placer) Placer->CyclePreviousType(); }
+	// For Kind8 blueprint mode with TypeSelectionActive, cycles DifficultyValue
+	void CycleInputTypeNext();
+	void CycleInputTypePrevious();
 	
 	// Glyph cycling (Belt, Bond, Unbond)
 	void CycleGlyphType() { if (Placer) Placer->CycleGlyphType(); }

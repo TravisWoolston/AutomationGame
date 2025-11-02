@@ -12,6 +12,8 @@
 #include "Geometry/GoldbergGrid.h" // NEW
 #include "UI/ArmTimelineWidget.h"
 #include "Engine/Texture2D.h"
+#include "Sim/OrbTypes.h"
+#include "Data/OrbMaterialManager.h"
 
 // Local helper to build orthonormal basis from Up + arbitrary forward (similar to HexFactoryActor)
 namespace { inline void BuildSafeBasisGM(const FVector& InUpRaw, const FVector& InForwardRaw, FVector& OutF, FVector& OutR, FVector& OutU)
@@ -487,4 +489,264 @@ ABasicArm* AGameManager::GetActiveArm() const
 	}
 	
 	return nullptr;
+}
+
+int32 AGameManager::GenerateRandomCluster()
+{
+	// Get the simulation
+	if (!OrbSimDriver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GenerateRandomCluster: No OrbSimDriver found"));
+		return -1;
+	}
+	
+	USimWorldHex* Sim = OrbSimDriver->GetSim();
+	if (!Sim)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GenerateRandomCluster: No Sim found"));
+		return -1;
+	}
+	
+	// Determine number of unique orb types and total orbs based on difficulty
+	// DifficultyValue = TotalOrbs + NumOfUniqueOrbTypes
+	// Examples: 4=1+3, 6=2+4 or 4+2, 9=3+6 or 5+4 or 7+2
+	int32 NumUniqueTypes = 0;
+	int32 TotalOrbs = 0;
+	
+	// Generate random valid combinations
+	// For difficulty 4: only option is 1 unique type + 3 orbs
+	// For difficulty 6: can be 2 types + 4 orbs OR 4 orbs + 2 types (same as 2+4)
+	// For difficulty 9: can be 3+6, 4+5, 5+4, 6+3, 7+2, 2+7
+	
+	// Start with at least 1 unique type and at least 1 orb
+	int32 MinTypes = 1;
+	int32 MaxOrbs = DifficultyValue - 1;
+	
+	// Randomly choose number of unique types (between 1 and approximately half the difficulty for variety)
+	int32 MaxTypes = FMath::Clamp(DifficultyValue / 2, 1, 6); // Cap at 6 orb types max
+	NumUniqueTypes = FMath::RandRange(MinTypes, MaxTypes);
+	TotalOrbs = DifficultyValue - NumUniqueTypes;
+	
+	// Ensure we have at least 1 orb per type minimum
+	if (TotalOrbs < NumUniqueTypes)
+	{
+		// Adjust: set orbs to at least equal types, reduce types if needed
+		TotalOrbs = NumUniqueTypes;
+		NumUniqueTypes = DifficultyValue - TotalOrbs;
+		if (NumUniqueTypes < 1)
+		{
+			NumUniqueTypes = 1;
+			TotalOrbs = DifficultyValue - 1;
+		}
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Difficulty=%d, UniqueTypes=%d, TotalOrbs=%d"), 
+		DifficultyValue, NumUniqueTypes, TotalOrbs);
+	
+	// Generate list of unique orb types (randomly selected from available types)
+	// First, get all orb types that have valid materials from OrbMaterialManager
+	TArray<EOrbType> AllValidOrbTypes;
+	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
+	if (MaterialManager)
+	{
+		// Check all possible orb types to see which ones have materials assigned
+		TArray<EOrbType> AllOrbTypes = {
+			EOrbType::None,
+			EOrbType::BaseA,
+			EOrbType::BaseB,
+			EOrbType::BaseC,
+			EOrbType::MetalA,
+			EOrbType::CatalystX
+		};
+		
+		for (EOrbType OrbType : AllOrbTypes)
+		{
+			// Check if this orb type has a material assigned in the map
+			if (const UMaterialInterface* const* FoundMaterial = MaterialManager->OrbTypeMaterials.Find(OrbType))
+			{
+				// Only add if the material is not null and not the default material
+				if (*FoundMaterial != nullptr && *FoundMaterial != MaterialManager->DefaultOrbMaterial)
+				{
+					AllValidOrbTypes.Add(OrbType);
+				}
+			}
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Found %d valid orb types with materials"), AllValidOrbTypes.Num());
+	}
+	
+	// If no valid types found from material manager, fallback to hardcoded difficulty-based types
+	TArray<EOrbType> AvailableOrbTypes;
+	if (AllValidOrbTypes.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GenerateRandomCluster: No valid orb types from MaterialManager, using fallback"));
+		if (DifficultyValue <= 4)
+		{
+			AvailableOrbTypes = { EOrbType::BaseA };
+		}
+		else if (DifficultyValue <= 6)
+		{
+			AvailableOrbTypes = { EOrbType::BaseA, EOrbType::BaseB };
+		}
+		else if (DifficultyValue <= 9)
+		{
+			AvailableOrbTypes = { EOrbType::BaseA, EOrbType::BaseB, EOrbType::BaseC };
+		}
+		else if (DifficultyValue <= 12)
+		{
+			AvailableOrbTypes = { EOrbType::BaseA, EOrbType::BaseB, EOrbType::BaseC, EOrbType::MetalA };
+		}
+		else
+		{
+			AvailableOrbTypes = { EOrbType::BaseA, EOrbType::BaseB, EOrbType::BaseC, 
+								  EOrbType::MetalA, EOrbType::CatalystX };
+		}
+	}
+	else
+	{
+		// Sort valid types by enum order to ensure consistent difficulty progression
+		AllValidOrbTypes.Sort();
+		
+		// Use exponential scaling to determine which types are unlocked based on difficulty
+		// For each type beyond BaseA (index 1), calculate its unlock threshold
+		for (EOrbType OrbType : AllValidOrbTypes)
+		{
+			int32 TypeIndex = (int32)OrbType;
+			
+			// BaseA (index 1) is always available starting at difficulty 4
+			if (TypeIndex == 1) // EOrbType::BaseA
+			{
+				AvailableOrbTypes.Add(OrbType);
+			}
+			else if (TypeIndex > 1 && TypeIndex <= 5) // BaseB through CatalystX
+			{
+				// Calculate unlock threshold for this type using exponential scaling
+				// Type 2 (BaseB) unlocks at BaseUnlockDifficulty
+				// Type 3 (BaseC) unlocks at BaseUnlockDifficulty * DifficultyScaleMult^1
+				// Type 4 (MetalA) unlocks at BaseUnlockDifficulty * DifficultyScaleMult^2
+				// Type 5 (CatalystX) unlocks at BaseUnlockDifficulty * DifficultyScaleMult^3
+				int32 UnlockTypeIndex = TypeIndex - 2; // 0 for BaseB, 1 for BaseC, etc.
+				int32 UnlockThreshold = FMath::RoundToInt(BaseUnlockDifficulty * FMath::Pow(DifficultyScaleMult, UnlockTypeIndex));
+				
+				if (DifficultyValue >= UnlockThreshold)
+				{
+					AvailableOrbTypes.Add(OrbType);
+				}
+			}
+		}
+		
+		// Fallback if filtering removed all types
+		if (AvailableOrbTypes.Num() == 0)
+		{
+			AvailableOrbTypes = { EOrbType::BaseA };
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Filtered to %d types based on difficulty (BaseUnlock=%d, ScaleMult=%.2f)"), 
+			AvailableOrbTypes.Num(), BaseUnlockDifficulty, DifficultyScaleMult);
+	}
+	
+	TArray<EOrbType> SelectedTypes;
+	
+	// Shuffle and take NumUniqueTypes
+	TArray<EOrbType> Shuffled = AvailableOrbTypes;
+	for (int32 i = Shuffled.Num() - 1; i > 0; i--)
+	{
+		int32 j = FMath::RandRange(0, i);
+		Shuffled.Swap(i, j);
+	}
+	for (int32 i = 0; i < NumUniqueTypes && i < Shuffled.Num(); i++)
+	{
+		SelectedTypes.Add(Shuffled[i]);
+	}
+	
+	// Generate random orb positions in a connected cluster
+	TSet<FHex> UsedPositions;
+	TArray<FOrbData> GeneratedOrbs;
+	FHex CenterPos(0, 0);
+	
+	// Start with center orb
+	FOrbData CenterOrb;
+	CenterOrb.Type = (uint8)SelectedTypes[0];
+	CenterOrb.dQ = 0;
+	CenterOrb.dR = 0;
+	GeneratedOrbs.Add(CenterOrb);
+	UsedPositions.Add(CenterPos);
+	
+	// Define hex neighbor offsets (6 directions)
+	TArray<FHex> HexNeighbors = {
+		FHex(1, 0), FHex(1, -1), FHex(0, -1),
+		FHex(-1, 0), FHex(-1, 1), FHex(0, 1)
+	};
+	
+	// Add remaining orbs one by one, always adjacent to at least one existing orb
+	for (int32 i = 1; i < TotalOrbs; i++)
+	{
+		// Collect all candidate positions (neighbors of existing orbs that aren't used)
+		TArray<FHex> CandidatePositions;
+		for (const FHex& ExistingPos : UsedPositions)
+		{
+			for (const FHex& Neighbor : HexNeighbors)
+			{
+				FHex Candidate = FHex(ExistingPos.Q + Neighbor.Q, ExistingPos.R + Neighbor.R);
+				if (!UsedPositions.Contains(Candidate))
+				{
+					CandidatePositions.AddUnique(Candidate);
+				}
+			}
+		}
+		
+		if (CandidatePositions.Num() == 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GenerateRandomCluster: Ran out of valid positions at orb %d of %d"), i, TotalOrbs);
+			break;
+		}
+		
+		// Randomly select a candidate position
+		int32 RandomIndex = FMath::RandRange(0, CandidatePositions.Num() - 1);
+		FHex SelectedPos = CandidatePositions[RandomIndex];
+		
+		// Assign a random type from SelectedTypes
+		EOrbType RandomType = SelectedTypes[FMath::RandRange(0, SelectedTypes.Num() - 1)];
+		
+		FOrbData NewOrb;
+		NewOrb.Type = (uint8)RandomType;
+		NewOrb.dQ = SelectedPos.Q;
+		NewOrb.dR = SelectedPos.R;
+		GeneratedOrbs.Add(NewOrb);
+		UsedPositions.Add(SelectedPos);
+	}
+	
+	// Generate bonds: bond each orb to its neighbors in the structure
+	TArray<TPair<int32, int32>> Bonds;
+	for (int32 i = 0; i < GeneratedOrbs.Num(); i++)
+	{
+		const FOrbData& Orb1 = GeneratedOrbs[i];
+		for (int32 j = i + 1; j < GeneratedOrbs.Num(); j++)
+		{
+			const FOrbData& Orb2 = GeneratedOrbs[j];
+		// Check if they're neighbors (distance = 1 in hex grid)
+		// Hex distance in axial coordinates: (|dq1-dq2| + |dq1+dr1-dq2-dr2| + |dr1-dr2|) / 2
+		// For adjacent hexes this equals 1
+		int32 dQ = Orb1.dQ - Orb2.dQ;
+		int32 dR = Orb1.dR - Orb2.dR;
+		int32 Dist = (FMath::Abs(dQ) + FMath::Abs(dQ + dR) + FMath::Abs(dR)) / 2;
+		if (Dist == 1)
+			{
+				Bonds.Add(TPair<int32, int32>(i, j));
+			}
+		}
+	}
+	
+	// Generate a unique template ID
+	uint8 TemplateId = Sim->GenerateNewTemplateId();
+	
+	// Register the template
+	FString TemplateName = FString::Printf(TEXT("Random_Difficulty%d_Types%d_Orbs%d"), 
+		DifficultyValue, NumUniqueTypes, GeneratedOrbs.Num());
+	Sim->RegisterClusterTemplate(TemplateId, GeneratedOrbs, Bonds, TemplateName);
+	
+	UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Registered template ID %d with %d orbs and %d bonds"), 
+		TemplateId, GeneratedOrbs.Num(), Bonds.Num());
+	
+	return (int32)TemplateId;
 }

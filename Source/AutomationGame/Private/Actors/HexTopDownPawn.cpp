@@ -265,68 +265,168 @@ void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceK
 void AHexTopDownPawn::SetInputMode7() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterOutput); }
 void AHexTopDownPawn::SetInputMode8() 
 { 
-	// Register a simple 3-tile template with different orb types if it doesn't exist
-	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
-	if (!Driver) return;
-	
-	USimWorldHex* Sim = Driver->GetSim();
-	if (!Sim) return;
-	
-	// Check if template 1 already exists
-	const TMap<uint8, USimWorldHex::FClusterTemplate>& Templates = Sim->GetClusterTemplates();
-	if (!Templates.Contains(1))
+	// Find GameManager to get DifficultyValue
+	AGameManager* GameManager = nullptr;
+	if (UWorld* World = GetWorld())
 	{
-		// Create a simple 3-tile template with different orb types
-		TArray<FOrbData> Orbs;
-		
-		// Center orb - BaseA (Red)
-		FOrbData Orb1;
-		Orb1.Type = (uint8)EOrbType::BaseA;
-		Orb1.dQ = 0;
-		Orb1.dR = 0;
-		Orbs.Add(Orb1);
-		
-		// Right orb - BaseB (Blue)
-		FOrbData Orb2;
-		Orb2.Type = (uint8)EOrbType::BaseB;
-		Orb2.dQ = 1;
-		Orb2.dR = 0;
-		Orbs.Add(Orb2);
-		
-		// Bottom-right orb - BaseC (Green)
-		FOrbData Orb3;
-		Orb3.Type = (uint8)EOrbType::BaseC;
-		Orb3.dQ = 0;
-		Orb3.dR = 1;
-		Orbs.Add(Orb3);
-		
-		// Bonds between all three orbs
-		TArray<TPair<int32, int32>> Bonds;
-		Bonds.Add(TPair<int32, int32>(0, 1)); // Center to Right
-		Bonds.Add(TPair<int32, int32>(0, 2)); // Center to Bottom-right
-		
-		// Register template with ID 1
-		Sim->RegisterClusterTemplate(1, Orbs, Bonds, TEXT("Simple_3Tile_Template"));
-		
-		UE_LOG(LogTemp, Log, TEXT("SetInputMode8: Registered simple 3-tile template with ID 1"));
-		
-		if (GEngine)
+		for (TActorIterator<AGameManager> It(World); It; ++It)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, 
-				TEXT("Registered 3-tile template: Red(center), Blue(right), Green(bottom-right)"));
+			GameManager = *It;
+			break;
 		}
 	}
 	
-	if (Placer) 
+	if (!GameManager)
 	{
-		Placer->SetPlaceKind(EPlaceKind::ClusterOutput);
-		// Select template 1 if it exists
-		Placer->SetClusterTemplateToId(1);
+		UE_LOG(LogTemp, Warning, TEXT("SetInputMode8: No GameManager found"));
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("No GameManager found"));
+		}
+		return;
+	}
+	
+	// Get the simulation to access templates
+	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	if (!Driver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetInputMode8: No OrbSimDriver found"));
+		return;
+	}
+	
+	USimWorldHex* Sim = Driver->GetSim();
+	if (!Sim)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetInputMode8: No Sim found"));
+		return;
+	}
+	
+	// Generate a random cluster based on difficulty
+	int32 TemplateId = GameManager->GenerateRandomCluster();
+	
+	if (TemplateId < 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetInputMode8: Failed to generate cluster"));
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("Failed to generate cluster"));
+		}
+		return;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("SetInputMode8: Generated cluster template with ID %d"), TemplateId);
+	
+	// Get the template to convert it into a blueprint
+	const USimWorldHex::FClusterTemplate* Template = Sim->GetClusterTemplates().Find((uint8)TemplateId);
+	if (!Template)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetInputMode8: Template %d not found"), TemplateId);
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red, TEXT("Template not found"));
+		}
+		return;
+	}
+	
+	// Clear any existing blueprint
+	ClearSelection();
+	
+	// Convert template into blueprint tiles (ClusterOutput tiles)
+	for (const FOrbData& Orb : Template->Orbs)
+	{
+		// Create a FBlueprintTile for each orb in the cluster
+		FBlueprintTile BlueprintTile;
+		BlueprintTile.LocalHex = FHex(Orb.dQ, Orb.dR);
+		BlueprintTile.TileType = ETileKind::ClusterOutput;
+		BlueprintTile.TileDirection = (uint8)TemplateId; // Store template ID in TileDirection
+		BlueprintTiles.Add(BlueprintTile);
+	}
+	
+	// Enter blueprint placement mode
+	bBlueprintPlacementMode = true;
+	bBlueprintMode = false;
+	BlueprintRotation = 0;
+	BlueprintPlacementOffset = FHex(0, 0);
+	
+	// Disable HexPlacementComponent preview when in blueprint mode
+	if (Placer)
+	{
+		Placer->SetBlueprintMode(true);
+	}
+	
+	if (GEngine)
+	{
+		FString Msg = FString::Printf(TEXT("Generated random cluster (ID: %d, Difficulty: %d) - %d tiles ready to place"), TemplateId, GameManager->DifficultyValue, BlueprintTiles.Num());
+		GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Green, Msg);
 	}
 }
 
 void AHexTopDownPawn::SelectionActivePressed() { bTypeSelectionActive = true; }
 void AHexTopDownPawn::SelectionActiveReleased() { bTypeSelectionActive = false; }
+
+void AHexTopDownPawn::CycleInputTypeNext() 
+{ 
+	// Check if we're in Kind8 blueprint placement mode with TypeSelectionActive
+	if (bBlueprintPlacementMode && bTypeSelectionActive && BlueprintTiles.Num() > 0)
+	{
+		// Find GameManager to adjust DifficultyValue
+		AGameManager* GameManager = nullptr;
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				GameManager = *It;
+				break;
+			}
+		}
+		
+		if (GameManager)
+		{
+			// Increase difficulty (decrease means harder, but the value increases)
+			GameManager->DifficultyValue = FMath::Min(GameManager->DifficultyValue + 1, 100);
+			UE_LOG(LogTemp, Log, TEXT("Kind8 difficulty increased to %d"), GameManager->DifficultyValue);
+			
+			// Regenerate the cluster
+			SetInputMode8();
+		}
+	}
+	else if (Placer)
+	{
+		Placer->CycleNextType();
+	}
+}
+
+void AHexTopDownPawn::CycleInputTypePrevious() 
+{ 
+	// Check if we're in Kind8 blueprint placement mode with TypeSelectionActive
+	if (bBlueprintPlacementMode && bTypeSelectionActive && BlueprintTiles.Num() > 0)
+	{
+		// Find GameManager to adjust DifficultyValue
+		AGameManager* GameManager = nullptr;
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				GameManager = *It;
+				break;
+			}
+		}
+		
+		if (GameManager)
+		{
+			// Decrease difficulty (increase means easier, but the value decreases)
+			GameManager->DifficultyValue = FMath::Max(GameManager->DifficultyValue - 1, 4);
+			UE_LOG(LogTemp, Log, TEXT("Kind8 difficulty decreased to %d"), GameManager->DifficultyValue);
+			
+			// Regenerate the cluster
+			SetInputMode8();
+		}
+	}
+	else if (Placer)
+	{
+		Placer->CyclePreviousType();
+	}
+}
 
 void AHexTopDownPawn::NextTick()
 {
@@ -1024,10 +1124,6 @@ void AHexTopDownPawn::PlaceBlueprint()
 		}
 	}
 	
-	// Track ClusterOutput template IDs to remap them to new unique IDs
-	TMap<uint8, uint8> TemplateIdRemap;
-	TArray<FHex> PlacedClusterOutputTiles;
-	
 	// Place each tile in the blueprint
 	for (const FBlueprintTile& BlueprintTile : BlueprintTiles)
 	{
@@ -1141,38 +1237,36 @@ void AHexTopDownPawn::PlaceBlueprint()
 				break;
 			}
 			
-			// Special handling for ClusterOutput tiles - remap template IDs to new unique IDs
+			// For ClusterOutput tiles in blueprints, check if TileDirection is a template ID
+			// If a template with that ID exists, this is a Kind8 multi-tile cluster placement
 			if (BlueprintTile.TileType == ETileKind::ClusterOutput)
 			{
-				uint8 OriginalTemplateId = BlueprintTile.TileDirection; // For ClusterOutput, Arg stores template ID
-				uint8 NewTemplateId = OriginalTemplateId;
-				
-				// Check if we've already remapped this template ID
-				if (uint8* RemappedId = TemplateIdRemap.Find(OriginalTemplateId))
+				const USimWorldHex::FClusterTemplate* Template = Sim->GetClusterTemplates().Find(BlueprintTile.TileDirection);
+				if (Template)
 				{
-					NewTemplateId = *RemappedId;
+					// This is a Kind8 placement - find the orb type from the template
+					// Find matching orb in template by dQ/dR from LocalHex
+					uint8 OrbTypeForThisTile = 0;
+					FHex LocalPos = BlueprintTile.LocalHex;
+					for (const FOrbData& Orb : Template->Orbs)
+					{
+						if (Orb.dQ == LocalPos.Q && Orb.dR == LocalPos.R)
+						{
+							OrbTypeForThisTile = Orb.Type;
+							break;
+						}
+					}
+					NewTile.Arg = OrbTypeForThisTile;
 				}
 				else
 				{
-					// Generate a new unique template ID and register the template
-					NewTemplateId = Sim->GenerateNewTemplateId();
-					TemplateIdRemap.Add(OriginalTemplateId, NewTemplateId);
-					
-					// Copy the template from the old ID to the new ID
-					if (const USimWorldHex::FClusterTemplate* SourceTemplate = Sim->GetClusterTemplates().Find(OriginalTemplateId))
-					{
-						FString NewName = FString::Printf(TEXT("Blueprint_%d_from_%d"), NewTemplateId, OriginalTemplateId);
-						Sim->RegisterClusterTemplate(NewTemplateId, SourceTemplate->Orbs, SourceTemplate->Bonds, NewName);
-						
-						UE_LOG(LogTemp, Log, TEXT("Blueprint: Remapped ClusterOutput template %d -> %d"), OriginalTemplateId, NewTemplateId);
-					}
+					// This is a regular copy/paste - TileDirection stores the orb type directly
+					NewTile.Arg = RotatedTileDirection;
 				}
-				
-				NewTile.Arg = NewTemplateId;
-				PlacedClusterOutputTiles.Add(FinalHex);
 			}
 			else
 			{
+				// For other tile types, TileDirection is the direction/type
 				NewTile.Arg = RotatedTileDirection;
 			}
 			
@@ -1184,74 +1278,16 @@ void AHexTopDownPawn::PlaceBlueprint()
 		}
 	}
 	
-	// If we placed any ClusterOutput tiles, rebuild cluster output relationships
-	if (PlacedClusterOutputTiles.Num() > 0)
+	// Force GameManager to rebuild grid to reflect tile changes
+	if (UWorld* GameWorld = GetWorld())
 	{
-		UE_LOG(LogTemp, Log, TEXT("Blueprint: Rebuilding cluster output relationships for %d tiles"), PlacedClusterOutputTiles.Num());
-		
-		// Build map of hex -> orb type for all placed ClusterOutput tiles
-		TMap<FHex, uint8> ClusterOutputOrbTypes;
-		
-		// Sync with TestLevelDirector to save orb types
-		ATestLevelDirector* TLD = nullptr;
-		if (UWorld* GameWorld = GetWorld())
+		for (TActorIterator<AGameManager> It(GameWorld); It; ++It)
 		{
-			for (TActorIterator<ATestLevelDirector> It(GameWorld); It; ++It)
+			AGameManager* GameManager = *It;
+			if (GameManager)
 			{
-				TLD = *It;
+				GameManager->Rebuild();
 				break;
-			}
-		}
-		
-		// For each placed ClusterOutput tile, save its orb type from the template
-		for (const FHex& TileHex : PlacedClusterOutputTiles)
-		{
-			if (const FTile* PlacedTile = Sim->TileMap.Find(TileHex))
-			{
-				uint8 TemplateId = PlacedTile->Arg;
-				if (const USimWorldHex::FClusterTemplate* Template = Sim->GetClusterTemplates().Find(TemplateId))
-				{
-					// Find the orb type for this specific tile position
-					// The template orbs are relative to the first placed tile
-					FHex BaseHex = PlacedClusterOutputTiles[0];
-					for (const FOrbData& OrbData : Template->Orbs)
-					{
-						FHex OrbHex(BaseHex.Q + OrbData.dQ, BaseHex.R + OrbData.dR);
-						if (OrbHex == TileHex)
-						{
-							// Add to map for RebuildClusterOutputRelationships
-							ClusterOutputOrbTypes.Add(TileHex, OrbData.Type);
-							
-							// Save to TLD if available
-							if (TLD)
-							{
-								TLD->UpsertClusterOutputTileSpec(TileHex, TemplateId, OrbData.Type);
-								UE_LOG(LogTemp, Log, TEXT("Blueprint: Saved ClusterOutput tile at (%d,%d) with template %d, type %d"), 
-									TileHex.Q, TileHex.R, TemplateId, OrbData.Type);
-							}
-							break;
-						}
-					}
-				}
-			}
-		}
-		
-		// Don't call RebuildClusterOutputRelationships here - the templates are already correctly registered
-		// with the right orb types. Calling it would risk overwriting templates if the saved orb types
-		// are missing or incomplete.
-		// Sim->RebuildClusterOutputRelationships() is only needed when loading from saved scenarios.
-		
-		// Force GameManager to rebuild grid to reflect merged tile changes
-		if (UWorld* GameWorld = GetWorld())
-		{
-			for (TActorIterator<AGameManager> It(GameWorld); It; ++It)
-			{
-				AGameManager* GameManager = *It;
-				if (GameManager)
-				{
-					GameManager->Rebuild();
-					break;
-				}
 			}
 		}
 	}
@@ -1878,18 +1914,29 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 					PreviewMesh = Placer->GetActualOrbMesh();
 				}
 				break;
-			case ETileKind::Output:
-				if (Placer)
+		case ETileKind::Output:
+			if (Placer)
+			{
+				PreviewMesh = Placer->GetActualOutputOrbMesh();
+				// For output tiles, handle grid orientation
+				if (Orientation == EHexOrientation::FlatTop)
 				{
-					PreviewMesh = Placer->GetActualOutputOrbMesh();
-					// For output tiles, handle grid orientation
-					if (Orientation == EHexOrientation::FlatTop)
-					{
-						PreviewYaw = 30.0f;
-					}
+					PreviewYaw = 30.0f;
 				}
-				break;
-			case ETileKind::Belt:
+			}
+			break;
+		case ETileKind::ClusterOutput:
+			if (Placer)
+			{
+				PreviewMesh = Placer->GetActualOutputOrbMesh();
+				// For output tiles, handle grid orientation
+				if (Orientation == EHexOrientation::FlatTop)
+				{
+					PreviewYaw = 30.0f;
+				}
+			}
+			break;
+		case ETileKind::Belt:
 				if (Placer)
 				{
 					PreviewMesh = Placer->GetActualBeltMesh();

@@ -29,7 +29,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Tick") int32 GetRemainingDelayTicks() const { return RemainingDelayTicks; }
 	/** Interpolation alpha [0..1) within the current fixed step. Resets to 0 when a tick is emitted. */
 	UFUNCTION(BlueprintCallable, Category = "Tick") float GetStepAlpha() const { return StepAlpha; }
-
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Tick") bool bShowTickDebug = false;
 	/** Helper to find a manager in the current world. */
 	UFUNCTION(BlueprintCallable, Category = "Tick", meta = (WorldContext = "WorldContextObject"))
 	static AGameTickManager* Get(const UObject* WorldContextObject);

@@ -53,7 +53,7 @@ void AGameTickManager::Tick(float DeltaSeconds)
 			OnFixedTick.Broadcast(Step);
 
 			// Optional lightweight on-screen mark
-			if (GEngine)
+			if (GEngine && bShowTickDebug)
 			{
 				GEngine->AddOnScreenDebugMessage(-1, 0.2f, FColor::White, TEXT("TICK"));
 			}

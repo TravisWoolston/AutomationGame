@@ -45,6 +45,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Startup")
 	FString InitialMapToLoad;
 
+	// ------------ Cluster Generation ------------
+	/** Difficulty value for generating random target cluster structures. TotalOrbs + NumOfUniqueOrbTypes = DifficultyValue */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "4"))
+	int32 DifficultyValue = 6;
+	
+	/** Base difficulty required to unlock the first orb type beyond BaseA (BaseA is always available, BaseB unlocks here) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "0"))
+	int32 BaseUnlockDifficulty = 6;
+	
+	/** Multiplier for exponential scaling of unlock thresholds. Higher values create faster progression. Default 1.5 gives thresholds: 6, 9, 13.5≈14, 20.25≈20 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "1.0"))
+	float DifficultyScaleMult = 1.5f;
+
 	// ------------ Grid Visual ------------
 	/** Center-to-center spacing for hexes (was TileSizeUU). */
 	UPROPERTY(EditAnywhere, Category = "Grid", meta = (ClampMin = "1.0"))
@@ -242,6 +255,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Grid")
 	FVector GetWorldForHex(const FHex& H) const;
+
+	// ------------ Cluster Generation ------------
+	/** Generate a random cluster structure based on DifficultyValue. Returns the template ID that was registered. */
+	UFUNCTION(BlueprintCallable, Category = "Cluster Generation")
+	int32 GenerateRandomCluster();
 
 protected:
 	virtual void BeginPlay() override;

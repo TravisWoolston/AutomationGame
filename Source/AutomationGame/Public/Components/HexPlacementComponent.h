@@ -144,6 +144,9 @@ public:
 	/** Get the current orb type for output placement */
 	UFUNCTION(BlueprintPure, Category = "Place|Output") EOrbType GetCurrentOutputOrbType() const;
 	
+	/** Get the current cluster template ID for ClusterOutput placement */
+	UFUNCTION(BlueprintPure, Category = "Place|ClusterOutput") uint8 GetCurrentClusterTemplateId() const;
+	
 	FVector HexToWorld(const FHex& H) const;
 protected:
 	virtual void BeginPlay() override;
