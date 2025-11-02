@@ -87,6 +87,18 @@ void AGameManager::OnConstruction(const FTransform&)
 	EnsureISM();
 	Rebuild();
 }
+
+void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	
+	// Clear icon cache if ClusterIconScale changed
+	if (PropertyChangedEvent.Property && PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(AGameManager, ClusterIconScale))
+	{
+		ClusterIcons.Empty();
+		UE_LOG(LogTemp, Log, TEXT("GameManager: ClusterIconScale changed - cleared icon cache"));
+	}
+}
 #endif
 
 void AGameManager::AutoFindRefs()
@@ -749,4 +761,367 @@ int32 AGameManager::GenerateRandomCluster()
 		TemplateId, GeneratedOrbs.Num(), Bonds.Num());
 	
 	return (int32)TemplateId;
+}
+
+// ------------ Cluster Storage Implementation ------------
+
+// Comparison operator for FClusterCanonicalKey
+bool FClusterCanonicalKey::operator==(const FClusterCanonicalKey& Other) const
+{
+	if (CanonicalOrbs.Num() != Other.CanonicalOrbs.Num()) return false;
+	if (CanonicalBonds.Num() != Other.CanonicalBonds.Num()) return false;
+
+	// Compare orbs
+	for (int32 i = 0; i < CanonicalOrbs.Num(); i++)
+	{
+		if (CanonicalOrbs[i].dQ != Other.CanonicalOrbs[i].dQ) return false;
+		if (CanonicalOrbs[i].dR != Other.CanonicalOrbs[i].dR) return false;
+		if (CanonicalOrbs[i].Type != Other.CanonicalOrbs[i].Type) return false;
+	}
+
+	// Compare bonds
+	for (int32 i = 0; i < CanonicalBonds.Num(); i++)
+	{
+		if (CanonicalBonds[i].Key != Other.CanonicalBonds[i].Key) return false;
+		if (CanonicalBonds[i].Value != Other.CanonicalBonds[i].Value) return false;
+	}
+
+	return true;
+}
+
+// Hash function for FClusterCanonicalKey
+uint32 GetTypeHash(const FClusterCanonicalKey& Key)
+{
+	uint32 Hash = 0;
+	
+	// Hash all orb data
+	for (const FOrbData& Orb : Key.CanonicalOrbs)
+	{
+		Hash = HashCombine(Hash, ::GetTypeHash(Orb.dQ));
+		Hash = HashCombine(Hash, ::GetTypeHash(Orb.dR));
+		Hash = HashCombine(Hash, ::GetTypeHash(Orb.Type));
+	}
+	
+	// Hash all bonds
+	for (const TPair<int32, int32>& Bond : Key.CanonicalBonds)
+	{
+		Hash = HashCombine(Hash, ::GetTypeHash(Bond.Key));
+		Hash = HashCombine(Hash, ::GetTypeHash(Bond.Value));
+	}
+	
+	return Hash;
+}
+
+FClusterCanonicalKey AGameManager::GenerateCanonicalKey(const USimWorldHex::FClusterTemplate& ClusterTemplate) const
+{
+	FClusterCanonicalKey Key;
+
+	// Normalize the cluster: translate so the leftmost-topmost orb is at (0,0)
+	if (ClusterTemplate.Orbs.Num() == 0)
+	{
+		return Key; // Empty cluster
+	}
+
+	// Find the minimum dQ and dR values
+	int32 MinQ = ClusterTemplate.Orbs[0].dQ;
+	int32 MinR = ClusterTemplate.Orbs[0].dR;
+	for (const FOrbData& Orb : ClusterTemplate.Orbs)
+	{
+		MinQ = FMath::Min(MinQ, Orb.dQ);
+		MinR = FMath::Min(MinR, Orb.dR);
+	}
+
+	// Normalize all orbs by subtracting the minimum
+	for (const FOrbData& Orb : ClusterTemplate.Orbs)
+	{
+		FOrbData NormalizedOrb = Orb;
+		NormalizedOrb.dQ -= MinQ;
+		NormalizedOrb.dR -= MinR;
+		// Don't include ItemId in canonical representation
+		NormalizedOrb.ItemId = 0;
+		Key.CanonicalOrbs.Add(NormalizedOrb);
+	}
+
+	// Sort orbs by dQ, then dR, then Type for consistent ordering
+	Key.CanonicalOrbs.Sort([](const FOrbData& A, const FOrbData& B) {
+		if (A.dQ != B.dQ) return A.dQ < B.dQ;
+		if (A.dR != B.dR) return A.dR < B.dR;
+		return A.Type < B.Type;
+	});
+
+	// Normalize bonds to use indices into the sorted array
+	// First, create a map from old indices to new indices
+	TMap<int32, int32> OldToNewIndex;
+	for (int32 OldIdx = 0; OldIdx < ClusterTemplate.Orbs.Num(); OldIdx++)
+	{
+		const FOrbData& OriginalOrb = ClusterTemplate.Orbs[OldIdx];
+		for (int32 NewIdx = 0; NewIdx < Key.CanonicalOrbs.Num(); NewIdx++)
+		{
+			const FOrbData& CanonicalOrb = Key.CanonicalOrbs[NewIdx];
+			// Check if this is the same orb (after normalization)
+			if (OriginalOrb.dQ - MinQ == CanonicalOrb.dQ &&
+				OriginalOrb.dR - MinR == CanonicalOrb.dR &&
+				OriginalOrb.Type == CanonicalOrb.Type)
+			{
+				OldToNewIndex.Add(OldIdx, NewIdx);
+				break;
+			}
+		}
+	}
+
+	// Remap bonds to use new indices
+	for (const TPair<int32, int32>& OriginalBond : ClusterTemplate.Bonds)
+	{
+		if (int32* NewKey = OldToNewIndex.Find(OriginalBond.Key))
+		{
+			if (int32* NewValue = OldToNewIndex.Find(OriginalBond.Value))
+			{
+				// Ensure bonds are always in sorted order (smaller index first)
+				int32 A = FMath::Min(*NewKey, *NewValue);
+				int32 B = FMath::Max(*NewKey, *NewValue);
+				Key.CanonicalBonds.Add(TPair<int32, int32>(A, B));
+			}
+		}
+	}
+
+	// Sort bonds for consistent ordering
+	Key.CanonicalBonds.Sort([](const TPair<int32, int32>& A, const TPair<int32, int32>& B) {
+		if (A.Key != B.Key) return A.Key < B.Key;
+		return A.Value < B.Value;
+	});
+
+	return Key;
+}
+
+void AGameManager::AddClusterToStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate)
+{
+	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
+	
+	if (int32* ExistingCount = ClusterCounts.Find(Key))
+	{
+		// Increment existing count
+		(*ExistingCount)++;
+		// UE_LOG(LogTemp, Log, TEXT("Added cluster to storage - incremented count to %d"), *ExistingCount);
+	}
+	else
+	{
+		// Add new cluster
+		ClusterCounts.Add(Key, 1);
+		StoredClusterTemplates.Add(Key, ClusterTemplate);
+		// UE_LOG(LogTemp, Log, TEXT("Added new cluster to storage (count: 1)"));
+	}
+}
+
+int32 AGameManager::GetClusterCount(const USimWorldHex::FClusterTemplate& ClusterTemplate) const
+{
+	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
+	if (const int32* Count = ClusterCounts.Find(Key))
+	{
+		return *Count;
+	}
+	return 0;
+}
+
+void AGameManager::GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& OutTemplates, TArray<int32>& OutCounts) const
+{
+	OutTemplates.Empty();
+	OutCounts.Empty();
+
+	for (const auto& KV : ClusterCounts)
+	{
+		if (const USimWorldHex::FClusterTemplate* Template = StoredClusterTemplates.Find(KV.Key))
+		{
+			OutTemplates.Add(*Template);
+			OutCounts.Add(KV.Value);
+		}
+	}
+}
+
+void AGameManager::ClearClusterStorage()
+{
+	ClusterCounts.Empty();
+	StoredClusterTemplates.Empty();
+	ClusterIcons.Empty();
+	UE_LOG(LogTemp, Log, TEXT("Cleared all cluster storage"));
+}
+
+void AGameManager::ClearClusterIcons()
+{
+	ClusterIcons.Empty();
+	UE_LOG(LogTemp, Log, TEXT("Cleared all cluster icons"));
+}
+
+UTexture2D* AGameManager::GenerateClusterIcon(const USimWorldHex::FClusterTemplate& ClusterTemplate)
+{
+	// Create a larger 256x256 texture for better detail
+	const int32 IconSize = 256;
+	TArray<FColor> Pixels;
+	Pixels.SetNum(IconSize * IconSize);
+
+	// Fill with transparent background
+	for (FColor& Pixel : Pixels)
+	{
+		Pixel = FColor(0, 0, 0, 0);
+	}
+
+	// Get OrbMaterialManager for colors
+	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
+	
+	// Calculate bounds to fit all orbs
+	int32 MinQ = INT_MAX, MaxQ = INT_MIN;
+	int32 MinR = INT_MAX, MaxR = INT_MIN;
+	for (const FOrbData& Orb : ClusterTemplate.Orbs)
+	{
+		MinQ = FMath::Min(MinQ, Orb.dQ);
+		MaxQ = FMath::Max(MaxQ, Orb.dQ);
+		MinR = FMath::Min(MinR, Orb.dR);
+		MaxR = FMath::Max(MaxR, Orb.dR);
+	}
+
+	// Calculate the center of the cluster for proper centering
+	float CenterQ = (MinQ + MaxQ) * 0.5f;
+	float CenterR = (MinR + MaxR) * 0.5f;
+	
+	// Calculate scale to fit everything
+	int32 HexWidth = MaxQ - MinQ + 1;
+	int32 HexHeight = MaxR - MinR + 1;
+	
+	// Use ClusterIconScale to adjust overall icon size
+	const float BaseOrbRadius = 18.0f;
+	const float OrbRadius = BaseOrbRadius * ClusterIconScale;
+	const float Padding = OrbRadius; // Minimal padding - just enough for orb radius
+	
+	// Calculate scale with proper padding to fit everything
+	const float ScaleX = (IconSize - Padding * 2) / (HexWidth * 1.732f); // sqrt(3) for hex width
+	const float ScaleY = (IconSize - Padding * 2) / (HexHeight * 1.5f);
+	const float Scale = FMath::Min(ScaleX, ScaleY); // Removed extra 0.85f scaling
+	for (const FOrbData& Orb : ClusterTemplate.Orbs)
+	{
+		// Convert hex coordinates to pixel coordinates (pointy-top hex), offset by cluster center
+		float OrbCenterX = ((Orb.dQ - CenterQ) * 1.732f + (Orb.dR - CenterR) * 0.866f) * Scale;
+		float OrbCenterY = (Orb.dR - CenterR) * 1.5f * Scale;
+		
+		// Center in the icon
+		OrbCenterX += IconSize * 0.5f;
+		OrbCenterY += IconSize * 0.5f;
+
+		// Get color for this orb type
+		EOrbType OrbType = (EOrbType)Orb.Type;
+		FLinearColor OrbColor = MaterialManager ? MaterialManager->GetOrbTypeUIColor(OrbType) : FLinearColor::White;
+		FColor PixelColor = OrbColor.ToFColor(true);
+
+		// Draw a filled circle
+		for (int32 Y = 0; Y < IconSize; Y++)
+		{
+			for (int32 X = 0; X < IconSize; X++)
+			{
+				float Dx = X - OrbCenterX;
+				float Dy = Y - OrbCenterY;
+				float Distance = FMath::Sqrt(Dx * Dx + Dy * Dy);
+				
+				if (Distance <= OrbRadius)
+				{
+					int32 Index = Y * IconSize + X;
+					if (Index >= 0 && Index < Pixels.Num())
+					{
+						Pixels[Index] = PixelColor;
+					}
+				}
+			}
+		}
+	}
+
+	// Draw bonds as lines - scale thickness with icon scale
+	const float BaseLineThickness = 3.0f;
+	const float LineThickness = BaseLineThickness * ClusterIconScale;
+	for (const TPair<int32, int32>& Bond : ClusterTemplate.Bonds)
+	{
+		if (Bond.Key >= 0 && Bond.Key < ClusterTemplate.Orbs.Num() &&
+			Bond.Value >= 0 && Bond.Value < ClusterTemplate.Orbs.Num())
+		{
+			const FOrbData& OrbA = ClusterTemplate.Orbs[Bond.Key];
+			const FOrbData& OrbB = ClusterTemplate.Orbs[Bond.Value];
+
+			// Convert hex coordinates to pixel coordinates, offset by cluster center
+			float X1 = ((OrbA.dQ - CenterQ) * 1.732f + (OrbA.dR - CenterR) * 0.866f) * Scale + IconSize * 0.5f;
+			float Y1 = (OrbA.dR - CenterR) * 1.5f * Scale + IconSize * 0.5f;
+			float X2 = ((OrbB.dQ - CenterQ) * 1.732f + (OrbB.dR - CenterR) * 0.866f) * Scale + IconSize * 0.5f;
+			float Y2 = (OrbB.dR - CenterR) * 1.5f * Scale + IconSize * 0.5f;
+
+			// Draw a line using Bresenham's algorithm
+			int32 X1i = FMath::RoundToInt(X1);
+			int32 Y1i = FMath::RoundToInt(Y1);
+			int32 X2i = FMath::RoundToInt(X2);
+			int32 Y2i = FMath::RoundToInt(Y2);
+
+			int32 Dx = FMath::Abs(X2i - X1i);
+			int32 Dy = FMath::Abs(Y2i - Y1i);
+			int32 Sx = (X1i < X2i) ? 1 : -1;
+			int32 Sy = (Y1i < Y2i) ? 1 : -1;
+			int32 Err = Dx - Dy;
+
+			int32 X = X1i, Y = Y1i;
+			int32 HalfThickness = FMath::Max(1, (int32)(LineThickness / 2.0f));
+			while (true)
+			{
+				// Draw a thicker line by drawing multiple pixels around each point
+				for (int32 OffsetY = -HalfThickness; OffsetY <= HalfThickness; OffsetY++)
+				{
+					for (int32 OffsetX = -HalfThickness; OffsetX <= HalfThickness; OffsetX++)
+					{
+						int32 DrawX = X + OffsetX;
+						int32 DrawY = Y + OffsetY;
+						if (DrawX >= 0 && DrawX < IconSize && DrawY >= 0 && DrawY < IconSize)
+						{
+							int32 Index = DrawY * IconSize + DrawX;
+							if (Index >= 0 && Index < Pixels.Num())
+							{
+								Pixels[Index] = FColor::White;
+							}
+						}
+					}
+				}
+
+				if (X == X2i && Y == Y2i) break;
+
+				int32 Err2 = Err * 2;
+				if (Err2 > -Dy) { Err -= Dy; X += Sx; }
+				if (Err2 < Dx) { Err += Dx; Y += Sy; }
+			}
+		}
+	}
+
+	// Create texture from pixel data
+	UTexture2D* Texture = UTexture2D::CreateTransient(IconSize, IconSize, PF_B8G8R8A8);
+	if (Texture)
+	{
+		FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
+		void* TextureData = Mip.BulkData.Lock(LOCK_READ_WRITE);
+		FMemory::Memcpy(TextureData, Pixels.GetData(), Pixels.Num() * sizeof(FColor));
+		Mip.BulkData.Unlock();
+		
+		Texture->UpdateResource();
+	}
+
+	return Texture;
+}
+
+UTexture2D* AGameManager::GetClusterIcon(const USimWorldHex::FClusterTemplate& ClusterTemplate)
+{
+	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
+	
+	// Check if icon already exists
+	if (UTexture2D** ExistingIcon = ClusterIcons.Find(Key))
+	{
+		return *ExistingIcon;
+	}
+
+	// Generate new icon
+	UTexture2D* NewIcon = GenerateClusterIcon(ClusterTemplate);
+	if (NewIcon)
+	{
+		ClusterIcons.Add(Key, NewIcon);
+	}
+
+	return NewIcon;
 }

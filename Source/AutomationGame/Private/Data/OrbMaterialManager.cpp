@@ -2,12 +2,14 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "UObject/UnrealType.h"
+#include "Math/Color.h"
 
 UOrbMaterialManager::UOrbMaterialManager()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	// Initialize with some default mappings if needed
 	InitializeDefaultCustomNames();
+	InitializeDefaultUIColors();
 }
 
 void UOrbMaterialManager::BeginPlay()
@@ -49,6 +51,17 @@ FString UOrbMaterialManager::GetOrbTypeDisplayName(EOrbType OrbType) const
 	
 	// Fallback to enum name
 	return UEnum::GetValueAsString(OrbType);
+}
+
+FLinearColor UOrbMaterialManager::GetOrbTypeUIColor(EOrbType OrbType) const
+{
+	if (const FLinearColor* FoundColor = OrbTypeUIColors.Find(OrbType))
+	{
+		return *FoundColor;
+	}
+	
+	// Fallback to a default color (white)
+	return FLinearColor::White;
 }
 
 UOrbMaterialManager* UOrbMaterialManager::FindInWorld(const UObject* WorldContextObject)
@@ -111,4 +124,15 @@ void UOrbMaterialManager::InitializeDefaultMaterials()
 			}
 		}
 	}
+}
+
+void UOrbMaterialManager::InitializeDefaultUIColors()
+{
+	// Set default UI colors for all orb types
+	OrbTypeUIColors.Add(EOrbType::None, FLinearColor(0.5f, 0.5f, 0.5f, 1.0f));           // Gray
+	OrbTypeUIColors.Add(EOrbType::BaseA, FLinearColor(0.0f, 0.8f, 1.0f, 1.0f));         // Light Blue
+	OrbTypeUIColors.Add(EOrbType::BaseB, FLinearColor(0.0f, 1.0f, 0.5f, 1.0f));         // Green
+	OrbTypeUIColors.Add(EOrbType::BaseC, FLinearColor(1.0f, 0.8f, 0.0f, 1.0f));         // Yellow
+	OrbTypeUIColors.Add(EOrbType::MetalA, FLinearColor(0.7f, 0.7f, 0.8f, 1.0f));        // Silver
+	OrbTypeUIColors.Add(EOrbType::CatalystX, FLinearColor(1.0f, 0.0f, 1.0f, 1.0f));    // Magenta
 }

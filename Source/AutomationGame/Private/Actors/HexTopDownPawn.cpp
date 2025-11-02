@@ -19,6 +19,8 @@
 #include "UI/ArmTimelineUMGWidget.h"
 #include "UI/ArmTimelineEditorWidget.h"
 #include "EngineUtils.h"
+#include "Data/OrbMaterialManager.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
 {
@@ -1976,9 +1978,62 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 			PreviewComp->SetWorldLocationAndRotation(PreviewWorldPos, FRotator(0.f, PreviewYaw, 0.f));
 			PreviewComp->SetVisibility(true);
 			
-			// Apply preview material if available
-			if (Placer && Placer->PreviewBaseMaterial)
+			// Apply preview material based on tile type
+			if (BlueprintTile.TileType == ETileKind::ClusterOutput)
 			{
+				// For ClusterOutput tiles, get the material from the template
+				UMaterialInterface* MaterialToApply = nullptr;
+				
+				// Check if this is a Kind8 generated cluster (TileDirection contains template ID)
+				if (Placer && Driver)
+				{
+					USimWorldHex* Sim = Driver->GetSim();
+					if (Sim)
+					{
+						const USimWorldHex::FClusterTemplate* Template = Sim->GetClusterTemplates().Find(BlueprintTile.TileDirection);
+						if (Template)
+						{
+							// Find the orb type for this specific tile position
+							FHex LocalPos = BlueprintTile.LocalHex;
+							for (const FOrbData& Orb : Template->Orbs)
+							{
+								if (Orb.dQ == LocalPos.Q && Orb.dR == LocalPos.R)
+								{
+									// Found the matching orb - get its material
+									if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
+									{
+										MaterialToApply = MaterialManager->GetMaterialForOrbType((EOrbType)Orb.Type);
+									}
+									break;
+								}
+							}
+						}
+					}
+				}
+				
+				// Apply the material with half opacity if found
+				if (MaterialToApply)
+				{
+					UMaterialInstanceDynamic* OutputMID = UMaterialInstanceDynamic::Create(MaterialToApply, this);
+					if (OutputMID)
+					{
+						OutputMID->SetScalarParameterValue(FName("Opacity"), 0.5f);
+						PreviewComp->SetMaterial(0, OutputMID);
+					}
+					else
+					{
+						PreviewComp->SetMaterial(0, MaterialToApply);
+					}
+				}
+				else if (Placer && Placer->PreviewBaseMaterial)
+				{
+					// Fallback to generic preview material
+					PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
+				}
+			}
+			else if (Placer && Placer->PreviewBaseMaterial)
+			{
+				// Apply generic preview material for non-ClusterOutput tiles
 				PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
 			}
 		}

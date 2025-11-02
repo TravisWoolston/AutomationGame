@@ -31,6 +31,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Orb Materials")
 	FString GetOrbTypeDisplayName(EOrbType OrbType) const;
 
+	/** Get the UI color for an orb type */
+	UFUNCTION(BlueprintPure, Category = "Orb Materials")
+	FLinearColor GetOrbTypeUIColor(EOrbType OrbType) const;
+
 	/** Find the material manager in the world */
 	UFUNCTION(BlueprintCallable, Category = "Orb Materials", meta = (WorldContext = "WorldContextObject"))
 	static UOrbMaterialManager* FindInWorld(const UObject* WorldContextObject);
@@ -42,6 +46,10 @@ public:
 	/** Initialize default materials for all orb types */
 	UFUNCTION(BlueprintCallable, Category = "Orb Materials")
 	void InitializeDefaultMaterials();
+
+	/** Initialize default UI colors for all orb types */
+	UFUNCTION(BlueprintCallable, Category = "Orb Materials")
+	void InitializeDefaultUIColors();
 
 public:
 	/** The mesh used for all orbs */
@@ -59,4 +67,8 @@ public:
 	/** Custom names for each orb type (editable in the editor) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Materials")
 	TMap<EOrbType, FString> OrbTypeCustomNames;
+
+	/** UI colors for each orb type (for icons and displays) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Colors")
+	TMap<EOrbType, FLinearColor> OrbTypeUIColors;
 };

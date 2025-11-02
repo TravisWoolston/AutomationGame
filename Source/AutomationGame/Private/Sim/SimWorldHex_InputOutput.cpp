@@ -1,4 +1,7 @@
 #include "Sim/SimWorldHex.h"
+#include "Framework/GameManager.h"
+#include "Actors/OrbSimDriver.h"
+#include "EngineUtils.h"
 
 // Input/Output processing functions
 void USimWorldHex::SpawnInputs()
@@ -610,6 +613,77 @@ void USimWorldHex::ProcessOutputs()
 							break;
 						}
 					}
+				}
+			}
+		}
+		
+		// Build cluster template for storage BEFORE removing items
+		if (NewAnimations.Num() > 0)
+		{
+			USimWorldHex::FClusterTemplate ProcessedClusterTemplate;
+			
+			// Use the first tile as the base
+			FHex BaseHex = NewAnimations[0].Hex;
+			
+			// Convert animations to canonical orb data
+			TMap<int32, int32> ItemIdToIndex;
+			for (const FAnimatedOrb& Anim : NewAnimations)
+			{
+				FOrbData OrbData;
+				OrbData.Type = (uint8)Anim.Item.Single.Type;
+				OrbData.Color = 0;
+				OrbData.dQ = Anim.Hex.Q - BaseHex.Q;
+				OrbData.dR = Anim.Hex.R - BaseHex.R;
+				OrbData.ItemId = 0; // Don't store ItemId in templates
+				
+				int32 Index = ProcessedClusterTemplate.Orbs.Add(OrbData);
+				ItemIdToIndex.Add(Anim.Item.Id, Index);
+			}
+			
+			// Convert bonds to template bonds
+			for (const FAnimatedOrb& Anim : NewAnimations)
+			{
+				if (const TArray<int32>* BondList = ItemToBonds.Find(Anim.Item.Id))
+				{
+					for (int32 BondIdx : *BondList)
+					{
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& Bond = Bonds[BondIdx];
+						if (!Bond.bActive) continue;
+						
+						int32 OtherItemId = (Bond.ItemA == Anim.Item.Id) ? Bond.ItemB : Bond.ItemA;
+						if (int32* OtherIndex = ItemIdToIndex.Find(OtherItemId))
+						{
+							int32 ThisIndex = ItemIdToIndex[Anim.Item.Id];
+							// Only add each bond once (smaller index first)
+							int32 A = FMath::Min(ThisIndex, *OtherIndex);
+							int32 B = FMath::Max(ThisIndex, *OtherIndex);
+							
+							bool bAlreadyExists = false;
+							for (const TPair<int32, int32>& ExistingBond : ProcessedClusterTemplate.Bonds)
+							{
+								if (ExistingBond.Key == A && ExistingBond.Value == B)
+								{
+									bAlreadyExists = true;
+									break;
+								}
+							}
+							
+							if (!bAlreadyExists)
+							{
+								ProcessedClusterTemplate.Bonds.Add(TPair<int32, int32>(A, B));
+							}
+						}
+					}
+				}
+			}
+			
+			// Notify GameManager to store this cluster
+			if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
+			{
+				if (Driver->GM)
+				{
+					Driver->GM->AddClusterToStorage(ProcessedClusterTemplate);
 				}
 			}
 		}

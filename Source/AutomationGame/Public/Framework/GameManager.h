@@ -4,6 +4,8 @@
 #include "GameFramework/Actor.h"
 #include "Actors/BasicArm.h"
 #include "Sim/ArmTypes.h"
+#include "Templates/Tuple.h"
+#include "Sim/SimWorldHex.h"
 #include "GameManager.generated.h"
 
 class AGameTickManager;
@@ -14,6 +16,21 @@ class AOrbSimDriver;
 class UGoldbergGrid; // NEW
 class UTexture2D;
 class UArmTimelineWidget;
+
+/** Canonical representation of a cluster structure for storage and comparison */
+struct AUTOMATIONGAME_API FClusterCanonicalKey
+{
+	/** Normalized orb data (sorted by dQ, then dR, then Type) */
+	TArray<FOrbData> CanonicalOrbs;
+
+	/** Bond pairs (indices into CanonicalOrbs array, sorted) */
+	TArray<TPair<int32, int32>> CanonicalBonds;
+
+	/** Comparison operators for use in TMap */
+	bool operator==(const FClusterCanonicalKey& Other) const;
+};
+
+FORCEINLINE uint32 GetTypeHash(const FClusterCanonicalKey& Key);
 /** Lightweight coordinator that also renders a simple hex or Goldberg grid via ISM. */
 UCLASS(BlueprintType)
 class AUTOMATIONGAME_API AGameManager : public AActor
@@ -57,6 +74,10 @@ public:
 	/** Multiplier for exponential scaling of unlock thresholds. Higher values create faster progression. Default 1.5 gives thresholds: 6, 9, 13.5≈14, 20.25≈20 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "1.0"))
 	float DifficultyScaleMult = 1.5f;
+
+	/** Scale factor for cluster icon generation. Higher values create larger orbs and bonds. Default 1.0 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "0.1"))
+	float ClusterIconScale = 1.0f;
 
 	// ------------ Grid Visual ------------
 	/** Center-to-center spacing for hexes (was TileSizeUU). */
@@ -261,11 +282,37 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Cluster Generation")
 	int32 GenerateRandomCluster();
 
+	// ------------ Cluster Storage ------------
+	/** Add a processed cluster to storage or increment its count if already exists (C++ only) */
+	void AddClusterToStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate);
+
+	/** Get the count for a specific cluster structure (C++ only) */
+	int32 GetClusterCount(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;
+
+	/** Get all stored cluster templates and their counts (C++ only) */
+	void GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& OutTemplates, TArray<int32>& OutCounts) const;
+
+	/** Clear all stored clusters (C++ only) */
+	void ClearClusterStorage();
+
+	/** Clear cached cluster icons (C++ only) */
+	void ClearClusterIcons();
+
+	/** Generate a canonical key for a cluster template (C++ only) */
+	FClusterCanonicalKey GenerateCanonicalKey(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;
+
+	/** Generate an icon texture for a cluster template (C++ only) */
+	UTexture2D* GenerateClusterIcon(const USimWorldHex::FClusterTemplate& ClusterTemplate);
+
+	/** Get the icon texture for a stored cluster (generates if needed) (C++ only) */
+	UTexture2D* GetClusterIcon(const USimWorldHex::FClusterTemplate& ClusterTemplate);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 #if WITH_EDITOR
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 
 private:
@@ -279,4 +326,11 @@ private:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* ISM = nullptr;
 	FVector LastGridCenter = FVector::ZeroVector;
 	UPROPERTY(Transient) UGoldbergGrid* GoldbergGrid = nullptr; // NEW
+
+	// Cluster storage (NOT UPROPERTY - they contain non-USTRUCT types)
+	TMap<FClusterCanonicalKey, int32> ClusterCounts;
+
+	TMap<FClusterCanonicalKey, USimWorldHex::FClusterTemplate> StoredClusterTemplates;
+
+	TMap<FClusterCanonicalKey, UTexture2D*> ClusterIcons;
 };
