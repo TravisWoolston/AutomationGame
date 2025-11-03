@@ -289,6 +289,15 @@ public:
 	/** Get the count for a specific cluster structure (C++ only) */
 	int32 GetClusterCount(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;
 
+	/** Check if a cluster structure exists in storage (C++ only) */
+	bool DoesClusterExistInStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;
+
+	/** Check if a cluster structure exists in storage by template ID using cached canonical key (C++ only) */
+	bool DoesClusterExistInStorageByTemplateId(uint8 TemplateId) const;
+
+	/** Cache the canonical key for a template ID (should be called when template is registered) (C++ only) */
+	void CacheCanonicalKeyForTemplate(uint8 TemplateId, const USimWorldHex::FClusterTemplate& ClusterTemplate);
+
 	/** Get all stored cluster templates and their counts (C++ only) */
 	void GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& OutTemplates, TArray<int32>& OutCounts) const;
 
@@ -333,4 +342,7 @@ private:
 	TMap<FClusterCanonicalKey, USimWorldHex::FClusterTemplate> StoredClusterTemplates;
 
 	TMap<FClusterCanonicalKey, UTexture2D*> ClusterIcons;
+
+	// Cached canonical keys by template ID (for efficient lookup without regenerating keys)
+	TMap<uint8, FClusterCanonicalKey> TemplateIdToCanonicalKey;
 };

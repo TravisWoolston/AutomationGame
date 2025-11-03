@@ -16,30 +16,32 @@
 #include "Data/OrbMaterialManager.h"
 
 // Local helper to build orthonormal basis from Up + arbitrary forward (similar to HexFactoryActor)
-namespace { inline void BuildSafeBasisGM(const FVector& InUpRaw, const FVector& InForwardRaw, FVector& OutF, FVector& OutR, FVector& OutU)
-{
-	OutU = InUpRaw.GetSafeNormal(); if (OutU.IsNearlyZero()) OutU = FVector::UpVector;
-	FVector F = InForwardRaw - OutU * FVector::DotProduct(InForwardRaw, OutU);
-	if (F.SizeSquared() < KINDA_SMALL_NUMBER)
+namespace {
+	inline void BuildSafeBasisGM(const FVector& InUpRaw, const FVector& InForwardRaw, FVector& OutF, FVector& OutR, FVector& OutU)
 	{
-		F = FVector::CrossProduct(OutU, FVector::RightVector);
-		if (F.SizeSquared() < KINDA_SMALL_NUMBER) F = FVector::CrossProduct(OutU, FVector::ForwardVector);
-	}
-	OutF = F.GetSafeNormal();
-	OutR = FVector::CrossProduct(OutF, OutU).GetSafeNormal();
-	if (OutR.IsNearlyZero())
-	{
-		FVector Aux = FVector::CrossProduct(OutU, FVector::ForwardVector); if (Aux.IsNearlyZero()) Aux = FVector::CrossProduct(OutU, FVector::RightVector);
-		OutF = Aux.GetSafeNormal();
+		OutU = InUpRaw.GetSafeNormal(); if (OutU.IsNearlyZero()) OutU = FVector::UpVector;
+		FVector F = InForwardRaw - OutU * FVector::DotProduct(InForwardRaw, OutU);
+		if (F.SizeSquared() < KINDA_SMALL_NUMBER)
+		{
+			F = FVector::CrossProduct(OutU, FVector::RightVector);
+			if (F.SizeSquared() < KINDA_SMALL_NUMBER) F = FVector::CrossProduct(OutU, FVector::ForwardVector);
+		}
+		OutF = F.GetSafeNormal();
 		OutR = FVector::CrossProduct(OutF, OutU).GetSafeNormal();
+		if (OutR.IsNearlyZero())
+		{
+			FVector Aux = FVector::CrossProduct(OutU, FVector::ForwardVector); if (Aux.IsNearlyZero()) Aux = FVector::CrossProduct(OutU, FVector::RightVector);
+			OutF = Aux.GetSafeNormal();
+			OutR = FVector::CrossProduct(OutF, OutU).GetSafeNormal();
+		}
+		OutF = FVector::CrossProduct(OutU, OutR).GetSafeNormal();
 	}
-	OutF = FVector::CrossProduct(OutU, OutR).GetSafeNormal();
-} }
+}
 
 AGameManager::AGameManager()
 {
 	PrimaryActorTick.bCanEverTick = true; // needed for auto-recenter
-	
+
 	// Initialize timeline system defaults
 	bShowArmTimelines = false;
 	TimelineWidgetScale = 1.0f;
@@ -61,7 +63,7 @@ void AGameManager::BeginPlay()
 		TickManager ? *TickManager->GetName() : TEXT("null"),
 		OrbSimDriver ? *OrbSimDriver->GetName() : TEXT("null"),
 		AnchorLoc.X, AnchorLoc.Y, AnchorLoc.Z, TileSizeUU, Radius);
-	
+
 	// Apply timeline visibility settings to all existing arms
 	UpdateAllArmTimelineWidgets();
 }
@@ -91,7 +93,7 @@ void AGameManager::OnConstruction(const FTransform&)
 void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
-	
+
 	// Clear icon cache if ClusterIconScale changed
 	if (PropertyChangedEvent.Property && PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(AGameManager, ClusterIconScale))
 	{
@@ -116,7 +118,7 @@ void AGameManager::AutoFindRefs()
 		FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 		OrbSimDriver = W->SpawnActor<AOrbSimDriver>(OrbSimDriverClass, GetActorTransform(), S); // <-- typed
 	}
-	
+
 	// Sync OrbSimDriver parameters with GameManager (GameManager is the source of truth)
 	SyncOrbSimDriverParameters();
 }
@@ -186,7 +188,7 @@ void AGameManager::BuildGridInstances()
 		GoldbergGrid->Build(GoldbergFrequency, GetEffectiveSphereRadius(), Origin);
 		const TArray<FGoldbergCell>& Cells = GoldbergGrid->GetCells();
 		const bool bPointy = (GridOrientation == EHexOrientation::PointyTop);
-		for (int32 i=0;i<Cells.Num();++i)
+		for (int32 i = 0;i < Cells.Num();++i)
 		{
 			const FGoldbergCell& C = Cells[i];
 			if (C.bPentagon) continue; // leave pentagon slots empty for now
@@ -210,16 +212,16 @@ void AGameManager::BuildGridInstances()
 	if (bSphereGrid && OrbSimDriver)
 	{
 		TArray<FHex> Hexes; Hexes.Reserve((Radius * 2 + 1) * (Radius * 2 + 1));
-		float MinX=FLT_MAX, MaxX=-FLT_MAX, MinY=FLT_MAX, MaxY=-FLT_MAX;
-		for(int r=-Radius;r<=Radius;++r){ for(int q=-Radius;q<=Radius;++q){ int s=-q-r; if(FMath::Max3(FMath::Abs(q),FMath::Abs(r),FMath::Abs(s))>Radius) continue; Hexes.Add(FHex(q,r)); FVector2D XY=HexCoord::AxialToXY(FHexAxial(q,r), S, GridOrientation); MinX=FMath::Min(MinX,XY.X); MaxX=FMath::Max(MaxX,XY.X); MinY=FMath::Min(MinY,XY.Y); MaxY=FMath::Max(MaxY,XY.Y);} }
+		float MinX = FLT_MAX, MaxX = -FLT_MAX, MinY = FLT_MAX, MaxY = -FLT_MAX;
+		for (int r = -Radius;r <= Radius;++r) { for (int q = -Radius;q <= Radius;++q) { int s = -q - r; if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue; Hexes.Add(FHex(q, r)); FVector2D XY = HexCoord::AxialToXY(FHexAxial(q, r), S, GridOrientation); MinX = FMath::Min(MinX, XY.X); MaxX = FMath::Max(MaxX, XY.X); MinY = FMath::Min(MinY, XY.Y); MaxY = FMath::Max(MaxY, XY.Y); } }
 		const float SphereR = GetEffectiveSphereRadius();
-		OrbSimDriver->SetSphereMappingExtents(MinX,MaxX,MinY,MaxY,SphereR);
-		for(const FHex& H: Hexes){ if (Sim && Sim->TileMap.Contains(H)){ const FTile& PT=Sim->TileMap[H]; if(PT.Kind==ETileKind::Output) continue;} FVector P=OrbSimDriver->MapHexToWorld(H); FVector Radial=(P-Origin).GetSafeNormal(); if(Radial.IsNearlyZero()) Radial=FVector::UpVector; FVector East=FVector::CrossProduct(FVector::UpVector,Radial); if(East.IsNearlyZero()) East=FVector::CrossProduct(FVector::RightVector,Radial); East.Normalize(); FVector North=FVector::CrossProduct(Radial,East).GetSafeNormal(); FMatrix M(East,North,Radial,FVector::ZeroVector); FTransform X(M.Rotator(),P,FVector(1)); if (GridOrientation==EHexOrientation::PointyTop){ FQuat Off(Radial, FMath::DegreesToRadians(30.f)); X.ConcatenateRotation(Off);} ISM->AddInstance(X); }
+		OrbSimDriver->SetSphereMappingExtents(MinX, MaxX, MinY, MaxY, SphereR);
+		for (const FHex& H : Hexes) { if (Sim && Sim->TileMap.Contains(H)) { const FTile& PT = Sim->TileMap[H]; if (PT.Kind == ETileKind::Output) continue; } FVector P = OrbSimDriver->MapHexToWorld(H); FVector Radial = (P - Origin).GetSafeNormal(); if (Radial.IsNearlyZero()) Radial = FVector::UpVector; FVector East = FVector::CrossProduct(FVector::UpVector, Radial); if (East.IsNearlyZero()) East = FVector::CrossProduct(FVector::RightVector, Radial); East.Normalize(); FVector North = FVector::CrossProduct(Radial, East).GetSafeNormal(); FMatrix M(East, North, Radial, FVector::ZeroVector); FTransform X(M.Rotator(), P, FVector(1)); if (GridOrientation == EHexOrientation::PointyTop) { FQuat Off(Radial, FMath::DegreesToRadians(30.f)); X.ConcatenateRotation(Off); } ISM->AddInstance(X); }
 		return;
 	}
 	// planar path
-	const auto ToWorld=[S,Origin,this](int32 Q,int32 R){ FVector2D XY=HexCoord::AxialToXY(FHexAxial(Q,R),S,GridOrientation); FVector2D RotXY=HexCoord::Rotate2D(XY,GridYawDeg); return Origin+FVector(RotXY.X,RotXY.Y,0.f); };
-	for(int r=-Radius;r<=Radius;++r){ for(int q=-Radius;q<=Radius;++q){ int s=-q-r; if(FMath::Max3(FMath::Abs(q),FMath::Abs(r),FMath::Abs(s))>Radius) continue; if(Sim && Sim->TileMap.Contains(FHex(q,r))){ const FTile& PT=Sim->TileMap[FHex(q,r)]; if(PT.Kind==ETileKind::Output) continue;} FVector P=ToWorld(q,r); FRotator R(0.f, GridYawDeg + OriYawOffsetDegPlanar, 0.f); ISM->AddInstance(FTransform(R,P,FVector(1))); }}
+	const auto ToWorld = [S, Origin, this](int32 Q, int32 R) { FVector2D XY = HexCoord::AxialToXY(FHexAxial(Q, R), S, GridOrientation); FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg); return Origin + FVector(RotXY.X, RotXY.Y, 0.f); };
+	for (int r = -Radius;r <= Radius;++r) { for (int q = -Radius;q <= Radius;++q) { int s = -q - r; if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue; if (Sim && Sim->TileMap.Contains(FHex(q, r))) { const FTile& PT = Sim->TileMap[FHex(q, r)]; if (PT.Kind == ETileKind::Output) continue; } FVector P = ToWorld(q, r); FRotator R(0.f, GridYawDeg + OriYawOffsetDegPlanar, 0.f); ISM->AddInstance(FTransform(R, P, FVector(1))); } }
 }
 
 void AGameManager::Rebuild()
@@ -307,7 +309,7 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 
 		const int32 ArmIndex = Sim->AddArm(ArmState);
 		Arm->SimArmIndex = ArmIndex;
-		
+
 		// Now that SimArmIndex is set, we can call SetProgram which will properly expand Reset commands
 		Arm->SetProgram(Program, bLoop);
 		Arm->Start();
@@ -342,10 +344,10 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 
 void AGameManager::SyncOrbSimDriverParameters()
 {
-	if (!OrbSimDriver) return; 
+	if (!OrbSimDriver) return;
 	OrbSimDriver->SetGridParameters(GridOrientation, GridYawDeg, TileSizeUU, GridAnchor);
 	OrbSimDriver->ApplySphereSettings(bSphereGrid, GetEffectiveSphereRadius());
-	UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver params Orientation=%d Yaw=%.1f TileSpacing=%.1f SphereR=%.1f Auto=%d"), (int32)GridOrientation, GridYawDeg, TileSizeUU, GetEffectiveSphereRadius(), bAutoSphereRadius?1:0);
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver params Orientation=%d Yaw=%.1f TileSpacing=%.1f SphereR=%.1f Auto=%d"), (int32)GridOrientation, GridYawDeg, TileSizeUU, GetEffectiveSphereRadius(), bAutoSphereRadius ? 1 : 0);
 }
 
 FVector AGameManager::GetWorldForHex(const FHex& H) const
@@ -367,9 +369,9 @@ FVector AGameManager::GetWorldForHex(const FHex& H) const
 void AGameManager::SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Textures)
 {
 	CommandTextures = Textures;
-	
+
 	UE_LOG(LogTemp, Log, TEXT("GameManager: SetCommandTextures - %d textures set"), Textures.Num());
-	
+
 	// Update all existing arm timeline widgets
 	if (UWorld* World = GetWorld())
 	{
@@ -394,15 +396,15 @@ UTexture2D* AGameManager::GetTextureForCommand(EArmCmd Command) const
 	{
 		return const_cast<UTexture2D*>(*FoundTexture);
 	}
-	
+
 	return DefaultCommandTexture;
 }
 
 void AGameManager::SetTimelineVisibility(bool bVisible)
 {
 	bShowArmTimelines = bVisible;
-	
-	
+
+
 	// Update all existing arm timeline widgets
 	if (UWorld* World = GetWorld())
 	{
@@ -428,7 +430,7 @@ void AGameManager::UpdateArmTimeline(ABasicArm* Arm, int32 CommandIndex, float P
 	{
 		return;
 	}
-	
+
 	UArmTimelineWidget* TimelineWidget = Arm->FindComponentByClass<UArmTimelineWidget>();
 	if (TimelineWidget)
 	{
@@ -438,7 +440,7 @@ void AGameManager::UpdateArmTimeline(ABasicArm* Arm, int32 CommandIndex, float P
 
 void AGameManager::UpdateAllArmTimelineWidgets()
 {
-	
+
 	// Update all existing arm timeline widgets with current settings
 	if (UWorld* World = GetWorld())
 	{
@@ -482,7 +484,7 @@ ABasicArm* AGameManager::GetActiveArm() const
 	{
 		return nullptr;
 	}
-	
+
 	// Find the arm that owns this timeline widget
 	if (UWorld* World = GetWorld())
 	{
@@ -499,7 +501,7 @@ ABasicArm* AGameManager::GetActiveArm() const
 			}
 		}
 	}
-	
+
 	return nullptr;
 }
 
@@ -511,34 +513,34 @@ int32 AGameManager::GenerateRandomCluster()
 		UE_LOG(LogTemp, Warning, TEXT("GenerateRandomCluster: No OrbSimDriver found"));
 		return -1;
 	}
-	
+
 	USimWorldHex* Sim = OrbSimDriver->GetSim();
 	if (!Sim)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("GenerateRandomCluster: No Sim found"));
 		return -1;
 	}
-	
+
 	// Determine number of unique orb types and total orbs based on difficulty
 	// DifficultyValue = TotalOrbs + NumOfUniqueOrbTypes
 	// Examples: 4=1+3, 6=2+4 or 4+2, 9=3+6 or 5+4 or 7+2
 	int32 NumUniqueTypes = 0;
 	int32 TotalOrbs = 0;
-	
+
 	// Generate random valid combinations
 	// For difficulty 4: only option is 1 unique type + 3 orbs
 	// For difficulty 6: can be 2 types + 4 orbs OR 4 orbs + 2 types (same as 2+4)
 	// For difficulty 9: can be 3+6, 4+5, 5+4, 6+3, 7+2, 2+7
-	
+
 	// Start with at least 1 unique type and at least 1 orb
 	int32 MinTypes = 1;
 	int32 MaxOrbs = DifficultyValue - 1;
-	
+
 	// Randomly choose number of unique types (between 1 and approximately half the difficulty for variety)
 	int32 MaxTypes = FMath::Clamp(DifficultyValue / 2, 1, 6); // Cap at 6 orb types max
 	NumUniqueTypes = FMath::RandRange(MinTypes, MaxTypes);
 	TotalOrbs = DifficultyValue - NumUniqueTypes;
-	
+
 	// Ensure we have at least 1 orb per type minimum
 	if (TotalOrbs < NumUniqueTypes)
 	{
@@ -551,10 +553,10 @@ int32 AGameManager::GenerateRandomCluster()
 			TotalOrbs = DifficultyValue - 1;
 		}
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Difficulty=%d, UniqueTypes=%d, TotalOrbs=%d"), 
+
+	UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Difficulty=%d, UniqueTypes=%d, TotalOrbs=%d"),
 		DifficultyValue, NumUniqueTypes, TotalOrbs);
-	
+
 	// Generate list of unique orb types (randomly selected from available types)
 	// First, get all orb types that have valid materials from OrbMaterialManager
 	TArray<EOrbType> AllValidOrbTypes;
@@ -570,7 +572,7 @@ int32 AGameManager::GenerateRandomCluster()
 			EOrbType::MetalA,
 			EOrbType::CatalystX
 		};
-		
+
 		for (EOrbType OrbType : AllOrbTypes)
 		{
 			// Check if this orb type has a material assigned in the map
@@ -583,10 +585,10 @@ int32 AGameManager::GenerateRandomCluster()
 				}
 			}
 		}
-		
+
 		UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Found %d valid orb types with materials"), AllValidOrbTypes.Num());
 	}
-	
+
 	// If no valid types found from material manager, fallback to hardcoded difficulty-based types
 	TArray<EOrbType> AvailableOrbTypes;
 	if (AllValidOrbTypes.Num() == 0)
@@ -610,7 +612,7 @@ int32 AGameManager::GenerateRandomCluster()
 		}
 		else
 		{
-			AvailableOrbTypes = { EOrbType::BaseA, EOrbType::BaseB, EOrbType::BaseC, 
+			AvailableOrbTypes = { EOrbType::BaseA, EOrbType::BaseB, EOrbType::BaseC,
 								  EOrbType::MetalA, EOrbType::CatalystX };
 		}
 	}
@@ -618,13 +620,13 @@ int32 AGameManager::GenerateRandomCluster()
 	{
 		// Sort valid types by enum order to ensure consistent difficulty progression
 		AllValidOrbTypes.Sort();
-		
+
 		// Use exponential scaling to determine which types are unlocked based on difficulty
 		// For each type beyond BaseA (index 1), calculate its unlock threshold
 		for (EOrbType OrbType : AllValidOrbTypes)
 		{
 			int32 TypeIndex = (int32)OrbType;
-			
+
 			// BaseA (index 1) is always available starting at difficulty 4
 			if (TypeIndex == 1) // EOrbType::BaseA
 			{
@@ -639,26 +641,26 @@ int32 AGameManager::GenerateRandomCluster()
 				// Type 5 (CatalystX) unlocks at BaseUnlockDifficulty * DifficultyScaleMult^3
 				int32 UnlockTypeIndex = TypeIndex - 2; // 0 for BaseB, 1 for BaseC, etc.
 				int32 UnlockThreshold = FMath::RoundToInt(BaseUnlockDifficulty * FMath::Pow(DifficultyScaleMult, UnlockTypeIndex));
-				
+
 				if (DifficultyValue >= UnlockThreshold)
 				{
 					AvailableOrbTypes.Add(OrbType);
 				}
 			}
 		}
-		
+
 		// Fallback if filtering removed all types
 		if (AvailableOrbTypes.Num() == 0)
 		{
 			AvailableOrbTypes = { EOrbType::BaseA };
 		}
-		
-		UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Filtered to %d types based on difficulty (BaseUnlock=%d, ScaleMult=%.2f)"), 
+
+		UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Filtered to %d types based on difficulty (BaseUnlock=%d, ScaleMult=%.2f)"),
 			AvailableOrbTypes.Num(), BaseUnlockDifficulty, DifficultyScaleMult);
 	}
-	
+
 	TArray<EOrbType> SelectedTypes;
-	
+
 	// Shuffle and take NumUniqueTypes
 	TArray<EOrbType> Shuffled = AvailableOrbTypes;
 	for (int32 i = Shuffled.Num() - 1; i > 0; i--)
@@ -670,12 +672,12 @@ int32 AGameManager::GenerateRandomCluster()
 	{
 		SelectedTypes.Add(Shuffled[i]);
 	}
-	
+
 	// Generate random orb positions in a connected cluster
 	TSet<FHex> UsedPositions;
 	TArray<FOrbData> GeneratedOrbs;
 	FHex CenterPos(0, 0);
-	
+
 	// Start with center orb
 	FOrbData CenterOrb;
 	CenterOrb.Type = (uint8)SelectedTypes[0];
@@ -683,13 +685,13 @@ int32 AGameManager::GenerateRandomCluster()
 	CenterOrb.dR = 0;
 	GeneratedOrbs.Add(CenterOrb);
 	UsedPositions.Add(CenterPos);
-	
+
 	// Define hex neighbor offsets (6 directions)
 	TArray<FHex> HexNeighbors = {
 		FHex(1, 0), FHex(1, -1), FHex(0, -1),
 		FHex(-1, 0), FHex(-1, 1), FHex(0, 1)
 	};
-	
+
 	// Add remaining orbs one by one, always adjacent to at least one existing orb
 	for (int32 i = 1; i < TotalOrbs; i++)
 	{
@@ -706,20 +708,20 @@ int32 AGameManager::GenerateRandomCluster()
 				}
 			}
 		}
-		
+
 		if (CandidatePositions.Num() == 0)
 		{
 			UE_LOG(LogTemp, Warning, TEXT("GenerateRandomCluster: Ran out of valid positions at orb %d of %d"), i, TotalOrbs);
 			break;
 		}
-		
+
 		// Randomly select a candidate position
 		int32 RandomIndex = FMath::RandRange(0, CandidatePositions.Num() - 1);
 		FHex SelectedPos = CandidatePositions[RandomIndex];
-		
+
 		// Assign a random type from SelectedTypes
 		EOrbType RandomType = SelectedTypes[FMath::RandRange(0, SelectedTypes.Num() - 1)];
-		
+
 		FOrbData NewOrb;
 		NewOrb.Type = (uint8)RandomType;
 		NewOrb.dQ = SelectedPos.Q;
@@ -727,7 +729,7 @@ int32 AGameManager::GenerateRandomCluster()
 		GeneratedOrbs.Add(NewOrb);
 		UsedPositions.Add(SelectedPos);
 	}
-	
+
 	// Generate bonds: bond each orb to its neighbors in the structure
 	TArray<TPair<int32, int32>> Bonds;
 	for (int32 i = 0; i < GeneratedOrbs.Num(); i++)
@@ -736,30 +738,30 @@ int32 AGameManager::GenerateRandomCluster()
 		for (int32 j = i + 1; j < GeneratedOrbs.Num(); j++)
 		{
 			const FOrbData& Orb2 = GeneratedOrbs[j];
-		// Check if they're neighbors (distance = 1 in hex grid)
-		// Hex distance in axial coordinates: (|dq1-dq2| + |dq1+dr1-dq2-dr2| + |dr1-dr2|) / 2
-		// For adjacent hexes this equals 1
-		int32 dQ = Orb1.dQ - Orb2.dQ;
-		int32 dR = Orb1.dR - Orb2.dR;
-		int32 Dist = (FMath::Abs(dQ) + FMath::Abs(dQ + dR) + FMath::Abs(dR)) / 2;
-		if (Dist == 1)
+			// Check if they're neighbors (distance = 1 in hex grid)
+			// Hex distance in axial coordinates: (|dq1-dq2| + |dq1+dr1-dq2-dr2| + |dr1-dr2|) / 2
+			// For adjacent hexes this equals 1
+			int32 dQ = Orb1.dQ - Orb2.dQ;
+			int32 dR = Orb1.dR - Orb2.dR;
+			int32 Dist = (FMath::Abs(dQ) + FMath::Abs(dQ + dR) + FMath::Abs(dR)) / 2;
+			if (Dist == 1)
 			{
 				Bonds.Add(TPair<int32, int32>(i, j));
 			}
 		}
 	}
-	
+
 	// Generate a unique template ID
 	uint8 TemplateId = Sim->GenerateNewTemplateId();
-	
+
 	// Register the template
-	FString TemplateName = FString::Printf(TEXT("Random_Difficulty%d_Types%d_Orbs%d"), 
+	FString TemplateName = FString::Printf(TEXT("Random_Difficulty%d_Types%d_Orbs%d"),
 		DifficultyValue, NumUniqueTypes, GeneratedOrbs.Num());
 	Sim->RegisterClusterTemplate(TemplateId, GeneratedOrbs, Bonds, TemplateName);
-	
-	UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Registered template ID %d with %d orbs and %d bonds"), 
+
+	UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Registered template ID %d with %d orbs and %d bonds"),
 		TemplateId, GeneratedOrbs.Num(), Bonds.Num());
-	
+
 	return (int32)TemplateId;
 }
 
@@ -793,7 +795,7 @@ bool FClusterCanonicalKey::operator==(const FClusterCanonicalKey& Other) const
 uint32 GetTypeHash(const FClusterCanonicalKey& Key)
 {
 	uint32 Hash = 0;
-	
+
 	// Hash all orb data
 	for (const FOrbData& Orb : Key.CanonicalOrbs)
 	{
@@ -801,114 +803,250 @@ uint32 GetTypeHash(const FClusterCanonicalKey& Key)
 		Hash = HashCombine(Hash, ::GetTypeHash(Orb.dR));
 		Hash = HashCombine(Hash, ::GetTypeHash(Orb.Type));
 	}
-	
+
 	// Hash all bonds
 	for (const TPair<int32, int32>& Bond : Key.CanonicalBonds)
 	{
 		Hash = HashCombine(Hash, ::GetTypeHash(Bond.Key));
 		Hash = HashCombine(Hash, ::GetTypeHash(Bond.Value));
 	}
-	
+
 	return Hash;
 }
 
 FClusterCanonicalKey AGameManager::GenerateCanonicalKey(const USimWorldHex::FClusterTemplate& ClusterTemplate) const
 {
-	FClusterCanonicalKey Key;
+	auto RotateHex = [](int32 Q, int32 R) -> TPair<int32, int32> {
+		return TPair<int32, int32>(-R, Q + R);
+		};
 
-	// Normalize the cluster: translate so the leftmost-topmost orb is at (0,0)
-	if (ClusterTemplate.Orbs.Num() == 0)
-	{
-		return Key; // Empty cluster
-	}
+	auto CanonicalizeConfig = [](const TArray<FOrbData>& Orbs, const TArray<TPair<int32, int32>>& Bonds) -> FClusterCanonicalKey {
+		FClusterCanonicalKey Key;
 
-	// Find the minimum dQ and dR values
-	int32 MinQ = ClusterTemplate.Orbs[0].dQ;
-	int32 MinR = ClusterTemplate.Orbs[0].dR;
-	for (const FOrbData& Orb : ClusterTemplate.Orbs)
-	{
-		MinQ = FMath::Min(MinQ, Orb.dQ);
-		MinR = FMath::Min(MinR, Orb.dR);
-	}
-
-	// Normalize all orbs by subtracting the minimum
-	for (const FOrbData& Orb : ClusterTemplate.Orbs)
-	{
-		FOrbData NormalizedOrb = Orb;
-		NormalizedOrb.dQ -= MinQ;
-		NormalizedOrb.dR -= MinR;
-		// Don't include ItemId in canonical representation
-		NormalizedOrb.ItemId = 0;
-		Key.CanonicalOrbs.Add(NormalizedOrb);
-	}
-
-	// Sort orbs by dQ, then dR, then Type for consistent ordering
-	Key.CanonicalOrbs.Sort([](const FOrbData& A, const FOrbData& B) {
-		if (A.dQ != B.dQ) return A.dQ < B.dQ;
-		if (A.dR != B.dR) return A.dR < B.dR;
-		return A.Type < B.Type;
-	});
-
-	// Normalize bonds to use indices into the sorted array
-	// First, create a map from old indices to new indices
-	TMap<int32, int32> OldToNewIndex;
-	for (int32 OldIdx = 0; OldIdx < ClusterTemplate.Orbs.Num(); OldIdx++)
-	{
-		const FOrbData& OriginalOrb = ClusterTemplate.Orbs[OldIdx];
-		for (int32 NewIdx = 0; NewIdx < Key.CanonicalOrbs.Num(); NewIdx++)
+		if (Orbs.Num() == 0)
 		{
-			const FOrbData& CanonicalOrb = Key.CanonicalOrbs[NewIdx];
-			// Check if this is the same orb (after normalization)
-			if (OriginalOrb.dQ - MinQ == CanonicalOrb.dQ &&
-				OriginalOrb.dR - MinR == CanonicalOrb.dR &&
-				OriginalOrb.Type == CanonicalOrb.Type)
+			return Key;
+		}
+
+		// Find the minimum dQ and dR values
+		int32 MinQ = Orbs[0].dQ;
+		int32 MinR = Orbs[0].dR;
+		for (const FOrbData& Orb : Orbs)
+		{
+			MinQ = FMath::Min(MinQ, Orb.dQ);
+			MinR = FMath::Min(MinR, Orb.dR);
+		}
+
+		// Normalize all orbs by subtracting the minimum
+		for (const FOrbData& Orb : Orbs)
+		{
+			FOrbData NormalizedOrb = Orb;
+			NormalizedOrb.dQ -= MinQ;
+			NormalizedOrb.dR -= MinR;
+			NormalizedOrb.ItemId = 0; // Exclude ItemId from canonical representation
+			Key.CanonicalOrbs.Add(NormalizedOrb);
+		}
+
+		// Sort orbs by dQ, then dR, then Type for consistent ordering
+		Key.CanonicalOrbs.Sort([](const FOrbData& A, const FOrbData& B) {
+			if (A.dQ != B.dQ) return A.dQ < B.dQ;
+			if (A.dR != B.dR) return A.dR < B.dR;
+			return A.Type < B.Type;
+			});
+
+		// Create mapping from old indices to new sorted indices
+		TMap<int32, int32> OldToNewIndex;
+		for (int32 OldIdx = 0; OldIdx < Orbs.Num(); OldIdx++)
+		{
+			const FOrbData& OriginalOrb = Orbs[OldIdx];
+			for (int32 NewIdx = 0; NewIdx < Key.CanonicalOrbs.Num(); NewIdx++)
 			{
-				OldToNewIndex.Add(OldIdx, NewIdx);
-				break;
+				const FOrbData& CanonicalOrb = Key.CanonicalOrbs[NewIdx];
+				// Compare normalized coordinates and type
+				if (OriginalOrb.dQ - MinQ == CanonicalOrb.dQ &&
+					OriginalOrb.dR - MinR == CanonicalOrb.dR &&
+					OriginalOrb.Type == CanonicalOrb.Type)
+				{
+					OldToNewIndex.Add(OldIdx, NewIdx);
+					break;
+				}
+			}
+		}
+
+		// Remap bonds to use new sorted indices
+		for (const TPair<int32, int32>& OriginalBond : Bonds)
+		{
+			if (int32* NewKey = OldToNewIndex.Find(OriginalBond.Key))
+			{
+				if (int32* NewValue = OldToNewIndex.Find(OriginalBond.Value))
+				{
+					int32 A = FMath::Min(*NewKey, *NewValue);
+					int32 B = FMath::Max(*NewKey, *NewValue);
+					Key.CanonicalBonds.Add(TPair<int32, int32>(A, B));
+				}
+			}
+		}
+
+		// Sort bonds for consistent ordering
+		Key.CanonicalBonds.Sort([](const TPair<int32, int32>& A, const TPair<int32, int32>& B) {
+			if (A.Key != B.Key) return A.Key < B.Key;
+			return A.Value < B.Value;
+			});
+
+		return Key;
+		};
+
+	// Generate all six rotations and pick the lexicographically smallest
+	FClusterCanonicalKey BestKey;
+	bool bFirst = true;
+	int32 BestRotation = 0;
+
+	for (int32 Rotation = 0; Rotation < 6; Rotation++)
+	{
+		// Create rotated version of the cluster
+		TArray<FOrbData> RotatedOrbs = ClusterTemplate.Orbs;
+
+		// Apply rotation to all orbs
+		for (FOrbData& Orb : RotatedOrbs)
+		{
+			int32 CurrentQ = Orb.dQ;
+			int32 CurrentR = Orb.dR;
+
+			// Apply rotation N times
+			for (int32 r = 0; r < Rotation; r++)
+			{
+				TPair<int32, int32> Rotated = RotateHex(CurrentQ, CurrentR);
+				CurrentQ = Rotated.Key;
+				CurrentR = Rotated.Value;
+			}
+
+			Orb.dQ = CurrentQ;
+			Orb.dR = CurrentR;
+		}
+
+		// Bonds don't need rotation - they reference orb indices which don't change
+		FClusterCanonicalKey CandidateKey = CanonicalizeConfig(RotatedOrbs, ClusterTemplate.Bonds);
+
+		// Compare keys lexicographically
+		if (bFirst)
+		{
+			BestKey = CandidateKey;
+			BestRotation = Rotation;
+			bFirst = false;
+		}
+		else
+		{
+			// Compare orb arrays lexicographically
+			bool bCandidateIsLess = false;
+
+			if (CandidateKey.CanonicalOrbs.Num() != BestKey.CanonicalOrbs.Num())
+			{
+				bCandidateIsLess = CandidateKey.CanonicalOrbs.Num() < BestKey.CanonicalOrbs.Num();
+			}
+			else
+			{
+				// Compare orb by orb
+				for (int32 i = 0; i < CandidateKey.CanonicalOrbs.Num(); i++)
+				{
+					const FOrbData& CandOrb = CandidateKey.CanonicalOrbs[i];
+					const FOrbData& BestOrb = BestKey.CanonicalOrbs[i];
+
+					if (CandOrb.dQ != BestOrb.dQ)
+					{
+						bCandidateIsLess = CandOrb.dQ < BestOrb.dQ;
+						break;
+					}
+					if (CandOrb.dR != BestOrb.dR)
+					{
+						bCandidateIsLess = CandOrb.dR < BestOrb.dR;
+						break;
+					}
+					if (CandOrb.Type != BestOrb.Type)
+					{
+						bCandidateIsLess = CandOrb.Type < BestOrb.Type;
+						break;
+					}
+				}
+			}
+
+			// If orbs are identical, compare bonds
+			if (!bCandidateIsLess && CandidateKey.CanonicalOrbs.Num() == BestKey.CanonicalOrbs.Num())
+			{
+				// First check if all orbs are identical
+				bool bOrbsIdentical = true;
+				for (int32 i = 0; i < CandidateKey.CanonicalOrbs.Num(); i++)
+				{
+					const FOrbData& CandOrb = CandidateKey.CanonicalOrbs[i];
+					const FOrbData& BestOrb = BestKey.CanonicalOrbs[i];
+					if (CandOrb.dQ != BestOrb.dQ || CandOrb.dR != BestOrb.dR || CandOrb.Type != BestOrb.Type)
+					{
+						bOrbsIdentical = false;
+						break;
+					}
+				}
+
+				if (bOrbsIdentical)
+				{
+					// Compare bonds
+					for (int32 i = 0; i < FMath::Min(CandidateKey.CanonicalBonds.Num(), BestKey.CanonicalBonds.Num()); i++)
+					{
+						if (CandidateKey.CanonicalBonds[i].Key != BestKey.CanonicalBonds[i].Key)
+						{
+							bCandidateIsLess = CandidateKey.CanonicalBonds[i].Key < BestKey.CanonicalBonds[i].Key;
+							break;
+						}
+						if (CandidateKey.CanonicalBonds[i].Value != BestKey.CanonicalBonds[i].Value)
+						{
+							bCandidateIsLess = CandidateKey.CanonicalBonds[i].Value < BestKey.CanonicalBonds[i].Value;
+							break;
+						}
+					}
+
+					if (!bCandidateIsLess && CandidateKey.CanonicalBonds.Num() < BestKey.CanonicalBonds.Num())
+					{
+						bCandidateIsLess = true;
+					}
+				}
+			}
+
+			if (bCandidateIsLess)
+			{
+				BestKey = CandidateKey;
+				BestRotation = Rotation;
 			}
 		}
 	}
 
-	// Remap bonds to use new indices
-	for (const TPair<int32, int32>& OriginalBond : ClusterTemplate.Bonds)
-	{
-		if (int32* NewKey = OldToNewIndex.Find(OriginalBond.Key))
-		{
-			if (int32* NewValue = OldToNewIndex.Find(OriginalBond.Value))
-			{
-				// Ensure bonds are always in sorted order (smaller index first)
-				int32 A = FMath::Min(*NewKey, *NewValue);
-				int32 B = FMath::Max(*NewKey, *NewValue);
-				Key.CanonicalBonds.Add(TPair<int32, int32>(A, B));
-			}
-		}
-	}
+	UE_LOG(LogTemp, Verbose, TEXT("GenerateCanonicalKey: Selected rotation %d as canonical (%d orbs, %d bonds)"),
+		BestRotation, BestKey.CanonicalOrbs.Num(), BestKey.CanonicalBonds.Num());
 
-	// Sort bonds for consistent ordering
-	Key.CanonicalBonds.Sort([](const TPair<int32, int32>& A, const TPair<int32, int32>& B) {
-		if (A.Key != B.Key) return A.Key < B.Key;
-		return A.Value < B.Value;
-	});
-
-	return Key;
+	return BestKey;
 }
 
 void AGameManager::AddClusterToStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate)
 {
 	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
-	
+
+	// Log first orb of canonical key for debugging
+	if (Key.CanonicalOrbs.Num() > 0)
+	{
+		const FOrbData& FirstOrb = Key.CanonicalOrbs[0];
+		UE_LOG(LogTemp, Warning, TEXT("AddClusterToStorage: Canonical key has first orb at dQ=%d, dR=%d, Type=%d"),
+			FirstOrb.dQ, FirstOrb.dR, FirstOrb.Type);
+	}
+
 	if (int32* ExistingCount = ClusterCounts.Find(Key))
 	{
 		// Increment existing count
 		(*ExistingCount)++;
-		// UE_LOG(LogTemp, Log, TEXT("Added cluster to storage - incremented count to %d"), *ExistingCount);
+
 	}
 	else
 	{
 		// Add new cluster
 		ClusterCounts.Add(Key, 1);
 		StoredClusterTemplates.Add(Key, ClusterTemplate);
-		// UE_LOG(LogTemp, Log, TEXT("Added new cluster to storage (count: 1)"));
+
 	}
 }
 
@@ -920,6 +1058,33 @@ int32 AGameManager::GetClusterCount(const USimWorldHex::FClusterTemplate& Cluste
 		return *Count;
 	}
 	return 0;
+}
+
+bool AGameManager::DoesClusterExistInStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate) const
+{
+	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
+	return ClusterCounts.Contains(Key);
+}
+
+bool AGameManager::DoesClusterExistInStorageByTemplateId(uint8 TemplateId) const
+{
+	if (const FClusterCanonicalKey* CachedKey = TemplateIdToCanonicalKey.Find(TemplateId))
+	{
+		return ClusterCounts.Contains(*CachedKey);
+	}
+	return false;
+}
+
+void AGameManager::CacheCanonicalKeyForTemplate(uint8 TemplateId, const USimWorldHex::FClusterTemplate& ClusterTemplate)
+{
+	// Only cache if not already cached (templates shouldn't change structure)
+	if (!TemplateIdToCanonicalKey.Contains(TemplateId))
+	{
+		FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
+		TemplateIdToCanonicalKey.Add(TemplateId, Key);
+		//UE_LOG(LogTemp, Warning, TEXT("Cached canonical key for template %d (%d orbs, %d bonds)"),
+		//	TemplateId, Key.CanonicalOrbs.Num(), Key.CanonicalBonds.Num());
+	}
 }
 
 void AGameManager::GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& OutTemplates, TArray<int32>& OutCounts) const
@@ -966,7 +1131,7 @@ UTexture2D* AGameManager::GenerateClusterIcon(const USimWorldHex::FClusterTempla
 
 	// Get OrbMaterialManager for colors
 	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
-	
+
 	// Calculate bounds to fit all orbs
 	int32 MinQ = INT_MAX, MaxQ = INT_MIN;
 	int32 MinR = INT_MAX, MaxR = INT_MIN;
@@ -981,16 +1146,16 @@ UTexture2D* AGameManager::GenerateClusterIcon(const USimWorldHex::FClusterTempla
 	// Calculate the center of the cluster for proper centering
 	float CenterQ = (MinQ + MaxQ) * 0.5f;
 	float CenterR = (MinR + MaxR) * 0.5f;
-	
+
 	// Calculate scale to fit everything
 	int32 HexWidth = MaxQ - MinQ + 1;
 	int32 HexHeight = MaxR - MinR + 1;
-	
+
 	// Use ClusterIconScale to adjust overall icon size
 	const float BaseOrbRadius = 18.0f;
 	const float OrbRadius = BaseOrbRadius * ClusterIconScale;
 	const float Padding = OrbRadius; // Minimal padding - just enough for orb radius
-	
+
 	// Calculate scale with proper padding to fit everything
 	const float ScaleX = (IconSize - Padding * 2) / (HexWidth * 1.732f); // sqrt(3) for hex width
 	const float ScaleY = (IconSize - Padding * 2) / (HexHeight * 1.5f);
@@ -1000,7 +1165,7 @@ UTexture2D* AGameManager::GenerateClusterIcon(const USimWorldHex::FClusterTempla
 		// Convert hex coordinates to pixel coordinates (pointy-top hex), offset by cluster center
 		float OrbCenterX = ((Orb.dQ - CenterQ) * 1.732f + (Orb.dR - CenterR) * 0.866f) * Scale;
 		float OrbCenterY = (Orb.dR - CenterR) * 1.5f * Scale;
-		
+
 		// Center in the icon
 		OrbCenterX += IconSize * 0.5f;
 		OrbCenterY += IconSize * 0.5f;
@@ -1018,7 +1183,7 @@ UTexture2D* AGameManager::GenerateClusterIcon(const USimWorldHex::FClusterTempla
 				float Dx = X - OrbCenterX;
 				float Dy = Y - OrbCenterY;
 				float Distance = FMath::Sqrt(Dx * Dx + Dy * Dy);
-				
+
 				if (Distance <= OrbRadius)
 				{
 					int32 Index = Y * IconSize + X;
@@ -1099,7 +1264,7 @@ UTexture2D* AGameManager::GenerateClusterIcon(const USimWorldHex::FClusterTempla
 		void* TextureData = Mip.BulkData.Lock(LOCK_READ_WRITE);
 		FMemory::Memcpy(TextureData, Pixels.GetData(), Pixels.Num() * sizeof(FColor));
 		Mip.BulkData.Unlock();
-		
+
 		Texture->UpdateResource();
 	}
 
@@ -1109,7 +1274,7 @@ UTexture2D* AGameManager::GenerateClusterIcon(const USimWorldHex::FClusterTempla
 UTexture2D* AGameManager::GetClusterIcon(const USimWorldHex::FClusterTemplate& ClusterTemplate)
 {
 	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
-	
+
 	// Check if icon already exists
 	if (UTexture2D** ExistingIcon = ClusterIcons.Find(Key))
 	{

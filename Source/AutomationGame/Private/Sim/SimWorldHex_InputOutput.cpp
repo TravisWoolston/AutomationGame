@@ -439,31 +439,38 @@ void USimWorldHex::ProcessOutputs()
 		
 
 		
+		// ClusterOutputs should only process complete clusters, not single orbs
+		// and only if the entire bonded cluster can be processed (all orbs on ClusterOutput tiles)
+
+		// Must have at least 2 tiles to be a cluster (not a single orb)
+		if (ClusterTiles.Num() < 2)
+		{
+			continue; // Skip single orb processing
+		}
+
 		// Check if ALL tiles in the cluster have orbs of the correct type AND are bonded together
 		bool bAllTilesReady = true;
 		TArray<int32> OrbItemIds; // Store item IDs to check bonds later
-		
+
 		for (int32 i = 0; i < ClusterTiles.Num(); i++)
 		{
 			const FHex& TileHex = ClusterTiles[i];
 			const uint8 ExpectedType = ExpectedTypes[i];
-			
+
 			const FItem* TileItem = ItemMap.Find(TileHex);
 			if (!TileItem)
 			{
-
 				bAllTilesReady = false;
 				break;
 			}
-			
+
 			// ClusterOutput tiles expect single orbs, not clusters
 			if (TileItem->bIsCluster)
 			{
-
 				bAllTilesReady = false;
 				break;
 			}
-			
+
 			// Single orb - check type from the Single field
 			uint8 ActualType = (uint8)TileItem->Single.Type;
 			if (ActualType != ExpectedType)
@@ -471,31 +478,30 @@ void USimWorldHex::ProcessOutputs()
 				bAllTilesReady = false;
 				break;
 			}
-			
+
 			// Add the item ID to the list for bond checking
 			if (TileItem->Id > 0)
 			{
 				OrbItemIds.Add(TileItem->Id);
 			}
-
 		}
-		
+
 		// Check if all orbs belong to the same cluster (are bonded together)
 		// AND that the cluster doesn't have any orbs on non-ClusterOutput tiles
-		if (bAllTilesReady && ClusterTiles.Num() > 1 && OrbItemIds.Num() > 0)
+		if (bAllTilesReady && OrbItemIds.Num() > 0)
 		{
 			// Build a connectivity graph of ALL bonded orbs (including those outside the cluster)
 			TSet<int32> AllConnectedOrbs;
 			TArray<int32> ToVisitItems;
-			
+
 			// Start with the first orb
 			AllConnectedOrbs.Add(OrbItemIds[0]);
 			ToVisitItems.Add(OrbItemIds[0]);
-			
+
 			while (ToVisitItems.Num() > 0)
 			{
 				int32 CurrentItemId = ToVisitItems.Pop();
-				
+
 				// Check all bonds involving this orb
 				if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentItemId))
 				{
@@ -504,10 +510,10 @@ void USimWorldHex::ProcessOutputs()
 						if (!Bonds.IsValidIndex(BondIdx)) continue;
 						const FBond& Bond = Bonds[BondIdx];
 						if (!Bond.bActive) continue;
-						
+
 						// Find the other orb in this bond
 						int32 OtherItemId = (Bond.ItemA == CurrentItemId) ? Bond.ItemB : Bond.ItemA;
-						
+
 						// Add to connected set if not already visited
 						if (!AllConnectedOrbs.Contains(OtherItemId))
 						{
@@ -517,38 +523,36 @@ void USimWorldHex::ProcessOutputs()
 					}
 				}
 			}
-			
+
 			// Check if all orbs on our ClusterOutput tiles are connected
 			TSet<int32> OrbsOnClusterTiles;
 			for (int32 Id : OrbItemIds)
 			{
 				OrbsOnClusterTiles.Add(Id);
 			}
-			
+
 			for (int32 Id : OrbItemIds)
 			{
 				if (!AllConnectedOrbs.Contains(Id))
 				{
-					
 					bAllTilesReady = false;
 					break;
 				}
 			}
-			
+
 			if (bAllTilesReady)
 			{
-				// Check if the bonded cluster has any orbs that are NOT on our ClusterOutput tiles
+				// CRITICAL: Check if the bonded cluster has any orbs that are NOT on our ClusterOutput tiles
+				// This prevents processing clusters that extend beyond what can be processed
 				for (int32 ConnectedId : AllConnectedOrbs)
 				{
 					if (!OrbsOnClusterTiles.Contains(ConnectedId))
 					{
 						// This bonded orb is somewhere else (not on our ClusterOutput tiles)
-
 						bAllTilesReady = false;
 						break;
 					}
 				}
-
 			}
 		}
 		

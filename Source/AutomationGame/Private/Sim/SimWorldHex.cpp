@@ -3,6 +3,7 @@
 #include "Sim/HexCoord.h"
 #include "Actors/BasicArm.h"
 #include "Actors/OrbSimDriver.h"
+#include "Framework/GameManager.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 #include "AGLogChannels.h"
@@ -2188,10 +2189,59 @@ void USimWorldHex::RebuildClusterOutputRelationships(const TMap<FHex, uint8>& Sa
 		{
 			FString TemplateName = FString::Printf(TEXT("Reconstructed_%d_%dorbs"), TemplateId, Orbs.Num());
 			RegisterClusterTemplate(TemplateId, Orbs, BondPairs, TemplateName);
+			
+			// Cache the canonical key for this template and check storage
+			USimWorldHex::FClusterTemplate NewTemplate;
+			NewTemplate.Orbs = Orbs;
+			NewTemplate.Bonds = BondPairs;
+			NewTemplate.Name = TemplateName;
+			
+			if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
+			{
+				if (Driver->GM)
+				{
+					// Cache the canonical key for efficient future lookups
+					Driver->GM->CacheCanonicalKeyForTemplate(TemplateId, NewTemplate);
+					
+					// Check storage using the cached key (no rotation recalculation needed)
+					if (Driver->GM->DoesClusterExistInStorageByTemplateId(TemplateId))
+					{
+						UE_LOG(LogTemp, Warning, TEXT("║ Template %d structure EXISTS in storage (already produced)"), TemplateId);
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("║ Template %d structure NOT in storage (not yet produced)"), TemplateId);
+					}
+				}
+			}
 		}
 		else
 		{
 			UE_LOG(LogTemp, Warning, TEXT("║ Template %d is already up-to-date, skipping re-registration"), TemplateId);
+			
+			// Still check if this existing template structure exists in storage using cached key
+			if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
+			{
+				if (Driver->GM)
+				{
+					// Ensure canonical key is cached (might have been added before caching was implemented)
+					if (ExistingTemplate)
+					{
+						// Cache if not already cached
+						Driver->GM->CacheCanonicalKeyForTemplate(TemplateId, *ExistingTemplate);
+
+						// Check storage using cached key
+						if (Driver->GM->DoesClusterExistInStorageByTemplateId(TemplateId))
+						{
+							UE_LOG(LogTemp, Warning, TEXT("║ Template %d structure EXISTS in storage (already produced)"), TemplateId);
+						}
+						else
+						{
+							UE_LOG(LogTemp, Warning, TEXT("║ Template %d structure NOT in storage (not yet produced)"), TemplateId);
+						}
+					}
+				}
+			}
 		}
 		
 		// Create merged tile info for each adjacent pair

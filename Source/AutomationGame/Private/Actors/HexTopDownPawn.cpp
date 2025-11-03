@@ -989,8 +989,13 @@ void AHexTopDownPawn::CreateBlueprint()
 				
 				// Regular tile (not an arm)
 				BlueprintTiles.Add(FBlueprintTile(LocalHex, Tile->Kind, TileDirection));
-				// UE_LOG(LogTemp, Warning, TEXT("Found and captured tile at (%d,%d) of type %d"), 
-				// 	Hex.Q, Hex.R, (int32)Tile->Kind);
+				
+				// Debug log for ClusterOutput tiles
+				if (Tile->Kind == ETileKind::ClusterOutput)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("CreateBlueprint: Captured ClusterOutput at (%d,%d) with TileDirection=%d (from Tile->Arg)"), 
+						Hex.Q, Hex.R, TileDirection);
+				}
 			}
 			else
 			{
@@ -1264,6 +1269,8 @@ void AHexTopDownPawn::PlaceBlueprint()
 				{
 					// This is a regular copy/paste - TileDirection stores the orb type directly
 					NewTile.Arg = RotatedTileDirection;
+					UE_LOG(LogTemp, Warning, TEXT("PlaceBlueprint: ClusterOutput copy/paste - TileDirection=%d, NewTile.Arg=%d"), 
+						BlueprintTile.TileDirection, NewTile.Arg);
 				}
 			}
 			else
@@ -2008,6 +2015,14 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 								}
 							}
 						}
+						else
+						{
+							// This is a copy/paste ClusterOutput - TileDirection stores the orb type directly
+							if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
+							{
+								MaterialToApply = MaterialManager->GetMaterialForOrbType((EOrbType)BlueprintTile.TileDirection);
+							}
+						}
 					}
 				}
 				
@@ -2031,9 +2046,38 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 					PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
 				}
 			}
+			else if (BlueprintTile.TileType == ETileKind::Output)
+			{
+				// For Output tiles, get material based on TileDirection (which stores the orb type)
+				if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
+				{
+					UMaterialInterface* MaterialToApply = MaterialManager->GetMaterialForOrbType((EOrbType)BlueprintTile.TileDirection);
+					if (MaterialToApply)
+					{
+						UMaterialInstanceDynamic* OutputMID = UMaterialInstanceDynamic::Create(MaterialToApply, this);
+						if (OutputMID)
+						{
+							OutputMID->SetScalarParameterValue(FName("Opacity"), 0.5f);
+							PreviewComp->SetMaterial(0, OutputMID);
+						}
+						else
+						{
+							PreviewComp->SetMaterial(0, MaterialToApply);
+						}
+					}
+					else if (Placer && Placer->PreviewBaseMaterial)
+					{
+						PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
+					}
+				}
+				else if (Placer && Placer->PreviewBaseMaterial)
+				{
+					PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
+				}
+			}
 			else if (Placer && Placer->PreviewBaseMaterial)
 			{
-				// Apply generic preview material for non-ClusterOutput tiles
+				// Apply generic preview material for other tiles
 				PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
 			}
 		}
