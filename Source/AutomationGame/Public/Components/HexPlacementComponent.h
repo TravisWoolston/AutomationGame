@@ -17,7 +17,8 @@ enum class EPlaceKind : uint8
 	Arm,
 	Bond,          // place a Bond glyph (uses BeltDir for its direction)
 	Unbond,        // place an Unbond glyph (uses BeltDir for its direction)
-	ClusterOutput  // place a ClusterOutput tile (cycles through registered templates)
+	ClusterOutput, // place a ClusterOutput tile (cycles through registered templates)
+	ClusterInput   // place a ClusterInput tile (spawns clusters from storage)
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of truth). */

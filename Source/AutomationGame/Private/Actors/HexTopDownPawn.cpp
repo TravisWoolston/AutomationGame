@@ -289,6 +289,7 @@ void AHexTopDownPawn::SetInputMode4() { if (Placer) Placer->SetPlaceKind(EPlaceK
 void AHexTopDownPawn::SetInputMode5() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Bond); }
 void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Unbond); }
 void AHexTopDownPawn::SetInputMode7() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterOutput); }
+void AHexTopDownPawn::SetInputMode9() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterInput); }
 void AHexTopDownPawn::SetInputMode8() 
 { 
 	// Find GameManager to get DifficultyValue
@@ -1269,15 +1270,47 @@ void AHexTopDownPawn::PlaceBlueprint()
 			}
 			
 			// For ClusterOutput tiles in blueprints, check if TileDirection is a template ID
-			// If a template with that ID exists, this is a Kind8 multi-tile cluster placement
+			// Only use template if this is a Kind8-generated template (template exists and LocalHex matches)
 			if (BlueprintTile.TileType == ETileKind::ClusterOutput)
 			{
 				const USimWorldHex::FClusterTemplate* Template = Sim->GetClusterTemplates().Find(BlueprintTile.TileDirection);
-
+				FHex LocalPos = BlueprintTile.LocalHex;
+				
+				// Check if this is a Kind8-generated template:
+				// Template must exist AND LocalHex must match an orb position in the template
+				bool bIsKind8Template = false;
+				if (Template)
+				{
+					// Verify LocalHex matches an orb position in the template
+					for (const FOrbData& Orb : Template->Orbs)
+					{
+						if (Orb.dQ == LocalPos.Q && Orb.dR == LocalPos.R)
+						{
+							bIsKind8Template = true;
+							break;
+						}
+					}
+				}
+				
+				if (bIsKind8Template && Template)
+				{
+					// This is a Kind8 placement - find the orb type from the template
+					uint8 OrbTypeForThisTile = 0;
+					for (const FOrbData& Orb : Template->Orbs)
+					{
+						if (Orb.dQ == LocalPos.Q && Orb.dR == LocalPos.R)
+						{
+							OrbTypeForThisTile = Orb.Type;
+							break;
+						}
+					}
+					NewTile.Arg = OrbTypeForThisTile;
+				}
+				else
+				{
+					// Regular ClusterOutput tile - TileDirection is the orb type directly
 					NewTile.Arg = RotatedTileDirection;
-					UE_LOG(LogTemp, Warning, TEXT("PlaceBlueprint: ClusterOutput copy/paste - TileDirection=%d, NewTile.Arg=%d"), 
-						BlueprintTile.TileDirection, NewTile.Arg);
-
+				}
 			}
 			else
 			{
@@ -2030,39 +2063,46 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 				// For ClusterOutput tiles, get the material from the template
 				UMaterialInterface* MaterialToApply = nullptr;
 				
-				// Check if this is a Kind8 generated cluster (TileDirection contains template ID)
+				// Check if this is a Kind8 generated cluster (template exists and LocalHex matches)
 				if (Placer && Driver)
 				{
 					USimWorldHex* Sim = Driver->GetSim();
 					if (Sim)
 					{
 						const USimWorldHex::FClusterTemplate* Template = Sim->GetClusterTemplates().Find(BlueprintTile.TileDirection);
-						// if (Template)
-						// {
-						// 	// Find the orb type for this specific tile position
-						// 	FHex LocalPos = BlueprintTile.LocalHex;
-						// 	for (const FOrbData& Orb : Template->Orbs)
-						// 	{
-						// 		if (Orb.dQ == LocalPos.Q && Orb.dR == LocalPos.R)
-						// 		{
-						// 			// Found the matching orb - get its material
-						// 			if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
-						// 			{
-						// 				MaterialToApply = MaterialManager->GetMaterialForOrbType((EOrbType)Orb.Type);
-						// 			}
-						// 			break;
-						// 		}
-						// 	}
-						// }
-						// else
-						// {
-							// This is a copy/paste ClusterOutput - TileDirection stores the orb type directly
+						FHex LocalPos = BlueprintTile.LocalHex;
+						
+						// Check if this is a Kind8-generated template:
+						// Template must exist AND LocalHex must match an orb position in the template
+						bool bIsKind8Template = false;
+						if (Template)
+						{
+							// Verify LocalHex matches an orb position in the template
+							for (const FOrbData& Orb : Template->Orbs)
+							{
+								if (Orb.dQ == LocalPos.Q && Orb.dR == LocalPos.R)
+								{
+									bIsKind8Template = true;
+									// Found the matching orb - get its material
+									if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
+									{
+										MaterialToApply = MaterialManager->GetMaterialForOrbType((EOrbType)Orb.Type);
+									}
+									break;
+								}
+							}
+						}
+						
+						// If material not set (either not Kind8 or template lookup failed), use TileDirection as orb type
+						if (!MaterialToApply)
+						{
+							// This is a regular ClusterOutput or copy/paste - TileDirection stores the orb type directly
 							if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
 							{
 								MaterialToApply = MaterialManager->GetMaterialForOrbType((EOrbType)BlueprintTile.TileDirection);
 							}
 						}
-					// }
+					}
 				}
 				
 				// Apply the material with half opacity if found

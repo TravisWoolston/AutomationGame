@@ -289,6 +289,12 @@ public:
 	/** Get the count for a specific cluster structure (C++ only) */
 	int32 GetClusterCount(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;
 
+	/** Get the count for a cluster structure by template ID (C++ only) */
+	int32 GetClusterCountByTemplateId(uint8 TemplateId) const;
+
+	/** Decrement cluster count from storage by template ID, returns true if successful (C++ only) */
+	bool DecrementClusterFromStorageByTemplateId(uint8 TemplateId);
+
 	/** Check if a cluster structure exists in storage (C++ only) */
 	bool DoesClusterExistInStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;
 

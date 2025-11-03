@@ -174,6 +174,8 @@ private:
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode7();
 	void SetInputMode8();
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	void SetInputMode9();
 	void RotCW() { 
 		if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0) {
 			RotateBlueprintCW();

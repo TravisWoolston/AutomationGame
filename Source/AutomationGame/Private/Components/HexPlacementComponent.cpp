@@ -146,6 +146,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	case EPlaceKind::Input:  T = FTile{ ETileKind::Input,  (uint8)GetCurrentInputOrbType() }; break;
 	case EPlaceKind::Output: T = FTile{ ETileKind::Output, (uint8)GetCurrentOutputOrbType() }; break;
 	case EPlaceKind::ClusterOutput: T = FTile{ ETileKind::ClusterOutput, (uint8)GetCurrentOutputOrbType() }; break;
+	case EPlaceKind::ClusterInput: T = FTile{ ETileKind::ClusterInput, GetCurrentClusterTemplateId() }; break;
 	case EPlaceKind::Belt:   T = FTile{ ETileKind::Belt,   (uint8)BeltDir }; break;
 	case EPlaceKind::Bond:   T = FTile{ ETileKind::Bond,   (uint8)BeltDir }; break;
 	case EPlaceKind::Unbond: T = FTile{ ETileKind::Unbond, (uint8)BeltDir }; break;
@@ -383,6 +384,14 @@ void UHexPlacementComponent::CycleNextType()
 	{
 		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
+	else if (PlaceKind == EPlaceKind::ClusterInput)
+	{
+		TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
+		if (ValidTemplates.Num() > 0)
+		{
+			CurrentClusterTemplateIndex = (CurrentClusterTemplateIndex + 1) % ValidTemplates.Num();
+		}
+	}
 }
 
 void UHexPlacementComponent::CyclePreviousType()
@@ -399,6 +408,14 @@ void UHexPlacementComponent::CyclePreviousType()
 	else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
 	{
 		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
+	}
+	else if (PlaceKind == EPlaceKind::ClusterInput)
+	{
+		TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
+		if (ValidTemplates.Num() > 0)
+		{
+			CurrentClusterTemplateIndex = (CurrentClusterTemplateIndex - 1 + ValidTemplates.Num()) % ValidTemplates.Num();
+		}
 	}
 }
 
@@ -615,6 +632,9 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 	case EPlaceKind::ClusterOutput:
 		// ClusterOutput now uses same preview as Output
 		return GetActualOutputOrbMesh();
+	case EPlaceKind::ClusterInput:
+		// ClusterInput uses same preview as Input
+		return GetActualOrbMesh();
 	default:
 		return GenericTilePreviewMesh;
 	}
@@ -918,7 +938,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 	}
 
 	// Mesh preview (for all placeable tiles)
-	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
 	{
 
 		// For now, use static mesh preview for arms (ArmBasePreviewMesh)

@@ -55,41 +55,64 @@ void USimWorldHex::SpawnInputs()
 			const FClusterTemplate* Template = ClusterTemplates.Find(TemplateId);
 			if (Template)
 			{
-				// Create cluster from template
-				FItem ClusterItem;
-				ClusterItem.bIsCluster = true;
-				ClusterItem.Id = NextItemId++;
-				
-				// Create orbs with unique IDs
-				for (const FOrbData& TemplateOrb : Template->Orbs)
+				// Check if cluster exists in storage and has count > 0
+				AGameManager* GameManager = nullptr;
+				if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
 				{
-					FOrbData NewOrb = TemplateOrb;
-					NewOrb.ItemId = NextItemId++;
-					ClusterItem.Orbs.Add(NewOrb);
+					GameManager = Driver->GM;
 				}
 				
-				// Place the cluster
-				if (TryPutItem(H, ClusterItem))
+				int32 ClusterCount = 0;
+				if (GameManager)
 				{
-					// Create bonds between orbs based on template
-					for (const TPair<int32, int32>& BondPair : Template->Bonds)
+					ClusterCount = GameManager->GetClusterCountByTemplateId(TemplateId);
+				}
+				
+				// Only spawn if cluster exists in storage with count > 0
+				if (ClusterCount > 0)
+				{
+					// Create cluster from template
+					FItem ClusterItem;
+					ClusterItem.bIsCluster = true;
+					ClusterItem.Id = NextItemId++;
+					
+					// Create orbs with unique IDs
+					for (const FOrbData& TemplateOrb : Template->Orbs)
 					{
-						if (BondPair.Key < ClusterItem.Orbs.Num() && BondPair.Value < ClusterItem.Orbs.Num())
+						FOrbData NewOrb = TemplateOrb;
+						NewOrb.ItemId = NextItemId++;
+						ClusterItem.Orbs.Add(NewOrb);
+					}
+					
+					// Place the cluster
+					if (TryPutItem(H, ClusterItem))
+					{
+						// Create bonds between orbs based on template (pre-bonded)
+						for (const TPair<int32, int32>& BondPair : Template->Bonds)
 						{
-							int32 ItemA = ClusterItem.Orbs[BondPair.Key].ItemId;
-							int32 ItemB = ClusterItem.Orbs[BondPair.Value].ItemId;
-							
-							FBond NewBond;
-							NewBond.ItemA = ItemA;
-							NewBond.ItemB = ItemB;
-							NewBond.Root = H;
-							NewBond.dQ = ClusterItem.Orbs[BondPair.Value].dQ - ClusterItem.Orbs[BondPair.Key].dQ;
-							NewBond.dR = ClusterItem.Orbs[BondPair.Value].dR - ClusterItem.Orbs[BondPair.Key].dR;
-							NewBond.bActive = true;
-							
-							const int32 BondIndex = Bonds.Add(NewBond);
-							AddItemBondLink(NewBond.ItemA, BondIndex);
-							AddItemBondLink(NewBond.ItemB, BondIndex);
+							if (BondPair.Key < ClusterItem.Orbs.Num() && BondPair.Value < ClusterItem.Orbs.Num())
+							{
+								int32 ItemA = ClusterItem.Orbs[BondPair.Key].ItemId;
+								int32 ItemB = ClusterItem.Orbs[BondPair.Value].ItemId;
+								
+								FBond NewBond;
+								NewBond.ItemA = ItemA;
+								NewBond.ItemB = ItemB;
+								NewBond.Root = H;
+								NewBond.dQ = ClusterItem.Orbs[BondPair.Value].dQ - ClusterItem.Orbs[BondPair.Key].dQ;
+								NewBond.dR = ClusterItem.Orbs[BondPair.Value].dR - ClusterItem.Orbs[BondPair.Key].dR;
+								NewBond.bActive = true;
+								
+								const int32 BondIndex = Bonds.Add(NewBond);
+								AddItemBondLink(NewBond.ItemA, BondIndex);
+								AddItemBondLink(NewBond.ItemB, BondIndex);
+							}
+						}
+						
+						// Decrement cluster count in storage
+						if (GameManager)
+						{
+							GameManager->DecrementClusterFromStorageByTemplateId(TemplateId);
 						}
 					}
 				}
@@ -149,41 +172,64 @@ void USimWorldHex::SpawnInputsAfterBelts()
 			const FClusterTemplate* Template = ClusterTemplates.Find(TemplateId);
 			if (Template)
 			{
-				// Create cluster from template
-				FItem ClusterItem;
-				ClusterItem.bIsCluster = true;
-				ClusterItem.Id = NextItemId++;
-				
-				// Create orbs with unique IDs
-				for (const FOrbData& TemplateOrb : Template->Orbs)
+				// Check if cluster exists in storage and has count > 0
+				AGameManager* GameManager = nullptr;
+				if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
 				{
-					FOrbData NewOrb = TemplateOrb;
-					NewOrb.ItemId = NextItemId++;
-					ClusterItem.Orbs.Add(NewOrb);
+					GameManager = Driver->GM;
 				}
 				
-				// Place the cluster
-				if (TryPutItem(H, ClusterItem))
+				int32 ClusterCount = 0;
+				if (GameManager)
 				{
-					// Create bonds between orbs based on template
-					for (const TPair<int32, int32>& BondPair : Template->Bonds)
+					ClusterCount = GameManager->GetClusterCountByTemplateId(TemplateId);
+				}
+				
+				// Only spawn if cluster exists in storage with count > 0
+				if (ClusterCount > 0)
+				{
+					// Create cluster from template
+					FItem ClusterItem;
+					ClusterItem.bIsCluster = true;
+					ClusterItem.Id = NextItemId++;
+					
+					// Create orbs with unique IDs
+					for (const FOrbData& TemplateOrb : Template->Orbs)
 					{
-						if (BondPair.Key < ClusterItem.Orbs.Num() && BondPair.Value < ClusterItem.Orbs.Num())
+						FOrbData NewOrb = TemplateOrb;
+						NewOrb.ItemId = NextItemId++;
+						ClusterItem.Orbs.Add(NewOrb);
+					}
+					
+					// Place the cluster
+					if (TryPutItem(H, ClusterItem))
+					{
+						// Create bonds between orbs based on template (pre-bonded)
+						for (const TPair<int32, int32>& BondPair : Template->Bonds)
 						{
-							int32 ItemA = ClusterItem.Orbs[BondPair.Key].ItemId;
-							int32 ItemB = ClusterItem.Orbs[BondPair.Value].ItemId;
-							
-							FBond NewBond;
-							NewBond.ItemA = ItemA;
-							NewBond.ItemB = ItemB;
-							NewBond.Root = H;
-							NewBond.dQ = ClusterItem.Orbs[BondPair.Value].dQ - ClusterItem.Orbs[BondPair.Key].dQ;
-							NewBond.dR = ClusterItem.Orbs[BondPair.Value].dR - ClusterItem.Orbs[BondPair.Key].dR;
-							NewBond.bActive = true;
-							
-							const int32 BondIndex = Bonds.Add(NewBond);
-							AddItemBondLink(NewBond.ItemA, BondIndex);
-							AddItemBondLink(NewBond.ItemB, BondIndex);
+							if (BondPair.Key < ClusterItem.Orbs.Num() && BondPair.Value < ClusterItem.Orbs.Num())
+							{
+								int32 ItemA = ClusterItem.Orbs[BondPair.Key].ItemId;
+								int32 ItemB = ClusterItem.Orbs[BondPair.Value].ItemId;
+								
+								FBond NewBond;
+								NewBond.ItemA = ItemA;
+								NewBond.ItemB = ItemB;
+								NewBond.Root = H;
+								NewBond.dQ = ClusterItem.Orbs[BondPair.Value].dQ - ClusterItem.Orbs[BondPair.Key].dQ;
+								NewBond.dR = ClusterItem.Orbs[BondPair.Value].dR - ClusterItem.Orbs[BondPair.Key].dR;
+								NewBond.bActive = true;
+								
+								const int32 BondIndex = Bonds.Add(NewBond);
+								AddItemBondLink(NewBond.ItemA, BondIndex);
+								AddItemBondLink(NewBond.ItemB, BondIndex);
+							}
+						}
+						
+						// Decrement cluster count in storage
+						if (GameManager)
+						{
+							GameManager->DecrementClusterFromStorageByTemplateId(TemplateId);
 						}
 					}
 				}
@@ -763,55 +809,78 @@ bool USimWorldHex::TryArmPickItem(const FHex& From, FItem& OutItem)
 			const FClusterTemplate* Template = ClusterTemplates.Find(TemplateId);
 			if (Template)
 			{
-				// Create cluster from template
-				FItem ClusterItem;
-				ClusterItem.bIsCluster = true;
-				ClusterItem.Id = NextItemId++;
-				
-				// Create orbs with unique IDs
-				for (const FOrbData& TemplateOrb : Template->Orbs)
+				// Check if cluster exists in storage and has count > 0
+				AGameManager* GameManager = nullptr;
+				if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
 				{
-					FOrbData NewOrb = TemplateOrb;
-					NewOrb.ItemId = NextItemId++;
-					ClusterItem.Orbs.Add(NewOrb);
+					GameManager = Driver->GM;
 				}
 				
-				OutItem = ClusterItem;
-				
-				// Create bonds between orbs based on template
-				for (const TPair<int32, int32>& BondPair : Template->Bonds)
+				int32 ClusterCount = 0;
+				if (GameManager)
 				{
-					if (BondPair.Key < ClusterItem.Orbs.Num() && BondPair.Value < ClusterItem.Orbs.Num())
+					ClusterCount = GameManager->GetClusterCountByTemplateId(TemplateId);
+				}
+				
+				// Only spawn if cluster exists in storage with count > 0
+				if (ClusterCount > 0)
+				{
+					// Create cluster from template
+					FItem ClusterItem;
+					ClusterItem.bIsCluster = true;
+					ClusterItem.Id = NextItemId++;
+					
+					// Create orbs with unique IDs
+					for (const FOrbData& TemplateOrb : Template->Orbs)
 					{
-						int32 ItemA = ClusterItem.Orbs[BondPair.Key].ItemId;
-						int32 ItemB = ClusterItem.Orbs[BondPair.Value].ItemId;
-						
-						FBond NewBond;
-						NewBond.ItemA = ItemA;
-						NewBond.ItemB = ItemB;
-						NewBond.Root = From;
-						NewBond.dQ = ClusterItem.Orbs[BondPair.Value].dQ - ClusterItem.Orbs[BondPair.Key].dQ;
-						NewBond.dR = ClusterItem.Orbs[BondPair.Value].dR - ClusterItem.Orbs[BondPair.Key].dR;
-						NewBond.bActive = true;
-						
-						const int32 BondIndex = Bonds.Add(NewBond);
-						AddItemBondLink(NewBond.ItemA, BondIndex);
-						AddItemBondLink(NewBond.ItemB, BondIndex);
+						FOrbData NewOrb = TemplateOrb;
+						NewOrb.ItemId = NextItemId++;
+						ClusterItem.Orbs.Add(NewOrb);
 					}
+					
+					OutItem = ClusterItem;
+					
+					// Create bonds between orbs based on template (pre-bonded)
+					for (const TPair<int32, int32>& BondPair : Template->Bonds)
+					{
+						if (BondPair.Key < ClusterItem.Orbs.Num() && BondPair.Value < ClusterItem.Orbs.Num())
+						{
+							int32 ItemA = ClusterItem.Orbs[BondPair.Key].ItemId;
+							int32 ItemB = ClusterItem.Orbs[BondPair.Value].ItemId;
+							
+							FBond NewBond;
+							NewBond.ItemA = ItemA;
+							NewBond.ItemB = ItemB;
+							NewBond.Root = From;
+							NewBond.dQ = ClusterItem.Orbs[BondPair.Value].dQ - ClusterItem.Orbs[BondPair.Key].dQ;
+							NewBond.dR = ClusterItem.Orbs[BondPair.Value].dR - ClusterItem.Orbs[BondPair.Key].dR;
+							NewBond.bActive = true;
+							
+							const int32 BondIndex = Bonds.Add(NewBond);
+							AddItemBondLink(NewBond.ItemA, BondIndex);
+							AddItemBondLink(NewBond.ItemB, BondIndex);
+						}
+					}
+					
+					// Decrement cluster count in storage
+					if (GameManager)
+					{
+						GameManager->DecrementClusterFromStorageByTemplateId(TemplateId);
+					}
+					
+					// Create ascending animation for the cluster input tile
+					FAnimatedOrb AscendAnimation;
+					AscendAnimation.bActive = true;
+					AscendAnimation.bIsInput = true;
+					AscendAnimation.Hex = From;
+					AscendAnimation.Item = ClusterItem;
+					AscendAnimation.StartStep = StepCounter;
+					AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
+					
+					AnimatedOrbs.Add(AscendAnimation);
+					
+					return true;
 				}
-				
-				// Create ascending animation for the cluster input tile
-				FAnimatedOrb AscendAnimation;
-				AscendAnimation.bActive = true;
-				AscendAnimation.bIsInput = true;
-				AscendAnimation.Hex = From;
-				AscendAnimation.Item = ClusterItem;
-				AscendAnimation.StartStep = StepCounter;
-				AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
-				
-				AnimatedOrbs.Add(AscendAnimation);
-				
-				return true;
 			}
 		}
 	}

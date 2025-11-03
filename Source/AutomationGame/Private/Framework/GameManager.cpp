@@ -1058,6 +1058,35 @@ int32 AGameManager::GetClusterCount(const USimWorldHex::FClusterTemplate& Cluste
 	return 0;
 }
 
+int32 AGameManager::GetClusterCountByTemplateId(uint8 TemplateId) const
+{
+	if (const FClusterCanonicalKey* CachedKey = TemplateIdToCanonicalKey.Find(TemplateId))
+	{
+		if (const int32* Count = ClusterCounts.Find(*CachedKey))
+		{
+			return *Count;
+		}
+	}
+	return 0;
+}
+
+bool AGameManager::DecrementClusterFromStorageByTemplateId(uint8 TemplateId)
+{
+	if (const FClusterCanonicalKey* CachedKey = TemplateIdToCanonicalKey.Find(TemplateId))
+	{
+		if (int32* Count = ClusterCounts.Find(*CachedKey))
+		{
+			if (*Count > 0)
+			{
+				(*Count)--;
+				// If count reaches zero, we keep the entry (don't remove) so it can be tracked
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 bool AGameManager::DoesClusterExistInStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate) const
 {
 	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
