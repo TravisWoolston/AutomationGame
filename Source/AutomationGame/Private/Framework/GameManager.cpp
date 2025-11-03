@@ -1031,8 +1031,6 @@ void AGameManager::AddClusterToStorage(const USimWorldHex::FClusterTemplate& Clu
 	if (Key.CanonicalOrbs.Num() > 0)
 	{
 		const FOrbData& FirstOrb = Key.CanonicalOrbs[0];
-		UE_LOG(LogTemp, Warning, TEXT("AddClusterToStorage: Canonical key has first orb at dQ=%d, dR=%d, Type=%d"),
-			FirstOrb.dQ, FirstOrb.dR, FirstOrb.Type);
 	}
 
 	if (int32* ExistingCount = ClusterCounts.Find(Key))
