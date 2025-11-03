@@ -1249,29 +1249,11 @@ void AHexTopDownPawn::PlaceBlueprint()
 			if (BlueprintTile.TileType == ETileKind::ClusterOutput)
 			{
 				const USimWorldHex::FClusterTemplate* Template = Sim->GetClusterTemplates().Find(BlueprintTile.TileDirection);
-				// if (Template)
-				// {
-				// 	// This is a Kind8 placement - find the orb type from the template
-				// 	// Find matching orb in template by dQ/dR from LocalHex
-				// 	uint8 OrbTypeForThisTile = 0;
-				// 	FHex LocalPos = BlueprintTile.LocalHex;
-				// 	for (const FOrbData& Orb : Template->Orbs)
-				// 	{
-				// 		if (Orb.dQ == LocalPos.Q && Orb.dR == LocalPos.R)
-				// 		{
-				// 			OrbTypeForThisTile = Orb.Type;
-				// 			break;
-				// 		}
-				// 	}
-				// 	NewTile.Arg = OrbTypeForThisTile;
-				// }
-				// else
-				// {
-					// This is a regular copy/paste - TileDirection stores the orb type directly
+
 					NewTile.Arg = RotatedTileDirection;
 					UE_LOG(LogTemp, Warning, TEXT("PlaceBlueprint: ClusterOutput copy/paste - TileDirection=%d, NewTile.Arg=%d"), 
 						BlueprintTile.TileDirection, NewTile.Arg);
-				// }
+
 			}
 			else
 			{
@@ -1950,24 +1932,57 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 				{
 					PreviewMesh = Placer->GetActualBeltMesh();
 				}
-				// Apply belt direction rotation
-				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;
+				// Apply belt direction rotation using proper world position calculation
+				{
+					const uint8 RotatedDir = (BlueprintTile.TileDirection + BlueprintRotation) % 6;
+					const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)RotatedDir);
+					const FVector NeighborWorldPos = Driver->IsSphereEnabled()
+						? Driver->MapHexToWorld(NeighborHex)
+						: FVector(HexCoord::AxialToXY(FHexAxial(NeighborHex.Q, NeighborHex.R), TileSize, Orientation), GridPlaneZ);
+					const FVector2D DirVec(NeighborWorldPos.X - PreviewWorldPos.X, NeighborWorldPos.Y - PreviewWorldPos.Y);
+					if (!DirVec.IsNearlyZero())
+					{
+						PreviewYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+					}
+				}
 				break;
 			case ETileKind::Bond:
 				if (Placer)
 				{
 					PreviewMesh = Placer->BondPreviewMesh ? Placer->BondPreviewMesh : Placer->GenericTilePreviewMesh;
 				}
-				// Apply bond direction rotation
-				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;
+				// Apply bond direction rotation using proper world position calculation
+				{
+					const uint8 RotatedDir = (BlueprintTile.TileDirection + BlueprintRotation) % 6;
+					const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)RotatedDir);
+					const FVector NeighborWorldPos = Driver->IsSphereEnabled()
+						? Driver->MapHexToWorld(NeighborHex)
+						: FVector(HexCoord::AxialToXY(FHexAxial(NeighborHex.Q, NeighborHex.R), TileSize, Orientation), GridPlaneZ);
+					const FVector2D DirVec(NeighborWorldPos.X - PreviewWorldPos.X, NeighborWorldPos.Y - PreviewWorldPos.Y);
+					if (!DirVec.IsNearlyZero())
+					{
+						PreviewYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+					}
+				}
 				break;
 			case ETileKind::Unbond:
 				if (Placer)
 				{
 					PreviewMesh = Placer->UnbondPreviewMesh ? Placer->UnbondPreviewMesh : Placer->GenericTilePreviewMesh;
 				}
-				// Apply unbond direction rotation
-				PreviewYaw = (BlueprintTile.TileDirection + BlueprintRotation) * 60.0f;
+				// Apply unbond direction rotation using proper world position calculation
+				{
+					const uint8 RotatedDir = (BlueprintTile.TileDirection + BlueprintRotation) % 6;
+					const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)RotatedDir);
+					const FVector NeighborWorldPos = Driver->IsSphereEnabled()
+						? Driver->MapHexToWorld(NeighborHex)
+						: FVector(HexCoord::AxialToXY(FHexAxial(NeighborHex.Q, NeighborHex.R), TileSize, Orientation), GridPlaneZ);
+					const FVector2D DirVec(NeighborWorldPos.X - PreviewWorldPos.X, NeighborWorldPos.Y - PreviewWorldPos.Y);
+					if (!DirVec.IsNearlyZero())
+					{
+						PreviewYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+					}
+				}
 				break;
 			default:
 				if (Placer)
