@@ -21,6 +21,8 @@
 #include "EngineUtils.h"
 #include "Data/OrbMaterialManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Blueprints/PlayerBlueprintLibrarySave.h"
+#include "Kismet/GameplayStatics.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
 {
@@ -66,6 +68,25 @@ void AHexTopDownPawn::BeginPlay()
 	}
 	
     // Editor UI now toggled explicitly via action
+	
+	// Load saved blueprints from disk
+	UPlayerBlueprintLibrarySave* SaveGameInstance = Cast<UPlayerBlueprintLibrarySave>(
+		UGameplayStatics::LoadGameFromSlot(BlueprintLibrarySaveSlotName, 0));
+	
+	if (SaveGameInstance)
+	{
+		// Convert from wrapper struct to TArray<TArray<>>
+		SavedBlueprints.Empty();
+		for (const FBlueprintData& Data : SaveGameInstance->SavedBlueprints)
+		{
+			SavedBlueprints.Add(Data.Tiles);
+		}
+		UE_LOG(LogTemp, Log, TEXT("HexTopDownPawn: Loaded %d blueprints from save file"), SavedBlueprints.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("HexTopDownPawn: No saved blueprints found, starting with empty library"));
+	}
 }
 
 void AHexTopDownPawn::Tick(float DeltaSeconds)
@@ -256,6 +277,9 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	// Timeline editing - cursor control
 	IC->BindAction("NextCommand", IE_Pressed, this, &AHexTopDownPawn::NextCommand);
 	IC->BindAction("PrevCommand", IE_Pressed, this, &AHexTopDownPawn::PrevCommand);
+	
+	// Blueprint library - save selection as blueprint
+	IC->BindAction("SaveSelectionAsBlueprint", IE_Pressed, this, &AHexTopDownPawn::SaveSelectionAsBlueprint);
 }
 
 void AHexTopDownPawn::SetInputMode1() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Input); }
@@ -2112,4 +2136,178 @@ void AHexTopDownPawn::ClearBlueprintPreviewComponents()
 			PreviewComp->SetVisibility(false);
 		}
 	}
+}
+
+const FString AHexTopDownPawn::BlueprintLibrarySaveSlotName = TEXT("PlayerBlueprintLibrary");
+
+void AHexTopDownPawn::SaveSelectionAsBlueprint()
+{
+	if (!bBlueprintSelectionActive || SelectedTiles.Num() == 0)
+	{
+		// If no selection is active, check if we have a current blueprint
+		if (BlueprintTiles.Num() > 0)
+		{
+			SaveBlueprintToLibrary(BlueprintTiles);
+		}
+		return;
+	}
+	
+	// Create blueprint from current selection first
+	CreateBlueprint();
+	
+	// Then save it
+	if (BlueprintTiles.Num() > 0)
+	{
+		SaveBlueprintToLibrary(BlueprintTiles);
+	}
+}
+
+void AHexTopDownPawn::SaveBlueprintToLibrary(const TArray<FBlueprintTile>& Blueprint)
+{
+	if (Blueprint.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SaveBlueprintToLibrary: Cannot save empty blueprint"));
+		return;
+	}
+	
+	// Load existing save game
+	UPlayerBlueprintLibrarySave* SaveGameInstance = Cast<UPlayerBlueprintLibrarySave>(
+		UGameplayStatics::LoadGameFromSlot(BlueprintLibrarySaveSlotName, 0));
+	
+	if (!SaveGameInstance)
+	{
+		// Create new save game if none exists
+		SaveGameInstance = Cast<UPlayerBlueprintLibrarySave>(
+			UGameplayStatics::CreateSaveGameObject(UPlayerBlueprintLibrarySave::StaticClass()));
+	}
+	
+	if (!SaveGameInstance)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SaveBlueprintToLibrary: Failed to create save game instance"));
+		return;
+	}
+	
+	// Add the blueprint to the saved list (convert to wrapper struct)
+	FBlueprintData BlueprintData;
+	BlueprintData.Tiles = Blueprint;
+	SaveGameInstance->SavedBlueprints.Add(BlueprintData);
+	
+	// Update in-memory cache (convert back from wrapper)
+	SavedBlueprints.Empty();
+	for (const FBlueprintData& Data : SaveGameInstance->SavedBlueprints)
+	{
+		SavedBlueprints.Add(Data.Tiles);
+	}
+	
+	// Save to disk
+	if (UGameplayStatics::SaveGameToSlot(SaveGameInstance, BlueprintLibrarySaveSlotName, 0))
+	{
+		UE_LOG(LogTemp, Log, TEXT("SaveBlueprintToLibrary: Saved blueprint with %d tiles (total: %d blueprints)"), 
+			Blueprint.Num(), SavedBlueprints.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("SaveBlueprintToLibrary: Failed to save to slot"));
+	}
+}
+
+void AHexTopDownPawn::LoadBlueprintFromLibrary(int32 Index)
+{
+	if (Index < 0 || Index >= SavedBlueprints.Num())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LoadBlueprintFromLibrary: Invalid index %d (total: %d)"), 
+			Index, SavedBlueprints.Num());
+		return;
+	}
+	
+	SetBlueprintForPlacement(SavedBlueprints[Index]);
+}
+
+TArray<FBlueprintData> AHexTopDownPawn::GetSavedBlueprints() const
+{
+	// Convert from internal TArray<TArray<>> to FBlueprintData wrapper
+	TArray<FBlueprintData> Result;
+	for (const TArray<FBlueprintTile>& Blueprint : SavedBlueprints)
+	{
+		FBlueprintData Data;
+		Data.Tiles = Blueprint;
+		Result.Add(Data);
+	}
+	return Result;
+}
+
+void AHexTopDownPawn::RemoveBlueprintFromLibrary(int32 Index)
+{
+	if (Index < 0 || Index >= SavedBlueprints.Num())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RemoveBlueprintFromLibrary: Invalid index %d (total: %d)"), 
+			Index, SavedBlueprints.Num());
+		return;
+	}
+	
+	// Remove from in-memory cache
+	SavedBlueprints.RemoveAt(Index);
+	
+	// Load existing save game
+	UPlayerBlueprintLibrarySave* SaveGameInstance = Cast<UPlayerBlueprintLibrarySave>(
+		UGameplayStatics::LoadGameFromSlot(BlueprintLibrarySaveSlotName, 0));
+	
+	if (!SaveGameInstance)
+	{
+		// Create new save game if none exists
+		SaveGameInstance = Cast<UPlayerBlueprintLibrarySave>(
+			UGameplayStatics::CreateSaveGameObject(UPlayerBlueprintLibrarySave::StaticClass()));
+	}
+	
+	if (!SaveGameInstance)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveBlueprintFromLibrary: Failed to create save game instance"));
+		return;
+	}
+	
+	// Update save game with removed blueprint (convert to wrapper struct)
+	SaveGameInstance->SavedBlueprints.Empty();
+	for (const TArray<FBlueprintTile>& Blueprint : SavedBlueprints)
+	{
+		FBlueprintData BlueprintData;
+		BlueprintData.Tiles = Blueprint;
+		SaveGameInstance->SavedBlueprints.Add(BlueprintData);
+	}
+	
+	// Save to disk
+	if (UGameplayStatics::SaveGameToSlot(SaveGameInstance, BlueprintLibrarySaveSlotName, 0))
+	{
+		UE_LOG(LogTemp, Log, TEXT("RemoveBlueprintFromLibrary: Removed blueprint at index %d (remaining: %d)"), 
+			Index, SavedBlueprints.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveBlueprintFromLibrary: Failed to save to slot"));
+	}
+}
+
+void AHexTopDownPawn::SetBlueprintForPlacement(const TArray<FBlueprintTile>& Blueprint)
+{
+	if (Blueprint.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetBlueprintForPlacement: Cannot set empty blueprint"));
+		return;
+	}
+	
+	// Copy the blueprint to placement tiles
+	BlueprintTiles = Blueprint;
+	
+	// Enter blueprint placement mode
+	bBlueprintPlacementMode = true;
+	bBlueprintMode = false;
+	BlueprintRotation = 0;
+	BlueprintPlacementOffset = FHex(0, 0);
+	
+	// Disable HexPlacementComponent preview when in blueprint mode
+	if (Placer)
+	{
+		Placer->SetBlueprintMode(true);
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("SetBlueprintForPlacement: Set blueprint with %d tiles for placement"), Blueprint.Num());
 }
