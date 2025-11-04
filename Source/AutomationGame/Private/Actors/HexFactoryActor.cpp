@@ -88,6 +88,31 @@ AHexFactoryActor::AHexFactoryActor()
 	OutputCatalystXISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputCatalystXISM"));
 	OutputCatalystXISM->SetupAttachment(Root);
 	OutputCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Type-specific input ISM components
+	InputNoneISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputNoneISM"));
+	InputNoneISM->SetupAttachment(Root);
+	InputNoneISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	InputBaseAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputBaseAISM"));
+	InputBaseAISM->SetupAttachment(Root);
+	InputBaseAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	InputBaseBISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputBaseBISM"));
+	InputBaseBISM->SetupAttachment(Root);
+	InputBaseBISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	InputBaseCISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputBaseCISM"));
+	InputBaseCISM->SetupAttachment(Root);
+	InputBaseCISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	InputMetalAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputMetalAISM"));
+	InputMetalAISM->SetupAttachment(Root);
+	InputMetalAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	InputCatalystXISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputCatalystXISM"));
+	InputCatalystXISM->SetupAttachment(Root);
+	InputCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 void AHexFactoryActor::EnsureComponents()
@@ -129,6 +154,14 @@ void AHexFactoryActor::EnsureComponents()
 	EnsureISM(OutputMetalAISM, TEXT("OutputMetalAISM_Runtime"));
 	EnsureISM(OutputCatalystXISM, TEXT("OutputCatalystXISM_Runtime"));
 	
+	// Ensure type-specific input ISM components
+	EnsureISM(InputNoneISM, TEXT("InputNoneISM_Runtime"));
+	EnsureISM(InputBaseAISM, TEXT("InputBaseAISM_Runtime"));
+	EnsureISM(InputBaseBISM, TEXT("InputBaseBISM_Runtime"));
+	EnsureISM(InputBaseCISM, TEXT("InputBaseCISM_Runtime"));
+	EnsureISM(InputMetalAISM, TEXT("InputMetalAISM_Runtime"));
+	EnsureISM(InputCatalystXISM, TEXT("InputCatalystXISM_Runtime"));
+	
 	// Ensure procedural mesh for merged outputs
 	if (!MergedOutputMesh)
 	{
@@ -138,6 +171,16 @@ void AHexFactoryActor::EnsureComponents()
 		MergedOutputMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
 	MergedOutputMesh->SetVisibility(true, true);
+	
+	// Ensure InputTilesMesh component exists
+	if (!InputTilesMesh)
+	{
+		InputTilesMesh = NewObject<UProceduralMeshComponent>(this, TEXT("InputTilesMesh_Runtime"));
+		InputTilesMesh->SetupAttachment(GetRootComponent());
+		InputTilesMesh->RegisterComponent();
+		InputTilesMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	InputTilesMesh->SetVisibility(true, true);
 }
 
 AActor* AHexFactoryActor::GetAnchor() const
@@ -258,17 +301,35 @@ void AHexFactoryActor::RebuildInternal()
 	LastSeenBoardRevision = Board ? Board->BoardRevision : -1;
 
 	// Set up tile ISM components
-	if (TileMesh) 
+	// Get the tile mesh from GameManager (same as Output tiles use)
+	UStaticMesh* BaseTileMesh = TileMesh;
+	if (UWorld* World = GetWorld())
 	{
-		TileISM->SetStaticMesh(TileMesh);
-		InputTileISM->SetStaticMesh(TileMesh);
-		OutputTileISM->SetStaticMesh(TileMesh);
-		BeltTileISM->SetStaticMesh(TileMesh);
-		BondTileISM->SetStaticMesh(TileMesh);
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager && GameManager->TileMesh)
+			{
+				BaseTileMesh = GameManager->TileMesh;
+				break;
+			}
+		}
+	}
+	
+	if (BaseTileMesh) 
+	{
+		TileISM->SetStaticMesh(BaseTileMesh);
+		// Input and ClusterInput tiles are rendered via procedural mesh (no ISM needed)
+		OutputTileISM->SetStaticMesh(BaseTileMesh);
+		BeltTileISM->SetStaticMesh(BaseTileMesh);
+		BondTileISM->SetStaticMesh(BaseTileMesh);
 	}
 	
 	if (TileMaterial) TileISM->SetMaterial(0, TileMaterial);
-	if (InputTileMaterial) InputTileISM->SetMaterial(0, InputTileMaterial);
+	
+	// Input and ClusterInput tiles use procedural meshes with cutouts (handled in RebuildInputTiles)
+	// No ISM material setup needed for Input tiles
+	
 	if (OutputTileMaterial) OutputTileISM->SetMaterial(0, OutputTileMaterial);
 	if (BeltTileMaterial) BeltTileISM->SetMaterial(0, BeltTileMaterial);
 	if (BondTileMaterial) BondTileISM->SetMaterial(0, BondTileMaterial);
@@ -327,6 +388,7 @@ void AHexFactoryActor::RebuildInternal()
 	RebuildBelts();
 	RebuildBonds();   // NEW
 	RebuildOutputs(); // NEW: Type-specific output rendering
+	RebuildInputTiles(); // Render Input/ClusterInput tiles using ISM with orb-type materials
 	
 	// Note: Debug logging removed for performance
 }
@@ -352,19 +414,18 @@ void AHexFactoryActor::RebuildTiles()
 		switch (TileKind)
 		{
 		case ETileKind::Input:
-			if (InputTileISM) InputTileISM->AddInstance(Transform);
+		case ETileKind::ClusterInput:
+			// Input and ClusterInput tiles are rendered via procedural mesh (with cutout)
+			// Skip ISM rendering for these - they're handled in RebuildInputTiles()
 			break;
 		case ETileKind::Output:
-			if (OutputTileISM) OutputTileISM->AddInstance(Transform);
+			// Output tiles are handled by RebuildOutputs() with type-specific materials
 			break;
 		case ETileKind::Belt:
-			if (BeltTileISM) BeltTileISM->AddInstance(Transform);
-			break;
 		case ETileKind::Bond:
-			if (BondTileISM) BondTileISM->AddInstance(Transform);
-			break;
 		case ETileKind::Unbond:
-			if (UnbondTileISM) UnbondTileISM->AddInstance(Transform); // Use separate unbond tile background
+			// Belts and bonds don't use base tile meshes - only their glyph meshes
+			// Skip tile mesh rendering for these
 			break;
 		default:
 			// Empty tiles or unknown types go to the default TileISM
@@ -969,6 +1030,20 @@ UInstancedStaticMeshComponent* AHexFactoryActor::GetOutputISMForType(EOrbType Or
 	}
 }
 
+UInstancedStaticMeshComponent* AHexFactoryActor::GetInputISMForType(EOrbType OrbType)
+{
+	switch (OrbType)
+	{
+	case EOrbType::None: return InputNoneISM;
+	case EOrbType::BaseA: return InputBaseAISM;
+	case EOrbType::BaseB: return InputBaseBISM;
+	case EOrbType::BaseC: return InputBaseCISM;
+	case EOrbType::MetalA: return InputMetalAISM;
+	case EOrbType::CatalystX: return InputCatalystXISM;
+	default: return InputBaseAISM; // Fallback
+	}
+}
+
 void AHexFactoryActor::GenerateMergedHexMesh(const FVector& Hex1Center, const FVector& Hex2Center, float HexRadius,
 	UMaterialInterface* Mat1, UMaterialInterface* Mat2, int32 SectionIndex)
 {
@@ -988,7 +1063,7 @@ void AHexFactoryActor::GenerateMergedHexMesh(const FVector& Hex1Center, const FV
 	// Generate Hex1 vertices
 	for (int32 i = 0; i < 6; i++)
 	{
-		float Angle = i * PI / 3.0f;
+		float Angle = i * UE_PI / 3.0f;
 		FVector LocalPos = FVector(FMath::Cos(Angle) * HexRadius, FMath::Sin(Angle) * HexRadius, 0);
 		Vertices.Add(Hex1Center + LocalPos);
 		Normals.Add(FVector::UpVector);
@@ -1000,7 +1075,7 @@ void AHexFactoryActor::GenerateMergedHexMesh(const FVector& Hex1Center, const FV
 	// Generate Hex2 vertices
 	for (int32 i = 0; i < 6; i++)
 	{
-		float Angle = i * PI / 3.0f;
+		float Angle = i * UE_PI / 3.0f;
 		FVector LocalPos = FVector(FMath::Cos(Angle) * HexRadius, FMath::Sin(Angle) * HexRadius, 0);
 		Vertices.Add(Hex2Center + LocalPos);
 		Normals.Add(FVector::UpVector);
@@ -1098,6 +1173,214 @@ void AHexFactoryActor::GenerateMergedHexMesh(const FVector& Hex1Center, const FV
 	if (Mat1)
 	{
 		MergedOutputMesh->SetMaterial(SectionIndex, Mat1);
+	}
+}
+
+void AHexFactoryActor::GenerateHexWithHole(const FVector& Center, float HexRadius, float HoleRadius,
+	UMaterialInterface* Material, int32 SectionIndex)
+{
+	if (!InputTilesMesh) return;
+	
+	TArray<FVector> Vertices;
+	TArray<int32> Triangles;
+	TArray<FVector> Normals;
+	TArray<FVector2D> UV0;
+	TArray<FColor> VertexColors;
+	TArray<FProcMeshTangent> Tangents;
+	
+	const int32 CircleSegments = 32; // Number of segments for the circular hole
+	
+	// Generate outer hexagon vertices (6 vertices)
+	for (int32 i = 0; i < 6; i++)
+	{
+		float Angle = i * UE_PI / 3.0f;
+		FVector LocalPos = FVector(FMath::Cos(Angle) * HexRadius, FMath::Sin(Angle) * HexRadius, 0);
+		Vertices.Add(Center + LocalPos);
+		Normals.Add(FVector::UpVector);
+		// UV mapping: outer edge of hex
+		FVector2D UV = FVector2D(0.5f + 0.5f * FMath::Cos(Angle), 0.5f + 0.5f * FMath::Sin(Angle));
+		UV0.Add(UV);
+		VertexColors.Add(FColor::White);
+		Tangents.Add(FProcMeshTangent(1, 0, 0));
+	}
+	
+	// Generate inner circle vertices (for the hole) - reverse order for proper winding
+	for (int32 i = 0; i < CircleSegments; i++)
+	{
+		// Reverse order for proper winding (counter-clockwise when viewed from above)
+		float Angle = (CircleSegments - 1 - i) * 2.0f * UE_PI / CircleSegments;
+		FVector LocalPos = FVector(FMath::Cos(Angle) * HoleRadius, FMath::Sin(Angle) * HoleRadius, 0);
+		Vertices.Add(Center + LocalPos);
+		Normals.Add(FVector::UpVector);
+		// UV mapping: inner edge of circle
+		FVector2D UV = FVector2D(0.5f + (HoleRadius / HexRadius) * 0.5f * FMath::Cos(Angle), 
+		                          0.5f + (HoleRadius / HexRadius) * 0.5f * FMath::Sin(Angle));
+		UV0.Add(UV);
+		VertexColors.Add(FColor::White);
+		Tangents.Add(FProcMeshTangent(1, 0, 0));
+	}
+	
+	// Create triangles connecting hex vertices to circle vertices
+	// Form a ring by connecting each hex edge to the corresponding circle arc
+	for (int32 HexIdx = 0; HexIdx < 6; HexIdx++)
+	{
+		int32 NextHexIdx = (HexIdx + 1) % 6;
+		int32 HexVertexIdx = HexIdx;
+		int32 NextHexVertexIdx = NextHexIdx;
+		
+		// Calculate which circle segments correspond to this hex edge
+		// Each hex edge spans 60 degrees (UE_PI/3), divide circle segments equally
+		int32 SegmentsPerEdge = CircleSegments / 6;
+		int32 StartCircleIdx = HexIdx * SegmentsPerEdge;
+		
+		// Connect hex edge to circle arc with triangles
+		for (int32 i = 0; i < SegmentsPerEdge; i++)
+		{
+			int32 CircleIdx1 = 6 + ((StartCircleIdx + i) % CircleSegments);
+			int32 CircleIdx2 = 6 + ((StartCircleIdx + i + 1) % CircleSegments);
+			
+			// Create two triangles forming a quad between hex edge and circle arc
+			// For correct front-facing (viewed from above), use counter-clockwise winding
+			// Triangle 1: hex vertex -> circle segment 1 -> next hex vertex
+			Triangles.Add(HexVertexIdx);
+			Triangles.Add(CircleIdx1);
+			Triangles.Add(NextHexVertexIdx);
+			
+			// Triangle 2: next hex vertex -> circle segment 1 -> circle segment 2
+			Triangles.Add(NextHexVertexIdx);
+			Triangles.Add(CircleIdx1);
+			Triangles.Add(CircleIdx2);
+		}
+	}
+	
+	// Create the mesh section
+	InputTilesMesh->CreateMeshSection(SectionIndex, Vertices, Triangles, Normals, UV0, VertexColors, Tangents, true);
+	
+	// Set material
+	if (Material)
+	{
+		InputTilesMesh->SetMaterial(SectionIndex, Material);
+	}
+}
+
+void AHexFactoryActor::RebuildInputTiles()
+{
+	if (!Sim) return;
+	
+	// Get material manager
+	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
+	if (!MaterialManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildInputTiles: No OrbMaterialManager found in world."));
+		return;
+	}
+	
+	// Get the custom input tile mesh from GameManager, or fallback to regular tile mesh
+	UStaticMesh* BaseTileMesh = nullptr;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager)
+			{
+				// Prefer CustomInputTileMesh if available, otherwise use TileMesh
+				if (GameManager->CustomInputTileMesh)
+				{
+					BaseTileMesh = GameManager->CustomInputTileMesh;
+				}
+				else if (GameManager->TileMesh)
+				{
+					BaseTileMesh = GameManager->TileMesh;
+				}
+				break;
+			}
+		}
+	}
+	
+	if (!BaseTileMesh)
+	{
+		// Fallback to local tile mesh
+		if (TileMesh)
+		{
+			BaseTileMesh = TileMesh;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("HexFactoryActor::RebuildInputTiles: No tile mesh available"));
+			return;
+		}
+	}
+	
+	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
+	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	
+	// Set up all input ISM components with the custom input tile mesh and type-specific materials
+	TArray<EOrbType> AllOrbTypes = {
+		EOrbType::None,
+		EOrbType::BaseA,
+		EOrbType::BaseB,
+		EOrbType::BaseC,
+		EOrbType::MetalA,
+		EOrbType::CatalystX
+	};
+	
+	for (EOrbType OrbType : AllOrbTypes)
+	{
+		UInstancedStaticMeshComponent* InputISM = GetInputISMForType(OrbType);
+		if (InputISM)
+		{
+			// Set the custom input tile mesh
+			InputISM->SetStaticMesh(BaseTileMesh);
+			
+			// Get the material for this orb type
+			UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(OrbType);
+			if (TypeMaterial)
+			{
+				// Create a dynamic material instance for half opacity (like Output tiles)
+				UMaterialInstanceDynamic* InputMID = UMaterialInstanceDynamic::Create(TypeMaterial, this);
+				if (InputMID)
+				{
+					// Set half opacity (0.5 alpha) to match Output tiles
+					InputMID->SetScalarParameterValue(FName("Opacity"), 0.5f);
+					InputISM->SetMaterial(0, InputMID);
+				}
+				else
+				{
+					InputISM->SetMaterial(0, TypeMaterial);
+				}
+			}
+			
+			// Clear instances for this type
+			InputISM->ClearInstances();
+		}
+	}
+	
+	// Collect all Input and ClusterInput tiles and add them to the appropriate ISM
+	for (const auto& KV : Sim->TileMap)
+	{
+		const FHex& H = KV.Key;
+		const FTile& T = KV.Value;
+		
+		if (T.Kind == ETileKind::Input || T.Kind == ETileKind::ClusterInput)
+		{
+			const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
+			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+			const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+			
+			// Get orb type from tile Arg (same for Input and ClusterInput, like ClusterOutput)
+			EOrbType OrbType = (EOrbType)T.Arg;
+			
+			// Add instance to the appropriate ISM for this orb type
+			UInstancedStaticMeshComponent* InputISM = GetInputISMForType(OrbType);
+			if (InputISM)
+			{
+				InputISM->AddInstance(FTransform(FRotator::ZeroRotator, Loc, FVector(1.f)));
+			}
+		}
 	}
 }
 

@@ -93,8 +93,19 @@ protected:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputMetalAISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputCatalystXISM = nullptr;
 	
+	// Type-specific input ISM components
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputNoneISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputBaseAISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputBaseBISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputBaseCISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputMetalAISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputCatalystXISM = nullptr;
+	
 	// Procedural mesh for merged cluster outputs
 	UPROPERTY(Transient) UProceduralMeshComponent* MergedOutputMesh = nullptr;
+	
+	// Procedural mesh for Input/ClusterInput tiles with cutouts
+	UPROPERTY(Transient) UProceduralMeshComponent* InputTilesMesh = nullptr;
 
 	// References
 	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
@@ -112,15 +123,23 @@ protected:
 	void UpdateBeltMaterials();   // Update belt materials based on current item positions
 	void RebuildBonds();          // NEW
 	void RebuildOutputs();        // NEW: Type-specific output rendering
+	void RebuildInputTiles();     // Render Input/ClusterInput tiles using ISM with orb-type materials
 	void DrawBeltArrow(const FVector& Center, float TileRadiusUU, float YawDeg);
 	void DrawBondArrow(const FVector& A, const FVector& B);
 	
 	// Helper functions for output type management
 	UInstancedStaticMeshComponent* GetOutputISMForType(EOrbType OrbType);
 	
+	// Helper functions for input type management
+	UInstancedStaticMeshComponent* GetInputISMForType(EOrbType OrbType);
+	
 	// Generate a merged hex mesh between two adjacent hexagons
 	void GenerateMergedHexMesh(const FVector& Hex1Center, const FVector& Hex2Center, float HexRadius, 
 		UMaterialInterface* Mat1, UMaterialInterface* Mat2, int32 SectionIndex);
+	
+	// Generate a hexagon mesh with a circular hole cut out (for Input/ClusterInput tiles)
+	void GenerateHexWithHole(const FVector& Center, float HexRadius, float HoleRadius, 
+		UMaterialInterface* Material, int32 SectionIndex);
 
 private:
 	FVector HexToWorld(const FHex& H) const;

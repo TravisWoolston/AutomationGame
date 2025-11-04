@@ -146,7 +146,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	case EPlaceKind::Input:  T = FTile{ ETileKind::Input,  (uint8)GetCurrentInputOrbType() }; break;
 	case EPlaceKind::Output: T = FTile{ ETileKind::Output, (uint8)GetCurrentOutputOrbType() }; break;
 	case EPlaceKind::ClusterOutput: T = FTile{ ETileKind::ClusterOutput, (uint8)GetCurrentOutputOrbType() }; break;
-	case EPlaceKind::ClusterInput: T = FTile{ ETileKind::ClusterInput, GetCurrentClusterTemplateId() }; break;
+	case EPlaceKind::ClusterInput: T = FTile{ ETileKind::ClusterInput, (uint8)GetCurrentInputOrbType() }; break;
 	case EPlaceKind::Belt:   T = FTile{ ETileKind::Belt,   (uint8)BeltDir }; break;
 	case EPlaceKind::Bond:   T = FTile{ ETileKind::Bond,   (uint8)BeltDir }; break;
 	case EPlaceKind::Unbond: T = FTile{ ETileKind::Unbond, (uint8)BeltDir }; break;
@@ -198,24 +198,24 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		const FTile* ExistingTile = Sim->TileMap.Find(Root);
 		if (ExistingTile && ExistingTile->Kind != ETileKind::Empty)
 		{
-		// Allow Bond tiles to be placed on Input/Output/ClusterOutput tiles (they will auto-convert or expand clusters)
-		bool bAllowBondOnInputOutput = (T.Kind == ETileKind::Bond && 
-			(ExistingTile->Kind == ETileKind::Input || 
-			 ExistingTile->Kind == ETileKind::Output ||
-			 ExistingTile->Kind == ETileKind::InputBond ||
-			 ExistingTile->Kind == ETileKind::OutputBond ||
-			 ExistingTile->Kind == ETileKind::ClusterInput ||
-			 ExistingTile->Kind == ETileKind::ClusterOutput));
-		
-		if (!bAllowBondOnInputOutput)
+			// Allow Bond tiles to be placed on Input/Output/ClusterOutput tiles (they will auto-convert or expand clusters)
+			bool bAllowBondOnInputOutput = (T.Kind == ETileKind::Bond &&
+				(ExistingTile->Kind == ETileKind::Input ||
+					ExistingTile->Kind == ETileKind::Output ||
+					ExistingTile->Kind == ETileKind::InputBond ||
+					ExistingTile->Kind == ETileKind::OutputBond ||
+					ExistingTile->Kind == ETileKind::ClusterInput ||
+					ExistingTile->Kind == ETileKind::ClusterOutput));
+
+			if (!bAllowBondOnInputOutput)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place %s at (%d,%d) - location already occupied by %s"), 
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place %s at (%d,%d) - location already occupied by %s"),
 					*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
 					Root.Q, Root.R,
 					*StaticEnum<ETileKind>()->GetNameStringByValue((int64)ExistingTile->Kind));
 				if (GEngine)
 					GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Red,
-						FString::Printf(TEXT("Cannot place %s - location occupied by %s"), 
+						FString::Printf(TEXT("Cannot place %s - location occupied by %s"),
 							*StaticEnum<ETileKind>()->GetNameStringByValue((int64)T.Kind),
 							*StaticEnum<ETileKind>()->GetNameStringByValue((int64)ExistingTile->Kind)));
 				return;
@@ -374,7 +374,7 @@ void UHexPlacementComponent::CycleNextType()
 	// Get the list of valid orb types (those with assigned materials)
 	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
 	if (ValidTypes.Num() == 0) return; // No valid types to cycle through
-	
+
 	// Cycle the appropriate type based on current placement mode
 	if (PlaceKind == EPlaceKind::Input)
 	{
@@ -386,11 +386,8 @@ void UHexPlacementComponent::CycleNextType()
 	}
 	else if (PlaceKind == EPlaceKind::ClusterInput)
 	{
-		TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
-		if (ValidTemplates.Num() > 0)
-		{
-			CurrentClusterTemplateIndex = (CurrentClusterTemplateIndex + 1) % ValidTemplates.Num();
-		}
+		// ClusterInputs cycle through orb types like regular Inputs
+		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
 }
 
@@ -399,7 +396,7 @@ void UHexPlacementComponent::CyclePreviousType()
 	// Get the list of valid orb types (those with assigned materials)
 	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
 	if (ValidTypes.Num() == 0) return; // No valid types to cycle through
-	
+
 	// Cycle the appropriate type based on current placement mode
 	if (PlaceKind == EPlaceKind::Input)
 	{
@@ -411,11 +408,8 @@ void UHexPlacementComponent::CyclePreviousType()
 	}
 	else if (PlaceKind == EPlaceKind::ClusterInput)
 	{
-		TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
-		if (ValidTemplates.Num() > 0)
-		{
-			CurrentClusterTemplateIndex = (CurrentClusterTemplateIndex - 1 + ValidTemplates.Num()) % ValidTemplates.Num();
-		}
+		// ClusterInputs cycle through orb types like regular Inputs
+		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
 	}
 }
 
@@ -444,7 +438,7 @@ void UHexPlacementComponent::CycleInputOrbType()
 TArray<EOrbType> UHexPlacementComponent::GetValidOrbTypes() const
 {
 	TArray<EOrbType> ValidTypes;
-	
+
 	// Try to find UOrbMaterialManager in the world
 	if (UWorld* World = GetWorld())
 	{
@@ -461,7 +455,7 @@ TArray<EOrbType> UHexPlacementComponent::GetValidOrbTypes() const
 					EOrbType::MetalA,
 					EOrbType::CatalystX
 				};
-				
+
 				for (EOrbType OrbType : AllOrbTypes)
 				{
 					// Check if this orb type has a material assigned in the map
@@ -478,35 +472,35 @@ TArray<EOrbType> UHexPlacementComponent::GetValidOrbTypes() const
 			}
 		}
 	}
-	
+
 	// If no valid types found, fallback to at least BaseA (which will use DefaultOrbMaterial)
 	if (ValidTypes.Num() == 0)
 	{
 		ValidTypes.Add(EOrbType::BaseA);
 	}
-	
+
 	return ValidTypes;
 }
 
 TArray<uint8> UHexPlacementComponent::GetValidClusterTemplateIds() const
 {
 	TArray<uint8> ValidTemplateIds;
-	
+
 	if (Sim)
 	{
 		// Get the cluster templates map from SimWorldHex via public accessor
 		const TMap<uint8, USimWorldHex::FClusterTemplate>& Templates = Sim->GetClusterTemplates();
-		
+
 		// Collect all registered template IDs
 		for (const auto& TemplatePair : Templates)
 		{
 			ValidTemplateIds.Add(TemplatePair.Key);
 		}
-		
+
 		// Sort by template ID for consistent ordering
 		ValidTemplateIds.Sort();
 	}
-	
+
 	return ValidTemplateIds;
 }
 
@@ -518,7 +512,7 @@ EOrbType UHexPlacementComponent::GetCurrentInputOrbType() const
 	{
 		return EOrbType::BaseA; // Fallback if no valid types
 	}
-	
+
 	// Clamp the index to valid range
 	int32 ClampedIndex = FMath::Clamp(CurrentInputOrbTypeIndex, 0, ValidTypes.Num() - 1);
 	return ValidTypes[ClampedIndex];
@@ -533,7 +527,7 @@ EOrbType UHexPlacementComponent::GetCurrentOutputOrbType() const
 	{
 		return EOrbType::BaseA; // Fallback if no valid types
 	}
-	
+
 	// Clamp the index to valid range
 	int32 ClampedIndex = FMath::Clamp(CurrentOutputOrbTypeIndex, 0, ValidTypes.Num() - 1);
 	return ValidTypes[ClampedIndex];
@@ -541,15 +535,58 @@ EOrbType UHexPlacementComponent::GetCurrentOutputOrbType() const
 
 uint8 UHexPlacementComponent::GetCurrentClusterTemplateId() const
 {
-	TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
-	if (ValidTemplates.Num() == 0)
+	// Get the current orb type (ClusterInputs now cycle through orb types like Inputs)
+	EOrbType CurrentOrbType = GetCurrentInputOrbType();
+
+	// Find a cluster template that matches this orb type
+	// Prefer templates whose first orb matches the type, otherwise any template containing this orb type
+	UWorld* W = GetWorld();
+	AOrbSimDriver* NonConstDriver = const_cast<AOrbSimDriver*>(Driver);
+	USimWorldHex* NonConstSim = const_cast<USimWorldHex*>(Sim);
+	if ((!NonConstDriver || !NonConstSim) && W)
 	{
-		return 0; // Fallback if no valid templates
+		ReacquireSimIfNeeded(W, NonConstDriver, NonConstSim);
+		// Update the const pointers (this is safe because they're just cached pointers)
+		const_cast<UHexPlacementComponent*>(this)->Driver = NonConstDriver;
+		const_cast<UHexPlacementComponent*>(this)->Sim = NonConstSim;
 	}
-	
-	// Clamp the index to valid range
-	int32 ClampedIndex = FMath::Clamp(CurrentClusterTemplateIndex, 0, ValidTemplates.Num() - 1);
-	return ValidTemplates[ClampedIndex];
+
+	if (!NonConstSim) return 0; // Fallback if no sim
+
+	const TMap<uint8, USimWorldHex::FClusterTemplate>& Templates = NonConstSim->GetClusterTemplates();
+
+
+	// First pass: find templates whose first orb matches the orb type
+	for (const auto& TemplatePair : Templates)
+	{
+		const USimWorldHex::FClusterTemplate& Template = TemplatePair.Value;
+		if (Template.Orbs.Num() > 0 && Template.Orbs[0].Type == (uint8)CurrentOrbType)
+		{
+			return TemplatePair.Key;
+		}
+	}
+
+	// Second pass: find any template containing this orb type
+	for (const auto& TemplatePair : Templates)
+	{
+		const USimWorldHex::FClusterTemplate& Template = TemplatePair.Value;
+		for (const auto& Orb : Template.Orbs)
+		{
+			if (Orb.Type == (uint8)CurrentOrbType)
+			{
+				return TemplatePair.Key;
+			}
+		}
+	}
+
+	// Fallback: return first available template, or 0 if none
+	TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
+	if (ValidTemplates.Num() > 0)
+	{
+		return ValidTemplates[0];
+	}
+
+	return 0; // Fallback if no valid templates
 }
 
 void UHexPlacementComponent::SetClusterTemplateToId(uint8 TemplateId)
@@ -557,9 +594,9 @@ void UHexPlacementComponent::SetClusterTemplateToId(uint8 TemplateId)
 	UWorld* W = GetWorld();
 	if ((!Driver || !Sim) && W) ReacquireSimIfNeeded(W, Driver, Sim);
 	if (!Sim) return;
-	
+
 	TArray<uint8> ValidTemplates = GetValidClusterTemplateIds();
-	
+
 	// Find the index of the desired template ID
 	for (int32 i = 0; i < ValidTemplates.Num(); i++)
 	{
@@ -570,7 +607,7 @@ void UHexPlacementComponent::SetClusterTemplateToId(uint8 TemplateId)
 			return;
 		}
 	}
-	
+
 	UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Template ID %d not found in valid templates"), TemplateId);
 }
 
@@ -618,23 +655,58 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 	switch (PlaceKind)
 	{
 	case EPlaceKind::Input:
-		return GetActualOrbMesh();
+	case EPlaceKind::ClusterInput:
+	{
+		// For Input/ClusterInput, use the actual tile mesh from GameManager
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				// Prefer CustomInputTileMesh if available, otherwise use TileMesh
+				if ((*It)->CustomInputTileMesh)
+				{
+					return (*It)->CustomInputTileMesh;
+				}
+				else if ((*It)->TileMesh)
+				{
+					return (*It)->TileMesh;
+				}
+			}
+		}
+		// Fallback to generic preview mesh
+		return GenericTilePreviewMesh;
+	}
+
 	case EPlaceKind::Output:
-		return GetActualOutputOrbMesh();
+	case EPlaceKind::ClusterOutput:
+	{
+		// For Output/ClusterOutput, use the actual tile mesh from GameManager
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				if ((*It)->TileMesh)
+				{
+					return (*It)->TileMesh;
+				}
+			}
+		}
+		// Fallback to generic preview mesh
+		return GenericTilePreviewMesh;
+	}
+
 	case EPlaceKind::Belt:
-		return GetActualBeltMesh();
+		return BeltMeshPreview ? BeltMeshPreview : GenericTilePreviewMesh;
+
 	case EPlaceKind::Arm:
 		return ArmBasePreviewMesh ? ArmBasePreviewMesh : GenericTilePreviewMesh;
+
 	case EPlaceKind::Bond:
-		return BondPreviewMesh ? BondPreviewMesh : GenericTilePreviewMesh;
+		return BondPreviewMesh;
+
 	case EPlaceKind::Unbond:
-		return UnbondPreviewMesh ? UnbondPreviewMesh : GenericTilePreviewMesh;
-	case EPlaceKind::ClusterOutput:
-		// ClusterOutput now uses same preview as Output
-		return GetActualOutputOrbMesh();
-	case EPlaceKind::ClusterInput:
-		// ClusterInput uses same preview as Input
-		return GetActualOrbMesh();
+		return UnbondPreviewMesh ? UnbondPreviewMesh : BondPreviewMesh;
+
 	default:
 		return GenericTilePreviewMesh;
 	}
@@ -692,7 +764,7 @@ UStaticMesh* UHexPlacementComponent::GetActualBeltMesh() const
 	{
 		return BeltMeshPreview;
 	}
-	
+
 	// Fallback: try to find AHexFactoryActor in the world
 	if (UWorld* World = GetWorld())
 	{
@@ -707,7 +779,7 @@ UStaticMesh* UHexPlacementComponent::GetActualBeltMesh() const
 			}
 		}
 	}
-	
+
 	// Final fallback
 	return GenericTilePreviewMesh;
 }
@@ -719,7 +791,7 @@ UMaterialInterface* UHexPlacementComponent::GetActualBeltMaterial() const
 	{
 		return BeltMaterialPreview;
 	}
-	
+
 	// Fallback: try to find AHexFactoryActor in the world
 	if (UWorld* World = GetWorld())
 	{
@@ -734,7 +806,7 @@ UMaterialInterface* UHexPlacementComponent::GetActualBeltMaterial() const
 			}
 		}
 	}
-	
+
 	// Final fallback
 	return nullptr;
 }
@@ -756,7 +828,7 @@ UStaticMesh* UHexPlacementComponent::GetActualOrbMesh() const
 			}
 		}
 	}
-	
+
 	// Final fallback
 	return GenericTilePreviewMesh;
 }
@@ -779,7 +851,7 @@ UMaterialInterface* UHexPlacementComponent::GetActualOrbMaterial() const
 			}
 		}
 	}
-	
+
 	// Final fallback
 	return nullptr;
 }
@@ -895,7 +967,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		}
 		return;
 	}
-	
+
 	if (!bHoverValid || !GetWorld()) return;
 
 	const bool bPlaceOK = CanPlaceAt(HoverHex);
@@ -945,7 +1017,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		if (PlaceKind == EPlaceKind::Arm)
 		{
 			EnsurePreviewComponent();
-			if (!PreviewComp) 
+			if (!PreviewComp)
 			{
 				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Failed to create preview component"));
 				return;
@@ -958,9 +1030,9 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 				PreviewComp->SetVisibility(false);
 				return;
 			}
-			
 
-			
+
+
 			if (PreviewComp->GetStaticMesh() != Mesh)
 			{
 				PreviewComp->SetStaticMesh(Mesh);
@@ -976,10 +1048,10 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			FVector UseLoc = CenterA;
 			FVector UseScale(PreviewScale);
 
-			PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw, 0.f));
+			PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw + 30.0f, 0.f));
 			PreviewComp->SetWorldScale3D(UseScale);
 			PreviewComp->SetVisibility(true);
-			
+
 
 
 			// Set material for arm preview
@@ -996,7 +1068,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			{
 				SkeletalPreviewComp->SetVisibility(false);
 			}
-			
+
 
 		}
 		else
@@ -1035,7 +1107,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 
 			FVector UseLoc = CenterA;
 			FVector UseScale(PreviewScale);
-			
+
 			// ClusterOutput tiles use larger scale
 			if (PlaceKind == EPlaceKind::ClusterOutput)
 			{
@@ -1067,9 +1139,9 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			PreviewComp->SetVisibility(true);
 
 			// Set material based on placement type
-			if (PlaceKind == EPlaceKind::Input)
+			if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::ClusterInput)
 			{
-				// For input tiles, use the actual orb material
+				// For input tiles and cluster input tiles, use the actual orb material
 				UMaterialInterface* OrbMaterial = GetActualOrbMaterial();
 				if (OrbMaterial)
 				{
@@ -1081,9 +1153,9 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 				// For output/cluster tiles, use the actual orb material with half opacity
 				EOrbType CurrentType = GetCurrentOutputOrbType();
 				UMaterialInterface* OrbMaterial = GetActualOutputOrbMaterial();
-				
 
-				
+
+
 				if (OrbMaterial)
 				{
 					// Create a NEW dynamic material instance for opacity control (recreated each frame)
@@ -1140,7 +1212,7 @@ UStaticMesh* UHexPlacementComponent::GetActualOutputOrbMesh() const
 			}
 		}
 	}
-	
+
 	// Fallback to local tile mesh if available
 	if (UWorld* World = GetWorld())
 	{
@@ -1153,7 +1225,7 @@ UStaticMesh* UHexPlacementComponent::GetActualOutputOrbMesh() const
 			}
 		}
 	}
-	
+
 	// Final fallback
 	return GenericTilePreviewMesh;
 }
@@ -1176,7 +1248,7 @@ UMaterialInterface* UHexPlacementComponent::GetActualOutputOrbMaterial() const
 			}
 		}
 	}
-	
+
 	// Final fallback
 	return nullptr;
 }
@@ -1213,8 +1285,8 @@ void UHexPlacementComponent::UpdateArmPreviewBoneRotations(float Yaw)
 						Base1BoneName = DefaultArm->Base1BoneName;
 						RotatingBase2RotationOffset = DefaultArm->RotatingBase2RotationOffset;
 						BaseGear7RotationOffset = DefaultArm->BaseGear7RotationOffset;
-						
-						UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Using actual arm bone settings - RotatingBase2: %s, BaseGear7: %s"), 
+
+						UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Using actual arm bone settings - RotatingBase2: %s, BaseGear7: %s"),
 							*RotatingBase2BoneName.ToString(), *BaseGear7BoneName.ToString());
 					}
 					break; // Only check the first GameManager found

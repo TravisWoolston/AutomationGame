@@ -1087,6 +1087,25 @@ bool AGameManager::DecrementClusterFromStorageByTemplateId(uint8 TemplateId)
 	return false;
 }
 
+bool AGameManager::DecrementClusterFromStorageByCanonicalKey(const FClusterCanonicalKey& Key)
+{
+	if (int32* Count = ClusterCounts.Find(Key))
+	{
+		if (*Count > 0)
+		{
+			(*Count)--;
+			// If count reaches zero, we keep the entry (don't remove) so it can be tracked
+			return true;
+		}
+	}
+	return false;
+}
+
+const USimWorldHex::FClusterTemplate* AGameManager::GetStoredClusterTemplate(const FClusterCanonicalKey& Key) const
+{
+	return StoredClusterTemplates.Find(Key);
+}
+
 bool AGameManager::DoesClusterExistInStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate) const
 {
 	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
@@ -1127,6 +1146,70 @@ void AGameManager::GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& Out
 			OutCounts.Add(KV.Value);
 		}
 	}
+}
+
+uint8 AGameManager::FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplate& ClusterTemplate)
+{
+	if (!OrbSimDriver || !OrbSimDriver->GetSim())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FindOrRegisterTemplateId: No sim available"));
+		return 0;
+	}
+	
+	USimWorldHex* Sim = OrbSimDriver->GetSim();
+	
+	// Generate canonical key for the template
+	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
+	
+	// Check if we have a cached TemplateId for this canonical key
+	for (const auto& KV : TemplateIdToCanonicalKey)
+	{
+		if (KV.Value == Key)
+		{
+			// Found existing TemplateId
+			return KV.Key;
+		}
+	}
+	
+	// Check if sim already has a matching template
+	const TMap<uint8, USimWorldHex::FClusterTemplate>& SimTemplates = Sim->GetClusterTemplates();
+	for (const auto& KV : SimTemplates)
+	{
+		// Compare templates by checking orb count and structure
+		if (KV.Value.Orbs.Num() == ClusterTemplate.Orbs.Num() &&
+			KV.Value.Bonds.Num() == ClusterTemplate.Bonds.Num())
+		{
+			// Detailed comparison could be added here, but for now use canonical key
+			FClusterCanonicalKey SimKey = GenerateCanonicalKey(KV.Value);
+			if (SimKey == Key)
+			{
+				// Cache this mapping
+				TemplateIdToCanonicalKey.Add(KV.Key, Key);
+				return KV.Key;
+			}
+		}
+	}
+	
+	// No existing template found - register a new one
+	uint8 NewTemplateId = Sim->GenerateNewTemplateId();
+	
+	// Convert bonds to TPair format
+	TArray<TPair<int32, int32>> BondPairs;
+	for (const TPair<int32, int32>& Bond : ClusterTemplate.Bonds)
+	{
+		BondPairs.Add(Bond);
+	}
+	
+	// Register the template in the sim
+	Sim->RegisterClusterTemplate(NewTemplateId, ClusterTemplate.Orbs, BondPairs, ClusterTemplate.Name);
+	
+	// Cache the mapping
+	TemplateIdToCanonicalKey.Add(NewTemplateId, Key);
+	
+	UE_LOG(LogTemp, Log, TEXT("FindOrRegisterTemplateId: Registered new template ID %d for cluster with %d orbs"), 
+		NewTemplateId, ClusterTemplate.Orbs.Num());
+	
+	return NewTemplateId;
 }
 
 void AGameManager::ClearClusterStorage()

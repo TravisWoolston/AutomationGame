@@ -71,6 +71,7 @@ private:
 	bool bDeletionSelectionActive = false;  // For deletion drag selection
 	bool bBlueprintMode = false;
 	bool bBlueprintPlacementMode = false;
+	bool bContinuePlacementActive = false;  // NEW: For continuous placement mode
 	bool bDeletionMode = false;
 	FVector2D SelectionStart;
 	FVector2D SelectionEnd;
@@ -203,6 +204,10 @@ private:
 	void SelectionActivePressed();
 	void SelectionActiveReleased();
 	
+	// Continue placement modifier key (for keeping blueprint after placement)
+	void ContinuePlacementActivePressed();
+	void ContinuePlacementActiveReleased();
+
 	// Simulation control - advance one tick
 	void NextTick();
 	

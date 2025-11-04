@@ -19,6 +19,7 @@ public:
 	UClusterStorageDisplayWidget(const FObjectInitializer& ObjectInitializer);
 
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	/** Refresh the display with current stored clusters from GameManager */
@@ -33,6 +34,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Cluster Storage")
 	bool NeedsRefresh() const;
 
+	/** Handle clicking on a cluster icon to generate blueprint */
+	UFUNCTION()
+	void HandleClusterIconClicked();
+
 protected:
 	/** Vertical box containing cluster entries */
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
@@ -41,6 +46,18 @@ protected:
 	/** GameManager that owns the cluster storage */
 	UPROPERTY(BlueprintReadWrite, Category = "Cluster Storage")
 	AGameManager* GameManager = nullptr;
+	
+	/** HexTopDownPawn reference for setting blueprint placement */
+	UPROPERTY(BlueprintReadWrite, Category = "Cluster Storage")
+	class AHexTopDownPawn* Pawn = nullptr;
+	
+	/** Map to associate cluster icon buttons with their template indices */
+	UPROPERTY()
+	TMap<class UButton*, int32> ClusterButtonToIndex;
+	
+	/** Array of cluster icon buttons */
+	UPROPERTY()
+	TArray<class UButton*> ClusterIconButtons;
 
 	/** Last known cluster count to detect changes */
 	UPROPERTY()

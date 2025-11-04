@@ -1,5 +1,6 @@
 #pragma once
 #include "CoreMinimal.h"
+#include "Sim/HexTypes.h"
 #include "Sim/HexCoord.h"
 #include "Sim/Tiles.h"
 #include "BlueprintTile.generated.h"

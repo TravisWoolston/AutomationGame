@@ -89,70 +89,154 @@ void USimWorldHex::StepBelts()
 				const FItem* InputItem = ItemMap.Find(SourceHex);
 				if (InputItem && InputItem->Id > 0)
 				{
-					FItem MovingItem = *InputItem;
+					// Check if this item is part of a bonded cluster
+					TSet<int32> BondedClusterIds;
+					TArray<int32> Stack;
+					Stack.Add(InputItem->Id);
+					BondedClusterIds.Add(InputItem->Id);
 					
-					// For cluster inputs, we need to move all connected items
-					if (SourceTile->Kind == ETileKind::ClusterInput && MovingItem.bIsCluster)
+					// BFS to find all bonded items
+					while (Stack.Num() > 0)
 					{
-						// Remove entire cluster and its bonds from the board
-						ItemMap.Remove(SourceHex);
-						OrbAt.Remove(SourceHex);
+						int32 CurrentId = Stack.Pop();
+						if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentId))
+						{
+							for (int32 BondIdx : *BondList)
+							{
+								if (!Bonds.IsValidIndex(BondIdx)) continue;
+								const FBond& Bond = Bonds[BondIdx];
+								if (!Bond.bActive) continue;
+								
+								int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
+								if (OtherId > 0 && !BondedClusterIds.Contains(OtherId))
+								{
+									BondedClusterIds.Add(OtherId);
+									Stack.Add(OtherId);
+								}
+							}
+						}
+					}
+					
+					// Calculate move offset for the entire cluster
+					FHex MoveOffset(BeltHex.Q - SourceHex.Q, BeltHex.R - SourceHex.R);
+					
+					// Check if all bonded items can move together
+					bool bCanMoveCluster = true;
+					TMap<int32, FHex> ClusterPositions;
+					TMap<int32, FHex> ClusterDestinations;
+					
+					for (int32 BondedId : BondedClusterIds)
+					{
+						// Find current position
+						FHex CurrentPos;
+						bool bFound = false;
+						for (const auto& BoardKV : ItemMap)
+						{
+							if (BoardKV.Value.Id == BondedId)
+							{
+								CurrentPos = BoardKV.Key;
+								ClusterPositions.Add(BondedId, CurrentPos);
+								bFound = true;
+								break;
+							}
+						}
 						
-						// Track all sub-orb IDs for movement tracking
-						for (const FOrbData& SubOrb : MovingItem.Orbs)
+						if (!bFound)
 						{
-							if (SubOrb.ItemId > 0)
-							{
-								ItemsMovedLastStep.Add(SubOrb.ItemId);
-								OrbsMovedThisTick.Add(SubOrb.ItemId);
-							}
+							bCanMoveCluster = false;
+							break;
 						}
-					}
-					else
-					{
-						// Regular single item movement
-						ItemMap.Remove(SourceHex);
-						OrbAt.Remove(SourceHex);
-						ItemsMovedLastStep.Add(MovingItem.Id);
-						OrbsMovedThisTick.Add(MovingItem.Id);
-					}
-					
-					// Place item/cluster at belt position
-					ItemMap.Add(BeltHex, MovingItem);
-					OrbAt.Add(BeltHex, KindFromItem(MovingItem));
-
-					// Mark this input to skip spawning this frame
-					SkipInputThisFrame.Add(SourceHex);
-
-					// Create ascend animation for the input tile
-					// Animation will complete in one step, synchronized with belt interpolation
-					// Use the item that was pulled to display the correct material
-					FAnimatedOrb AscendAnimation;
-					AscendAnimation.bActive = true;
-					AscendAnimation.bIsInput = true;
-					AscendAnimation.Hex = SourceHex;
-					AscendAnimation.Item = MovingItem; // Use the actual item for correct material
-					AscendAnimation.StartStep = StepCounter;
-					AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
-					
-					// Check if this input tile has an InputBond partner
-					if (SourceTile->Kind == ETileKind::Input && IOBondPartners.Find(SourceHex))
-					{
-						if (const FHex* PartnerHex = IOBondPartners.Find(SourceHex))
+						
+						// Calculate destination
+						FHex DestPos(CurrentPos.Q + MoveOffset.Q, CurrentPos.R + MoveOffset.R);
+						ClusterDestinations.Add(BondedId, DestPos);
+						
+						// Check if destination is blocked by non-cluster items
+						if (const FItem* DestItem = ItemMap.Find(DestPos))
 						{
-							// Check if partner also has an item (both inputs should spawn bonded)
-							if (const FItem* PartnerItem = ItemMap.Find(*PartnerHex))
+							if (!BondedClusterIds.Contains(DestItem->Id))
 							{
-								AscendAnimation.bIsBonded = true;
-								AscendAnimation.PartnerHex = *PartnerHex;
-								AscendAnimation.PartnerItemId = PartnerItem->Id;
+								bCanMoveCluster = false;
+								break;
 							}
 						}
 					}
 					
-					AnimatedOrbs.Add(AscendAnimation);
-
-					return true;
+					if (bCanMoveCluster)
+					{
+						// Move entire bonded cluster
+						TMap<int32, FItem> MovingItems;
+						
+						// Remove all items from old positions
+						for (const auto& PosKV : ClusterPositions)
+						{
+							int32 ItemId = PosKV.Key;
+							FHex OldPos = PosKV.Value;
+							
+							if (FItem* Item = ItemMap.Find(OldPos))
+							{
+								MovingItems.Add(ItemId, *Item);
+								ItemMap.Remove(OldPos);
+								OrbAt.Remove(OldPos);
+							}
+						}
+						
+						// Place all items at new positions
+						for (const auto& DestKV : ClusterDestinations)
+						{
+							int32 ItemId = DestKV.Key;
+							FHex NewPos = DestKV.Value;
+							
+							if (FItem* Item = MovingItems.Find(ItemId))
+							{
+								ItemMap.Add(NewPos, *Item);
+								OrbAt.Add(NewPos, KindFromItem(*Item));
+								ItemsMovedLastStep.Add(ItemId);
+								OrbsMovedThisTick.Add(ItemId);
+							}
+						}
+						
+						// Update bond positions
+						for (int32 ItemId : BondedClusterIds)
+						{
+							if (const TArray<int32>* BondList = ItemToBonds.Find(ItemId))
+							{
+								for (int32 BondIdx : *BondList)
+								{
+									if (!Bonds.IsValidIndex(BondIdx)) continue;
+									FBond& Bond = Bonds[BondIdx];
+									if (!Bond.bActive) continue;
+									
+									// Update bond root if this item is ItemA
+									if (Bond.ItemA == ItemId)
+									{
+										if (FHex* NewPos = ClusterDestinations.Find(ItemId))
+										{
+											Bond.Root = *NewPos;
+										}
+									}
+								}
+							}
+						}
+						
+						// Mark source input tiles to skip spawning
+						for (const auto& PosKV : ClusterPositions)
+						{
+							SkipInputThisFrame.Add(PosKV.Value);
+						}
+						
+						// Create ascend animation for the primary input tile only
+						FAnimatedOrb AscendAnimation;
+						AscendAnimation.bActive = true;
+						AscendAnimation.bIsInput = true;
+						AscendAnimation.Hex = SourceHex;
+						AscendAnimation.Item = *InputItem;
+						AscendAnimation.StartStep = StepCounter;
+						AscendAnimation.CompletionStep = StepCounter + 1;
+						AnimatedOrbs.Add(AscendAnimation);
+						
+						return true;
+					}
 				}
 			}
 

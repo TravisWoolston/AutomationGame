@@ -106,6 +106,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Grid")
 	UStaticMesh* TileMesh = nullptr;
 
+	/** Custom mesh for Input and ClusterInput tiles. If null, uses TileMesh. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	UStaticMesh* CustomInputTileMesh = nullptr;
+
 	UPROPERTY(EditAnywhere, Category = "Grid")
 	UMaterialInterface* TileMaterial = nullptr;
 
@@ -295,6 +299,12 @@ public:
 	/** Decrement cluster count from storage by template ID, returns true if successful (C++ only) */
 	bool DecrementClusterFromStorageByTemplateId(uint8 TemplateId);
 
+	/** Decrement cluster count from storage by canonical key, returns true if successful (C++ only) */
+	bool DecrementClusterFromStorageByCanonicalKey(const FClusterCanonicalKey& Key);
+
+	/** Get the stored cluster template by canonical key, returns nullptr if not found (C++ only) */
+	const USimWorldHex::FClusterTemplate* GetStoredClusterTemplate(const FClusterCanonicalKey& Key) const;
+
 	/** Check if a cluster structure exists in storage (C++ only) */
 	bool DoesClusterExistInStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;
 
@@ -306,6 +316,9 @@ public:
 
 	/** Get all stored cluster templates and their counts (C++ only) */
 	void GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& OutTemplates, TArray<int32>& OutCounts) const;
+	
+	/** Find or register a TemplateId for a given cluster template (C++ only) */
+	uint8 FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplate& ClusterTemplate);
 
 	/** Clear all stored clusters (C++ only) */
 	void ClearClusterStorage();
