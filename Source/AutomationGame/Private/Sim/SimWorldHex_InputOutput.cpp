@@ -289,27 +289,26 @@ void USimWorldHex::SpawnInputs()
 
 									BondsCreated++; // Debug counter
 
-									UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
-										*ItemIdA, *ItemIdB, HexA->Q, HexA->R, HexB->Q, HexB->R);
+									// UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
+									// 	*ItemIdA, *ItemIdB, HexA->Q, HexA->R, HexB->Q, HexB->R);
 								}
 								else
 								{
-									UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to find hex positions for bond %d<->%d (items %d, %d)"),
-										BondPair.Key, BondPair.Value, *ItemIdA, *ItemIdB);
+									// UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to find hex positions for bond %d<->%d (items %d, %d)"),
+									// 	BondPair.Key, BondPair.Value, *ItemIdA, *ItemIdB);
 								}
 							}
 						}
 						else
 						{
-							UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to map ChainTemplate indices %d<->%d to item IDs (found A=%s, B=%s)"),
-								BondPair.Key, BondPair.Value,
-								ItemIdA ? TEXT("yes") : TEXT("no"),
-								ItemIdB ? TEXT("yes") : TEXT("no"));
+							// UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to map ChainTemplate indices %d<->%d to item IDs (found A=%s, B=%s)"),
+							// 	BondPair.Key, BondPair.Value,
+							// 	ItemIdA ? TEXT("yes") : TEXT("no"),
+							// 	ItemIdB ? TEXT("yes") : TEXT("no"));
 						}
 					}
 
-					UE_LOG(LogTemp, Log, TEXT("ClusterInput: Spawned %d orbs with %d bonds from storage (ChainTemplate had %d bonds, %d orbs)"),
-						HexToItemId.Num(), BondsCreated, ChainTemplate.Bonds.Num(), ChainTemplate.Orbs.Num());
+					
 
 					// Decrement cluster count in storage
 					if (GameManager)
@@ -622,27 +621,27 @@ void USimWorldHex::SpawnInputsAfterBelts()
 
 									BondsCreated++; // Debug counter
 
-									UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
-										*ItemIdA, *ItemIdB, HexA->Q, HexA->R, HexB->Q, HexB->R);
+									// UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
+									// 	*ItemIdA, *ItemIdB, HexA->Q, HexA->R, HexB->Q, HexB->R);
 								}
 								else
 								{
-									UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to find hex positions for bond %d<->%d (items %d, %d)"),
-										BondPair.Key, BondPair.Value, *ItemIdA, *ItemIdB);
+									// UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to find hex positions for bond %d<->%d (items %d, %d)"),
+									// 	BondPair.Key, BondPair.Value, *ItemIdA, *ItemIdB);
 								}
 							}
 						}
 						else
 						{
-							UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to map ChainTemplate indices %d<->%d to item IDs (found A=%s, B=%s)"),
-								BondPair.Key, BondPair.Value,
-								ItemIdA ? TEXT("yes") : TEXT("no"),
-								ItemIdB ? TEXT("yes") : TEXT("no"));
+							// UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to map ChainTemplate indices %d<->%d to item IDs (found A=%s, B=%s)"),
+							// 	BondPair.Key, BondPair.Value,
+							// 	ItemIdA ? TEXT("yes") : TEXT("no"),
+							// 	ItemIdB ? TEXT("yes") : TEXT("no"));
 						}
 					}
 
-					UE_LOG(LogTemp, Log, TEXT("ClusterInput: Spawned %d orbs with %d bonds from storage (ChainTemplate had %d bonds, %d orbs)"),
-						HexToItemId.Num(), BondsCreated, ChainTemplate.Bonds.Num(), ChainTemplate.Orbs.Num());
+					// UE_LOG(LogTemp, Log, TEXT("ClusterInput: Spawned %d orbs with %d bonds from storage (ChainTemplate had %d bonds, %d orbs)"),
+					// 	HexToItemId.Num(), BondsCreated, ChainTemplate.Bonds.Num(), ChainTemplate.Orbs.Num());
 
 					// Decrement cluster count in storage
 					if (GameManager)

@@ -1983,17 +1983,111 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 			case ETileKind::Input:
 				if (Placer)
 				{
-					PreviewMesh = Placer->GetActualOrbMesh();
+					// Use CustomInputTileMesh if available, otherwise GetActualOrbMesh
+					AGameManager* GameManager = nullptr;
+					if (UWorld* World = GetWorld())
+					{
+						for (TActorIterator<AGameManager> It(World); It; ++It)
+						{
+							GameManager = *It;
+							break;
+						}
+					}
+					if (GameManager && GameManager->CustomInputTileMesh)
+					{
+						PreviewMesh = GameManager->CustomInputTileMesh;
+					}
+					else if (GameManager && GameManager->TileMesh)
+					{
+						PreviewMesh = GameManager->TileMesh;
+					}
+					else
+					{
+						PreviewMesh = Placer->GetActualOrbMesh();
+					}
+					// Compute base yaw the same way as individual placement (direction 0)
+					{
+						const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)0);
+						const FVector NeighborWorldPos = Driver->IsSphereEnabled()
+							? Driver->MapHexToWorld(NeighborHex)
+							: FVector(HexCoord::AxialToXY(FHexAxial(NeighborHex.Q, NeighborHex.R), TileSize, Orientation), GridPlaneZ);
+						const FVector2D DirVec(NeighborWorldPos.X - PreviewWorldPos.X, NeighborWorldPos.Y - PreviewWorldPos.Y);
+						if (!DirVec.IsNearlyZero())
+						{
+							PreviewYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+						}
+						// For input tiles, handle grid orientation (same as output)
+						if (Orientation == EHexOrientation::FlatTop)
+						{
+							PreviewYaw = FMath::UnwindDegrees(PreviewYaw + 30.0f);
+						}
+					}
+				}
+				break;
+			case ETileKind::ClusterInput:
+				if (Placer)
+				{
+					// Use CustomInputTileMesh if available, otherwise TileMesh
+					AGameManager* GameManager = nullptr;
+					if (UWorld* World = GetWorld())
+					{
+						for (TActorIterator<AGameManager> It(World); It; ++It)
+						{
+							GameManager = *It;
+							break;
+						}
+					}
+					if (GameManager && GameManager->CustomInputTileMesh)
+					{
+						PreviewMesh = GameManager->CustomInputTileMesh;
+					}
+					else if (GameManager && GameManager->TileMesh)
+					{
+						PreviewMesh = GameManager->TileMesh;
+					}
+					else
+					{
+						PreviewMesh = Placer->GenericTilePreviewMesh;
+					}
+					// Compute base yaw the same way as individual placement (direction 0)
+					{
+						const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)0);
+						const FVector NeighborWorldPos = Driver->IsSphereEnabled()
+							? Driver->MapHexToWorld(NeighborHex)
+							: FVector(HexCoord::AxialToXY(FHexAxial(NeighborHex.Q, NeighborHex.R), TileSize, Orientation), GridPlaneZ);
+						const FVector2D DirVec(NeighborWorldPos.X - PreviewWorldPos.X, NeighborWorldPos.Y - PreviewWorldPos.Y);
+						if (!DirVec.IsNearlyZero())
+						{
+							PreviewYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+						}
+						// For cluster input tiles, handle grid orientation (same as output)
+						if (Orientation == EHexOrientation::FlatTop)
+						{
+							PreviewYaw = FMath::UnwindDegrees(PreviewYaw + 30.0f);
+						}
+					}
 				}
 				break;
 			case ETileKind::Output:
 				if (Placer)
 				{
 					PreviewMesh = Placer->GetActualOutputOrbMesh();
-					// For output tiles, handle grid orientation
-					if (Orientation == EHexOrientation::FlatTop)
+					// Compute base yaw the same way as individual placement (direction 0)
 					{
-						PreviewYaw = 30.0f;
+						const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)0);
+						const FVector NeighborWorldPos = Driver->IsSphereEnabled()
+							? Driver->MapHexToWorld(NeighborHex)
+							: FVector(HexCoord::AxialToXY(FHexAxial(NeighborHex.Q, NeighborHex.R), TileSize, Orientation), GridPlaneZ);
+						const FVector2D DirVec(NeighborWorldPos.X - PreviewWorldPos.X, NeighborWorldPos.Y - PreviewWorldPos.Y);
+						if (!DirVec.IsNearlyZero())
+						{
+							PreviewYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+						}
+						// For output tiles, handle grid orientation
+						if (Orientation == EHexOrientation::FlatTop)
+						{
+							PreviewYaw = FMath::UnwindDegrees(PreviewYaw + 30.0f);
+						}
 					}
 				}
 				break;
@@ -2001,10 +2095,22 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 				if (Placer)
 				{
 					PreviewMesh = Placer->GetActualOutputOrbMesh();
-					// For output tiles, handle grid orientation
-					if (Orientation == EHexOrientation::FlatTop)
+					// Compute base yaw the same way as individual placement (direction 0)
 					{
-						PreviewYaw = 30.0f;
+						const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)0);
+						const FVector NeighborWorldPos = Driver->IsSphereEnabled()
+							? Driver->MapHexToWorld(NeighborHex)
+							: FVector(HexCoord::AxialToXY(FHexAxial(NeighborHex.Q, NeighborHex.R), TileSize, Orientation), GridPlaneZ);
+						const FVector2D DirVec(NeighborWorldPos.X - PreviewWorldPos.X, NeighborWorldPos.Y - PreviewWorldPos.Y);
+						if (!DirVec.IsNearlyZero())
+						{
+							PreviewYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+						}
+						// For cluster output tiles, handle grid orientation
+						if (Orientation == EHexOrientation::FlatTop)
+						{
+							PreviewYaw = FMath::UnwindDegrees(PreviewYaw + 30.0f);
+						}
 					}
 				}
 				break;
@@ -2167,6 +2273,27 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 						{
 							PreviewComp->SetMaterial(0, MaterialToApply);
 						}
+					}
+					else if (Placer && Placer->PreviewBaseMaterial)
+					{
+						PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
+					}
+				}
+				else if (Placer && Placer->PreviewBaseMaterial)
+				{
+					PreviewComp->SetMaterial(0, Placer->PreviewBaseMaterial);
+				}
+			}
+			else if (BlueprintTile.TileType == ETileKind::Input || BlueprintTile.TileType == ETileKind::ClusterInput)
+			{
+				// For Input and ClusterInput tiles, get material based on TileDirection (which stores the orb type)
+				if (UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this))
+				{
+					UMaterialInterface* MaterialToApply = MaterialManager->GetMaterialForOrbType((EOrbType)BlueprintTile.TileDirection);
+					if (MaterialToApply)
+					{
+						// Input/ClusterInput tiles use the material directly (no opacity change)
+						PreviewComp->SetMaterial(0, MaterialToApply);
 					}
 					else if (Placer && Placer->PreviewBaseMaterial)
 					{

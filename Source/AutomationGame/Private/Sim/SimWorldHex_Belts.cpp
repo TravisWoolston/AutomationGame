@@ -225,15 +225,101 @@ void USimWorldHex::StepBelts()
 							SkipInputThisFrame.Add(PosKV.Value);
 						}
 						
-						// Create ascend animation for the primary input tile only
-						FAnimatedOrb AscendAnimation;
-						AscendAnimation.bActive = true;
-						AscendAnimation.bIsInput = true;
-						AscendAnimation.Hex = SourceHex;
-						AscendAnimation.Item = *InputItem;
-						AscendAnimation.StartStep = StepCounter;
-						AscendAnimation.CompletionStep = StepCounter + 1;
-						AnimatedOrbs.Add(AscendAnimation);
+						// Create ascend animations for all ClusterInput tiles in the chain
+						// For ClusterInput, we need to find all tiles in the chain and create animations for each
+						if (SourceTile->Kind == ETileKind::ClusterInput)
+						{
+							// Find all connected ClusterInput tiles in the chain
+							TArray<FHex> ClusterInputTiles;
+							TSet<FHex> Visited;
+							TArray<FHex> ToVisit;
+							
+							ToVisit.Add(SourceHex);
+							Visited.Add(SourceHex);
+							
+							// BFS to find all adjacent ClusterInput tiles
+							while (ToVisit.Num() > 0)
+							{
+								FHex CurrentHex = ToVisit.Pop();
+								ClusterInputTiles.Add(CurrentHex);
+								
+								// Check all 6 neighbors
+								for (uint8 Dir = 0; Dir < 6; Dir++)
+								{
+									FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
+									if (!Visited.Contains(NeighborHex))
+									{
+										const FTile* NeighborTile = TileMap.Find(NeighborHex);
+										if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterInput)
+										{
+											Visited.Add(NeighborHex);
+											ToVisit.Add(NeighborHex);
+										}
+									}
+								}
+							}
+							
+							// Create ascend animation for each ClusterInput tile that had an item pulled
+							for (const FHex& ClusterInputHex : ClusterInputTiles)
+							{
+								// Check if this tile had an item that was pulled
+								bool bHadItemPulled = false;
+								FItem ItemForAnimation;
+								
+								for (const auto& PosKV : ClusterPositions)
+								{
+									if (PosKV.Value.Q == ClusterInputHex.Q && PosKV.Value.R == ClusterInputHex.R)
+									{
+										// This tile had an item pulled - find it in MovingItems
+										if (const FItem* PulledItem = MovingItems.Find(PosKV.Key))
+										{
+											bHadItemPulled = true;
+											ItemForAnimation = *PulledItem;
+											break;
+										}
+									}
+								}
+								
+								// If no item was pulled from this tile (it might not have had one), check if it has a tile
+								if (!bHadItemPulled)
+								{
+									const FTile* ClusterTile = TileMap.Find(ClusterInputHex);
+									if (ClusterTile)
+									{
+										// Create a single orb item with the correct type for this tile
+										FOrb O;
+										O.Type = (EOrbType)ClusterTile->Arg;
+										ItemForAnimation = FItem::MakeSingle(O);
+										ItemForAnimation.Id = 0; // Animation doesn't need a real ID
+										bHadItemPulled = true;
+									}
+								}
+								
+								if (bHadItemPulled)
+								{
+									FAnimatedOrb AscendAnimation;
+									AscendAnimation.bActive = true;
+									AscendAnimation.bIsInput = true;
+									AscendAnimation.Hex = ClusterInputHex;
+									AscendAnimation.Item = ItemForAnimation;
+									AscendAnimation.StartStep = StepCounter;
+									AscendAnimation.CompletionStep = StepCounter + 1;
+									AnimatedOrbs.Add(AscendAnimation);
+								}
+							}
+						}
+						else
+						{
+							// For regular Input tiles, create single ascend animation
+							FAnimatedOrb AscendAnimation;
+							AscendAnimation.bActive = true;
+							AscendAnimation.bIsInput = true;
+							AscendAnimation.Hex = SourceHex;
+							AscendAnimation.Item = *InputItem;
+							AscendAnimation.StartStep = StepCounter;
+							AscendAnimation.CompletionStep = StepCounter + 1;
+							AnimatedOrbs.Add(AscendAnimation);
+						}
 						
 						return true;
 					}

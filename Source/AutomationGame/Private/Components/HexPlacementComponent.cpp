@@ -1104,6 +1104,16 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 					FixedYaw = FMath::UnwindDegrees(FixedYaw + 30.0f);
 				}
 			}
+			else if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::ClusterInput)
+			{
+				// For input tiles, we need to match the grid orientation (same as output)
+				// If the grid is using FlatTop orientation, rotate the tile mesh 30 degrees
+				const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+				if (Ori == EHexOrientation::FlatTop)
+				{
+					FixedYaw = FMath::UnwindDegrees(FixedYaw + 30.0f);
+				}
+			}
 
 			FVector UseLoc = CenterA;
 			FVector UseScale(PreviewScale);
