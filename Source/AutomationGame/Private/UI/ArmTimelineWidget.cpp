@@ -18,8 +18,12 @@ UArmTimelineWidget::UArmTimelineWidget()
 	
 	// Set up the widget component
 	SetWidgetSpace(EWidgetSpace::World);
-	SetDrawAtDesiredSize(true);
-	SetDrawSize(FVector2D(400.0f, 100.0f));
+	// Use fixed draw size instead of desired size to prevent cropping
+	SetDrawAtDesiredSize(false);
+	// Set a very large draw size to accommodate many command icons
+	// Width: enough for 20 icons at 48px each + spacing (roughly 20 * 60 = 1200, plus padding)
+	// Height: enough for icon + reset button + padding
+	SetDrawSize(FVector2D(4000.0f, 400.0f));
 	SetPivot(FVector2D(0.5f, 0.5f));
 	
 	// Start hidden by default - visibility will be controlled by GameManager
@@ -40,6 +44,14 @@ void UArmTimelineWidget::BeginPlay()
 void UArmTimelineWidget::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	
+	// Lerp position towards target
+	if (!CurrentWorldLocation.Equals(TargetWorldLocation, 1.0f))
+	{
+		float LerpAlpha = FMath::Clamp(LerpSpeed * DeltaTime, 0.0f, 1.0f);
+		CurrentWorldLocation = FMath::Lerp(CurrentWorldLocation, TargetWorldLocation, LerpAlpha);
+		SetWorldLocation(CurrentWorldLocation);
+	}
 	
 	// Reduced frequency tick - only update every 30th frame for performance
 	static int32 TickCounter = 0;
@@ -150,6 +162,9 @@ void UArmTimelineWidget::InitializeWidget()
 	if (TimelineWidgetInstance)
 	{
 		SetWidget(TimelineWidgetInstance);
+		
+		// Disable clipping on the widget instance to prevent content from being cropped
+		TimelineWidgetInstance->SetClipping(EWidgetClipping::Inherit);
 		
 		// If it's an ArmTimelineUMGWidget, we can call its specific functions
 		if (UArmTimelineUMGWidget* UMGWidget = Cast<UArmTimelineUMGWidget>(TimelineWidgetInstance))
@@ -278,6 +293,29 @@ void UArmTimelineWidget::UpdateWidgetPosition(const FVector& ArmLocation, const 
 	// Try to position the timeline to avoid blocking line of sight to the arm
 	WidgetLocation = CalculateOptimalTimelinePosition(ArmLocation);
 	
+	// Apply overlap avoidance if enabled
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager && GameManager->bAvoidTimelineOverlap)
+			{
+				WidgetLocation = GameManager->AdjustTimelinePositionForOverlap(this, WidgetLocation, ArmLocation);
+				break;
+			}
+		}
+	}
+	
+	// Set target position for lerp
+	TargetWorldLocation = WidgetLocation;
+	
+	// Initialize current position if not set
+	if (CurrentWorldLocation.IsNearlyZero())
+	{
+		CurrentWorldLocation = TargetWorldLocation;
+	}
+	
 	// Check if we should rotate for top-down view
 	FRotator WidgetRotation = FRotator::ZeroRotator; // Default rotation
 	if (UWorld* World = GetWorld())
@@ -305,8 +343,7 @@ void UArmTimelineWidget::UpdateWidgetPosition(const FVector& ArmLocation, const 
 		WidgetRotation = FRotator(90.0f, 180.0f, 0.0f);
 	}
 	
-	// Set the world transform
-	SetWorldLocation(WidgetLocation);
+	// Set rotation immediately (no lerp needed)
 	SetWorldRotation(WidgetRotation);
 	
 	// Only update scale if enough time has passed (to prevent excessive updates)

@@ -311,14 +311,14 @@ void USimWorldHex::StepBelts()
 						else
 						{
 							// For regular Input tiles, create single ascend animation
-							FAnimatedOrb AscendAnimation;
-							AscendAnimation.bActive = true;
-							AscendAnimation.bIsInput = true;
-							AscendAnimation.Hex = SourceHex;
-							AscendAnimation.Item = *InputItem;
-							AscendAnimation.StartStep = StepCounter;
-							AscendAnimation.CompletionStep = StepCounter + 1;
-							AnimatedOrbs.Add(AscendAnimation);
+						FAnimatedOrb AscendAnimation;
+						AscendAnimation.bActive = true;
+						AscendAnimation.bIsInput = true;
+						AscendAnimation.Hex = SourceHex;
+						AscendAnimation.Item = *InputItem;
+						AscendAnimation.StartStep = StepCounter;
+						AscendAnimation.CompletionStep = StepCounter + 1;
+						AnimatedOrbs.Add(AscendAnimation);
 						}
 						
 						return true;

@@ -232,6 +232,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	float TimelineMaxScale = 2.0f;
 
+	/** Whether to avoid timeline overlaps */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	bool bAvoidTimelineOverlap = true;
+
+	/** Lerp speed for timeline position updates (units per second) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineLerpSpeed = 5.0f;
+
+	/** Adjust timeline position to avoid overlap with other timelines */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	FVector AdjustTimelinePositionForOverlap(class UArmTimelineWidget* Timeline, const FVector& DesiredPosition, const FVector& ArmLocation);
+
 	/** Set command textures for timeline display */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Textures);

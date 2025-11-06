@@ -5,8 +5,13 @@
 #include "Components/TextBlock.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Components/Button.h"
+#include "Components/PanelWidget.h"
 #include "Sim/ArmTypes.h"
 #include "Actors/BasicArm.h"
+#include "Actors/OrbSimDriver.h"
 #include "Framework/GameManager.h"
 #include "AGLogChannels.h"
 #include "UMG.h"
@@ -28,6 +33,19 @@ UArmTimelineUMGWidget::UArmTimelineUMGWidget(const FObjectInitializer& ObjectIni
 void UArmTimelineUMGWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
+	
+	// Disable clipping on the root widget to prevent cropping
+	SetClipping(EWidgetClipping::Inherit);
+	
+	// Set a large minimum desired size to ensure the widget can expand to show all content
+	// This helps prevent cropping when there are many command icons
+	SetMinimumDesiredSize(FVector2D(4000.0f, 400.0f));
+	
+	// Ensure CommandIconsBox doesn't clip its content
+	if (CommandIconsBox)
+	{
+		CommandIconsBox->SetClipping(EWidgetClipping::Inherit);
+	}
 	
 	InitializeWidget();
 	
@@ -171,6 +189,12 @@ void UArmTimelineUMGWidget::InitializeWidget()
 {
 	// Initialize any default values or setup
 	
+	// Bind reset button if it exists
+	if (ResetButton)
+	{
+		ResetButton->OnClicked.AddDynamic(this, &UArmTimelineUMGWidget::TriggerImmediateReset);
+	}
+	
 	OnWidgetConstructed();
 }
 
@@ -267,6 +291,13 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
         }
     }
     CommandIconWidgets.Empty();
+
+    // Clear and remove existing reset button if it exists
+    if (ResetButton && ResetButton->IsValidLowLevel())
+    {
+        ResetButton->RemoveFromParent();
+        ResetButton = nullptr;
+    }
 
     // Also clear the container so borders/inner boxes don't accumulate
     if (CommandIconsBox)
@@ -374,6 +405,9 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 			}
 		}
 	}
+
+	// Create reset button beneath CommandIconsBox
+	CreateResetButton();
 }
 
 void UArmTimelineUMGWidget::UpdateCommandIcons()
@@ -698,6 +732,220 @@ void UArmTimelineUMGWidget::SetAssociatedArm(ABasicArm* Arm)
 UBorder* UArmTimelineUMGWidget::GetCursorLine() const
 {
 	return Cast<UBorder>(CursorIndicator);
+}
+
+void UArmTimelineUMGWidget::TriggerImmediateReset()
+{
+	// Get the associated arm
+	ABasicArm* Arm = GetAssociatedArm();
+	if (!Arm)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerImmediateReset: No associated arm found"));
+		return;
+	}
+
+	// Get the simulation from the driver
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerImmediateReset: No world found"));
+		return;
+	}
+
+	AOrbSimDriver* Driver = AOrbSimDriver::Find(World);
+	if (!Driver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerImmediateReset: No OrbSimDriver found"));
+		return;
+	}
+
+	USimWorldHex* Sim = Driver->GetSim();
+	if (!Sim)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerImmediateReset: No Sim found"));
+		return;
+	}
+
+	// Check if the arm has a valid SimArmIndex
+	if (Arm->SimArmIndex < 0 || Arm->SimArmIndex >= Sim->Arms.Num())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerImmediateReset: Invalid SimArmIndex %d (Sim has %d arms)"), 
+			Arm->SimArmIndex, Sim->Arms.Num());
+		return;
+	}
+
+	// Get the arm state from the simulation
+	FArmState& ArmState = Sim->Arms[Arm->SimArmIndex];
+	
+	// Check if the tape is valid
+	if (ArmState.Tape.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerImmediateReset: Arm has empty tape"));
+		return;
+	}
+
+	// Insert a Reset command at the current PC position to execute immediately
+	FOp ResetOp;
+	ResetOp.Cmd = ECmd::Reset;
+	ResetOp.Arg = 0;
+
+	// Clear any wait counters so the reset executes immediately
+	ArmState.WaitCounter = 0;
+
+	// Insert the reset command at the current PC position
+	// This ensures it executes on the next simulation tick
+	// The simulation will expand it into drop + rotation + reach adjustments and execute them immediately
+	int32 InsertIndex = ArmState.PC;
+	ArmState.Tape.Insert(ResetOp, InsertIndex);
+	
+	// PC now points to the Reset command we just inserted
+	// The simulation will execute it on the next tick and expand it immediately
+	
+	UE_LOG(LogTemp, Log, TEXT("TriggerImmediateReset: Inserted Reset command at tape index %d (PC is now %d, pointing at Reset)"), 
+		InsertIndex, ArmState.PC);
+}
+
+void UArmTimelineUMGWidget::CreateResetButton()
+{
+	if (!CommandIconsBox)
+	{
+		return;
+	}
+
+	// Get the parent widget of CommandIconsBox
+	UWidget* ParentWidget = CommandIconsBox->GetParent();
+	if (!ParentWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CreateResetButton: CommandIconsBox has no parent widget"));
+		return;
+	}
+
+	// Try to get the parent as a VerticalBox (most common layout)
+	UVerticalBox* ParentVerticalBox = Cast<UVerticalBox>(ParentWidget);
+	
+	// If parent is not a VerticalBox, try to find a VerticalBox ancestor or create one
+	if (!ParentVerticalBox)
+	{
+		// Try to find a VerticalBox in the parent hierarchy
+		UWidget* CurrentParent = ParentWidget;
+		while (CurrentParent)
+		{
+			ParentVerticalBox = Cast<UVerticalBox>(CurrentParent);
+			if (ParentVerticalBox)
+			{
+				break;
+			}
+			CurrentParent = CurrentParent->GetParent();
+		}
+	}
+
+	// If we still don't have a VerticalBox, wrap CommandIconsBox in one
+	if (!ParentVerticalBox)
+	{
+		// Create a new VerticalBox and move CommandIconsBox into it
+		ParentVerticalBox = NewObject<UVerticalBox>(this);
+		if (!ParentVerticalBox)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("CreateResetButton: Failed to create VerticalBox"));
+			return;
+		}
+
+		// Remove CommandIconsBox from its current parent
+		CommandIconsBox->RemoveFromParent();
+		
+		// Add CommandIconsBox to the new VerticalBox
+		UVerticalBoxSlot* IconsSlot = ParentVerticalBox->AddChildToVerticalBox(CommandIconsBox);
+		if (IconsSlot)
+		{
+			IconsSlot->SetHorizontalAlignment(HAlign_Fill);
+			IconsSlot->SetVerticalAlignment(VAlign_Top);
+		}
+
+		// Add the new VerticalBox to the original parent
+		if (ParentWidget)
+		{
+			// Try to add to various container types
+			if (UVerticalBox* VBox = Cast<UVerticalBox>(ParentWidget))
+			{
+				UVerticalBoxSlot* VerticalSlot = VBox->AddChildToVerticalBox(ParentVerticalBox);
+				if (VerticalSlot)
+				{
+					VerticalSlot->SetHorizontalAlignment(HAlign_Fill);
+					VerticalSlot->SetVerticalAlignment(VAlign_Top);
+				}
+			}
+			else if (UHorizontalBox* HBox = Cast<UHorizontalBox>(ParentWidget))
+			{
+				UHorizontalBoxSlot* HorizontalSlot = HBox->AddChildToHorizontalBox(ParentVerticalBox);
+				if (HorizontalSlot)
+				{
+					HorizontalSlot->SetHorizontalAlignment(HAlign_Fill);
+					HorizontalSlot->SetVerticalAlignment(VAlign_Center);
+				}
+			}
+			else
+			{
+				// Fallback: try to add as child using UPanelWidget interface
+				if (UPanelWidget* PanelWidget = Cast<UPanelWidget>(ParentWidget))
+				{
+					PanelWidget->AddChild(ParentVerticalBox);
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("CreateResetButton: Parent widget is not a panel widget, cannot add child"));
+				}
+			}
+		}
+	}
+
+	// Create the reset button
+	ResetButton = NewObject<UButton>(this);
+	if (!ResetButton)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CreateResetButton: Failed to create button"));
+		return;
+	}
+
+	// Set button properties
+	ResetButton->SetIsEnabled(true);
+	
+	// Create text label for the button
+	UTextBlock* ButtonText = NewObject<UTextBlock>(this);
+	if (ButtonText)
+	{
+		ButtonText->SetText(FText::FromString(TEXT("Reset")));
+		ButtonText->SetColorAndOpacity(FLinearColor::White);
+		ButtonText->SetJustification(ETextJustify::Center);
+		
+		// Set font size
+		FSlateFontInfo FontInfo = ButtonText->GetFont();
+		FontInfo.Size = 14;
+		ButtonText->SetFont(FontInfo);
+		
+		ResetButton->AddChild(ButtonText);
+	}
+
+	// Bind the click event
+	ResetButton->OnClicked.AddDynamic(this, &UArmTimelineUMGWidget::TriggerImmediateReset);
+
+	// Add the button to the VerticalBox below CommandIconsBox
+	if (ParentVerticalBox)
+	{
+		UVerticalBoxSlot* ButtonSlot = ParentVerticalBox->AddChildToVerticalBox(ResetButton);
+		if (ButtonSlot)
+		{
+			ButtonSlot->SetHorizontalAlignment(HAlign_Center);
+			ButtonSlot->SetVerticalAlignment(VAlign_Top);
+			ButtonSlot->SetPadding(FMargin(4.0f, 8.0f, 4.0f, 4.0f));
+			
+			// Set button size
+			ButtonSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CreateResetButton: Could not find or create VerticalBox parent"));
+	}
 }
 
 void UArmTimelineUMGWidget::CheckEditingMode()

@@ -1925,6 +1925,9 @@ void ABasicArm::InitializeTimelineWidget()
 			UMGWidget->SetAssociatedArm(this);
 		}
 	}
+
+	// Set the associated arm in the timeline widget for line drawing
+	TimelineWidget->SetAssociatedArm(this);
 	
 	// Timeline visibility will be set by GameManager based on bShowArmTimelines
 	TimelineWidget->SetTimelineScale(1.0f);

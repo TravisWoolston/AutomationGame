@@ -1048,7 +1048,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			FVector UseLoc = CenterA;
 			FVector UseScale(PreviewScale);
 
-			PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw + 30.0f, 0.f));
+			PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw, 0.f));
 			PreviewComp->SetWorldScale3D(UseScale);
 			PreviewComp->SetVisibility(true);
 

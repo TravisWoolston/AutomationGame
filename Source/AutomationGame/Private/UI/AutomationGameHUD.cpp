@@ -1,6 +1,10 @@
 #include "UI/AutomationGameHUD.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
+#include "Actors/BasicArm.h"
+#include "UI/ArmTimelineWidget.h"
+#include "EngineUtils.h"
+#include "Kismet/GameplayStatics.h"
 
 AAutomationGameHUD::AAutomationGameHUD()
 {
@@ -15,6 +19,9 @@ void AAutomationGameHUD::DrawHUD()
 	{
 		DrawSelectionBox();
 	}
+
+	// Draw lines connecting timelines to their arms
+	DrawTimelineToArmLines();
 }
 
 void AAutomationGameHUD::StartSelectionBox(FVector2D StartPosition)
@@ -78,5 +85,57 @@ void AAutomationGameHUD::DrawSelectionBox()
 		LeftLine.SetColor(SelectionBoxColor);
 		LeftLine.LineThickness = SelectionBoxThickness;
 		Canvas->DrawItem(LeftLine);
+	}
+}
+
+void AAutomationGameHUD::DrawTimelineToArmLines()
+{
+	if (!Canvas || !GetWorld())
+	{
+		return;
+	}
+
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC)
+	{
+		return;
+	}
+
+	// Color for timeline-arm connection lines
+	FLinearColor LineColor = FLinearColor(0.5f, 0.5f, 1.0f, 0.8f); // Light blue, semi-transparent
+	float LineThickness = 2.0f;
+
+	// Iterate through all arms and draw lines to their timelines
+	for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It)
+	{
+		ABasicArm* Arm = *It;
+		if (!Arm || !Arm->TimelineWidget || !Arm->TimelineWidget->bTimelineVisible)
+		{
+			continue;
+		}
+
+		UArmTimelineWidget* TimelineWidget = Arm->TimelineWidget;
+
+		// Get arm position in screen space
+		FVector ArmWorldPos = Arm->GetArmWorldPosition();
+		FVector2D ArmScreenPos;
+		if (!PC->ProjectWorldLocationToScreen(ArmWorldPos, ArmScreenPos))
+		{
+			continue;
+		}
+
+		// Get timeline position in screen space
+		FVector TimelineWorldPos = TimelineWidget->GetComponentLocation();
+		FVector2D TimelineScreenPos;
+		if (!PC->ProjectWorldLocationToScreen(TimelineWorldPos, TimelineScreenPos))
+		{
+			continue;
+		}
+
+		// Draw line from arm to timeline
+		FCanvasLineItem Line(FVector2D(ArmScreenPos.X, ArmScreenPos.Y), FVector2D(TimelineScreenPos.X, TimelineScreenPos.Y));
+		Line.SetColor(LineColor);
+		Line.LineThickness = LineThickness;
+		Canvas->DrawItem(Line);
 	}
 }

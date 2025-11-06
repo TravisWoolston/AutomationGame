@@ -50,4 +50,5 @@ private:
 	FVector2D SelectionEnd = FVector2D::ZeroVector;
 
 	void DrawSelectionBox();
+	void DrawTimelineToArmLines();
 };

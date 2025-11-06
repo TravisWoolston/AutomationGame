@@ -255,6 +255,14 @@ public:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
 	UHorizontalBox* CursorBox = nullptr;
 
+	/** Reset button to immediately trigger reset command (created programmatically) */
+	UPROPERTY()
+	class UButton* ResetButton = nullptr;
+
+	/** Trigger an immediate reset command for the associated arm */
+	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
+	void TriggerImmediateReset();
+
 private:
 	/** Array of command icon widgets */
 	UPROPERTY()
@@ -286,6 +294,9 @@ private:
 
 	/** Update the cursor indicator position */
 	void UpdateCursorIndicator();
+
+	/** Create the reset button programmatically */
+	void CreateResetButton();
 
 private:
 	/** Pointer to the arm this timeline is associated with */

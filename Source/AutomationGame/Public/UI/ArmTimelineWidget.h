@@ -77,6 +77,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void UpdateWidgetPosition(const FVector& ArmLocation, const FRotator& ArmRotation);
 
+	/** Get the associated arm */
+	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+	class ABasicArm* GetAssociatedArm() const { return AssociatedArm; }
+
+	/** Set the associated arm */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetAssociatedArm(class ABasicArm* Arm) { AssociatedArm = Arm; }
+
+	/** Get the target world location */
+	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+	FVector GetTargetWorldLocation() const { return TargetWorldLocation; }
+
 	/** Update widget position using arm's hex coordinates */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void UpdateWidgetPositionFromHex(const FHex& HexCoord, float BaseZ, const FRotator& ArmRotation);
@@ -116,6 +128,24 @@ public:
 	
 	/** Last tick when scale was updated */
 	float LastScaleUpdateTime = 0.0f;
+
+	/** Target position for lerp interpolation */
+	FVector TargetWorldLocation = FVector::ZeroVector;
+
+	/** Current interpolated position */
+	FVector CurrentWorldLocation = FVector::ZeroVector;
+
+	/** Lerp speed for position updates (units per second) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float LerpSpeed = 500.0f;
+
+	/** Minimum separation distance between timelines to avoid overlap */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float MinSeparationDistance = 200.0f;
+
+	/** Associated arm for line drawing */
+	UPROPERTY()
+	class ABasicArm* AssociatedArm = nullptr;
 
 	/** Set the maximum number of command icons to display */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")

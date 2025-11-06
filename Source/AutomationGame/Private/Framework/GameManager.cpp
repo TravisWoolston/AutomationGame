@@ -337,6 +337,7 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 		TimelineWidget->SetTimelineScale(TimelineWidgetScale);
 		TimelineWidget->SetTimelineOffset(TimelineWidgetOffset);
 		TimelineWidget->SetMaxCommandIcons(MaxTimelineIcons);
+		TimelineWidget->LerpSpeed = TimelineLerpSpeed;
 	}
 
 	return Arm;
@@ -462,6 +463,7 @@ void AGameManager::UpdateAllArmTimelineWidgets()
 					TimelineWidget->SetTimelineWidgetClass(ArmTimelineWidgetClass);
 					TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
 					TimelineWidget->SetMaxCommandIcons(MaxTimelineIcons);
+					TimelineWidget->LerpSpeed = TimelineLerpSpeed;
 				}
 			}
 		}
@@ -476,6 +478,74 @@ void AGameManager::SetActiveTimeline(UArmTimelineWidget* Timeline)
 UArmTimelineWidget* AGameManager::GetActiveTimeline() const
 {
 	return ActiveTimelineWidget;
+}
+
+FVector AGameManager::AdjustTimelinePositionForOverlap(UArmTimelineWidget* Timeline, const FVector& DesiredPosition, const FVector& ArmLocation)
+{
+	if (!Timeline || !GetWorld())
+	{
+		return DesiredPosition;
+	}
+
+	FVector AdjustedPosition = DesiredPosition;
+	float MinSeparation = Timeline->MinSeparationDistance;
+
+	// Check all other visible timeline widgets for overlaps
+	TArray<UArmTimelineWidget*> OtherTimelines;
+	for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It)
+	{
+		ABasicArm* Arm = *It;
+		if (Arm && Arm->TimelineWidget && Arm->TimelineWidget != Timeline && Arm->TimelineWidget->bTimelineVisible)
+		{
+			OtherTimelines.Add(Arm->TimelineWidget);
+		}
+	}
+
+	// Adjust position to avoid overlaps
+	int32 MaxIterations = 10;
+	for (int32 Iteration = 0; Iteration < MaxIterations; ++Iteration)
+	{
+		bool bHasOverlap = false;
+		FVector TotalOffset = FVector::ZeroVector;
+
+		for (UArmTimelineWidget* OtherTimeline : OtherTimelines)
+		{
+			FVector OtherPosition = OtherTimeline->GetTargetWorldLocation();
+			float Distance = FVector::Dist(AdjustedPosition, OtherPosition);
+
+			if (Distance < MinSeparation && Distance > KINDA_SMALL_NUMBER)
+			{
+				bHasOverlap = true;
+				// Push away from overlapping timeline
+				FVector Direction = (AdjustedPosition - OtherPosition).GetSafeNormal();
+				if (Direction.IsNearlyZero())
+				{
+					// If positions are identical, use a random direction
+					Direction = FVector(FMath::RandRange(-1.0f, 1.0f), FMath::RandRange(-1.0f, 1.0f), 0.0f).GetSafeNormal();
+				}
+				float PushDistance = (MinSeparation - Distance) * 0.5f;
+				TotalOffset += Direction * PushDistance;
+			}
+		}
+
+		if (!bHasOverlap)
+		{
+			break;
+		}
+
+		AdjustedPosition += TotalOffset;
+
+		// Keep timeline within reasonable distance from arm
+		float DistanceFromArm = FVector::Dist(AdjustedPosition, ArmLocation);
+		float MaxDistance = 500.0f;
+		if (DistanceFromArm > MaxDistance)
+		{
+			FVector DirectionToArm = (ArmLocation - AdjustedPosition).GetSafeNormal();
+			AdjustedPosition = ArmLocation - DirectionToArm * MaxDistance;
+		}
+	}
+
+	return AdjustedPosition;
 }
 
 ABasicArm* AGameManager::GetActiveArm() const

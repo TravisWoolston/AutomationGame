@@ -67,6 +67,8 @@ void USimWorldHex::SpawnInputs()
 			Visited.Add(H);
 
 			// BFS to find all adjacent ClusterInput tiles
+			// Include ALL connected ClusterInput tiles, even if they're in SkipInputThisFrame
+			// (we check ProcessedClusterInputHexes at the start to avoid duplicate processing)
 			while (ToVisit.Num() > 0)
 			{
 				FHex CurrentHex = ToVisit.Pop();
@@ -81,8 +83,11 @@ void USimWorldHex::SpawnInputs()
 						const FTile* NeighborTile = TileMap.Find(NeighborHex);
 						if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterInput)
 						{
-							// Only process if this neighbor hasn't spawned yet (not in SkipInputThisFrame)
-							if (!SkipInputThisFrame.Contains(NeighborHex) && !ItemMap.Contains(NeighborHex))
+							// Include all connected ClusterInput tiles, but skip if:
+							// 1. Already processed as part of another chain (ProcessedClusterInputHexes)
+							// 2. Currently occupied by an item (ItemMap)
+							// Note: We don't check SkipInputThisFrame here because we want to find the complete chain
+							if (!ProcessedClusterInputHexes.Contains(NeighborHex) && !ItemMap.Contains(NeighborHex))
 							{
 								Visited.Add(NeighborHex);
 								ToVisit.Add(NeighborHex);
@@ -120,38 +125,10 @@ void USimWorldHex::SpawnInputs()
 					}
 				}
 
-				// Add bonds based on adjacency (for ChainTemplate used in storage lookup)
-				for (int32 i = 0; i < ClusterInputTiles.Num(); i++)
-				{
-					const FHex& HexA = ClusterInputTiles[i];
+				// Don't add bonds to ChainTemplate - we'll match by orb structure only
+				// Bonds will be applied from the stored template when spawning
 
-					// Check all neighbors for potential bonds
-					for (int32 j = i + 1; j < ClusterInputTiles.Num(); j++)
-					{
-						const FHex& HexB = ClusterInputTiles[j];
-
-						// Check if these hexes are adjacent (neighbor check)
-						for (uint8 Dir = 0; Dir < 6; Dir++)
-						{
-							FHex Neighbor = HexUtil::Neighbor(HexA, (EHexDir)Dir);
-							if (Neighbor.Q == HexB.Q && Neighbor.R == HexB.R)
-							{
-								// These are adjacent - add a bond
-								int32 IdxA = HexToOrbIndex[HexA];
-								int32 IdxB = HexToOrbIndex[HexB];
-
-								// Store with smaller index first
-								int32 MinIdx = FMath::Min(IdxA, IdxB);
-								int32 MaxIdx = FMath::Max(IdxA, IdxB);
-
-								ChainTemplate.Bonds.AddUnique(TPair<int32, int32>(MinIdx, MaxIdx));
-								break;
-							}
-						}
-					}
-				}
-
-				// Check if this cluster structure exists in storage
+				// Check if this cluster structure exists in storage by matching orb positions/types only
 				AGameManager* GameManager = nullptr;
 				if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
 				{
@@ -164,28 +141,49 @@ void USimWorldHex::SpawnInputs()
 
 				if (GameManager)
 				{
-					FClusterCanonicalKey Key = GameManager->GenerateCanonicalKey(ChainTemplate);
-					ClusterCount = GameManager->GetClusterCount(ChainTemplate);
+					// Build a template with only orbs (no bonds) for matching
+					USimWorldHex::FClusterTemplate OrbsOnlyTemplate;
+					OrbsOnlyTemplate.Orbs = ChainTemplate.Orbs;
+					// Leave bonds empty - we want to match by orb structure only
 
-					// Find the stored template that matches this key
-					if (ClusterCount > 0)
+					// Generate canonical key for orbs-only template
+					FClusterCanonicalKey OrbsOnlyKey = GameManager->GenerateCanonicalKey(OrbsOnlyTemplate);
+
+					// Search through stored templates to find one matching by orb structure
+					// We need to compare orb structures, not full canonical keys (since bonds differ)
+					TArray<USimWorldHex::FClusterTemplate> StoredTemplates;
+					TArray<int32> StoredCounts;
+					GameManager->GetStoredClusters(StoredTemplates, StoredCounts);
+
+					for (int32 i = 0; i < StoredTemplates.Num(); i++)
 					{
-						// Get the stored template using the public getter
-						if (const USimWorldHex::FClusterTemplate* FoundTemplate = GameManager->GetStoredClusterTemplate(Key))
+						const USimWorldHex::FClusterTemplate& Stored = StoredTemplates[i];
+						
+						// Build an orbs-only version of the stored template
+						USimWorldHex::FClusterTemplate StoredOrbsOnly;
+						StoredOrbsOnly.Orbs = Stored.Orbs;
+						FClusterCanonicalKey StoredOrbsOnlyKey = GameManager->GenerateCanonicalKey(StoredOrbsOnly);
+
+						// Compare canonical keys (which should match if orb structures are the same)
+						if (OrbsOnlyKey == StoredOrbsOnlyKey)
 						{
-							StoredTemplate = FoundTemplate;
-							MatchingKey = Key;
+							// Found a match! Use the stored template (which has the correct bonds)
+							StoredTemplate = &Stored;
+							ClusterCount = StoredCounts[i];
+							MatchingKey = GameManager->GenerateCanonicalKey(Stored); // Use full key for decrement
+							
+							break;
 						}
-						else
-						{
-							// If no stored template found, use the ChainTemplate we built (with adjacency-based bonds)
-							StoredTemplate = &ChainTemplate;
-							MatchingKey = Key;
-						}
+					}
+
+					if (!StoredTemplate)
+					{
+						UE_LOG(LogTemp, Warning, TEXT("ClusterInput: No matching cluster found in storage (%d orbs, %d tiles)"),
+							ChainTemplate.Orbs.Num(), ClusterInputTiles.Num());
 					}
 				}
 
-				// Verify all hex positions are available
+				// Verify all hex positions are available (not occupied by board items)
 				bool bAllHexesAvailable = true;
 				for (const FHex& ClusterHex : ClusterInputTiles)
 				{
@@ -196,8 +194,86 @@ void USimWorldHex::SpawnInputs()
 					}
 				}
 
-				// Only spawn if cluster exists in storage and all hexes are available
-				if (ClusterCount > 0 && bAllHexesAvailable && StoredTemplate)
+				// Check if any held cluster occupies any tile in the chain
+				bool bHeldClusterOccupiesChain = false;
+				if (bAllHexesAvailable)
+				{
+					// Helper function to rotate hex coordinates
+					auto Rot60 = [](FHex D, uint8 StepsCCW)
+					{
+						for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+						{
+							const int32 q = D.Q;
+							const int32 r = D.R;
+							D.Q = -r;
+							D.R = q + r;
+						}
+						return D;
+					};
+
+					// Build a set of all hex positions in the chain
+					TSet<FHex> ChainHexSet;
+					for (const FHex& ChainHex : ClusterInputTiles)
+					{
+						ChainHexSet.Add(ChainHex);
+					}
+
+					// Check all arms for held clusters
+					for (const FArmState& ArmState : Arms)
+					{
+						if (!ArmState.bHolding) continue;
+
+						// Calculate the arm's grip position
+						FHex GripHex = ArmState.BaseHex;
+						for (int i = 0; i < ArmState.ArmLen; ++i)
+						{
+							GripHex = HexUtil::Neighbor(GripHex, ArmState.Facing);
+						}
+
+						// Check if this is a held cluster
+						if (ArmState.Held.bIsCluster)
+						{
+							// Calculate rotation offset based on GrabFacing
+							const uint8 cur = (uint8)ArmState.Facing % 6;
+							const int8 grab = (int8)ArmState.Held.GrabFacing;
+							const uint8 facingDelta = (grab >= 0)
+								? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+								: cur;
+							const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+							// Check all sub-orb positions of the held cluster
+							for (const FOrbData& Sub : ArmState.Held.Orbs)
+							{
+								FHex Local(Sub.dQ, Sub.dR);
+								FHex RotLocal = Rot60(Local, ccw);
+								FHex HeldPos(GripHex.Q + RotLocal.Q, GripHex.R + RotLocal.R);
+
+								// Check if this held position overlaps with any ClusterInput tile in the chain
+								if (ChainHexSet.Contains(HeldPos))
+								{
+									bHeldClusterOccupiesChain = true;
+									break;
+								}
+							}
+						}
+						else
+						{
+							// Single held orb - check if grip position is in the chain
+							if (ChainHexSet.Contains(GripHex))
+				{
+								bHeldClusterOccupiesChain = true;
+							}
+						}
+
+						if (bHeldClusterOccupiesChain) break;
+					}
+				}
+
+				// Only spawn if cluster exists in storage, all hexes are available, and no held cluster occupies the chain
+				UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Spawn conditions - ClusterCount: %d, bAllHexesAvailable: %d, !bHeldClusterOccupiesChain: %d, StoredTemplate: %s"),
+					ClusterCount, bAllHexesAvailable ? 1 : 0, !bHeldClusterOccupiesChain ? 1 : 0, StoredTemplate ? TEXT("yes") : TEXT("no"));
+
+				if (ClusterCount > 0 && bAllHexesAvailable && !bHeldClusterOccupiesChain && StoredTemplate)
 				{
 					// Spawn individual orbs at each ClusterInput tile
 					TMap<FHex, int32> HexToItemId; // Map hex to item ID for bond creation
@@ -221,11 +297,10 @@ void USimWorldHex::SpawnInputs()
 								NewlyPlacedItems.Add(NewItem.Id);
 							}
 						}
-					}
-
-					// Apply bonds from ChainTemplate (which matches the actual tile layout)
-					// Since ChainTemplate was built from the actual tiles and matches the canonical key,
-					// we can use it directly to create bonds without needing to match rotations
+				}
+				
+					// Apply bonds based on adjacency between ClusterInput tiles
+					// Build bonds from the actual tile layout (adjacent ClusterInput tiles get bonds)
 					TMap<int32, int32> ChainTemplateIndexToItemId;
 
 					// Map ChainTemplate indices to item IDs using HexToOrbIndex and HexToItemId
@@ -241,70 +316,63 @@ void USimWorldHex::SpawnInputs()
 						}
 					}
 
-					// Apply bonds from ChainTemplate (which has the correct structure for our tiles)
+					// Build bonds based on adjacency between ClusterInput tiles
 					TSet<TPair<int32, int32>> AppliedBonds; // Track bonds to avoid duplicates
 					int32 BondsCreated = 0; // Debug counter
 
-					for (const TPair<int32, int32>& BondPair : ChainTemplate.Bonds)
+					// Check all pairs of ClusterInput tiles for adjacency
+					for (int32 i = 0; i < ClusterInputTiles.Num(); i++)
 					{
-						// Find the item IDs for these ChainTemplate indices
-						int32* ItemIdA = ChainTemplateIndexToItemId.Find(BondPair.Key);
-						int32* ItemIdB = ChainTemplateIndexToItemId.Find(BondPair.Value);
-
-						if (ItemIdA && ItemIdB && *ItemIdA > 0 && *ItemIdB > 0)
+						const FHex& HexA = ClusterInputTiles[i];
+						
+						// Check all neighbors for potential bonds
+						for (int32 j = i + 1; j < ClusterInputTiles.Num(); j++)
 						{
-							// Avoid duplicate bonds (order-independent check)
-							int32 MinItemId = FMath::Min(*ItemIdA, *ItemIdB);
-							int32 MaxItemId = FMath::Max(*ItemIdA, *ItemIdB);
-							TPair<int32, int32> BondKey(MinItemId, MaxItemId);
+							const FHex& HexB = ClusterInputTiles[j];
 
-							if (!AppliedBonds.Contains(BondKey))
+							// Check if these hexes are adjacent (neighbor check)
+							for (uint8 Dir = 0; Dir < 6; Dir++)
 							{
-								AppliedBonds.Add(BondKey);
-
-								// Get the hex positions for these items to calculate bond offset
-								FHex* HexA = nullptr;
-								FHex* HexB = nullptr;
-
-								for (const auto& HexItemPair : HexToItemId)
+								FHex Neighbor = HexUtil::Neighbor(HexA, (EHexDir)Dir);
+								if (Neighbor.Q == HexB.Q && Neighbor.R == HexB.R)
 								{
-									if (HexItemPair.Value == *ItemIdA) HexA = const_cast<FHex*>(&HexItemPair.Key);
-									if (HexItemPair.Value == *ItemIdB) HexB = const_cast<FHex*>(&HexItemPair.Key);
-								}
+									// These are adjacent - create a bond between the orbs at these positions
+									int32* ItemIdA = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexA]);
+									int32* ItemIdB = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexB]);
 
-								if (HexA && HexB)
-								{
-									// Create bond between these two orbs
-									FBond NewBond;
-									NewBond.ItemA = *ItemIdA;
-									NewBond.ItemB = *ItemIdB;
-									NewBond.Root = *HexA;
-									NewBond.dQ = HexB->Q - HexA->Q;
-									NewBond.dR = HexB->R - HexA->R;
-									NewBond.bActive = true;
+									if (ItemIdA && ItemIdB && *ItemIdA > 0 && *ItemIdB > 0)
+									{
+										// Avoid duplicate bonds (order-independent check)
+										int32 MinItemId = FMath::Min(*ItemIdA, *ItemIdB);
+										int32 MaxItemId = FMath::Max(*ItemIdA, *ItemIdB);
+										TPair<int32, int32> BondKey(MinItemId, MaxItemId);
 
-									const int32 BondIndex = Bonds.Add(NewBond);
-									AddItemBondLink(NewBond.ItemA, BondIndex);
-									AddItemBondLink(NewBond.ItemB, BondIndex);
+										if (!AppliedBonds.Contains(BondKey))
+										{
+											AppliedBonds.Add(BondKey);
 
-									BondsCreated++; // Debug counter
+											// Create bond between these two orbs
+											FBond NewBond;
+											NewBond.ItemA = *ItemIdA;
+											NewBond.ItemB = *ItemIdB;
+											NewBond.Root = HexA;
+											NewBond.dQ = HexB.Q - HexA.Q;
+											NewBond.dR = HexB.R - HexA.R;
+											NewBond.bActive = true;
+											
+											const int32 BondIndex = Bonds.Add(NewBond);
+											AddItemBondLink(NewBond.ItemA, BondIndex);
+											AddItemBondLink(NewBond.ItemB, BondIndex);
 
-									// UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
-									// 	*ItemIdA, *ItemIdB, HexA->Q, HexA->R, HexB->Q, HexB->R);
-								}
-								else
-								{
-									// UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to find hex positions for bond %d<->%d (items %d, %d)"),
-									// 	BondPair.Key, BondPair.Value, *ItemIdA, *ItemIdB);
+											BondsCreated++; // Debug counter
+
+											UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
+												*ItemIdA, *ItemIdB, HexA.Q, HexA.R, HexB.Q, HexB.R);
+										}
+									}
+									break; // Found adjacency, move to next tile
 								}
 							}
-						}
-						else
-						{
-							// UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to map ChainTemplate indices %d<->%d to item IDs (found A=%s, B=%s)"),
-							// 	BondPair.Key, BondPair.Value,
-							// 	ItemIdA ? TEXT("yes") : TEXT("no"),
-							// 	ItemIdB ? TEXT("yes") : TEXT("no"));
 						}
 					}
 
@@ -399,6 +467,8 @@ void USimWorldHex::SpawnInputsAfterBelts()
 			Visited.Add(H);
 
 			// BFS to find all adjacent ClusterInput tiles
+			// Include ALL connected ClusterInput tiles, even if they're in SkipInputThisFrame
+			// (we check ProcessedClusterInputHexes at the start to avoid duplicate processing)
 			while (ToVisit.Num() > 0)
 			{
 				FHex CurrentHex = ToVisit.Pop();
@@ -413,8 +483,11 @@ void USimWorldHex::SpawnInputsAfterBelts()
 						const FTile* NeighborTile = TileMap.Find(NeighborHex);
 						if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterInput)
 						{
-							// Only process if this neighbor hasn't spawned yet (not in SkipInputThisFrame)
-							if (!SkipInputThisFrame.Contains(NeighborHex) && !ItemMap.Contains(NeighborHex))
+							// Include all connected ClusterInput tiles, but skip if:
+							// 1. Already processed as part of another chain (ProcessedClusterInputHexes)
+							// 2. Currently occupied by an item (ItemMap)
+							// Note: We don't check SkipInputThisFrame here because we want to find the complete chain
+							if (!ProcessedClusterInputHexes.Contains(NeighborHex) && !ItemMap.Contains(NeighborHex))
 							{
 								Visited.Add(NeighborHex);
 								ToVisit.Add(NeighborHex);
@@ -452,38 +525,10 @@ void USimWorldHex::SpawnInputsAfterBelts()
 					}
 				}
 
-				// Add bonds based on adjacency (for ChainTemplate used in storage lookup)
-				for (int32 i = 0; i < ClusterInputTiles.Num(); i++)
-				{
-					const FHex& HexA = ClusterInputTiles[i];
+				// Don't add bonds to ChainTemplate - we'll match by orb structure only
+				// Bonds will be applied from the stored template when spawning
 
-					// Check all neighbors for potential bonds
-					for (int32 j = i + 1; j < ClusterInputTiles.Num(); j++)
-					{
-						const FHex& HexB = ClusterInputTiles[j];
-
-						// Check if these hexes are adjacent (neighbor check)
-						for (uint8 Dir = 0; Dir < 6; Dir++)
-						{
-							FHex Neighbor = HexUtil::Neighbor(HexA, (EHexDir)Dir);
-							if (Neighbor.Q == HexB.Q && Neighbor.R == HexB.R)
-							{
-								// These are adjacent - add a bond
-								int32 IdxA = HexToOrbIndex[HexA];
-								int32 IdxB = HexToOrbIndex[HexB];
-
-								// Store with smaller index first
-								int32 MinIdx = FMath::Min(IdxA, IdxB);
-								int32 MaxIdx = FMath::Max(IdxA, IdxB);
-
-								ChainTemplate.Bonds.AddUnique(TPair<int32, int32>(MinIdx, MaxIdx));
-								break;
-							}
-						}
-					}
-				}
-
-				// Check if this cluster structure exists in storage
+				// Check if this cluster structure exists in storage by matching orb positions/types only
 				AGameManager* GameManager = nullptr;
 				if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
 				{
@@ -496,28 +541,49 @@ void USimWorldHex::SpawnInputsAfterBelts()
 
 				if (GameManager)
 				{
-					FClusterCanonicalKey Key = GameManager->GenerateCanonicalKey(ChainTemplate);
-					ClusterCount = GameManager->GetClusterCount(ChainTemplate);
+					// Build a template with only orbs (no bonds) for matching
+					USimWorldHex::FClusterTemplate OrbsOnlyTemplate;
+					OrbsOnlyTemplate.Orbs = ChainTemplate.Orbs;
+					// Leave bonds empty - we want to match by orb structure only
 
-					// Find the stored template that matches this key
-					if (ClusterCount > 0)
+					// Generate canonical key for orbs-only template
+					FClusterCanonicalKey OrbsOnlyKey = GameManager->GenerateCanonicalKey(OrbsOnlyTemplate);
+
+					// Search through stored templates to find one matching by orb structure
+					// We need to compare orb structures, not full canonical keys (since bonds differ)
+					TArray<USimWorldHex::FClusterTemplate> StoredTemplates;
+					TArray<int32> StoredCounts;
+					GameManager->GetStoredClusters(StoredTemplates, StoredCounts);
+
+					for (int32 i = 0; i < StoredTemplates.Num(); i++)
 					{
-						// Get the stored template using the public getter
-						if (const USimWorldHex::FClusterTemplate* FoundTemplate = GameManager->GetStoredClusterTemplate(Key))
+						const USimWorldHex::FClusterTemplate& Stored = StoredTemplates[i];
+						
+						// Build an orbs-only version of the stored template
+						USimWorldHex::FClusterTemplate StoredOrbsOnly;
+						StoredOrbsOnly.Orbs = Stored.Orbs;
+						FClusterCanonicalKey StoredOrbsOnlyKey = GameManager->GenerateCanonicalKey(StoredOrbsOnly);
+
+						// Compare canonical keys (which should match if orb structures are the same)
+						if (OrbsOnlyKey == StoredOrbsOnlyKey)
 						{
-							StoredTemplate = FoundTemplate;
-							MatchingKey = Key;
+							// Found a match! Use the stored template (which has the correct bonds)
+							StoredTemplate = &Stored;
+							ClusterCount = StoredCounts[i];
+							MatchingKey = GameManager->GenerateCanonicalKey(Stored); // Use full key for decrement
+							
+							break;
 						}
-						else
-						{
-							// If no stored template found, use the ChainTemplate we built (with adjacency-based bonds)
-							StoredTemplate = &ChainTemplate;
-							MatchingKey = Key;
-						}
+					}
+
+					if (!StoredTemplate)
+					{
+						UE_LOG(LogTemp, Warning, TEXT("ClusterInput: No matching cluster found in storage (%d orbs, %d tiles)"),
+							ChainTemplate.Orbs.Num(), ClusterInputTiles.Num());
 					}
 				}
 
-				// Verify all hex positions are available
+				// Verify all hex positions are available (not occupied by board items)
 				bool bAllHexesAvailable = true;
 				for (const FHex& ClusterHex : ClusterInputTiles)
 				{
@@ -528,8 +594,86 @@ void USimWorldHex::SpawnInputsAfterBelts()
 					}
 				}
 
-				// Only spawn if cluster exists in storage and all hexes are available
-				if (ClusterCount > 0 && bAllHexesAvailable && StoredTemplate)
+				// Check if any held cluster occupies any tile in the chain
+				bool bHeldClusterOccupiesChain = false;
+				if (bAllHexesAvailable)
+				{
+					// Helper function to rotate hex coordinates
+					auto Rot60 = [](FHex D, uint8 StepsCCW)
+					{
+						for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+						{
+							const int32 q = D.Q;
+							const int32 r = D.R;
+							D.Q = -r;
+							D.R = q + r;
+						}
+						return D;
+					};
+
+					// Build a set of all hex positions in the chain
+					TSet<FHex> ChainHexSet;
+					for (const FHex& ChainHex : ClusterInputTiles)
+					{
+						ChainHexSet.Add(ChainHex);
+					}
+
+					// Check all arms for held clusters
+					for (const FArmState& ArmState : Arms)
+					{
+						if (!ArmState.bHolding) continue;
+
+						// Calculate the arm's grip position
+						FHex GripHex = ArmState.BaseHex;
+						for (int i = 0; i < ArmState.ArmLen; ++i)
+						{
+							GripHex = HexUtil::Neighbor(GripHex, ArmState.Facing);
+						}
+
+						// Check if this is a held cluster
+						if (ArmState.Held.bIsCluster)
+						{
+							// Calculate rotation offset based on GrabFacing
+							const uint8 cur = (uint8)ArmState.Facing % 6;
+							const int8 grab = (int8)ArmState.Held.GrabFacing;
+							const uint8 facingDelta = (grab >= 0)
+								? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+								: cur;
+							const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+							// Check all sub-orb positions of the held cluster
+							for (const FOrbData& Sub : ArmState.Held.Orbs)
+							{
+								FHex Local(Sub.dQ, Sub.dR);
+								FHex RotLocal = Rot60(Local, ccw);
+								FHex HeldPos(GripHex.Q + RotLocal.Q, GripHex.R + RotLocal.R);
+
+								// Check if this held position overlaps with any ClusterInput tile in the chain
+								if (ChainHexSet.Contains(HeldPos))
+								{
+									bHeldClusterOccupiesChain = true;
+									break;
+								}
+							}
+						}
+						else
+						{
+							// Single held orb - check if grip position is in the chain
+							if (ChainHexSet.Contains(GripHex))
+				{
+								bHeldClusterOccupiesChain = true;
+							}
+						}
+
+						if (bHeldClusterOccupiesChain) break;
+					}
+				}
+
+				// Only spawn if cluster exists in storage, all hexes are available, and no held cluster occupies the chain
+				UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Spawn conditions - ClusterCount: %d, bAllHexesAvailable: %d, !bHeldClusterOccupiesChain: %d, StoredTemplate: %s"),
+					ClusterCount, bAllHexesAvailable ? 1 : 0, !bHeldClusterOccupiesChain ? 1 : 0, StoredTemplate ? TEXT("yes") : TEXT("no"));
+
+				if (ClusterCount > 0 && bAllHexesAvailable && !bHeldClusterOccupiesChain && StoredTemplate)
 				{
 					// Spawn individual orbs at each ClusterInput tile
 					TMap<FHex, int32> HexToItemId; // Map hex to item ID for bond creation
@@ -553,11 +697,10 @@ void USimWorldHex::SpawnInputsAfterBelts()
 								NewlyPlacedItems.Add(NewItem.Id);
 							}
 						}
-					}
-
-					// Apply bonds from ChainTemplate (which matches the actual tile layout)
-					// Since ChainTemplate was built from the actual tiles and matches the canonical key,
-					// we can use it directly to create bonds without needing to match rotations
+				}
+				
+					// Apply bonds based on adjacency between ClusterInput tiles
+					// Build bonds from the actual tile layout (adjacent ClusterInput tiles get bonds)
 					TMap<int32, int32> ChainTemplateIndexToItemId;
 
 					// Map ChainTemplate indices to item IDs using HexToOrbIndex and HexToItemId
@@ -573,75 +716,68 @@ void USimWorldHex::SpawnInputsAfterBelts()
 						}
 					}
 
-					// Apply bonds from ChainTemplate (which has the correct structure for our tiles)
+					// Build bonds based on adjacency between ClusterInput tiles
 					TSet<TPair<int32, int32>> AppliedBonds; // Track bonds to avoid duplicates
 					int32 BondsCreated = 0; // Debug counter
 
-					for (const TPair<int32, int32>& BondPair : ChainTemplate.Bonds)
+					// Check all pairs of ClusterInput tiles for adjacency
+					for (int32 i = 0; i < ClusterInputTiles.Num(); i++)
 					{
-						// Find the item IDs for these ChainTemplate indices
-						int32* ItemIdA = ChainTemplateIndexToItemId.Find(BondPair.Key);
-						int32* ItemIdB = ChainTemplateIndexToItemId.Find(BondPair.Value);
-
-						if (ItemIdA && ItemIdB && *ItemIdA > 0 && *ItemIdB > 0)
+						const FHex& HexA = ClusterInputTiles[i];
+						
+						// Check all neighbors for potential bonds
+						for (int32 j = i + 1; j < ClusterInputTiles.Num(); j++)
 						{
-							// Avoid duplicate bonds (order-independent check)
-							int32 MinItemId = FMath::Min(*ItemIdA, *ItemIdB);
-							int32 MaxItemId = FMath::Max(*ItemIdA, *ItemIdB);
-							TPair<int32, int32> BondKey(MinItemId, MaxItemId);
+							const FHex& HexB = ClusterInputTiles[j];
 
-							if (!AppliedBonds.Contains(BondKey))
+							// Check if these hexes are adjacent (neighbor check)
+							for (uint8 Dir = 0; Dir < 6; Dir++)
 							{
-								AppliedBonds.Add(BondKey);
-
-								// Get the hex positions for these items to calculate bond offset
-								FHex* HexA = nullptr;
-								FHex* HexB = nullptr;
-
-								for (const auto& HexItemPair : HexToItemId)
+								FHex Neighbor = HexUtil::Neighbor(HexA, (EHexDir)Dir);
+								if (Neighbor.Q == HexB.Q && Neighbor.R == HexB.R)
 								{
-									if (HexItemPair.Value == *ItemIdA) HexA = const_cast<FHex*>(&HexItemPair.Key);
-									if (HexItemPair.Value == *ItemIdB) HexB = const_cast<FHex*>(&HexItemPair.Key);
-								}
+									// These are adjacent - create a bond between the orbs at these positions
+									int32* ItemIdA = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexA]);
+									int32* ItemIdB = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexB]);
 
-								if (HexA && HexB)
-								{
-									// Create bond between these two orbs
-									FBond NewBond;
-									NewBond.ItemA = *ItemIdA;
-									NewBond.ItemB = *ItemIdB;
-									NewBond.Root = *HexA;
-									NewBond.dQ = HexB->Q - HexA->Q;
-									NewBond.dR = HexB->R - HexA->R;
-									NewBond.bActive = true;
+									if (ItemIdA && ItemIdB && *ItemIdA > 0 && *ItemIdB > 0)
+									{
+										// Avoid duplicate bonds (order-independent check)
+										int32 MinItemId = FMath::Min(*ItemIdA, *ItemIdB);
+										int32 MaxItemId = FMath::Max(*ItemIdA, *ItemIdB);
+										TPair<int32, int32> BondKey(MinItemId, MaxItemId);
 
-									const int32 BondIndex = Bonds.Add(NewBond);
-									AddItemBondLink(NewBond.ItemA, BondIndex);
-									AddItemBondLink(NewBond.ItemB, BondIndex);
+										if (!AppliedBonds.Contains(BondKey))
+										{
+											AppliedBonds.Add(BondKey);
 
-									BondsCreated++; // Debug counter
+											// Create bond between these two orbs
+											FBond NewBond;
+											NewBond.ItemA = *ItemIdA;
+											NewBond.ItemB = *ItemIdB;
+											NewBond.Root = HexA;
+											NewBond.dQ = HexB.Q - HexA.Q;
+											NewBond.dR = HexB.R - HexA.R;
+											NewBond.bActive = true;
+											
+											const int32 BondIndex = Bonds.Add(NewBond);
+											AddItemBondLink(NewBond.ItemA, BondIndex);
+											AddItemBondLink(NewBond.ItemB, BondIndex);
 
-									// UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
-									// 	*ItemIdA, *ItemIdB, HexA->Q, HexA->R, HexB->Q, HexB->R);
-								}
-								else
-								{
-									// UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to find hex positions for bond %d<->%d (items %d, %d)"),
-									// 	BondPair.Key, BondPair.Value, *ItemIdA, *ItemIdB);
+											BondsCreated++; // Debug counter
+
+											UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
+												*ItemIdA, *ItemIdB, HexA.Q, HexA.R, HexB.Q, HexB.R);
+										}
+									}
+									break; // Found adjacency, move to next tile
 								}
 							}
 						}
-						else
-						{
-							// UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Failed to map ChainTemplate indices %d<->%d to item IDs (found A=%s, B=%s)"),
-							// 	BondPair.Key, BondPair.Value,
-							// 	ItemIdA ? TEXT("yes") : TEXT("no"),
-							// 	ItemIdB ? TEXT("yes") : TEXT("no"));
-						}
 					}
 
-					// UE_LOG(LogTemp, Log, TEXT("ClusterInput: Spawned %d orbs with %d bonds from storage (ChainTemplate had %d bonds, %d orbs)"),
-					// 	HexToItemId.Num(), BondsCreated, ChainTemplate.Bonds.Num(), ChainTemplate.Orbs.Num());
+					UE_LOG(LogTemp, Log, TEXT("ClusterInput: Spawned %d orbs with %d bonds from adjacency (matching cluster in storage)"),
+						HexToItemId.Num(), BondsCreated);
 
 					// Decrement cluster count in storage
 					if (GameManager)
@@ -695,10 +831,10 @@ bool USimWorldHex::DoesItemMatchOutputType(const FItem& Item, const FTile& Outpu
 void USimWorldHex::ProcessOutputs()
 {
 	if (TileMap.Num() == 0) return;
-
+	
 	// Track which outputs we've already processed (for bonded outputs)
 	TSet<FHex> ProcessedOutputs;
-
+	
 	for (const auto& KV : TileMap)
 	{
 		const FHex& H = KV.Key;
@@ -718,476 +854,476 @@ void USimWorldHex::ProcessOutputs()
 		{
 			// Check if the orb type matches the output's expected type
 			if (DoesItemMatchOutputType(*ItemPtr, T))
+		{
+			// Check if this output tile has an OutputBond partner
+			bool bRequiresBond = false;
+			FHex PartnerOutputHex;
+			const FItem* PartnerItem = nullptr;
+			const FTile* PartnerTile = nullptr;
+			
+			if (const FHex* PartnerHex = IOBondPartners.Find(H))
 			{
-				// Check if this output tile has an OutputBond partner
-				bool bRequiresBond = false;
-				FHex PartnerOutputHex;
-				const FItem* PartnerItem = nullptr;
-				const FTile* PartnerTile = nullptr;
-
-				if (const FHex* PartnerHex = IOBondPartners.Find(H))
+				bRequiresBond = true;
+				PartnerOutputHex = *PartnerHex;
+				PartnerItem = ItemMap.Find(PartnerOutputHex);
+				PartnerTile = TileMap.Find(PartnerOutputHex);
+			}
+			
+			// If bonding is required, verify that the items are bonded to each other
+			bool bCanOutput = true;
+			if (bRequiresBond)
+			{
+				// Both items must exist, be bonded to each other, and match their respective output types
+				bCanOutput = false;
+				
+				if (PartnerItem && PartnerItem->Id != 0 && PartnerTile)
 				{
-					bRequiresBond = true;
-					PartnerOutputHex = *PartnerHex;
-					PartnerItem = ItemMap.Find(PartnerOutputHex);
-					PartnerTile = TileMap.Find(PartnerOutputHex);
-				}
-
-				// If bonding is required, verify that the items are bonded to each other
-				bool bCanOutput = true;
-				if (bRequiresBond)
-				{
-					// Both items must exist, be bonded to each other, and match their respective output types
-					bCanOutput = false;
-
-					if (PartnerItem && PartnerItem->Id != 0 && PartnerTile)
+					// Check that partner orb matches its output type
+					if (!DoesItemMatchOutputType(*PartnerItem, *PartnerTile))
 					{
-						// Check that partner orb matches its output type
-						if (!DoesItemMatchOutputType(*PartnerItem, *PartnerTile))
+						// Partner doesn't match its output type - can't output
+						bCanOutput = false;
+					}
+					else
+					{
+						// Check if the two items/clusters are bonded to each other
+						// For clusters, check if any orb in one cluster is bonded to any orb in the other
+						TSet<int32> ItemAIds;
+						TSet<int32> ItemBIds;
+						
+						// Gather all IDs for item A (current item)
+						if (ItemPtr->bIsCluster)
 						{
-							// Partner doesn't match its output type - can't output
-							bCanOutput = false;
+							for (const FOrbData& Sub : ItemPtr->Orbs)
+							{
+								if (Sub.ItemId > 0)
+								{
+									ItemAIds.Add(Sub.ItemId);
+								}
+							}
 						}
 						else
 						{
-							// Check if the two items/clusters are bonded to each other
-							// For clusters, check if any orb in one cluster is bonded to any orb in the other
-							TSet<int32> ItemAIds;
-							TSet<int32> ItemBIds;
-
-							// Gather all IDs for item A (current item)
-							if (ItemPtr->bIsCluster)
-							{
-								for (const FOrbData& Sub : ItemPtr->Orbs)
-								{
-									if (Sub.ItemId > 0)
-									{
-										ItemAIds.Add(Sub.ItemId);
-									}
-								}
-							}
-							else
-							{
-								ItemAIds.Add(ItemPtr->Id);
-							}
-
-							// Gather all IDs for item B (partner item)
-							if (PartnerItem->bIsCluster)
-							{
-								for (const FOrbData& Sub : PartnerItem->Orbs)
-								{
-									if (Sub.ItemId > 0)
-									{
-										ItemBIds.Add(Sub.ItemId);
-									}
-								}
-							}
-							else
-							{
-								ItemBIds.Add(PartnerItem->Id);
-							}
-
-							// Check if any ID from item A is bonded to any ID from item B
-							for (int32 IdA : ItemAIds)
-							{
-								if (const TArray<int32>* BondList = ItemToBonds.Find(IdA))
-								{
-									for (int32 BondIdx : *BondList)
-									{
-										if (!Bonds.IsValidIndex(BondIdx)) continue;
-										const FBond& Bond = Bonds[BondIdx];
-										if (!Bond.bActive) continue;
-
-										int32 OtherId = (Bond.ItemA == IdA) ? Bond.ItemB : Bond.ItemA;
-										if (ItemBIds.Contains(OtherId))
-										{
-											bCanOutput = true;
-											break;
-										}
-									}
-									if (bCanOutput) break;
-								}
-							}
+							ItemAIds.Add(ItemPtr->Id);
 						}
-					}
-				}
-
-				if (bCanOutput)
-				{
-					// Type matches and bond requirement satisfied - remove from simulation and create animated orbs
-					FItem Temp = *ItemPtr;
-					ItemMap.Remove(H);
-					OrbAt.Remove(H);
-
-					// Create animated orb for output (descending) - synchronized to step counter
-					FAnimatedOrb AnimatedOrb;
-					AnimatedOrb.Item = Temp;
-					AnimatedOrb.Hex = H;
-					AnimatedOrb.StartStep = StepCounter; // Start immediately this step
-					AnimatedOrb.CompletionStep = StepCounter + 3;
-					AnimatedOrb.bIsInput = false;
-					AnimatedOrb.bActive = true;
-
-					// If this was a bonded output, also process the partner and mark both animations
-					if (bRequiresBond && PartnerItem)
-					{
-						AnimatedOrb.bIsBonded = true;
-						AnimatedOrb.PartnerHex = PartnerOutputHex;
-						AnimatedOrb.PartnerItemId = PartnerItem->Id;
-
-						// Remove partner item and create its animation
-						FItem PartnerTemp = *PartnerItem;
-						ItemMap.Remove(PartnerOutputHex);
-						OrbAt.Remove(PartnerOutputHex);
-
-						FAnimatedOrb PartnerAnimatedOrb;
-						PartnerAnimatedOrb.Item = PartnerTemp;
-						PartnerAnimatedOrb.Hex = PartnerOutputHex;
-						PartnerAnimatedOrb.StartStep = StepCounter;
-						PartnerAnimatedOrb.CompletionStep = StepCounter + 3;
-						PartnerAnimatedOrb.bIsInput = false;
-						PartnerAnimatedOrb.bActive = true;
-						PartnerAnimatedOrb.bIsBonded = true;
-						PartnerAnimatedOrb.PartnerHex = H;
-						PartnerAnimatedOrb.PartnerItemId = Temp.Id;
-
-						AnimatedOrbs.Add(PartnerAnimatedOrb);
-
-						// Mark partner as processed
-						ProcessedOutputs.Add(PartnerOutputHex);
-
-						++OutputCount; // Count partner too
-					}
-
-					AnimatedOrbs.Add(AnimatedOrb);
-					++OutputCount;
-				}
-			}
-			// If type doesn't match or bond requirement not met, leave the orb on the tile (no action needed)
-		}
-		// Handle cluster output tiles
-		else if (T.Kind == ETileKind::ClusterOutput)
-		{
-			// Find all tiles that are part of this cluster output (connected adjacent ClusterOutput tiles)
-			TArray<FHex> ClusterTiles;
-			TArray<uint8> ExpectedTypes;
-
-			// Expected type is stored directly in Tile.Arg
-			uint8 CurrentExpectedType = T.Arg;
-
-			// Add the current tile
-			ClusterTiles.Add(H);
-			ExpectedTypes.Add(CurrentExpectedType);
-
-			// Find all adjacent ClusterOutput tiles recursively (forming a connected cluster)
-			TSet<FHex> VisitedTiles;
-			VisitedTiles.Add(H);
-			TArray<FHex> ToVisit;
-			ToVisit.Add(H);
-
-			while (ToVisit.Num() > 0)
-			{
-				FHex CurrentHex = ToVisit.Pop();
-
-				// Check all 6 neighbors
-				for (int32 Dir = 0; Dir < 6; Dir++)
-				{
-					FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
-
-					// Skip if already visited
-					if (VisitedTiles.Contains(NeighborHex))
-						continue;
-
-					// Check if neighbor is a ClusterOutput tile
-					const FTile* NeighborTile = TileMap.Find(NeighborHex);
-					if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterOutput)
-					{
-						VisitedTiles.Add(NeighborHex);
-						ClusterTiles.Add(NeighborHex);
-						ToVisit.Add(NeighborHex);
-
-						// Expected type for this neighbor is in its Arg
-						uint8 NeighborExpectedType = NeighborTile->Arg;
-						ExpectedTypes.Add(NeighborExpectedType);
-
-					}
-				}
-			}
-
-
-
-			// ClusterOutputs should only process complete clusters, not single orbs
-			// and only if the entire bonded cluster can be processed (all orbs on ClusterOutput tiles)
-
-			// Must have at least 2 tiles to be a cluster (not a single orb)
-			if (ClusterTiles.Num() < 2)
-			{
-				continue; // Skip single orb processing
-			}
-
-			// Check if ALL tiles in the cluster have orbs of the correct type AND are bonded together
-			bool bAllTilesReady = true;
-			TArray<int32> OrbItemIds; // Store item IDs to check bonds later
-
-			for (int32 i = 0; i < ClusterTiles.Num(); i++)
-			{
-				const FHex& TileHex = ClusterTiles[i];
-				const uint8 ExpectedType = ExpectedTypes[i];
-
-				const FItem* TileItem = ItemMap.Find(TileHex);
-				if (!TileItem)
-				{
-					bAllTilesReady = false;
-					break;
-				}
-
-				// ClusterOutput tiles expect single orbs, not clusters
-				if (TileItem->bIsCluster)
-				{
-					bAllTilesReady = false;
-					break;
-				}
-
-				// Single orb - check type from the Single field
-				uint8 ActualType = (uint8)TileItem->Single.Type;
-				if (ActualType != ExpectedType)
-				{
-					bAllTilesReady = false;
-					break;
-				}
-
-				// Add the item ID to the list for bond checking
-				if (TileItem->Id > 0)
-				{
-					OrbItemIds.Add(TileItem->Id);
-				}
-			}
-
-			// Check if all orbs belong to the same cluster (are bonded together)
-			// AND that the cluster doesn't have any orbs on non-ClusterOutput tiles
-			if (bAllTilesReady && OrbItemIds.Num() > 0)
-			{
-				// Build a connectivity graph of ALL bonded orbs (including those outside the cluster)
-				TSet<int32> AllConnectedOrbs;
-				TArray<int32> ToVisitItems;
-
-				// Start with the first orb
-				AllConnectedOrbs.Add(OrbItemIds[0]);
-				ToVisitItems.Add(OrbItemIds[0]);
-
-				while (ToVisitItems.Num() > 0)
-				{
-					int32 CurrentItemId = ToVisitItems.Pop();
-
-					// Check all bonds involving this orb
-					if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentItemId))
-					{
-						for (int32 BondIdx : *BondList)
+						
+						// Gather all IDs for item B (partner item)
+						if (PartnerItem->bIsCluster)
 						{
-							if (!Bonds.IsValidIndex(BondIdx)) continue;
-							const FBond& Bond = Bonds[BondIdx];
-							if (!Bond.bActive) continue;
-
-							// Find the other orb in this bond
-							int32 OtherItemId = (Bond.ItemA == CurrentItemId) ? Bond.ItemB : Bond.ItemA;
-
-							// Add to connected set if not already visited
-							if (!AllConnectedOrbs.Contains(OtherItemId))
+							for (const FOrbData& Sub : PartnerItem->Orbs)
 							{
-								AllConnectedOrbs.Add(OtherItemId);
-								ToVisitItems.Add(OtherItemId);
+								if (Sub.ItemId > 0)
+								{
+									ItemBIds.Add(Sub.ItemId);
+								}
+							}
+						}
+						else
+						{
+							ItemBIds.Add(PartnerItem->Id);
+						}
+						
+						// Check if any ID from item A is bonded to any ID from item B
+						for (int32 IdA : ItemAIds)
+						{
+							if (const TArray<int32>* BondList = ItemToBonds.Find(IdA))
+							{
+								for (int32 BondIdx : *BondList)
+								{
+									if (!Bonds.IsValidIndex(BondIdx)) continue;
+									const FBond& Bond = Bonds[BondIdx];
+									if (!Bond.bActive) continue;
+									
+									int32 OtherId = (Bond.ItemA == IdA) ? Bond.ItemB : Bond.ItemA;
+									if (ItemBIds.Contains(OtherId))
+									{
+										bCanOutput = true;
+										break;
+									}
+								}
+								if (bCanOutput) break;
 							}
 						}
 					}
 				}
+			}
+			
+			if (bCanOutput)
+			{
+				// Type matches and bond requirement satisfied - remove from simulation and create animated orbs
+				FItem Temp = *ItemPtr;
+				ItemMap.Remove(H);
+				OrbAt.Remove(H);
 
-				// Check if all orbs on our ClusterOutput tiles are connected
-				TSet<int32> OrbsOnClusterTiles;
-				for (int32 Id : OrbItemIds)
+				// Create animated orb for output (descending) - synchronized to step counter
+				FAnimatedOrb AnimatedOrb;
+				AnimatedOrb.Item = Temp;
+				AnimatedOrb.Hex = H;
+				AnimatedOrb.StartStep = StepCounter; // Start immediately this step
+				AnimatedOrb.CompletionStep = StepCounter + 3;
+				AnimatedOrb.bIsInput = false;
+				AnimatedOrb.bActive = true;
+				
+				// If this was a bonded output, also process the partner and mark both animations
+				if (bRequiresBond && PartnerItem)
 				{
-					OrbsOnClusterTiles.Add(Id);
+					AnimatedOrb.bIsBonded = true;
+					AnimatedOrb.PartnerHex = PartnerOutputHex;
+					AnimatedOrb.PartnerItemId = PartnerItem->Id;
+					
+					// Remove partner item and create its animation
+					FItem PartnerTemp = *PartnerItem;
+					ItemMap.Remove(PartnerOutputHex);
+					OrbAt.Remove(PartnerOutputHex);
+					
+					FAnimatedOrb PartnerAnimatedOrb;
+					PartnerAnimatedOrb.Item = PartnerTemp;
+					PartnerAnimatedOrb.Hex = PartnerOutputHex;
+					PartnerAnimatedOrb.StartStep = StepCounter;
+					PartnerAnimatedOrb.CompletionStep = StepCounter + 3;
+					PartnerAnimatedOrb.bIsInput = false;
+					PartnerAnimatedOrb.bActive = true;
+					PartnerAnimatedOrb.bIsBonded = true;
+					PartnerAnimatedOrb.PartnerHex = H;
+					PartnerAnimatedOrb.PartnerItemId = Temp.Id;
+					
+					AnimatedOrbs.Add(PartnerAnimatedOrb);
+					
+					// Mark partner as processed
+					ProcessedOutputs.Add(PartnerOutputHex);
+					
+					++OutputCount; // Count partner too
 				}
-
-				for (int32 Id : OrbItemIds)
+				
+				AnimatedOrbs.Add(AnimatedOrb);
+				++OutputCount;
+			}
+		}
+		// If type doesn't match or bond requirement not met, leave the orb on the tile (no action needed)
+		}
+	// Handle cluster output tiles
+	else if (T.Kind == ETileKind::ClusterOutput)
+	{
+		// Find all tiles that are part of this cluster output (connected adjacent ClusterOutput tiles)
+		TArray<FHex> ClusterTiles;
+		TArray<uint8> ExpectedTypes;
+		
+		// Expected type is stored directly in Tile.Arg
+		uint8 CurrentExpectedType = T.Arg;
+		
+		// Add the current tile
+		ClusterTiles.Add(H);
+		ExpectedTypes.Add(CurrentExpectedType);
+		
+		// Find all adjacent ClusterOutput tiles recursively (forming a connected cluster)
+		TSet<FHex> VisitedTiles;
+		VisitedTiles.Add(H);
+		TArray<FHex> ToVisit;
+		ToVisit.Add(H);
+		
+		while (ToVisit.Num() > 0)
+		{
+			FHex CurrentHex = ToVisit.Pop();
+			
+			// Check all 6 neighbors
+			for (int32 Dir = 0; Dir < 6; Dir++)
+			{
+				FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
+				
+				// Skip if already visited
+				if (VisitedTiles.Contains(NeighborHex))
+					continue;
+				
+				// Check if neighbor is a ClusterOutput tile
+				const FTile* NeighborTile = TileMap.Find(NeighborHex);
+				if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterOutput)
 				{
-					if (!AllConnectedOrbs.Contains(Id))
+					VisitedTiles.Add(NeighborHex);
+					ClusterTiles.Add(NeighborHex);
+					ToVisit.Add(NeighborHex);
+					
+					// Expected type for this neighbor is in its Arg
+					uint8 NeighborExpectedType = NeighborTile->Arg;
+					ExpectedTypes.Add(NeighborExpectedType);
+
+				}
+			}
+		}
+		
+
+		
+		// ClusterOutputs should only process complete clusters, not single orbs
+		// and only if the entire bonded cluster can be processed (all orbs on ClusterOutput tiles)
+
+		// Must have at least 2 tiles to be a cluster (not a single orb)
+		if (ClusterTiles.Num() < 2)
+		{
+			continue; // Skip single orb processing
+		}
+
+		// Check if ALL tiles in the cluster have orbs of the correct type AND are bonded together
+		bool bAllTilesReady = true;
+		TArray<int32> OrbItemIds; // Store item IDs to check bonds later
+
+		for (int32 i = 0; i < ClusterTiles.Num(); i++)
+		{
+			const FHex& TileHex = ClusterTiles[i];
+			const uint8 ExpectedType = ExpectedTypes[i];
+
+			const FItem* TileItem = ItemMap.Find(TileHex);
+			if (!TileItem)
+			{
+				bAllTilesReady = false;
+				break;
+			}
+
+			// ClusterOutput tiles expect single orbs, not clusters
+			if (TileItem->bIsCluster)
+			{
+				bAllTilesReady = false;
+				break;
+			}
+
+			// Single orb - check type from the Single field
+			uint8 ActualType = (uint8)TileItem->Single.Type;
+			if (ActualType != ExpectedType)
+			{
+				bAllTilesReady = false;
+				break;
+			}
+
+			// Add the item ID to the list for bond checking
+			if (TileItem->Id > 0)
+			{
+				OrbItemIds.Add(TileItem->Id);
+			}
+		}
+
+		// Check if all orbs belong to the same cluster (are bonded together)
+		// AND that the cluster doesn't have any orbs on non-ClusterOutput tiles
+		if (bAllTilesReady && OrbItemIds.Num() > 0)
+		{
+			// Build a connectivity graph of ALL bonded orbs (including those outside the cluster)
+			TSet<int32> AllConnectedOrbs;
+			TArray<int32> ToVisitItems;
+
+			// Start with the first orb
+			AllConnectedOrbs.Add(OrbItemIds[0]);
+			ToVisitItems.Add(OrbItemIds[0]);
+
+			while (ToVisitItems.Num() > 0)
+			{
+				int32 CurrentItemId = ToVisitItems.Pop();
+
+				// Check all bonds involving this orb
+				if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentItemId))
+				{
+					for (int32 BondIdx : *BondList)
 					{
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& Bond = Bonds[BondIdx];
+						if (!Bond.bActive) continue;
+
+						// Find the other orb in this bond
+						int32 OtherItemId = (Bond.ItemA == CurrentItemId) ? Bond.ItemB : Bond.ItemA;
+
+						// Add to connected set if not already visited
+						if (!AllConnectedOrbs.Contains(OtherItemId))
+						{
+							AllConnectedOrbs.Add(OtherItemId);
+							ToVisitItems.Add(OtherItemId);
+						}
+					}
+				}
+			}
+
+			// Check if all orbs on our ClusterOutput tiles are connected
+			TSet<int32> OrbsOnClusterTiles;
+			for (int32 Id : OrbItemIds)
+			{
+				OrbsOnClusterTiles.Add(Id);
+			}
+
+			for (int32 Id : OrbItemIds)
+			{
+				if (!AllConnectedOrbs.Contains(Id))
+				{
+					bAllTilesReady = false;
+					break;
+				}
+			}
+
+			if (bAllTilesReady)
+			{
+				// CRITICAL: Check if the bonded cluster has any orbs that are NOT on our ClusterOutput tiles
+				// This prevents processing clusters that extend beyond what can be processed
+				for (int32 ConnectedId : AllConnectedOrbs)
+				{
+					if (!OrbsOnClusterTiles.Contains(ConnectedId))
+					{
+						// This bonded orb is somewhere else (not on our ClusterOutput tiles)
 						bAllTilesReady = false;
 						break;
 					}
 				}
+			}
+		}
+		
 
-				if (bAllTilesReady)
+		
+	// If all tiles are ready, create descent animations and remove items
+	if (bAllTilesReady)
+	{
+		// First pass: create all animations
+		TArray<FAnimatedOrb> NewAnimations;
+		for (const FHex& TileHex : ClusterTiles)
+		{
+			const FItem* TileItem = ItemMap.Find(TileHex);
+			if (TileItem)
+			{
+				// Create descending animation for this orb
+				FAnimatedOrb AnimatedOrb;
+				AnimatedOrb.Item = *TileItem;
+				AnimatedOrb.Hex = TileHex;
+				AnimatedOrb.StartStep = StepCounter;
+				AnimatedOrb.CompletionStep = StepCounter + 3;
+				AnimatedOrb.bIsInput = false;
+				AnimatedOrb.bActive = true;
+				AnimatedOrb.bIsBonded = false; // Will be set if bonded to another orb in cluster
+				
+				NewAnimations.Add(AnimatedOrb);
+			}
+		}
+		
+		// Second pass: check for bonds between orbs in the cluster
+		for (int32 i = 0; i < NewAnimations.Num(); i++)
+		{
+			FAnimatedOrb& AnimA = NewAnimations[i];
+			int32 ItemIdA = AnimA.Item.Id;
+			
+			// Check if this orb is bonded to any other orb in the cluster
+			for (int32 j = i + 1; j < NewAnimations.Num(); j++)
+			{
+				FAnimatedOrb& AnimB = NewAnimations[j];
+				int32 ItemIdB = AnimB.Item.Id;
+				
+				// Check if these two orbs are bonded to each other
+				if (const TArray<int32>* BondList = ItemToBonds.Find(ItemIdA))
 				{
-					// CRITICAL: Check if the bonded cluster has any orbs that are NOT on our ClusterOutput tiles
-					// This prevents processing clusters that extend beyond what can be processed
-					for (int32 ConnectedId : AllConnectedOrbs)
+					for (int32 BondIdx : *BondList)
 					{
-						if (!OrbsOnClusterTiles.Contains(ConnectedId))
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& Bond = Bonds[BondIdx];
+						if (!Bond.bActive) continue;
+						
+								int32 OtherItemId = (Bond.ItemA == ItemIdA) ? Bond.ItemB : Bond.ItemA;
+								if (OtherItemId == ItemIdB)
 						{
-							// This bonded orb is somewhere else (not on our ClusterOutput tiles)
-							bAllTilesReady = false;
+							// These orbs are bonded - mark both animations
+							AnimA.bIsBonded = true;
+							AnimA.PartnerHex = AnimB.Hex;
+							AnimA.PartnerItemId = ItemIdB;
+							
+							AnimB.bIsBonded = true;
+							AnimB.PartnerHex = AnimA.Hex;
+							AnimB.PartnerItemId = ItemIdA;
 							break;
 						}
 					}
 				}
 			}
-
-
-
-			// If all tiles are ready, create descent animations and remove items
-			if (bAllTilesReady)
+		}
+		
+		// Build cluster template for storage BEFORE removing items
+		if (NewAnimations.Num() > 0)
+		{
+			USimWorldHex::FClusterTemplate ProcessedClusterTemplate;
+			
+			// Use the first tile as the base
+			FHex BaseHex = NewAnimations[0].Hex;
+			
+			// Convert animations to canonical orb data
+			TMap<int32, int32> ItemIdToIndex;
+			for (const FAnimatedOrb& Anim : NewAnimations)
 			{
-				// First pass: create all animations
-				TArray<FAnimatedOrb> NewAnimations;
-				for (const FHex& TileHex : ClusterTiles)
+				FOrbData OrbData;
+				OrbData.Type = (uint8)Anim.Item.Single.Type;
+				OrbData.Color = 0;
+				OrbData.dQ = Anim.Hex.Q - BaseHex.Q;
+				OrbData.dR = Anim.Hex.R - BaseHex.R;
+				OrbData.ItemId = 0; // Don't store ItemId in templates
+				
+				int32 Index = ProcessedClusterTemplate.Orbs.Add(OrbData);
+				ItemIdToIndex.Add(Anim.Item.Id, Index);
+			}
+			
+			// Convert bonds to template bonds
+			for (const FAnimatedOrb& Anim : NewAnimations)
+			{
+				if (const TArray<int32>* BondList = ItemToBonds.Find(Anim.Item.Id))
 				{
-					const FItem* TileItem = ItemMap.Find(TileHex);
-					if (TileItem)
+					for (int32 BondIdx : *BondList)
 					{
-						// Create descending animation for this orb
-						FAnimatedOrb AnimatedOrb;
-						AnimatedOrb.Item = *TileItem;
-						AnimatedOrb.Hex = TileHex;
-						AnimatedOrb.StartStep = StepCounter;
-						AnimatedOrb.CompletionStep = StepCounter + 3;
-						AnimatedOrb.bIsInput = false;
-						AnimatedOrb.bActive = true;
-						AnimatedOrb.bIsBonded = false; // Will be set if bonded to another orb in cluster
-
-						NewAnimations.Add(AnimatedOrb);
-					}
-				}
-
-				// Second pass: check for bonds between orbs in the cluster
-				for (int32 i = 0; i < NewAnimations.Num(); i++)
-				{
-					FAnimatedOrb& AnimA = NewAnimations[i];
-					int32 ItemIdA = AnimA.Item.Id;
-
-					// Check if this orb is bonded to any other orb in the cluster
-					for (int32 j = i + 1; j < NewAnimations.Num(); j++)
-					{
-						FAnimatedOrb& AnimB = NewAnimations[j];
-						int32 ItemIdB = AnimB.Item.Id;
-
-						// Check if these two orbs are bonded to each other
-						if (const TArray<int32>* BondList = ItemToBonds.Find(ItemIdA))
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& Bond = Bonds[BondIdx];
+						if (!Bond.bActive) continue;
+						
+						int32 OtherItemId = (Bond.ItemA == Anim.Item.Id) ? Bond.ItemB : Bond.ItemA;
+						if (int32* OtherIndex = ItemIdToIndex.Find(OtherItemId))
 						{
-							for (int32 BondIdx : *BondList)
+							int32 ThisIndex = ItemIdToIndex[Anim.Item.Id];
+							// Only add each bond once (smaller index first)
+							int32 A = FMath::Min(ThisIndex, *OtherIndex);
+							int32 B = FMath::Max(ThisIndex, *OtherIndex);
+							
+							bool bAlreadyExists = false;
+							for (const TPair<int32, int32>& ExistingBond : ProcessedClusterTemplate.Bonds)
 							{
-								if (!Bonds.IsValidIndex(BondIdx)) continue;
-								const FBond& Bond = Bonds[BondIdx];
-								if (!Bond.bActive) continue;
-
-								int32 OtherItemId = (Bond.ItemA == ItemIdA) ? Bond.ItemB : Bond.ItemA;
-								if (OtherItemId == ItemIdB)
+								if (ExistingBond.Key == A && ExistingBond.Value == B)
 								{
-									// These orbs are bonded - mark both animations
-									AnimA.bIsBonded = true;
-									AnimA.PartnerHex = AnimB.Hex;
-									AnimA.PartnerItemId = ItemIdB;
-
-									AnimB.bIsBonded = true;
-									AnimB.PartnerHex = AnimA.Hex;
-									AnimB.PartnerItemId = ItemIdA;
+									bAlreadyExists = true;
 									break;
 								}
 							}
-						}
-					}
-				}
-
-				// Build cluster template for storage BEFORE removing items
-				if (NewAnimations.Num() > 0)
-				{
-					USimWorldHex::FClusterTemplate ProcessedClusterTemplate;
-
-					// Use the first tile as the base
-					FHex BaseHex = NewAnimations[0].Hex;
-
-					// Convert animations to canonical orb data
-					TMap<int32, int32> ItemIdToIndex;
-					for (const FAnimatedOrb& Anim : NewAnimations)
-					{
-						FOrbData OrbData;
-						OrbData.Type = (uint8)Anim.Item.Single.Type;
-						OrbData.Color = 0;
-						OrbData.dQ = Anim.Hex.Q - BaseHex.Q;
-						OrbData.dR = Anim.Hex.R - BaseHex.R;
-						OrbData.ItemId = 0; // Don't store ItemId in templates
-
-						int32 Index = ProcessedClusterTemplate.Orbs.Add(OrbData);
-						ItemIdToIndex.Add(Anim.Item.Id, Index);
-					}
-
-					// Convert bonds to template bonds
-					for (const FAnimatedOrb& Anim : NewAnimations)
-					{
-						if (const TArray<int32>* BondList = ItemToBonds.Find(Anim.Item.Id))
-						{
-							for (int32 BondIdx : *BondList)
+							
+							if (!bAlreadyExists)
 							{
-								if (!Bonds.IsValidIndex(BondIdx)) continue;
-								const FBond& Bond = Bonds[BondIdx];
-								if (!Bond.bActive) continue;
-
-								int32 OtherItemId = (Bond.ItemA == Anim.Item.Id) ? Bond.ItemB : Bond.ItemA;
-								if (int32* OtherIndex = ItemIdToIndex.Find(OtherItemId))
-								{
-									int32 ThisIndex = ItemIdToIndex[Anim.Item.Id];
-									// Only add each bond once (smaller index first)
-									int32 A = FMath::Min(ThisIndex, *OtherIndex);
-									int32 B = FMath::Max(ThisIndex, *OtherIndex);
-
-									bool bAlreadyExists = false;
-									for (const TPair<int32, int32>& ExistingBond : ProcessedClusterTemplate.Bonds)
-									{
-										if (ExistingBond.Key == A && ExistingBond.Value == B)
-										{
-											bAlreadyExists = true;
-											break;
-										}
-									}
-
-									if (!bAlreadyExists)
-									{
-										ProcessedClusterTemplate.Bonds.Add(TPair<int32, int32>(A, B));
-									}
-								}
+								ProcessedClusterTemplate.Bonds.Add(TPair<int32, int32>(A, B));
 							}
 						}
 					}
-
-					// Notify GameManager to store this cluster
-					if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
-					{
-						if (Driver->GM)
-						{
-							Driver->GM->AddClusterToStorage(ProcessedClusterTemplate);
-						}
-					}
 				}
-
-				// Add all animations and remove items
-				for (const FAnimatedOrb& Anim : NewAnimations)
-				{
-					AnimatedOrbs.Add(Anim);
-
-					// Remove the item from the board
-					ItemMap.Remove(Anim.Hex);
-					OrbAt.Remove(Anim.Hex);
-
-					// Mark as processed
-					ProcessedOutputs.Add(Anim.Hex);
-
-					++OutputCount;
-				}
-
-
 			}
-			// If not all tiles are ready, leave all orbs on their tiles
+			
+			// Notify GameManager to store this cluster
+			if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
+			{
+				if (Driver->GM)
+				{
+					Driver->GM->AddClusterToStorage(ProcessedClusterTemplate);
+				}
+			}
 		}
+		
+		// Add all animations and remove items
+		for (const FAnimatedOrb& Anim : NewAnimations)
+		{
+			AnimatedOrbs.Add(Anim);
+			
+			// Remove the item from the board
+			ItemMap.Remove(Anim.Hex);
+			OrbAt.Remove(Anim.Hex);
+			
+			// Mark as processed
+			ProcessedOutputs.Add(Anim.Hex);
+			
+			++OutputCount;
+		}
+		
+
+	}
+	// If not all tiles are ready, leave all orbs on their tiles
+}
 	}
 }
 
@@ -1207,7 +1343,7 @@ bool USimWorldHex::TryArmPickItem(const FHex& From, FItem& OutItem)
 			FItem NewItem = FItem::MakeSingle(O);
 			NewItem.Id = NextItemId++;
 			OutItem = NewItem;
-
+			
 			// Create ascending animation for the input tile
 			// This ensures the next orb spawns after the animation completes
 			FAnimatedOrb AscendAnimation;
@@ -1217,7 +1353,7 @@ bool USimWorldHex::TryArmPickItem(const FHex& From, FItem& OutItem)
 			AscendAnimation.Item = OutItem;
 			AscendAnimation.StartStep = StepCounter;
 			AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
-
+			
 			// Check if this input tile has an InputBond partner
 			if (const FHex* PartnerHex = IOBondPartners.Find(From))
 			{
@@ -1229,9 +1365,9 @@ bool USimWorldHex::TryArmPickItem(const FHex& From, FItem& OutItem)
 					AscendAnimation.PartnerItemId = PartnerItem->Id;
 				}
 			}
-
+			
 			AnimatedOrbs.Add(AscendAnimation);
-
+			
 			return true;
 		}
 		else if (T->Kind == ETileKind::ClusterInput)
@@ -1291,62 +1427,62 @@ bool USimWorldHex::TryArmPickItem(const FHex& From, FItem& OutItem)
 
 				// Only spawn if cluster exists in storage with count > 0
 				if (ClusterCount > 0)
+			{
+				// Create cluster from template
+				FItem ClusterItem;
+				ClusterItem.bIsCluster = true;
+				ClusterItem.Id = NextItemId++;
+				
+				// Create orbs with unique IDs
+				for (const FOrbData& TemplateOrb : Template->Orbs)
 				{
-					// Create cluster from template
-					FItem ClusterItem;
-					ClusterItem.bIsCluster = true;
-					ClusterItem.Id = NextItemId++;
-
-					// Create orbs with unique IDs
-					for (const FOrbData& TemplateOrb : Template->Orbs)
-					{
-						FOrbData NewOrb = TemplateOrb;
-						NewOrb.ItemId = NextItemId++;
-						ClusterItem.Orbs.Add(NewOrb);
-					}
-
-					OutItem = ClusterItem;
-
+					FOrbData NewOrb = TemplateOrb;
+					NewOrb.ItemId = NextItemId++;
+					ClusterItem.Orbs.Add(NewOrb);
+				}
+				
+				OutItem = ClusterItem;
+				
 					// Create bonds between orbs based on template (pre-bonded)
-					for (const TPair<int32, int32>& BondPair : Template->Bonds)
+				for (const TPair<int32, int32>& BondPair : Template->Bonds)
+				{
+					if (BondPair.Key < ClusterItem.Orbs.Num() && BondPair.Value < ClusterItem.Orbs.Num())
 					{
-						if (BondPair.Key < ClusterItem.Orbs.Num() && BondPair.Value < ClusterItem.Orbs.Num())
-						{
-							int32 ItemA = ClusterItem.Orbs[BondPair.Key].ItemId;
-							int32 ItemB = ClusterItem.Orbs[BondPair.Value].ItemId;
-
-							FBond NewBond;
-							NewBond.ItemA = ItemA;
-							NewBond.ItemB = ItemB;
-							NewBond.Root = From;
-							NewBond.dQ = ClusterItem.Orbs[BondPair.Value].dQ - ClusterItem.Orbs[BondPair.Key].dQ;
-							NewBond.dR = ClusterItem.Orbs[BondPair.Value].dR - ClusterItem.Orbs[BondPair.Key].dR;
-							NewBond.bActive = true;
-
-							const int32 BondIndex = Bonds.Add(NewBond);
-							AddItemBondLink(NewBond.ItemA, BondIndex);
-							AddItemBondLink(NewBond.ItemB, BondIndex);
-						}
+						int32 ItemA = ClusterItem.Orbs[BondPair.Key].ItemId;
+						int32 ItemB = ClusterItem.Orbs[BondPair.Value].ItemId;
+						
+						FBond NewBond;
+						NewBond.ItemA = ItemA;
+						NewBond.ItemB = ItemB;
+						NewBond.Root = From;
+						NewBond.dQ = ClusterItem.Orbs[BondPair.Value].dQ - ClusterItem.Orbs[BondPair.Key].dQ;
+						NewBond.dR = ClusterItem.Orbs[BondPair.Value].dR - ClusterItem.Orbs[BondPair.Key].dR;
+						NewBond.bActive = true;
+						
+						const int32 BondIndex = Bonds.Add(NewBond);
+						AddItemBondLink(NewBond.ItemA, BondIndex);
+						AddItemBondLink(NewBond.ItemB, BondIndex);
 					}
+				}
 
 					// Decrement cluster count in storage
 					if (GameManager)
 					{
 						GameManager->DecrementClusterFromStorageByTemplateId(MatchingTemplateId);
 					}
-
-					// Create ascending animation for the cluster input tile
-					FAnimatedOrb AscendAnimation;
-					AscendAnimation.bActive = true;
-					AscendAnimation.bIsInput = true;
-					AscendAnimation.Hex = From;
-					AscendAnimation.Item = ClusterItem;
-					AscendAnimation.StartStep = StepCounter;
-					AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
-
-					AnimatedOrbs.Add(AscendAnimation);
-
-					return true;
+				
+				// Create ascending animation for the cluster input tile
+				FAnimatedOrb AscendAnimation;
+				AscendAnimation.bActive = true;
+				AscendAnimation.bIsInput = true;
+				AscendAnimation.Hex = From;
+				AscendAnimation.Item = ClusterItem;
+				AscendAnimation.StartStep = StepCounter;
+				AscendAnimation.CompletionStep = StepCounter + 1; // Complete at next step
+				
+				AnimatedOrbs.Add(AscendAnimation);
+				
+				return true;
 				}
 			}
 		}
@@ -1424,7 +1560,7 @@ bool USimWorldHex::PeekItemAt(const FHex& H, FItem& OutItem) const
 				FItem ClusterItem;
 				ClusterItem.bIsCluster = true;
 				ClusterItem.Id = 0; // Not yet assigned
-
+				
 				// Create orbs without IDs for peek
 				for (const FOrbData& TemplateOrb : Template->Orbs)
 				{
@@ -1432,7 +1568,7 @@ bool USimWorldHex::PeekItemAt(const FHex& H, FItem& OutItem) const
 					NewOrb.ItemId = 0; // Not yet assigned
 					ClusterItem.Orbs.Add(NewOrb);
 				}
-
+				
 				OutItem = ClusterItem;
 				return true;
 			}
@@ -1503,7 +1639,7 @@ void USimWorldHex::UpdateAnimatedOrbs(float DeltaTime)
 						NewItem.Id = NextItemId++;
 
 						TryPutItem(AnimatedOrb.Hex, NewItem);
-
+						
 						// If this was a bonded animation, also check if partner needs a bond formed
 						if (AnimatedOrb.bIsBonded && AnimatedOrb.PartnerItemId != 0)
 						{
