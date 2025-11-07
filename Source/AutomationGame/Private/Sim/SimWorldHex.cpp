@@ -14,6 +14,7 @@ USimWorldHex::USimWorldHex()
 	TileMap.Empty();
 	ItemMap.Empty();
 	Arms.Empty();
+	Walkers.Empty();
 	OrbAt.Empty();
 	BeltProgress.Empty();
 	Bonds.Empty();
@@ -145,6 +146,21 @@ int32 USimWorldHex::AddArm(const FArmState& Arm)
 	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::AddArm - Added arm at (%d,%d) facing=%d assigned SimIndex=%d (total arms: %d)"),
 		Arm.BaseHex.Q, Arm.BaseHex.R, (int32)Arm.Facing, NewIndex, Arms.Num());
 
+	return NewIndex;
+}
+
+int32 USimWorldHex::AddWalker(const FWalkerState& Walker)
+{
+	int32 NewIndex = Walkers.Add(Walker);
+	FWalkerState& S = Walkers[NewIndex];
+	S.PC = S.PC % FMath::Max(1, S.Program.Num());
+	S.WaitCounter = 0;
+	S.bMoving = false;
+	S.MovementProgress = 0.0f;
+	
+	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::AddWalker - Added walker at (%d,%d) assigned SimIndex=%d (total walkers: %d)"),
+		Walker.BaseHex.Q, Walker.BaseHex.R, NewIndex, Walkers.Num());
+	
 	return NewIndex;
 }
 
@@ -1313,6 +1329,7 @@ void USimWorldHex::StepSim()
 
 	// SpawnInputs();          // pass 1 (empty at start)
 	StepArms();
+	StepWalkers();
 	StepBelts();
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
 	StepBonds();

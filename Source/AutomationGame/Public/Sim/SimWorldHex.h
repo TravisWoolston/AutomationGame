@@ -7,6 +7,7 @@
 #include "Sim/HexTypes.h"
 #include "Sim/Tiles.h"
 #include "Sim/ArmTypes.h"
+#include "Sim/WalkerTypes.h"
 #include "Sim/OrbTypes.h"
 #include "Sim/HexCoord.h"
 #include "UObject/Object.h"
@@ -95,6 +96,7 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim") TMap<FHex, FTile> TileMap;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim") TMap<FHex, FItem> ItemMap;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim") TArray<FArmState> Arms;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim") TArray<FWalkerState> Walkers;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim") int32 OutputCount = 0;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim") int32 TileRevision = 0;
@@ -106,6 +108,7 @@ public:
 	// Build API
 	UFUNCTION(BlueprintCallable, Category = "Build") bool  PlaceTile(const FHex& H, const FTile& T);
 	UFUNCTION(BlueprintCallable, Category = "Build") int32 AddArm(const FArmState& Arm);
+	UFUNCTION(BlueprintCallable, Category = "Build") int32 AddWalker(const FWalkerState& Walker);
 	
 	// Cluster template API (C++ only - TPair is not Blueprint-compatible)
 	// Cluster template structure (must be public for external access)
@@ -377,6 +380,7 @@ private:
 	void StepArmsSecondPass();  // Second pass for immediate grab after unbonding
 	void StepBondsSecondPass(); // Second pass for bond formation after rotations complete
 	void StepBelts();
+	void StepWalkers();
 	
 	// Opus Magnum-style bond prediction for rotation obstruction
 	TMap<FHex, int32> GetPredictedBondFormations() const;

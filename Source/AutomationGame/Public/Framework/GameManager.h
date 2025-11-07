@@ -3,7 +3,9 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Actors/BasicArm.h"
+#include "Actors/BasicWalker.h"
 #include "Sim/ArmTypes.h"
+#include "Sim/WalkerTypes.h"
 #include "Templates/Tuple.h"
 #include "Sim/SimWorldHex.h"
 #include "GameManager.generated.h"
@@ -48,6 +50,16 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Factory|Arms")
 	ABasicArm* SpawnBasicArmAt(const FHex& Hex, uint8 FacingDir, const TArray<FArmInstr>& Program, bool bLoop = true);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Factory|Walkers")
+	TSubclassOf<ABasicWalker> BasicWalkerClass;
+
+	/** Optional default program to use when placing walkers. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Factory|Walkers")
+	TArray<FWalkerInstr> DefaultWalkerProgram;
+
+	UFUNCTION(BlueprintCallable, Category = "Factory|Walkers")
+	ABasicWalker* SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWalkerInstr>& Program, bool bLoop = true);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Refs")
 	AGameTickManager* TickManager = nullptr;

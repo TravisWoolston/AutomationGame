@@ -10,6 +10,8 @@
 #include "EngineUtils.h"
 #include "Framework/GameManager.h"
 #include "Actors/BasicArm.h"
+#include "Actors/BasicWalker.h"
+#include "Sim/WalkerTypes.h"
 #include "DrawDebugHelpers.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -173,6 +175,22 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			{
 				CachedTLD->UpsertArmSpec(A.Q, A.R, BeltDir % 6, TArray<FArmInstr>(), true);
 			}
+		}
+		return;
+	}
+	case EPlaceKind::Walker:
+	{
+		AActor* GMActor = nullptr;
+		for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+			if (It->IsA<AGameManager>()) { GMActor = *It; break; }
+
+		if (AGameManager* GM = Cast<AGameManager>(GMActor))
+		{
+			GM->SpawnBasicWalkerAt(FHex{ A.Q, A.R }, TArray<FWalkerInstr>(), true);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn Walker (no GameManager)."));
 		}
 		return;
 	}

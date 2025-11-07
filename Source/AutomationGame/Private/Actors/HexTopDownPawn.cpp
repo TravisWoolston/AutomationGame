@@ -289,7 +289,21 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 void AHexTopDownPawn::SetInputMode1() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Input); }
 void AHexTopDownPawn::SetInputMode2() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Output); }
 void AHexTopDownPawn::SetInputMode3() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Belt); }
-void AHexTopDownPawn::SetInputMode4() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Arm); }
+void AHexTopDownPawn::SetInputMode4() 
+{ 
+	if (Placer) 
+	{
+		// Cycle between Arm and Walker
+		if (Placer->PlaceKind == EPlaceKind::Arm)
+		{
+			Placer->SetPlaceKind(EPlaceKind::Walker);
+		}
+		else
+		{
+			Placer->SetPlaceKind(EPlaceKind::Arm);
+		}
+	}
+}
 void AHexTopDownPawn::SetInputMode5() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Bond); }
 void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Unbond); }
 void AHexTopDownPawn::SetInputMode7() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterOutput); }

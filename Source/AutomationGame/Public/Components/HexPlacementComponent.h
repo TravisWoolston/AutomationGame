@@ -15,6 +15,7 @@ enum class EPlaceKind : uint8
 	Output,
 	Belt,
 	Arm,
+	Walker,        // place a Walker unit
 	Bond,          // place a Bond glyph (uses BeltDir for its direction)
 	Unbond,        // place an Unbond glyph (uses BeltDir for its direction)
 	ClusterOutput, // place a ClusterOutput tile (cycles through registered templates)

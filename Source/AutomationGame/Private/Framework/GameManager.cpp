@@ -314,33 +314,72 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 		Arm->SetProgram(Program, bLoop);
 		Arm->Start();
 
-		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered arm at Hex(%d,%d) Facing=%d SimIndex=%d TapeLen=%d"),
-			Hex.Q, Hex.R, (int32)ArmState.Facing, ArmIndex, ArmState.Tape.Num());
+	UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered arm at Hex(%d,%d) Facing=%d SimIndex=%d TapeLen=%d"),
+		Hex.Q, Hex.R, (int32)ArmState.Facing, ArmIndex, ArmState.Tape.Num());
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("GameManager: Arm spawned visually but Sim is null; program will not run."));
 	}
+	return Arm;
+}
 
-	// Apply timeline settings to the newly spawned arm
-	if (UArmTimelineWidget* TimelineWidget = Arm->FindComponentByClass<UArmTimelineWidget>())
+ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWalkerInstr>& Program, bool bLoop)
+{
+	if (!BasicWalkerClass)
 	{
-		TimelineWidget->SetCommandTextures(CommandTextures);
-		TimelineWidget->SetDefaultCommandTexture(DefaultCommandTexture);
-		TimelineWidget->SetIconSize(TimelineIconSize);
-		TimelineWidget->SetIconBackgroundColor(TimelineIconBackgroundColor);
-		TimelineWidget->SetNormalCommandColor(TimelineNormalCommandColor);
-		TimelineWidget->SetCurrentCommandColor(TimelineCurrentCommandColor);
-		TimelineWidget->SetCompletedCommandColor(TimelineCompletedCommandColor);
-		TimelineWidget->SetTimelineWidgetClass(ArmTimelineWidgetClass);
-		TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
-		TimelineWidget->SetTimelineScale(TimelineWidgetScale);
-		TimelineWidget->SetTimelineOffset(TimelineWidgetOffset);
-		TimelineWidget->SetMaxCommandIcons(MaxTimelineIcons);
-		TimelineWidget->LerpSpeed = TimelineLerpSpeed;
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: BasicWalkerClass not set; cannot spawn."));
+		return nullptr;
+	}
+	if (!OrbSimDriver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: OrbSimDriver not set; cannot compute grid transform for walker."));
+		return nullptr;
 	}
 
-	return Arm;
+	FVector Loc = OrbSimDriver->MapHexToWorld(Hex);
+
+	FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ABasicWalker* Walker = GetWorld()->SpawnActor<ABasicWalker>(BasicWalkerClass, FTransform(FRotator::ZeroRotator, Loc), S);
+	if (!Walker) return nullptr;
+
+	// Initialize actor-side data
+	Walker->Driver = OrbSimDriver;
+	Walker->Q = Hex.Q;
+	Walker->R = Hex.R;
+	// Don't call SetProgram yet - need SimWalkerIndex first
+
+	// --- Add to simulation so it actually runs ---
+	if (USimWorldHex* Sim = OrbSimDriver->GetSim())
+	{
+		FWalkerState WalkerState;
+		WalkerState.BaseHex = Hex;
+		WalkerState.HomeHex = Hex;
+		WalkerState.TargetHex = Hex;
+		WalkerState.PC = 0;
+		WalkerState.WaitCounter = 0;
+		WalkerState.bMoving = false;
+		WalkerState.MovementProgress = 0.0f;
+		WalkerState.TileTraverseRate = Walker->TileTraverseRate;
+		// Don't set program here - let SetProgram handle it after SimWalkerIndex is assigned
+		WalkerState.Program = TArray<FWalkerInstr>(); // Empty for now
+
+		const int32 WalkerIndex = Sim->AddWalker(WalkerState);
+		Walker->SimWalkerIndex = WalkerIndex;
+
+		// Now that SimWalkerIndex is set, we can call SetProgram
+		Walker->SetProgram(Program, bLoop);
+		Walker->Start();
+
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered walker at Hex(%d,%d) SimIndex=%d ProgramLen=%d"),
+			Hex.Q, Hex.R, WalkerIndex, Program.Num());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Walker spawned visually but Sim is null; program will not run."));
+	}
+
+	return Walker;
 }
 
 void AGameManager::SyncOrbSimDriverParameters()
