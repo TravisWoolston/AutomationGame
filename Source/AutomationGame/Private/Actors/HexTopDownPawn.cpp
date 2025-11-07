@@ -271,6 +271,8 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 
 	// Simulation control
 	IC->BindAction("NextTick", IE_Pressed, this, &AHexTopDownPawn::NextTick);
+	IC->BindAction("IncreaseTickSpeed", IE_Pressed, this, &AHexTopDownPawn::IncreaseTickSpeed);
+	IC->BindAction("DecreaseTickSpeed", IE_Pressed, this, &AHexTopDownPawn::DecreaseTickSpeed);
 
 	// Timeline control
 	IC->BindAction("ToggleArmTimelines", IE_Pressed, this, &AHexTopDownPawn::ToggleArmTimelines);
@@ -489,6 +491,32 @@ void AHexTopDownPawn::NextTick()
 		// Already playing, will pause on next tick
 		UE_LOG(LogTemp, Log, TEXT("NextTick: Will pause on next tick"));
 	}
+}
+
+void AHexTopDownPawn::IncreaseTickSpeed()
+{
+	AGameTickManager* TickManager = AGameTickManager::Get(this);
+	if (!TickManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("IncreaseTickSpeed: No GameTickManager found"));
+		return;
+	}
+
+	TickManager->TicksPerSecond = FMath::Clamp(TickManager->TicksPerSecond + 0.5f, 0.01f, 240.0f);
+	UE_LOG(LogTemp, Log, TEXT("Tick speed increased to %.2f ticks/second"), TickManager->TicksPerSecond);
+}
+
+void AHexTopDownPawn::DecreaseTickSpeed()
+{
+	AGameTickManager* TickManager = AGameTickManager::Get(this);
+	if (!TickManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DecreaseTickSpeed: No GameTickManager found"));
+		return;
+	}
+
+	TickManager->TicksPerSecond = FMath::Clamp(TickManager->TicksPerSecond - 0.5f, 0.01f, 240.0f);
+	UE_LOG(LogTemp, Log, TEXT("Tick speed decreased to %.2f ticks/second"), TickManager->TicksPerSecond);
 }
 
 void AHexTopDownPawn::HandleNextTickStop(float StepSeconds)
@@ -1382,7 +1410,7 @@ void AHexTopDownPawn::RotateBlueprintCW()
 {
 	if (BlueprintTiles.Num() == 0) return;
 
-	BlueprintRotation = (BlueprintRotation + 1) % 6;
+	BlueprintRotation = (BlueprintRotation + 5) % 6; // +5 is equivalent to -1 mod 6
 	UE_LOG(LogTemp, Log, TEXT("Blueprint rotated CW, new rotation: %d"), BlueprintRotation);
 }
 
@@ -1390,7 +1418,7 @@ void AHexTopDownPawn::RotateBlueprintCCW()
 {
 	if (BlueprintTiles.Num() == 0) return;
 
-	BlueprintRotation = (BlueprintRotation + 5) % 6; // +5 is equivalent to -1 mod 6
+	BlueprintRotation = (BlueprintRotation + 1) % 6;
 	UE_LOG(LogTemp, Log, TEXT("Blueprint rotated CCW, new rotation: %d"), BlueprintRotation);
 }
 

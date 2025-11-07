@@ -2236,3 +2236,72 @@ void USimWorldHex::RebuildClusterOutputRelationships(const TMap<FHex, uint8>& Sa
 	UE_LOG(LogTemp, Warning, TEXT("╚════════════════════════════════════════"));
 }
 
+TArray<FHex> USimWorldHex::FindClusterInputChain(const FHex& StartHex, const TSet<FHex>& ExcludeHexes) const
+{
+	// Invalidate cache if tiles have changed
+	if (LastTileRevisionForChainCache != TileRevision)
+	{
+		ClusterInputChainCache.Empty();
+		LastTileRevisionForChainCache = TileRevision;
+	}
+	
+	// Check cache first
+	if (const TArray<FHex>* Cached = ClusterInputChainCache.Find(StartHex))
+	{
+		// Verify cached chain is still valid (all tiles still exist and are ClusterInput)
+		bool bCacheValid = true;
+		for (const FHex& Hex : *Cached)
+		{
+			const FTile* T = TileMap.Find(Hex);
+			if (!T || T->Kind != ETileKind::ClusterInput)
+			{
+				bCacheValid = false;
+				break;
+			}
+		}
+		if (bCacheValid)
+		{
+			return *Cached;
+		}
+		// Cache invalid, clear it
+		ClusterInputChainCache.Remove(StartHex);
+	}
+	
+	// Perform BFS to find chain
+	TArray<FHex> ClusterInputTiles;
+	TSet<FHex> Visited;
+	TArray<FHex> ToVisit;
+	
+	ToVisit.Add(StartHex);
+	Visited.Add(StartHex);
+	
+	while (ToVisit.Num() > 0)
+	{
+		FHex CurrentHex = ToVisit.Pop();
+		ClusterInputTiles.Add(CurrentHex);
+		
+		// Check all 6 neighbors
+		for (uint8 Dir = 0; Dir < 6; Dir++)
+		{
+			FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
+			if (!Visited.Contains(NeighborHex) && !ExcludeHexes.Contains(NeighborHex))
+			{
+				const FTile* NeighborTile = TileMap.Find(NeighborHex);
+				if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterInput)
+				{
+					Visited.Add(NeighborHex);
+					ToVisit.Add(NeighborHex);
+				}
+			}
+		}
+	}
+	
+	// Cache the result for all tiles in the chain
+	for (const FHex& Hex : ClusterInputTiles)
+	{
+		ClusterInputChainCache.Add(Hex, ClusterInputTiles);
+	}
+	
+	return ClusterInputTiles;
+}
+

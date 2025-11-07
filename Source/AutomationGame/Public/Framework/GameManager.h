@@ -329,6 +329,9 @@ public:
 	/** Get all stored cluster templates and their counts (C++ only) */
 	void GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& OutTemplates, TArray<int32>& OutCounts) const;
 	
+	/** Find a stored cluster matching an orbs-only template (for ClusterInput matching) (C++ only) */
+	bool FindStoredClusterByOrbsOnly(const USimWorldHex::FClusterTemplate& OrbsOnlyTemplate, const USimWorldHex::FClusterTemplate*& OutTemplate, int32& OutCount, FClusterCanonicalKey& OutMatchingKey) const;
+	
 	/** Find or register a TemplateId for a given cluster template (C++ only) */
 	uint8 FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplate& ClusterTemplate);
 
@@ -376,4 +379,10 @@ private:
 
 	// Cached canonical keys by template ID (for efficient lookup without regenerating keys)
 	TMap<uint8, FClusterCanonicalKey> TemplateIdToCanonicalKey;
+	
+	// Cached orbs-only canonical keys for stored templates (for efficient ClusterInput matching)
+	mutable TMap<FClusterCanonicalKey, FClusterCanonicalKey> StoredOrbsOnlyKeysCache;
+	
+	// Get orbs-only canonical key for a stored template (cached)
+	FClusterCanonicalKey GetOrbsOnlyKeyForStoredTemplate(const FClusterCanonicalKey& FullKey) const;
 };

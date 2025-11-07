@@ -1218,6 +1218,61 @@ void AGameManager::GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& Out
 	}
 }
 
+bool AGameManager::FindStoredClusterByOrbsOnly(const USimWorldHex::FClusterTemplate& OrbsOnlyTemplate, const USimWorldHex::FClusterTemplate*& OutTemplate, int32& OutCount, FClusterCanonicalKey& OutMatchingKey) const
+{
+	// Generate canonical key for orbs-only template
+	FClusterCanonicalKey OrbsOnlyKey = GenerateCanonicalKey(OrbsOnlyTemplate);
+	
+	// Search through stored templates using cached orbs-only keys
+	for (const auto& KV : ClusterCounts)
+	{
+		const FClusterCanonicalKey& StoredFullKey = KV.Key;
+		FClusterCanonicalKey StoredOrbsOnlyKey = GetOrbsOnlyKeyForStoredTemplate(StoredFullKey);
+		
+		// Compare canonical keys (which should match if orb structures are the same)
+		if (OrbsOnlyKey == StoredOrbsOnlyKey)
+		{
+			// Found a match!
+			if (const USimWorldHex::FClusterTemplate* FoundTemplate = StoredClusterTemplates.Find(StoredFullKey))
+			{
+				OutTemplate = FoundTemplate;
+				OutCount = KV.Value;
+				OutMatchingKey = StoredFullKey;
+				return true;
+			}
+		}
+	}
+	
+	return false;
+}
+
+FClusterCanonicalKey AGameManager::GetOrbsOnlyKeyForStoredTemplate(const FClusterCanonicalKey& FullKey) const
+{
+	// Check cache first
+	if (const FClusterCanonicalKey* Cached = StoredOrbsOnlyKeysCache.Find(FullKey))
+	{
+		return *Cached;
+	}
+	
+	// Build orbs-only template from stored template
+	if (const USimWorldHex::FClusterTemplate* Template = StoredClusterTemplates.Find(FullKey))
+	{
+		USimWorldHex::FClusterTemplate OrbsOnlyTemplate;
+		OrbsOnlyTemplate.Orbs = Template->Orbs;
+		// Leave bonds empty
+		
+		FClusterCanonicalKey OrbsOnlyKey = GenerateCanonicalKey(OrbsOnlyTemplate);
+		
+		// Cache it
+		StoredOrbsOnlyKeysCache.Add(FullKey, OrbsOnlyKey);
+		
+		return OrbsOnlyKey;
+	}
+	
+	// Fallback: return empty key
+	return FClusterCanonicalKey();
+}
+
 uint8 AGameManager::FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplate& ClusterTemplate)
 {
 	if (!OrbSimDriver || !OrbSimDriver->GetSim())

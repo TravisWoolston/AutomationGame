@@ -87,6 +87,8 @@ void UArmTimelineUMGWidget::SetArmProgram(const TArray<FArmInstr>& Program)
 		CommandIconWidgets.Empty();
 		bIconsCreated = false; // Reset caching flag since program changed
 		
+		// Ensure minimum desired size is maintained to prevent shrinking
+		SetMinimumDesiredSize(FVector2D(4000.0f, 400.0f));
 		
 		UpdateWidgetContent();
 		OnProgramChanged();
@@ -643,6 +645,9 @@ bool UArmTimelineUMGWidget::RemoveCommandAt(int32 Index)
 	{
 		CursorPosition = ArmProgram.Num();
 	}
+	
+	// Ensure minimum desired size is maintained to prevent shrinking when commands are removed
+	SetMinimumDesiredSize(FVector2D(4000.0f, 400.0f));
 	
 	// Synchronize the program back to the arm
 	SyncProgramToArm();

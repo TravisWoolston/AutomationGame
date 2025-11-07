@@ -342,6 +342,13 @@ private:
 	};
 	TArray<FPendingGrab> PendingGrabs;
 
+	// Cache for ClusterInput chains (invalidated when tiles change)
+	mutable TMap<FHex, TArray<FHex>> ClusterInputChainCache;
+	mutable int32 LastTileRevisionForChainCache = -1;
+	
+	// Helper function to find all connected ClusterInput tiles in a chain
+	TArray<FHex> FindClusterInputChain(const FHex& StartHex, const TSet<FHex>& ExcludeHexes = TSet<FHex>()) const;
+
 	// Bonded arm pair tracking for cross-arm cluster management
 	struct FBondedArmPair
 	{

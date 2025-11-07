@@ -58,47 +58,53 @@ void USimWorldHex::SpawnInputs()
 		// Handle cluster input tiles
 		else if (T.Kind == ETileKind::ClusterInput)
 		{
-			// Find all connected ClusterInput tiles in the chain (adjacent to each other)
-			TArray<FHex> ClusterInputTiles;
-			TSet<FHex> Visited;
-			TArray<FHex> ToVisit;
-
-			ToVisit.Add(H);
-			Visited.Add(H);
-
-			// BFS to find all adjacent ClusterInput tiles
-			// Include ALL connected ClusterInput tiles, even if they're in SkipInputThisFrame
-			// (we check ProcessedClusterInputHexes at the start to avoid duplicate processing)
-			while (ToVisit.Num() > 0)
+			// Use cached helper function to find chain
+			// Only exclude items, not processed tiles - we need to find the complete chain
+			TSet<FHex> ExcludeHexes;
+			for (const auto& ItemKV : ItemMap)
 			{
-				FHex CurrentHex = ToVisit.Pop();
-				ClusterInputTiles.Add(CurrentHex);
-
+				ExcludeHexes.Add(ItemKV.Key);
+			}
+			TArray<FHex> ClusterInputTiles = FindClusterInputChain(H, ExcludeHexes);
+			
+			// Verify this is a complete chain (not a sub-chain)
+			// Check if any ClusterInput tile adjacent to the chain is not in the chain and not already processed
+			bool bIsCompleteChain = true;
+			TSet<FHex> ChainHexSet;
+			for (const FHex& Hex : ClusterInputTiles)
+			{
+				ChainHexSet.Add(Hex);
+			}
+			
+			for (const FHex& ChainHex : ClusterInputTiles)
+			{
 				// Check all 6 neighbors
 				for (uint8 Dir = 0; Dir < 6; Dir++)
 				{
-					FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
-					if (!Visited.Contains(NeighborHex))
+					FHex NeighborHex = HexUtil::Neighbor(ChainHex, (EHexDir)Dir);
+					
+					// Skip if neighbor is in the chain or already processed
+					if (ChainHexSet.Contains(NeighborHex) || ProcessedClusterInputHexes.Contains(NeighborHex))
 					{
-						const FTile* NeighborTile = TileMap.Find(NeighborHex);
-						if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterInput)
-						{
-							// Include all connected ClusterInput tiles, but skip if:
-							// 1. Already processed as part of another chain (ProcessedClusterInputHexes)
-							// 2. Currently occupied by an item (ItemMap)
-							// Note: We don't check SkipInputThisFrame here because we want to find the complete chain
-							if (!ProcessedClusterInputHexes.Contains(NeighborHex) && !ItemMap.Contains(NeighborHex))
-							{
-								Visited.Add(NeighborHex);
-								ToVisit.Add(NeighborHex);
-							}
-						}
+						continue;
+					}
+					
+					// Check if neighbor is a ClusterInput tile
+					const FTile* NeighborTile = TileMap.Find(NeighborHex);
+					if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterInput)
+					{
+						// Found an adjacent ClusterInput that's not in the chain and not processed
+						// This means we have a sub-chain, not the complete chain
+						bIsCompleteChain = false;
+						break;
 					}
 				}
+				if (!bIsCompleteChain) break;
 			}
 
 			// Process the chain: spawn individual orbs at each tile, then apply bonds
-			if (ClusterInputTiles.Num() > 0)
+			// Only process if this is a complete chain (not a sub-chain)
+			if (ClusterInputTiles.Num() > 0 && bIsCompleteChain)
 			{
 				// Use the first tile as the base hex for relative positioning
 				FHex BaseHex = ClusterInputTiles[0];
@@ -146,40 +152,11 @@ void USimWorldHex::SpawnInputs()
 					OrbsOnlyTemplate.Orbs = ChainTemplate.Orbs;
 					// Leave bonds empty - we want to match by orb structure only
 
-					// Generate canonical key for orbs-only template
-					FClusterCanonicalKey OrbsOnlyKey = GameManager->GenerateCanonicalKey(OrbsOnlyTemplate);
-
-					// Search through stored templates to find one matching by orb structure
-					// We need to compare orb structures, not full canonical keys (since bonds differ)
-					TArray<USimWorldHex::FClusterTemplate> StoredTemplates;
-					TArray<int32> StoredCounts;
-					GameManager->GetStoredClusters(StoredTemplates, StoredCounts);
-
-					for (int32 i = 0; i < StoredTemplates.Num(); i++)
+					// Use optimized method to find matching stored cluster
+					const USimWorldHex::FClusterTemplate* FoundTemplate = nullptr;
+					if (GameManager->FindStoredClusterByOrbsOnly(OrbsOnlyTemplate, FoundTemplate, ClusterCount, MatchingKey))
 					{
-						const USimWorldHex::FClusterTemplate& Stored = StoredTemplates[i];
-						
-						// Build an orbs-only version of the stored template
-						USimWorldHex::FClusterTemplate StoredOrbsOnly;
-						StoredOrbsOnly.Orbs = Stored.Orbs;
-						FClusterCanonicalKey StoredOrbsOnlyKey = GameManager->GenerateCanonicalKey(StoredOrbsOnly);
-
-						// Compare canonical keys (which should match if orb structures are the same)
-						if (OrbsOnlyKey == StoredOrbsOnlyKey)
-						{
-							// Found a match! Use the stored template (which has the correct bonds)
-							StoredTemplate = &Stored;
-							ClusterCount = StoredCounts[i];
-							MatchingKey = GameManager->GenerateCanonicalKey(Stored); // Use full key for decrement
-							
-							break;
-						}
-					}
-
-					if (!StoredTemplate)
-					{
-						UE_LOG(LogTemp, Warning, TEXT("ClusterInput: No matching cluster found in storage (%d orbs, %d tiles)"),
-							ChainTemplate.Orbs.Num(), ClusterInputTiles.Num());
+						StoredTemplate = FoundTemplate;
 					}
 				}
 
@@ -212,10 +189,10 @@ void USimWorldHex::SpawnInputs()
 					};
 
 					// Build a set of all hex positions in the chain
-					TSet<FHex> ChainHexSet;
+					TSet<FHex> HeldCheckChainHexSet;
 					for (const FHex& ChainHex : ClusterInputTiles)
 					{
-						ChainHexSet.Add(ChainHex);
+						HeldCheckChainHexSet.Add(ChainHex);
 					}
 
 					// Check all arms for held clusters
@@ -249,7 +226,7 @@ void USimWorldHex::SpawnInputs()
 								FHex HeldPos(GripHex.Q + RotLocal.Q, GripHex.R + RotLocal.R);
 
 								// Check if this held position overlaps with any ClusterInput tile in the chain
-								if (ChainHexSet.Contains(HeldPos))
+								if (HeldCheckChainHexSet.Contains(HeldPos))
 								{
 									bHeldClusterOccupiesChain = true;
 									break;
@@ -259,7 +236,7 @@ void USimWorldHex::SpawnInputs()
 						else
 						{
 							// Single held orb - check if grip position is in the chain
-							if (ChainHexSet.Contains(GripHex))
+							if (HeldCheckChainHexSet.Contains(GripHex))
 				{
 								bHeldClusterOccupiesChain = true;
 							}
@@ -270,9 +247,6 @@ void USimWorldHex::SpawnInputs()
 				}
 
 				// Only spawn if cluster exists in storage, all hexes are available, and no held cluster occupies the chain
-				UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Spawn conditions - ClusterCount: %d, bAllHexesAvailable: %d, !bHeldClusterOccupiesChain: %d, StoredTemplate: %s"),
-					ClusterCount, bAllHexesAvailable ? 1 : 0, !bHeldClusterOccupiesChain ? 1 : 0, StoredTemplate ? TEXT("yes") : TEXT("no"));
-
 				if (ClusterCount > 0 && bAllHexesAvailable && !bHeldClusterOccupiesChain && StoredTemplate)
 				{
 					// Spawn individual orbs at each ClusterInput tile
@@ -320,21 +294,30 @@ void USimWorldHex::SpawnInputs()
 					TSet<TPair<int32, int32>> AppliedBonds; // Track bonds to avoid duplicates
 					int32 BondsCreated = 0; // Debug counter
 
-					// Check all pairs of ClusterInput tiles for adjacency
-					for (int32 i = 0; i < ClusterInputTiles.Num(); i++)
+					// Build bonds based on adjacency - optimized O(n) approach
+					// Build a set of all ClusterInput hexes for fast lookup
+					TSet<FHex> ClusterInputHexSet;
+					for (const FHex& Hex : ClusterInputTiles)
 					{
-						const FHex& HexA = ClusterInputTiles[i];
-						
-						// Check all neighbors for potential bonds
-						for (int32 j = i + 1; j < ClusterInputTiles.Num(); j++)
-						{
-							const FHex& HexB = ClusterInputTiles[j];
+						ClusterInputHexSet.Add(Hex);
+					}
 
-							// Check if these hexes are adjacent (neighbor check)
-							for (uint8 Dir = 0; Dir < 6; Dir++)
+					// Check each tile's neighbors (O(n) instead of O(n²))
+					for (const FHex& HexA : ClusterInputTiles)
+					{
+						// Check all 6 neighbors
+						for (uint8 Dir = 0; Dir < 6; Dir++)
+						{
+							FHex NeighborHex = HexUtil::Neighbor(HexA, (EHexDir)Dir);
+							
+							// Only process if neighbor is in the chain and we process each pair only once
+							// Use comparison to ensure we only process each bond once
+							if (ClusterInputHexSet.Contains(NeighborHex))
 							{
-								FHex Neighbor = HexUtil::Neighbor(HexA, (EHexDir)Dir);
-								if (Neighbor.Q == HexB.Q && Neighbor.R == HexB.R)
+								const FHex& HexB = NeighborHex;
+								
+								// Process each pair only once (use consistent ordering)
+								if (HexA.Q < HexB.Q || (HexA.Q == HexB.Q && HexA.R < HexB.R))
 								{
 									// These are adjacent - create a bond between the orbs at these positions
 									int32* ItemIdA = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexA]);
@@ -365,12 +348,8 @@ void USimWorldHex::SpawnInputs()
 											AddItemBondLink(NewBond.ItemB, BondIndex);
 
 											BondsCreated++; // Debug counter
-
-											UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
-												*ItemIdA, *ItemIdB, HexA.Q, HexA.R, HexB.Q, HexB.R);
 										}
 									}
-									break; // Found adjacency, move to next tile
 								}
 							}
 						}
@@ -394,11 +373,18 @@ void USimWorldHex::SpawnInputs()
 				else
 				{
 					// Even if cluster doesn't spawn, mark tiles as processed to avoid duplicate processing
+					// (only if this was a complete chain - sub-chains are not marked so they can be part of larger chains)
 					for (const FHex& ClusterHex : ClusterInputTiles)
 					{
 						ProcessedClusterInputHexes.Add(ClusterHex);
 					}
 				}
+			}
+			else if (ClusterInputTiles.Num() > 0 && !bIsCompleteChain)
+			{
+				// This is a sub-chain - don't process it, but also don't mark as processed
+				// so it can be part of a larger chain when we encounter a tile that's part of the complete chain
+				// Just skip it for now
 			}
 		}
 	}
@@ -458,47 +444,53 @@ void USimWorldHex::SpawnInputsAfterBelts()
 		// Handle cluster input tiles
 		else if (T.Kind == ETileKind::ClusterInput)
 		{
-			// Find all connected ClusterInput tiles in the chain (adjacent to each other)
-			TArray<FHex> ClusterInputTiles;
-			TSet<FHex> Visited;
-			TArray<FHex> ToVisit;
-
-			ToVisit.Add(H);
-			Visited.Add(H);
-
-			// BFS to find all adjacent ClusterInput tiles
-			// Include ALL connected ClusterInput tiles, even if they're in SkipInputThisFrame
-			// (we check ProcessedClusterInputHexes at the start to avoid duplicate processing)
-			while (ToVisit.Num() > 0)
+			// Use cached helper function to find chain
+			// Only exclude items, not processed tiles - we need to find the complete chain
+			TSet<FHex> ExcludeHexes;
+			for (const auto& ItemKV : ItemMap)
 			{
-				FHex CurrentHex = ToVisit.Pop();
-				ClusterInputTiles.Add(CurrentHex);
-
+				ExcludeHexes.Add(ItemKV.Key);
+			}
+			TArray<FHex> ClusterInputTiles = FindClusterInputChain(H, ExcludeHexes);
+			
+			// Verify this is a complete chain (not a sub-chain)
+			// Check if any ClusterInput tile adjacent to the chain is not in the chain and not already processed
+			bool bIsCompleteChain = true;
+			TSet<FHex> ChainHexSet;
+			for (const FHex& Hex : ClusterInputTiles)
+			{
+				ChainHexSet.Add(Hex);
+			}
+			
+			for (const FHex& ChainHex : ClusterInputTiles)
+			{
 				// Check all 6 neighbors
 				for (uint8 Dir = 0; Dir < 6; Dir++)
 				{
-					FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
-					if (!Visited.Contains(NeighborHex))
+					FHex NeighborHex = HexUtil::Neighbor(ChainHex, (EHexDir)Dir);
+					
+					// Skip if neighbor is in the chain or already processed
+					if (ChainHexSet.Contains(NeighborHex) || ProcessedClusterInputHexes.Contains(NeighborHex))
 					{
-						const FTile* NeighborTile = TileMap.Find(NeighborHex);
-						if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterInput)
-						{
-							// Include all connected ClusterInput tiles, but skip if:
-							// 1. Already processed as part of another chain (ProcessedClusterInputHexes)
-							// 2. Currently occupied by an item (ItemMap)
-							// Note: We don't check SkipInputThisFrame here because we want to find the complete chain
-							if (!ProcessedClusterInputHexes.Contains(NeighborHex) && !ItemMap.Contains(NeighborHex))
-							{
-								Visited.Add(NeighborHex);
-								ToVisit.Add(NeighborHex);
-							}
-						}
+						continue;
+					}
+					
+					// Check if neighbor is a ClusterInput tile
+					const FTile* NeighborTile = TileMap.Find(NeighborHex);
+					if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterInput)
+					{
+						// Found an adjacent ClusterInput that's not in the chain and not processed
+						// This means we have a sub-chain, not the complete chain
+						bIsCompleteChain = false;
+						break;
 					}
 				}
+				if (!bIsCompleteChain) break;
 			}
 
 			// Process the chain: spawn individual orbs at each tile, then apply bonds
-			if (ClusterInputTiles.Num() > 0)
+			// Only process if this is a complete chain (not a sub-chain)
+			if (ClusterInputTiles.Num() > 0 && bIsCompleteChain)
 			{
 				// Use the first tile as the base hex for relative positioning
 				FHex BaseHex = ClusterInputTiles[0];
@@ -546,40 +538,11 @@ void USimWorldHex::SpawnInputsAfterBelts()
 					OrbsOnlyTemplate.Orbs = ChainTemplate.Orbs;
 					// Leave bonds empty - we want to match by orb structure only
 
-					// Generate canonical key for orbs-only template
-					FClusterCanonicalKey OrbsOnlyKey = GameManager->GenerateCanonicalKey(OrbsOnlyTemplate);
-
-					// Search through stored templates to find one matching by orb structure
-					// We need to compare orb structures, not full canonical keys (since bonds differ)
-					TArray<USimWorldHex::FClusterTemplate> StoredTemplates;
-					TArray<int32> StoredCounts;
-					GameManager->GetStoredClusters(StoredTemplates, StoredCounts);
-
-					for (int32 i = 0; i < StoredTemplates.Num(); i++)
+					// Use optimized method to find matching stored cluster
+					const USimWorldHex::FClusterTemplate* FoundTemplate = nullptr;
+					if (GameManager->FindStoredClusterByOrbsOnly(OrbsOnlyTemplate, FoundTemplate, ClusterCount, MatchingKey))
 					{
-						const USimWorldHex::FClusterTemplate& Stored = StoredTemplates[i];
-						
-						// Build an orbs-only version of the stored template
-						USimWorldHex::FClusterTemplate StoredOrbsOnly;
-						StoredOrbsOnly.Orbs = Stored.Orbs;
-						FClusterCanonicalKey StoredOrbsOnlyKey = GameManager->GenerateCanonicalKey(StoredOrbsOnly);
-
-						// Compare canonical keys (which should match if orb structures are the same)
-						if (OrbsOnlyKey == StoredOrbsOnlyKey)
-						{
-							// Found a match! Use the stored template (which has the correct bonds)
-							StoredTemplate = &Stored;
-							ClusterCount = StoredCounts[i];
-							MatchingKey = GameManager->GenerateCanonicalKey(Stored); // Use full key for decrement
-							
-							break;
-						}
-					}
-
-					if (!StoredTemplate)
-					{
-						UE_LOG(LogTemp, Warning, TEXT("ClusterInput: No matching cluster found in storage (%d orbs, %d tiles)"),
-							ChainTemplate.Orbs.Num(), ClusterInputTiles.Num());
+						StoredTemplate = FoundTemplate;
 					}
 				}
 
@@ -612,10 +575,10 @@ void USimWorldHex::SpawnInputsAfterBelts()
 					};
 
 					// Build a set of all hex positions in the chain
-					TSet<FHex> ChainHexSet;
+					TSet<FHex> HeldCheckChainHexSet;
 					for (const FHex& ChainHex : ClusterInputTiles)
 					{
-						ChainHexSet.Add(ChainHex);
+						HeldCheckChainHexSet.Add(ChainHex);
 					}
 
 					// Check all arms for held clusters
@@ -649,7 +612,7 @@ void USimWorldHex::SpawnInputsAfterBelts()
 								FHex HeldPos(GripHex.Q + RotLocal.Q, GripHex.R + RotLocal.R);
 
 								// Check if this held position overlaps with any ClusterInput tile in the chain
-								if (ChainHexSet.Contains(HeldPos))
+								if (HeldCheckChainHexSet.Contains(HeldPos))
 								{
 									bHeldClusterOccupiesChain = true;
 									break;
@@ -659,7 +622,7 @@ void USimWorldHex::SpawnInputsAfterBelts()
 						else
 						{
 							// Single held orb - check if grip position is in the chain
-							if (ChainHexSet.Contains(GripHex))
+							if (HeldCheckChainHexSet.Contains(GripHex))
 				{
 								bHeldClusterOccupiesChain = true;
 							}
@@ -670,9 +633,6 @@ void USimWorldHex::SpawnInputsAfterBelts()
 				}
 
 				// Only spawn if cluster exists in storage, all hexes are available, and no held cluster occupies the chain
-				UE_LOG(LogTemp, Warning, TEXT("ClusterInput: Spawn conditions - ClusterCount: %d, bAllHexesAvailable: %d, !bHeldClusterOccupiesChain: %d, StoredTemplate: %s"),
-					ClusterCount, bAllHexesAvailable ? 1 : 0, !bHeldClusterOccupiesChain ? 1 : 0, StoredTemplate ? TEXT("yes") : TEXT("no"));
-
 				if (ClusterCount > 0 && bAllHexesAvailable && !bHeldClusterOccupiesChain && StoredTemplate)
 				{
 					// Spawn individual orbs at each ClusterInput tile
@@ -720,21 +680,30 @@ void USimWorldHex::SpawnInputsAfterBelts()
 					TSet<TPair<int32, int32>> AppliedBonds; // Track bonds to avoid duplicates
 					int32 BondsCreated = 0; // Debug counter
 
-					// Check all pairs of ClusterInput tiles for adjacency
-					for (int32 i = 0; i < ClusterInputTiles.Num(); i++)
+					// Build bonds based on adjacency - optimized O(n) approach
+					// Build a set of all ClusterInput hexes for fast lookup
+					TSet<FHex> ClusterInputHexSet;
+					for (const FHex& Hex : ClusterInputTiles)
 					{
-						const FHex& HexA = ClusterInputTiles[i];
-						
-						// Check all neighbors for potential bonds
-						for (int32 j = i + 1; j < ClusterInputTiles.Num(); j++)
-						{
-							const FHex& HexB = ClusterInputTiles[j];
+						ClusterInputHexSet.Add(Hex);
+					}
 
-							// Check if these hexes are adjacent (neighbor check)
-							for (uint8 Dir = 0; Dir < 6; Dir++)
+					// Check each tile's neighbors (O(n) instead of O(n²))
+					for (const FHex& HexA : ClusterInputTiles)
+					{
+						// Check all 6 neighbors
+						for (uint8 Dir = 0; Dir < 6; Dir++)
+						{
+							FHex NeighborHex = HexUtil::Neighbor(HexA, (EHexDir)Dir);
+							
+							// Only process if neighbor is in the chain and we process each pair only once
+							// Use comparison to ensure we only process each bond once
+							if (ClusterInputHexSet.Contains(NeighborHex))
 							{
-								FHex Neighbor = HexUtil::Neighbor(HexA, (EHexDir)Dir);
-								if (Neighbor.Q == HexB.Q && Neighbor.R == HexB.R)
+								const FHex& HexB = NeighborHex;
+								
+								// Process each pair only once (use consistent ordering)
+								if (HexA.Q < HexB.Q || (HexA.Q == HexB.Q && HexA.R < HexB.R))
 								{
 									// These are adjacent - create a bond between the orbs at these positions
 									int32* ItemIdA = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexA]);
@@ -765,19 +734,13 @@ void USimWorldHex::SpawnInputsAfterBelts()
 											AddItemBondLink(NewBond.ItemB, BondIndex);
 
 											BondsCreated++; // Debug counter
-
-											UE_LOG(LogTemp, Log, TEXT("ClusterInput: Created bond between items %d and %d at hexes (%d,%d)->(%d,%d)"),
-												*ItemIdA, *ItemIdB, HexA.Q, HexA.R, HexB.Q, HexB.R);
 										}
 									}
-									break; // Found adjacency, move to next tile
 								}
 							}
 						}
 					}
 
-					UE_LOG(LogTemp, Log, TEXT("ClusterInput: Spawned %d orbs with %d bonds from adjacency (matching cluster in storage)"),
-						HexToItemId.Num(), BondsCreated);
 
 					// Decrement cluster count in storage
 					if (GameManager)
@@ -795,11 +758,18 @@ void USimWorldHex::SpawnInputsAfterBelts()
 				else
 				{
 					// Even if cluster doesn't spawn, mark tiles as processed to avoid duplicate processing
+					// (only if this was a complete chain - sub-chains are not marked so they can be part of larger chains)
 					for (const FHex& ClusterHex : ClusterInputTiles)
 					{
 						ProcessedClusterInputHexes.Add(ClusterHex);
 					}
 				}
+			}
+			else if (ClusterInputTiles.Num() > 0 && !bIsCompleteChain)
+			{
+				// This is a sub-chain - don't process it, but also don't mark as processed
+				// so it can be part of a larger chain when we encounter a tile that's part of the complete chain
+				// Just skip it for now
 			}
 		}
 	}

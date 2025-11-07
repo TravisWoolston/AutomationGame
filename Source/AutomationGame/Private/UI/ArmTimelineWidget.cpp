@@ -163,6 +163,10 @@ void UArmTimelineWidget::InitializeWidget()
 	{
 		SetWidget(TimelineWidgetInstance);
 		
+		// Ensure draw size is set correctly when widget is initialized
+		SetDrawAtDesiredSize(false);
+		SetDrawSize(FVector2D(4000.0f, 400.0f));
+		
 		// Disable clipping on the widget instance to prevent content from being cropped
 		TimelineWidgetInstance->SetClipping(EWidgetClipping::Inherit);
 		
@@ -212,6 +216,11 @@ void UArmTimelineWidget::UpdateWidgetContent()
 			UMGWidget->SetCurrentCommand(CurrentCommandIndex, CurrentCommandProgress);
 			UMGWidget->SetCommandTextures(CommandTextures);
 			UMGWidget->SetDefaultCommandTexture(DefaultCommandTexture);
+			
+			// Ensure draw size stays fixed after content updates to prevent shrinking
+			// This prevents the widget from getting smaller when commands are removed
+			SetDrawAtDesiredSize(false);
+			SetDrawSize(FVector2D(4000.0f, 400.0f));
 			
 			// Update static variables
 			LastCommandIndex = CurrentCommandIndex;

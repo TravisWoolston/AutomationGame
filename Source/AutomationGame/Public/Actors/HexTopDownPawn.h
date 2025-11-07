@@ -211,6 +211,10 @@ private:
 	// Simulation control - advance one tick
 	void NextTick();
 	
+	// Simulation control - tick speed adjustment
+	void IncreaseTickSpeed();
+	void DecreaseTickSpeed();
+	
 	// Timeline control - toggle all arm timelines
 	void ToggleArmTimelines();
 	
