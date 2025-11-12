@@ -18,6 +18,7 @@ class AOrbSimDriver;
 class UGoldbergGrid; // NEW
 class UTexture2D;
 class UArmTimelineWidget;
+class UPoseableMeshComponent;
 
 /** Canonical representation of a cluster structure for storage and comparison */
 struct AUTOMATIONGAME_API FClusterCanonicalKey
@@ -61,6 +62,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Factory|Walkers")
 	ABasicWalker* SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWalkerInstr>& Program, bool bLoop = true);
 
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
+	void CalibrateWalker();
+
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
+	void SetStandHeight();
+
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
+	void CancelWalkerCalibration();
+
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
+	void ToggleStance();
+
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "-200.0", ClampMax = "1000.0"))
+	float DesiredStandHeight = 0.f;
+
+	UPROPERTY(VisibleAnywhere, Category = "Walker|Calibration")
+	float CurrentStandHeight = 0.f;
+
+	UPROPERTY(VisibleAnywhere, Category = "Walker|Calibration")
+	bool bWalkerStanding = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Refs")
 	AGameTickManager* TickManager = nullptr;
 
@@ -78,11 +100,11 @@ public:
 	/** Difficulty value for generating random target cluster structures. TotalOrbs + NumOfUniqueOrbTypes = DifficultyValue */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "4"))
 	int32 DifficultyValue = 6;
-	
+
 	/** Base difficulty required to unlock the first orb type beyond BaseA (BaseA is always available, BaseB unlocks here) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "0"))
 	int32 BaseUnlockDifficulty = 6;
-	
+
 	/** Multiplier for exponential scaling of unlock thresholds. Higher values create faster progression. Default 1.5 gives thresholds: 6, 9, 13.5≈14, 20.25≈20 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "1.0"))
 	float DifficultyScaleMult = 1.5f;
@@ -97,7 +119,7 @@ public:
 	float TileSizeUU = 120.f; // Legacy name kept for serialization
 
 	/** Alias for TileSizeUU for clarity when working in sphere mode. */
-	UFUNCTION(BlueprintPure, Category="Grid") FORCEINLINE float GetTileSpacing() const { return TileSizeUU; }
+	UFUNCTION(BlueprintPure, Category = "Grid") FORCEINLINE float GetTileSpacing() const { return TileSizeUU; }
 
 	/** PointyTop vs FlatTop orientation of the hex grid. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
@@ -141,33 +163,33 @@ public:
 	bool bSphereGrid = false;
 
 	/** Multiplier for automatic sphere radius: AutoSphereRadius = TileSizeUU * Radius * SphereRadiusScale. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta=(EditCondition="bSphereGrid", ClampMin="0.1"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid", ClampMin = "0.1"))
 	float SphereRadiusScale = 1.0f;
 
 	/** If true, sphere radius derives from TileSpacing*Radius*SphereRadiusScale; otherwise uses SphereRadiusOverrideUU. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta=(EditCondition="bSphereGrid"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid"))
 	bool bAutoSphereRadius = true;
 
 	/** Explicit sphere radius to use when bAutoSphereRadius is false. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta=(EditCondition="bSphereGrid && !bAutoSphereRadius", ClampMin="10"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid && !bAutoSphereRadius", ClampMin = "10"))
 	float SphereRadiusOverrideUU = 3000.f;
 
 	/** Use Goldberg (geodesic) sphere instead of projected hex disc. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta=(EditCondition="bSphereGrid"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid"))
 	bool bUseGoldbergSphere = false; // NEW
 
 	/** Subdivision frequency for Goldberg sphere (>=1). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta=(EditCondition="bSphereGrid && bUseGoldbergSphere", ClampMin="1", UIMin="1"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid && bUseGoldbergSphere", ClampMin = "1", UIMin = "1"))
 	int32 GoldbergFrequency = 3; // NEW
 
 	/** Current effective sphere radius (auto or override). */
-	UFUNCTION(BlueprintPure, Category="Grid|Sphere")
+	UFUNCTION(BlueprintPure, Category = "Grid|Sphere")
 	float GetEffectiveSphereRadius() const { return bAutoSphereRadius ? (TileSizeUU * Radius * SphereRadiusScale) : SphereRadiusOverrideUU; }
 
 	// ------------ Arm Timeline System ------------
 	// NOTE: These settings control ALL arm timeline widgets globally
 	// Individual arm timeline properties are private and controlled by GameManager
-	
+
 	/** Command textures for arm timeline display */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	TMap<EArmCmd, UTexture2D*> CommandTextures;
@@ -302,7 +324,7 @@ public:
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Grid")
 	void Rebuild();
 
-	UFUNCTION(BlueprintCallable, Category="Grid")
+	UFUNCTION(BlueprintCallable, Category = "Grid")
 	FVector GetWorldForHex(const FHex& H) const;
 
 	// ------------ Cluster Generation ------------
@@ -340,10 +362,10 @@ public:
 
 	/** Get all stored cluster templates and their counts (C++ only) */
 	void GetStoredClusters(TArray<USimWorldHex::FClusterTemplate>& OutTemplates, TArray<int32>& OutCounts) const;
-	
+
 	/** Find a stored cluster matching an orbs-only template (for ClusterInput matching) (C++ only) */
 	bool FindStoredClusterByOrbsOnly(const USimWorldHex::FClusterTemplate& OrbsOnlyTemplate, const USimWorldHex::FClusterTemplate*& OutTemplate, int32& OutCount, FClusterCanonicalKey& OutMatchingKey) const;
-	
+
 	/** Find or register a TemplateId for a given cluster template (C++ only) */
 	uint8 FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplate& ClusterTemplate);
 
@@ -371,6 +393,62 @@ protected:
 #endif
 
 private:
+	struct FWalkerLegCalibrationData
+	{
+		FName HipRotatorBone;
+		FName HipAxleBone;
+		FName KneeAxleBone;
+		FName FootAxleBone;
+		FName FootBone;
+		FQuat HipRotatorBaseRotation;
+		FQuat HipAxleBaseRotation;
+		FQuat KneeAxleBaseRotation;
+		FQuat FootAxleBaseRotation;
+		FQuat FootBoneBaseRotation;
+		FTransform FootRelativeTransform;
+		FVector HipComponentLocation = FVector::ZeroVector;
+		FVector KneeComponentLocation = FVector::ZeroVector;
+		FVector FootAxleComponentLocation = FVector::ZeroVector;
+		FVector FootComponentLocation = FVector::ZeroVector;
+		FVector HipWorldLocation = FVector::ZeroVector;
+		FVector PlaneNormalComponent = FVector::UpVector;
+		FVector ThighBaseDirComponent = FVector::ForwardVector;
+		FVector CalfBaseDirComponent = FVector::ForwardVector;
+		FVector HipForwardDirComponent = FVector::ForwardVector;
+		FVector BasePerpDirComponent = FVector::RightVector;
+		FVector HipRotAxisComponent = FVector::UpVector;
+		FVector HipAxleAxisComponent = FVector::ForwardVector;
+		FVector KneeAxleAxisComponent = FVector::ForwardVector;
+		FVector FootAxleAxisComponent = FVector::ForwardVector;
+		FVector FootAxleWorldLocation = FVector::ZeroVector;
+		FVector FootWorldLocation = FVector::ZeroVector;
+		FVector PoleVectorLocal;
+		float UpperLength = 0.f;
+		float LowerLength = 0.f;
+		float BaseKneeAlong = 0.f;
+		float BaseKneeHeight = 0.f;
+	};
+
+	bool bWalkerCalibrationActive = false;
+	TWeakObjectPtr<ABasicWalker> CalibratingWalker;
+	TWeakObjectPtr<UPoseableMeshComponent> WalkerCalibrationPoseable;
+	FVector WalkerCalibrationBaseLocation = FVector::ZeroVector;
+	TMap<FName, FQuat> WalkerSittingPose;
+	TArray<FWalkerLegCalibrationData> WalkerLegCalibrations;
+	float WalkerStandAlpha = 0.f;
+	FVector WalkerBodyBaseWorldLocation = FVector::ZeroVector;
+	FVector WalkerBodyActorOffset = FVector::ZeroVector;
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
+	UMaterialInterface* WalkerFootDebugMaterial = nullptr;
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
+	UMaterialInterface* WalkerKneeDebugMaterial = nullptr;
+	void GatherWalkerCalibrationData(class UPoseableMeshComponent* PoseableComp);
+	void RestoreWalkerSittingPose(class UPoseableMeshComponent* PoseableComp) const;
+	void SolveWalkerLeg(class UPoseableMeshComponent* PoseableComp, const FWalkerLegCalibrationData& LegData) const;
+	void CreateWalkerDebugMeshes(class ABasicWalker* Walker, class UPoseableMeshComponent* PoseableComp);
+	void UpdateWalkerDebugMeshes(const class UPoseableMeshComponent* PoseableComp);
+	void ClearWalkerDebugMeshes();
+
 	void AutoFindRefs();
 	void TryLoadInitial();
 	void EnsureISM();
@@ -391,10 +469,14 @@ private:
 
 	// Cached canonical keys by template ID (for efficient lookup without regenerating keys)
 	TMap<uint8, FClusterCanonicalKey> TemplateIdToCanonicalKey;
-	
+
 	// Cached orbs-only canonical keys for stored templates (for efficient ClusterInput matching)
 	mutable TMap<FClusterCanonicalKey, FClusterCanonicalKey> StoredOrbsOnlyKeysCache;
-	
+
 	// Get orbs-only canonical key for a stored template (cached)
 	FClusterCanonicalKey GetOrbsOnlyKeyForStoredTemplate(const FClusterCanonicalKey& FullKey) const;
+
+	TArray<TWeakObjectPtr<class UStaticMeshComponent>> WalkerFootDebugMeshes;
+	TArray<TWeakObjectPtr<class UStaticMeshComponent>> WalkerKneeDebugMeshes;
+
 };

@@ -72,6 +72,10 @@ public:
 	/** Use actual arm skeletal mesh from BasicArm class instead of separate preview mesh. */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	bool bUseActualArmAssets = true;
+
+	/** Use actual walker skeletal mesh from BasicWalker class instead of separate preview mesh. */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	bool bUseActualWalkerAssets = true;
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	UStaticMesh* BondPreviewMesh = nullptr;
 

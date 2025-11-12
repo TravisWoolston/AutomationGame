@@ -194,6 +194,22 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 					DestroyActorNow(Arm);
 				}
 			}
+			
+			// Also destroy any residual walkers
+			TArray<ABasicWalker*> WalkersToDestroy;
+			for (TActorIterator<ABasicWalker> It(W); It; ++It)
+			{
+				WalkersToDestroy.Add(*It);
+			}
+			for (ABasicWalker* Walker : WalkersToDestroy)
+			{
+				if (Walker)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying walker at (%d,%d) SimIndex=%d during scenario reset"),
+						Walker->Q, Walker->R, Walker->SimWalkerIndex);
+					DestroyActorNow(Walker);
+				}
+			}
 		}
 	}
 
@@ -202,9 +218,10 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 		USimWorldHex* Sim = Driver->GetSim();
 		const FScenarioSpec& Spec = Scenarios[ActiveScenarioIndex];
 
-		// Reinitialize simulation (clears tiles, items, arms, bonds, etc.)
+		// Reinitialize simulation (clears tiles, items, arms, walkers, bonds, etc.)
 		Sim->Initialize(Spec.GridRadius);
 		Sim->TileSizeUU = Spec.TileSizeUU;
+		// Walkers array is cleared by Initialize
 
 		// Ensure sim gets the correct grid parameters from OrbSimDriver
 		const FVector AnchorLoc = Driver->GetGridAnchor() ? Driver->GetGridAnchor()->GetActorLocation() : FVector::ZeroVector;
@@ -216,12 +233,20 @@ void ATestLevelDirector::ClearArms()
 {
 	if (!GetWorld()) return;
 	for (FScenarioSpec& Sc : Scenarios)
+	{
 		for (FArmSpawnSpec& S : Sc.Arms)
 			if (S.Spawned)
 			{
 				DestroyActorNow(S.Spawned);
 				S.Spawned = nullptr;
 			}
+		for (FWalkerSpawnSpec& W : Sc.Walkers)
+			if (W.Spawned)
+			{
+				DestroyActorNow(W.Spawned);
+				W.Spawned = nullptr;
+			}
+	}
 }
 
 void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
@@ -312,6 +337,45 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 
 		// If your SetProgram implementation does NOT push to sim, uncomment:
 		// A.Spawned->PushProgramToSim();
+	}
+
+	// Spawn walkers from scenario
+	AGameManager* GM = nullptr;
+	if (W)
+	{
+		for (TActorIterator<AGameManager> It(W); It; ++It)
+		{
+			GM = *It;
+			break;
+		}
+	}
+
+	for (FWalkerSpawnSpec& WalkerSpec : const_cast<TArray<FWalkerSpawnSpec>&>(S.Walkers))
+	{
+		if (!GM || !GM->BasicWalkerClass) continue;
+		
+		// Skip if this walker is already spawned
+		if (WalkerSpec.Spawned && IsValid(WalkerSpec.Spawned))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: Walker at (%d,%d) already spawned, skipping"), WalkerSpec.Q, WalkerSpec.R);
+			continue;
+		}
+
+		// Spawn walker using GameManager
+		FHex WalkerHex(WalkerSpec.Q, WalkerSpec.R);
+		WalkerSpec.Spawned = GM->SpawnBasicWalkerAt(WalkerHex, WalkerSpec.Program, WalkerSpec.bLoopProgram);
+		
+		if (WalkerSpec.Spawned && Driver && Driver->GetSim())
+		{
+			USimWorldHex* Sim = Driver->GetSim();
+			// Update the walker's home hex to match StartingLocation
+			if (WalkerSpec.Spawned->SimWalkerIndex >= 0 && WalkerSpec.Spawned->SimWalkerIndex < Sim->Walkers.Num())
+			{
+				FWalkerState& WalkerState = Sim->Walkers[WalkerSpec.Spawned->SimWalkerIndex];
+				WalkerState.HomeHex = WalkerSpec.StartingLocation;
+				WalkerSpec.Spawned->HomeHex = WalkerSpec.StartingLocation;
+			}
+		}
 	}
 
 	if (TickManager && S.bAutoPlay)
@@ -668,6 +732,107 @@ bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R)
 	return false;
 }
 
+void ATestLevelDirector::UpsertWalkerSpec(int32 Q, int32 R, const FHex& StartingLocation, const TArray<FWalkerInstr>& Program, bool bLoop)
+{
+	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
+	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+
+	auto FindRuntimeWalkerAt = [&](int32 InQ, int32 InR) -> ABasicWalker*
+		{
+			if (!GetWorld()) return nullptr;
+			for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It)
+			{
+				if (It->Q == InQ && It->R == InR)
+				{
+					return *It;
+				}
+			}
+			return nullptr;
+		};
+
+	for (FWalkerSpawnSpec& W : Sc.Walkers)
+	{
+		if (W.Q == Q && W.R == R)
+		{
+			W.StartingLocation = StartingLocation;
+			W.Program = Program;
+			W.bLoopProgram = bLoop;
+			if (!W.Spawned) W.Spawned = FindRuntimeWalkerAt(Q, R);
+			MarkActiveScenarioDirty();
+#if WITH_EDITOR
+			MirrorScenarioEditsToEditor();
+#endif
+			return;
+		}
+	}
+
+	FWalkerSpawnSpec NewW;
+	NewW.Q = Q;
+	NewW.R = R;
+	NewW.StartingLocation = StartingLocation;
+	NewW.Program = Program;
+	NewW.bLoopProgram = bLoop;
+	NewW.Spawned = FindRuntimeWalkerAt(Q, R);   // capture runtime actor if already spawned
+	Sc.Walkers.Add(NewW);
+	MarkActiveScenarioDirty();
+#if WITH_EDITOR
+	MirrorScenarioEditsToEditor();
+#endif
+}
+
+bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R)
+{
+	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
+	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+
+	for (int32 i = 0; i < Sc.Walkers.Num(); ++i)
+	{
+		if (Sc.Walkers[i].Q == Q && Sc.Walkers[i].R == R)
+		{
+			if (Sc.Walkers[i].Spawned)
+			{
+				DestroyActorNow(Sc.Walkers[i].Spawned);
+				Sc.Walkers[i].Spawned = nullptr;
+			}
+			else if (UWorld* W = GetWorld())
+			{
+				for (TActorIterator<ABasicWalker> It(W); It; ++It)
+				{
+					if (It->Q == Q && It->R == R)
+					{
+						DestroyActorNow(*It);
+						break;
+					}
+				}
+			}
+
+			Sc.Walkers.RemoveAt(i);
+			MarkActiveScenarioDirty();
+#if WITH_EDITOR
+			MirrorScenarioEditsToEditor();
+#endif
+			return true;
+		}
+	}
+
+	if (UWorld* W = GetWorld())
+	{
+		for (TActorIterator<ABasicWalker> It(W); It; ++It)
+		{
+			if (It->Q == Q && It->R == R)
+			{
+				DestroyActorNow(*It);
+				MarkActiveScenarioDirty();
+#if WITH_EDITOR
+				MirrorScenarioEditsToEditor();
+#endif
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 /* ---------------- PIE Sync (Editor Only) ---------------- */
 #if WITH_EDITOR
 void ATestLevelDirector::HandlePreBeginPIE(bool /*bIsSimulating*/)
@@ -896,12 +1061,41 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			NewArmSpec.StartingReach = Arm->StartingReach;
 			NewArmSpec.Spawned = Arm; // Keep reference
 			Scenario.Arms.Add(NewArmSpec);
+		}
 
+		// Preserve existing walker specs (for program data) unless capturing edits
+		TMap<FHex, FWalkerSpawnSpec> ExistingWalkerSpecs;
+		for (const FWalkerSpawnSpec& ExistingWalker : Scenario.Walkers)
+		{
+			ExistingWalkerSpecs.Add(FHex(ExistingWalker.Q, ExistingWalker.R), ExistingWalker);
+		}
 
-			for (int32 i = 0; i < FMath::Min(3, Arm->Program.Num()); i++)
+		Scenario.Walkers.Empty();
+
+		for (TActorIterator<ABasicWalker> It(W); It; ++It)
+		{
+			ABasicWalker* Walker = *It;
+			if (!Walker) continue;
+
+			FWalkerSpawnSpec NewWalkerSpec;
+			NewWalkerSpec.Q = Walker->Q;
+			NewWalkerSpec.R = Walker->R;
+			NewWalkerSpec.StartingLocation = Walker->HomeHex;
+			NewWalkerSpec.Spawned = Walker;
+
+			FHex WalkerHex(Walker->Q, Walker->R);
+			if (!bCaptureRuntimeProgramEdits && ExistingWalkerSpecs.Contains(WalkerHex))
 			{
-				const FArmInstr& Instr = Arm->Program[i];
+				NewWalkerSpec.Program = ExistingWalkerSpecs[WalkerHex].Program;
+				NewWalkerSpec.bLoopProgram = ExistingWalkerSpecs[WalkerHex].bLoopProgram;
 			}
+			else
+			{
+				NewWalkerSpec.Program = Walker->Program;
+				NewWalkerSpec.bLoopProgram = Walker->bLoopProgram;
+			}
+
+			Scenario.Walkers.Add(NewWalkerSpec);
 		}
 
 

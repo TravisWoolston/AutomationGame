@@ -18,6 +18,7 @@
 #include "Framework/TestLevelDirector.h"
 #include "Actors/HexFactoryActor.h"
 #include "Data/OrbMaterialManager.h"
+#include "Animation/AnimInstance.h"
 
 UHexPlacementComponent::UHexPlacementComponent()
 {
@@ -186,7 +187,24 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 
 		if (AGameManager* GM = Cast<AGameManager>(GMActor))
 		{
-			GM->SpawnBasicWalkerAt(FHex{ A.Q, A.R }, TArray<FWalkerInstr>(), true);
+			FHex StartingLocation(A.Q, A.R);
+			TArray<FWalkerInstr> WalkerProgram = GM->DefaultWalkerProgram;
+			ABasicWalker* Walker = GM->SpawnBasicWalkerAt(FHex{ A.Q, A.R }, WalkerProgram, true);
+			if (Walker)
+			{
+				Walker->HomeHex = StartingLocation;
+				WalkerProgram = Walker->Program;
+			}
+			
+			// Scenario capture for walker
+			if (bAutoScenarioCapture)
+			{
+				if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
+				if (CachedTLD)
+				{
+					CachedTLD->UpsertWalkerSpec(A.Q, A.R, StartingLocation, WalkerProgram, Walker ? Walker->bLoopProgram : true);
+				}
+			}
 		}
 		else
 		{
@@ -343,6 +361,58 @@ void UHexPlacementComponent::DoRemoveAt(const FVector& World)
 		UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Removed tile at Hex(%d,%d)"), A.Q, A.R);
 	}
 
+	// Remove walkers at this location
+	if (W)
+	{
+		for (TActorIterator<ABasicWalker> It(W); It; ++It)
+		{
+			if (It->Q == A.Q && It->R == A.R)
+			{
+				// Remove from simulation first
+				if (Sim && It->SimWalkerIndex >= 0 && It->SimWalkerIndex < Sim->Walkers.Num())
+				{
+					Sim->Walkers.RemoveAt(It->SimWalkerIndex);
+					// Adjust indices for walkers after the removed one
+					for (TActorIterator<ABasicWalker> OtherIt(W); OtherIt; ++OtherIt)
+					{
+						if (OtherIt->SimWalkerIndex > It->SimWalkerIndex)
+						{
+							OtherIt->SimWalkerIndex--;
+						}
+					}
+				}
+				It->Destroy();
+				break;
+			}
+		}
+	}
+
+	// Remove arms at this location (existing code)
+	if (W)
+	{
+		for (TActorIterator<ABasicArm> It(W); It; ++It)
+		{
+			if (It->Q == A.Q && It->R == A.R)
+			{
+				// Remove from simulation first
+				if (Sim && It->SimArmIndex >= 0 && It->SimArmIndex < Sim->Arms.Num())
+				{
+					Sim->Arms.RemoveAt(It->SimArmIndex);
+					// Adjust indices for arms after the removed one
+					for (TActorIterator<ABasicArm> OtherIt(W); OtherIt; ++OtherIt)
+					{
+						if (OtherIt->SimArmIndex > It->SimArmIndex)
+						{
+							OtherIt->SimArmIndex--;
+						}
+					}
+				}
+				It->Destroy();
+				break;
+			}
+		}
+	}
+
 	if (bDebug && GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 1.5f, FColor::Yellow,
@@ -357,6 +427,7 @@ void UHexPlacementComponent::DoRemoveAt(const FVector& World)
 		{
 			CachedTLD->RemoveTileSpec(FHex{ A.Q, A.R });
 			CachedTLD->RemoveArmSpec(A.Q, A.R); // in case an arm spec was there
+			CachedTLD->RemoveWalkerSpec(A.Q, A.R); // in case a walker spec was there
 		}
 	}
 }
@@ -719,6 +790,9 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 	case EPlaceKind::Arm:
 		return ArmBasePreviewMesh ? ArmBasePreviewMesh : GenericTilePreviewMesh;
 
+	case EPlaceKind::Walker:
+		return ArmBasePreviewMesh ? ArmBasePreviewMesh : GenericTilePreviewMesh;
+
 	case EPlaceKind::Bond:
 		return BondPreviewMesh;
 
@@ -737,7 +811,6 @@ USkeletalMesh* UHexPlacementComponent::SelectSkeletalPreviewMesh() const
 	case EPlaceKind::Arm:
 		if (bUseActualArmAssets)
 		{
-			// Get the skeletal mesh directly from GameManager's BasicArmClass blueprint
 			if (UWorld* World = GetWorld())
 			{
 				for (TActorIterator<AGameManager> It(World); It; ++It)
@@ -745,7 +818,6 @@ USkeletalMesh* UHexPlacementComponent::SelectSkeletalPreviewMesh() const
 					AGameManager* GameManager = *It;
 					if (GameManager && GameManager->BasicArmClass)
 					{
-						// Get the skeletal mesh from the BasicArm class blueprint
 						ABasicArm* DefaultArm = GameManager->BasicArmClass->GetDefaultObject<ABasicArm>();
 						if (DefaultArm && DefaultArm->ArmSkeletalMesh)
 						{
@@ -761,7 +833,7 @@ USkeletalMesh* UHexPlacementComponent::SelectSkeletalPreviewMesh() const
 					{
 						UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: GameManager or BasicArmClass not found"));
 					}
-					break; // Only check the first GameManager found
+					break;
 				}
 			}
 			else
@@ -770,6 +842,42 @@ USkeletalMesh* UHexPlacementComponent::SelectSkeletalPreviewMesh() const
 			}
 		}
 		return nullptr;
+
+	case EPlaceKind::Walker:
+		if (bUseActualWalkerAssets)
+		{
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<AGameManager> It(World); It; ++It)
+				{
+					AGameManager* GameManager = *It;
+					if (GameManager && GameManager->BasicWalkerClass)
+					{
+						ABasicWalker* DefaultWalker = GameManager->BasicWalkerClass->GetDefaultObject<ABasicWalker>();
+						if (DefaultWalker && DefaultWalker->WalkerSkeletalMesh)
+						{
+							UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Using actual walker skeletal mesh: %s"), *DefaultWalker->WalkerSkeletalMesh->GetName());
+							return DefaultWalker->WalkerSkeletalMesh;
+						}
+						else
+						{
+							UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: BasicWalker class found but WalkerSkeletalMesh is null"));
+						}
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: GameManager or BasicWalkerClass not found"));
+					}
+					break;
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: No world found"));
+			}
+		}
+		return nullptr;
+
 	default:
 		return nullptr;
 	}
@@ -993,6 +1101,38 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 
 	const FVector CenterA = HexToWorld(HoverHex) + FVector(0, 0, PreviewZOffset);
 
+	if (PlaceKind != EPlaceKind::Walker && SkeletalPreviewComp)
+	{
+		SkeletalPreviewComp->SetVisibility(false);
+	}
+
+	// If walker placement, try to use actual walker skeletal assets for preview
+	if (PlaceKind == EPlaceKind::Walker)
+	{
+		USkeletalMesh* WalkerMesh = SelectSkeletalPreviewMesh();
+		if (WalkerMesh && bUseActualWalkerAssets)
+		{
+			EnsureSkeletalPreviewComponent();
+			if (PreviewComp)
+			{
+				PreviewComp->SetVisibility(false);
+			}
+			if (SkeletalPreviewComp)
+			{
+				SkeletalPreviewComp->SetVisibility(true);
+				SkeletalPreviewComp->SetSkinnedAssetAndUpdate(WalkerMesh);
+				SkeletalPreviewComp->SetWorldLocation(CenterA);
+				SkeletalPreviewComp->SetWorldRotation(FRotator(0.f, Driver ? Driver->GetGridYaw() : 0.f, 0.f));
+				SkeletalPreviewComp->SetWorldScale3D(FVector(1.f));
+			}
+			return;
+		}
+		else if (SkeletalPreviewComp)
+		{
+			SkeletalPreviewComp->SetVisibility(false);
+		}
+	}
+
 	// Outline (keep single hex for non-bond, two for bond/unbond, multiple for ClusterOutput)
 	if (PlaceKind != EPlaceKind::Bond && PlaceKind != EPlaceKind::Unbond)
 	{
@@ -1028,7 +1168,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 	}
 
 	// Mesh preview (for all placeable tiles)
-	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Walker || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
 	{
 
 		// For now, use static mesh preview for arms (ArmBasePreviewMesh)

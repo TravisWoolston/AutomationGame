@@ -7,13 +7,17 @@
 #include "Actors/OrbSimDriver.h"
 #include "Sim/HexCoord.h"
 #include "Sim/SimWorldHex.h"          // <-- ADDED for USimWorldHex / FArmState
-#include "DrawDebugHelpers.h"
 #include "Sim/HexTypes.h" // <-- ADDED for HexUtil
 #include "Geometry/GoldbergGrid.h" // NEW
 #include "UI/ArmTimelineWidget.h"
 #include "Engine/Texture2D.h"
 #include "Sim/OrbTypes.h"
 #include "Data/OrbMaterialManager.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/PoseableMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/Engine.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 // Local helper to build orthonormal basis from Up + arbitrary forward (similar to HexFactoryActor)
 namespace {
@@ -35,6 +39,49 @@ namespace {
 			OutR = FVector::CrossProduct(OutF, OutU).GetSafeNormal();
 		}
 		OutF = FVector::CrossProduct(OutU, OutR).GetSafeNormal();
+	}
+
+	struct FWalkerLegNames
+	{
+		FName HipRotator;
+		FName HipAxle;
+		FName KneeAxle;
+		FName FootAxle;
+		FName FootBone;
+	};
+
+	static const FWalkerLegNames WalkerLegBones[] =
+	{
+		{ TEXT("DHipRotatorAxle38"), TEXT("DHipAxle41"), TEXT("DKneeAxle44"), TEXT("DFootAxle47"), TEXT("DFoot49") },
+		{ TEXT("LHipRotatorAxle14"), TEXT("LHipAxle17"), TEXT("LKneeAxle20"), TEXT("LFootAxle23"), TEXT("LFoot25") },
+		{ TEXT("RHipRotatorAxle2"), TEXT("RHipAxle5"), TEXT("RKneeAxle8"), TEXT("RFootAxle11"), TEXT("RFoot13") },
+		{ TEXT("UHipRotatorAxle26"), TEXT("UHipAxle29"), TEXT("UKneeAxle32"), TEXT("UFootAxle35"), TEXT("UFoot37") },
+	};
+
+	static const FName WalkerBodyBoneName = TEXT("Body1");
+
+	static float SignedAngleAroundAxis(const FVector& From, const FVector& To, const FVector& Axis)
+	{
+		const FVector NAxis = Axis.GetSafeNormal();
+		if (NAxis.IsNearlyZero())
+		{
+			return 0.f;
+		}
+
+		FVector FromProj = From - NAxis * FVector::DotProduct(From, NAxis);
+		FVector ToProj = To - NAxis * FVector::DotProduct(To, NAxis);
+
+		if (!FromProj.Normalize() || !ToProj.Normalize())
+		{
+			return 0.f;
+		}
+
+		const float Dot = FMath::Clamp(FVector::DotProduct(FromProj, ToProj), -1.f, 1.f);
+		float Angle = FMath::Acos(Dot);
+		const FVector Cross = FVector::CrossProduct(FromProj, ToProj);
+		const float Sign = FVector::DotProduct(Cross, NAxis) >= 0.f ? 1.f : -1.f;
+		Angle *= Sign;
+		return Angle;
 	}
 }
 
@@ -94,11 +141,22 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
-	// Clear icon cache if ClusterIconScale changed
-	if (PropertyChangedEvent.Property && PropertyChangedEvent.Property->GetFName() == GET_MEMBER_NAME_CHECKED(AGameManager, ClusterIconScale))
+	if (PropertyChangedEvent.Property)
 	{
-		ClusterIcons.Empty();
-		UE_LOG(LogTemp, Log, TEXT("GameManager: ClusterIconScale changed - cleared icon cache"));
+		const FName PropName = PropertyChangedEvent.Property->GetFName();
+		if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ClusterIconScale))
+		{
+			ClusterIcons.Empty();
+			UE_LOG(LogTemp, Log, TEXT("GameManager: ClusterIconScale changed - cleared icon cache"));
+		}
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, DesiredStandHeight))
+		{
+			DesiredStandHeight = FMath::Clamp(DesiredStandHeight, -200.f, 1000.f);
+			if (bWalkerCalibrationActive && CalibratingWalker.IsValid() && WalkerCalibrationPoseable.IsValid())
+			{
+				SetStandHeight();
+			}
+		}
 	}
 }
 #endif
@@ -314,8 +372,8 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 		Arm->SetProgram(Program, bLoop);
 		Arm->Start();
 
-	UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered arm at Hex(%d,%d) Facing=%d SimIndex=%d TapeLen=%d"),
-		Hex.Q, Hex.R, (int32)ArmState.Facing, ArmIndex, ArmState.Tape.Num());
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered arm at Hex(%d,%d) Facing=%d SimIndex=%d TapeLen=%d"),
+			Hex.Q, Hex.R, (int32)ArmState.Facing, ArmIndex, ArmState.Tape.Num());
 	}
 	else
 	{
@@ -347,6 +405,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 	Walker->Driver = OrbSimDriver;
 	Walker->Q = Hex.Q;
 	Walker->R = Hex.R;
+	Walker->HomeHex = Hex;
 	// Don't call SetProgram yet - need SimWalkerIndex first
 
 	// --- Add to simulation so it actually runs ---
@@ -380,6 +439,608 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 	}
 
 	return Walker;
+}
+
+void AGameManager::CalibrateWalker()
+{
+	if (bWalkerCalibrationActive)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Walker calibration already active."));
+		return;
+	}
+
+	if (!BasicWalkerClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Cannot calibrate walker because BasicWalkerClass is not set."));
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Cannot calibrate walker without a valid world."));
+		return;
+	}
+
+	CancelWalkerCalibration();
+
+	const FVector SpawnLocation = GetActorLocation() + FVector(0.f, 0.f, 50.f);
+	const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
+
+	ABasicWalker* Walker = World->SpawnActorDeferred<ABasicWalker>(BasicWalkerClass, SpawnTransform, this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Walker)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Failed to spawn calibration walker."));
+		return;
+	}
+
+	Walker->SetActorEnableCollision(false);
+	Walker->FinishSpawning(SpawnTransform);
+	Walker->Stop();
+	Walker->SetProgram(TArray<FWalkerInstr>(), true);
+
+	USkeletalMeshComponent* BodyComp = Walker->GetBodyComponent();
+	if (!BodyComp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Calibration walker has no skeletal mesh component."));
+		Walker->Destroy();
+		return;
+	}
+
+	UPoseableMeshComponent* PoseableComp = NewObject<UPoseableMeshComponent>(Walker, TEXT("WalkerCalibrationPoseable"));
+	PoseableComp->SetupAttachment(Walker->GetRootComponent());
+	PoseableComp->RegisterComponent();
+	PoseableComp->SetSkinnedAssetAndUpdate(BodyComp->GetSkeletalMeshAsset());
+	PoseableComp->CopyPoseFromSkeletalComponent(BodyComp);
+	PoseableComp->RefreshBoneTransforms();
+	BodyComp->SetVisibility(false, true);
+
+	WalkerBodyBaseWorldLocation = PoseableComp->GetBoneLocation(WalkerBodyBoneName, EBoneSpaces::WorldSpace);
+	WalkerBodyActorOffset = Walker->GetActorLocation() - WalkerBodyBaseWorldLocation;
+	WalkerCalibrationBaseLocation = Walker->GetActorLocation();
+
+	GatherWalkerCalibrationData(PoseableComp);
+
+	if (WalkerLegCalibrations.Num() == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: No valid walker legs found during calibration."));
+		Walker->Destroy();
+		WalkerSittingPose.Empty();
+		return;
+	}
+
+	CalibratingWalker = Walker;
+	WalkerCalibrationPoseable = PoseableComp;
+
+	bWalkerCalibrationActive = true;
+	bWalkerStanding = false;
+	DesiredStandHeight = 0.f;
+	CurrentStandHeight = 0.f;
+	WalkerStandAlpha = 0.f;
+
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Walker calibration started (%d legs)."), WalkerLegCalibrations.Num());
+
+	CreateWalkerDebugMeshes(Walker, PoseableComp);
+	UpdateWalkerDebugMeshes(PoseableComp);
+}
+
+void AGameManager::SetStandHeight()
+{
+	if (!bWalkerCalibrationActive || !CalibratingWalker.IsValid() || !WalkerCalibrationPoseable.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: SetStandHeight called without an active calibration."));
+		return;
+	}
+
+	ABasicWalker* Walker = CalibratingWalker.Get();
+	UPoseableMeshComponent* PoseableComp = WalkerCalibrationPoseable.Get();
+	if (!Walker || !PoseableComp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Calibration walker poseable component missing."));
+		return;
+	}
+
+	// Restore the base sitting pose first to have a clean state
+	RestoreWalkerSittingPose(PoseableComp);
+	PoseableComp->RefreshBoneTransforms();
+
+	const float MaxStandHeight = 1000.f;
+	float RequestedHeight = FMath::Clamp(DesiredStandHeight, -200.f, MaxStandHeight);
+
+	// Calculate the maximum height the body can rise to, constrained by all legs.
+	float AllowedHeight = RequestedHeight;
+	for (const FWalkerLegCalibrationData& LegData : WalkerLegCalibrations)
+	{
+		const float MaxLen = LegData.UpperLength + LegData.LowerLength - KINDA_SMALL_NUMBER;
+
+		// Vector from the foot's ground position to the hip's base (sitting) position
+		const FVector FootToHipBase = LegData.HipWorldLocation - LegData.FootAxleWorldLocation;
+		const float HorizontalDistSq = FVector::DistSquared2D(LegData.HipWorldLocation, LegData.FootAxleWorldLocation);
+
+		// Maximum vertical distance the hip can be from the foot
+		const float MaxVertical = FMath::Sqrt(FMath::Max(0.f, MaxLen * MaxLen - HorizontalDistSq));
+
+		// The vertical distance in the base sitting pose
+		const float BaseVertical = FootToHipBase.Z;
+
+		// The maximum height we can add from the sitting position
+		const float MaxAdditionalHeight = MaxVertical - BaseVertical;
+
+		AllowedHeight = FMath::Min(AllowedHeight, MaxAdditionalHeight);
+	}
+
+	// Clamp to a valid, achievable range
+	float ActualHeight = FMath::Clamp(AllowedHeight, -200.f, MaxStandHeight);
+
+	UE_LOG(LogTemp, Log, TEXT("SetStandHeight: Requested=%.1f, Allowed=%.1f, Actual=%.1f"),
+		RequestedHeight, AllowedHeight, ActualHeight);
+
+	WalkerStandAlpha = FMath::Clamp(ActualHeight / MaxStandHeight, 0.f, 1.f);
+
+	// Move the body actor to the final calculated position
+	const FVector TargetBodyWorld = WalkerBodyBaseWorldLocation + FVector(0.f, 0.f, ActualHeight);
+	Walker->SetActorLocation(TargetBodyWorld + WalkerBodyActorOffset);
+	PoseableComp->RefreshBoneTransforms();
+
+	// Now, solve the IK for each leg. The feet are anchored at their original ground positions,
+	// and the hips are now at their new, elevated positions.
+	for (const FWalkerLegCalibrationData& LegData : WalkerLegCalibrations)
+	{
+		SolveWalkerLeg(PoseableComp, LegData);
+	}
+
+	PoseableComp->RefreshBoneTransforms();
+	UpdateWalkerDebugMeshes(PoseableComp);
+
+	CurrentStandHeight = ActualHeight;
+	bWalkerStanding = !FMath::IsNearlyZero(CurrentStandHeight, 1.0f);
+
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Calibrated walker stand height set to %.2f"), CurrentStandHeight);
+}
+
+void AGameManager::ToggleStance()
+{
+	if (!bWalkerCalibrationActive || !CalibratingWalker.IsValid() || !WalkerCalibrationPoseable.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: ToggleStance called without an active calibration."));
+		return;
+	}
+
+	const float MaxStandHeight = 1000.f;
+	DesiredStandHeight = bWalkerStanding ? 0.f : MaxStandHeight;
+	SetStandHeight();
+}
+
+void AGameManager::CancelWalkerCalibration()
+{
+	if (CalibratingWalker.IsValid())
+	{
+		CalibratingWalker->Destroy();
+		CalibratingWalker.Reset();
+	}
+
+	if (WalkerCalibrationPoseable.IsValid())
+	{
+		WalkerCalibrationPoseable->DestroyComponent();
+		WalkerCalibrationPoseable.Reset();
+	}
+
+	WalkerLegCalibrations.Empty();
+	WalkerSittingPose.Empty();
+	bWalkerCalibrationActive = false;
+	DesiredStandHeight = 0.f;
+	CurrentStandHeight = 0.f;
+	bWalkerStanding = false;
+	WalkerCalibrationPoseable.Reset();
+	WalkerLegCalibrations.Empty();
+	WalkerSittingPose.Empty();
+	WalkerBodyBaseWorldLocation = FVector::ZeroVector;
+	WalkerBodyActorOffset = FVector::ZeroVector;
+	WalkerStandAlpha = 0.f;
+	ClearWalkerDebugMeshes();
+}
+void AGameManager::GatherWalkerCalibrationData(UPoseableMeshComponent* PoseableComp)
+{
+	WalkerLegCalibrations.Empty();
+	WalkerSittingPose.Empty();
+	if (!PoseableComp)
+	{
+		return;
+	}
+
+	const int32 BodyIndex = PoseableComp->GetBoneIndex(WalkerBodyBoneName);
+	if (BodyIndex != INDEX_NONE)
+	{
+		const FTransform BodyXform = PoseableComp->GetBoneTransform(WalkerBodyBoneName, RTS_Component);
+		WalkerSittingPose.Add(WalkerBodyBoneName, BodyXform.GetRotation());
+	}
+
+	for (const FWalkerLegNames& Names : WalkerLegBones)
+	{
+		const int32 HipRotIdx = PoseableComp->GetBoneIndex(Names.HipRotator);
+		const int32 HipIdx = PoseableComp->GetBoneIndex(Names.HipAxle);
+		const int32 KneeIdx = PoseableComp->GetBoneIndex(Names.KneeAxle);
+		const int32 FootAxleIdx = PoseableComp->GetBoneIndex(Names.FootAxle);
+		const int32 FootIdx = PoseableComp->GetBoneIndex(Names.FootBone);
+
+		if (HipRotIdx == INDEX_NONE || HipIdx == INDEX_NONE || KneeIdx == INDEX_NONE || FootAxleIdx == INDEX_NONE || FootIdx == INDEX_NONE)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GameManager: Missing bones for walker leg (%s, %s, %s, %s, %s)"),
+				*Names.HipRotator.ToString(), *Names.HipAxle.ToString(), *Names.KneeAxle.ToString(), *Names.FootAxle.ToString(), *Names.FootBone.ToString());
+			continue;
+		}
+
+		FWalkerLegCalibrationData Data;
+		Data.HipRotatorBone = Names.HipRotator;
+		Data.HipAxleBone = Names.HipAxle;
+		Data.KneeAxleBone = Names.KneeAxle;
+		Data.FootAxleBone = Names.FootAxle;
+		Data.FootBone = Names.FootBone;
+
+		const FTransform HipRotXform = PoseableComp->GetBoneTransform(Names.HipRotator, RTS_Component);
+		const FTransform HipXform = PoseableComp->GetBoneTransform(Names.HipAxle, RTS_Component);
+		const FTransform KneeXform = PoseableComp->GetBoneTransform(Names.KneeAxle, RTS_Component);
+		const FTransform FootAxleXform = PoseableComp->GetBoneTransform(Names.FootAxle, RTS_Component);
+		const FTransform FootXform = PoseableComp->GetBoneTransform(Names.FootBone, RTS_Component);
+
+		Data.HipRotatorBaseRotation = HipRotXform.GetRotation();
+		Data.HipAxleBaseRotation = HipXform.GetRotation();
+		Data.KneeAxleBaseRotation = KneeXform.GetRotation();
+		Data.FootAxleBaseRotation = FootAxleXform.GetRotation();
+		Data.FootBoneBaseRotation = FootXform.GetRotation();
+
+		Data.HipComponentLocation = HipXform.GetLocation();
+		Data.KneeComponentLocation = KneeXform.GetLocation();
+		Data.FootAxleComponentLocation = FootAxleXform.GetLocation();
+		Data.FootComponentLocation = FootXform.GetLocation();
+		Data.HipWorldLocation = PoseableComp->GetBoneLocation(Names.HipAxle, EBoneSpaces::WorldSpace);
+		Data.HipRotAxisComponent = HipRotXform.GetUnitAxis(EAxis::Z).GetSafeNormal();
+
+		const FString HipName = Names.HipAxle.ToString();
+		if (HipName.Contains(TEXT("LHip")) || HipName.Contains(TEXT("RHip")))
+		{
+			Data.HipAxleAxisComponent = HipXform.GetUnitAxis(EAxis::Y).GetSafeNormal();
+		}
+		else
+		{
+			Data.HipAxleAxisComponent = HipXform.GetUnitAxis(EAxis::X).GetSafeNormal();
+		}
+
+		const FString KneeName = Names.KneeAxle.ToString();
+		if (KneeName.Contains(TEXT("LKnee")) || KneeName.Contains(TEXT("RKnee")))
+		{
+			Data.KneeAxleAxisComponent = KneeXform.GetUnitAxis(EAxis::Y).GetSafeNormal();
+		}
+		else
+		{
+			Data.KneeAxleAxisComponent = KneeXform.GetUnitAxis(EAxis::X).GetSafeNormal();
+		}
+
+		const FString FootName = Names.FootAxle.ToString();
+		if (FootName.Contains(TEXT("LFoot")) || FootName.Contains(TEXT("RFoot")))
+		{
+			Data.FootAxleAxisComponent = FootAxleXform.GetUnitAxis(EAxis::Y).GetSafeNormal();
+		}
+		else
+		{
+			Data.FootAxleAxisComponent = FootAxleXform.GetUnitAxis(EAxis::X).GetSafeNormal();
+		}
+
+		if (Data.HipRotAxisComponent.IsNearlyZero()) Data.HipRotAxisComponent = FVector::UpVector;
+		if (Data.HipAxleAxisComponent.IsNearlyZero()) Data.HipAxleAxisComponent = (HipName.Contains(TEXT("LHip")) || HipName.Contains(TEXT("RHip"))) ? FVector::YAxisVector : FVector::XAxisVector;
+		if (Data.KneeAxleAxisComponent.IsNearlyZero()) Data.KneeAxleAxisComponent = (KneeName.Contains(TEXT("LKnee")) || KneeName.Contains(TEXT("RKnee"))) ? FVector::YAxisVector : FVector::XAxisVector;
+		if (Data.FootAxleAxisComponent.IsNearlyZero()) Data.FootAxleAxisComponent = (FootName.Contains(TEXT("LFoot")) || FootName.Contains(TEXT("RFoot"))) ? FVector::YAxisVector : FVector::XAxisVector;
+
+		const FVector ThighDir = (Data.KneeComponentLocation - Data.HipComponentLocation).GetSafeNormal();
+		const FVector CalfDir = (Data.FootComponentLocation - Data.KneeComponentLocation).GetSafeNormal();
+		FVector PlaneNormal = FVector::CrossProduct(ThighDir, CalfDir).GetSafeNormal();
+		if (PlaneNormal.IsNearlyZero())
+		{
+			PlaneNormal = FVector::UpVector;
+		}
+		Data.PlaneNormalComponent = PlaneNormal;
+		Data.ThighBaseDirComponent = ThighDir;
+		Data.CalfBaseDirComponent = CalfDir;
+
+		FVector HipToFootInPlane = (Data.FootComponentLocation - Data.HipComponentLocation) - PlaneNormal * FVector::DotProduct(Data.FootComponentLocation - Data.HipComponentLocation, PlaneNormal);
+		if (!HipToFootInPlane.Normalize())
+		{
+			HipToFootInPlane = ThighDir;
+		}
+		FVector BasePerp = FVector::CrossProduct(PlaneNormal, HipToFootInPlane).GetSafeNormal();
+		if (BasePerp.IsNearlyZero())
+		{
+			BasePerp = FVector::CrossProduct(PlaneNormal, ThighDir).GetSafeNormal();
+		}
+
+		Data.BaseKneeAlong = FVector::DotProduct(Data.KneeComponentLocation - Data.HipComponentLocation, HipToFootInPlane);
+		Data.BaseKneeHeight = FVector::DotProduct(Data.KneeComponentLocation - Data.HipComponentLocation, BasePerp);
+
+		FVector HipToFoot = Data.FootComponentLocation - Data.HipComponentLocation;
+
+		Data.HipForwardDirComponent = HipToFoot - FVector::DotProduct(HipToFoot, PlaneNormal) * PlaneNormal;
+		if (!Data.HipForwardDirComponent.Normalize())
+		{
+			Data.HipForwardDirComponent = ThighDir;
+		}
+		Data.BasePerpDirComponent = BasePerp;
+
+		Data.UpperLength = (Data.KneeComponentLocation - Data.HipComponentLocation).Size();
+		Data.LowerLength = (Data.FootComponentLocation - Data.KneeComponentLocation).Size();
+
+		const FVector Point = Data.HipComponentLocation + ThighDir * (Data.UpperLength > KINDA_SMALL_NUMBER ? Data.UpperLength : 1.f);
+		const FVector KneeOffset = Data.KneeComponentLocation - Point;
+		const float Sign = FVector::DotProduct(KneeOffset, PlaneNormal) >= 0.f ? 1.f : -1.f;
+		Data.PlaneNormalComponent *= Sign;
+
+		// *** NEW: Calculate and store the pole vector in the hip's local space ***
+		Data.PoleVectorLocal = HipXform.InverseTransformVector(Data.PlaneNormalComponent);
+
+		Data.FootAxleWorldLocation = PoseableComp->GetBoneLocation(Names.FootAxle, EBoneSpaces::WorldSpace);
+		Data.FootWorldLocation = PoseableComp->GetBoneLocation(Names.FootBone, EBoneSpaces::WorldSpace);
+
+		Data.FootAxleBaseRotation = FootAxleXform.GetRotation();
+		Data.FootBoneBaseRotation = FootXform.GetRotation();
+		Data.FootRelativeTransform = FootXform.GetRelativeTransform(FootAxleXform);
+
+		WalkerLegCalibrations.Add(Data);
+
+		WalkerSittingPose.FindOrAdd(Names.HipRotator) = Data.HipRotatorBaseRotation;
+		WalkerSittingPose.FindOrAdd(Names.HipAxle) = Data.HipAxleBaseRotation;
+		WalkerSittingPose.FindOrAdd(Names.KneeAxle) = Data.KneeAxleBaseRotation;
+		WalkerSittingPose.FindOrAdd(Names.FootAxle) = Data.FootAxleBaseRotation;
+		WalkerSittingPose.FindOrAdd(Names.FootBone) = Data.FootBoneBaseRotation;
+	}
+}
+
+void AGameManager::RestoreWalkerSittingPose(UPoseableMeshComponent* PoseableComp) const
+{
+	if (!PoseableComp)
+	{
+		return;
+	}
+
+	for (const TPair<FName, FQuat>& Pair : WalkerSittingPose)
+	{
+		PoseableComp->SetBoneRotationByName(Pair.Key, Pair.Value.Rotator(), EBoneSpaces::ComponentSpace);
+	}
+}
+
+void AGameManager::SolveWalkerLeg(UPoseableMeshComponent* PoseableComp, const FWalkerLegCalibrationData& LegData) const
+{
+	if (!PoseableComp)
+	{
+		return;
+	}
+
+	const FTransform ComponentTM = PoseableComp->GetComponentTransform();
+
+	// Get the CURRENT hip position in world space (it has moved up with the body)
+	const FVector HipWorld = PoseableComp->GetBoneLocation(LegData.HipAxleBone, EBoneSpaces::WorldSpace);
+
+	// The foot target is the ORIGINAL, fixed ground position from calibration data.
+	const FVector FootTargetWorld = LegData.FootAxleWorldLocation;
+
+	// Convert world-space targets to component space for calculations
+	FVector HipComponent = ComponentTM.InverseTransformPosition(HipWorld);
+	FVector FootTargetComponent = ComponentTM.InverseTransformPosition(FootTargetWorld);
+
+	// --- Standard 2-Bone IK Calculation ---
+	const float L1 = LegData.UpperLength;
+	const float L2 = LegData.LowerLength;
+	const FVector HipToFoot = FootTargetComponent - HipComponent;
+	const float Dist = HipToFoot.Size();
+
+	// Calculate knee position
+	float KneeAngleRad = 0.f;
+	if (Dist < L1 + L2)
+	{
+		// Law of cosines to find the angle at the hip
+		float AcosArg = (Dist * Dist + L1 * L1 - L2 * L2) / (2.f * Dist * L1);
+		KneeAngleRad = FMath::Acos(FMath::Clamp(AcosArg, -1.f, 1.f));
+	}
+
+	// Determine the plane of rotation for the leg
+	FVector PlaneNormal = LegData.PlaneNormalComponent;
+	FVector HipToFootDir = HipToFoot.GetSafeNormal();
+	if (HipToFootDir.IsNearlyZero())
+	{
+		HipToFootDir = -ComponentTM.GetUnitAxis(EAxis::Z); // Fallback to pointing down
+	}
+
+	// Rotate the HipToFoot vector by the knee angle around the plane normal to find the thigh direction
+	FVector ThighDir = HipToFootDir.RotateAngleAxis(FMath::RadiansToDegrees(KneeAngleRad), PlaneNormal);
+	FVector KneeComponent = HipComponent + ThighDir * L1;
+
+	// The calf direction is from the new knee to the foot target
+	FVector CalfDir = (FootTargetComponent - KneeComponent).GetSafeNormal();
+
+	// --- Apply Bone Rotations ---
+	// Calculate the delta rotation from the base pose to the target pose for each segment
+	const FQuat HipRotationDelta = FQuat::FindBetweenNormals(LegData.ThighBaseDirComponent, ThighDir);
+	const FQuat KneeRotationDelta = FQuat::FindBetweenNormals(LegData.CalfBaseDirComponent, CalfDir);
+
+	// Apply the delta to the base rotations
+	const FQuat NewHipAxleRotation = HipRotationDelta * LegData.HipAxleBaseRotation;
+	const FQuat NewKneeAxleRotation = KneeRotationDelta * LegData.KneeAxleBaseRotation;
+
+	// Set the bone rotations in component space
+	PoseableComp->SetBoneRotationByName(LegData.HipAxleBone, NewHipAxleRotation.Rotator(), EBoneSpaces::ComponentSpace);
+	PoseableComp->SetBoneRotationByName(LegData.KneeAxleBone, NewKneeAxleRotation.Rotator(), EBoneSpaces::ComponentSpace);
+
+	// Keep the foot level with the ground by reapplying its base rotation relative to the new calf position
+	const FQuat NewFootAxleRotation = KneeRotationDelta * LegData.FootAxleBaseRotation;
+	PoseableComp->SetBoneRotationByName(LegData.FootAxleBone, NewFootAxleRotation.Rotator(), EBoneSpaces::ComponentSpace);
+
+	// The final foot bone inherits rotation from the foot axle
+	const FQuat NewFootBoneRotation = LegData.FootRelativeTransform.GetRotation() * NewFootAxleRotation;
+	PoseableComp->SetBoneRotationByName(LegData.FootBone, NewFootBoneRotation.Rotator(), EBoneSpaces::ComponentSpace);
+
+}
+
+void AGameManager::CreateWalkerDebugMeshes(ABasicWalker* Walker, UPoseableMeshComponent* PoseableComp)
+{
+	ClearWalkerDebugMeshes();
+	if (!Walker || !PoseableComp || WalkerLegCalibrations.Num() == 0)
+	{
+		return;
+	}
+
+	UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	if (!SphereMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Failed to load debug sphere mesh."));
+		return;
+	}
+
+	WalkerFootDebugMeshes.SetNum(WalkerLegCalibrations.Num());
+	WalkerKneeDebugMeshes.SetNum(WalkerLegCalibrations.Num());
+
+	UMaterialInterface* FootMaterial = WalkerFootDebugMaterial;
+	UMaterialInterface* KneeMaterial = WalkerKneeDebugMaterial;
+
+	if (!FootMaterial && GEngine)
+	{
+		UMaterialInterface* BaseMaterial = GEngine->DebugMeshMaterial;
+		if (BaseMaterial)
+		{
+			if (UMaterialInstanceDynamic* FootMID = UMaterialInstanceDynamic::Create(BaseMaterial, this))
+			{
+				FootMID->SetVectorParameterValue(TEXT("DiffuseColor"), FLinearColor::Green);
+				FootMaterial = FootMID;
+			}
+			if (!FootMaterial)
+			{
+				FootMaterial = BaseMaterial;
+			}
+		}
+	}
+	if (!KneeMaterial && GEngine)
+	{
+		UMaterialInterface* BaseMaterial = GEngine->DebugMeshMaterial;
+		if (BaseMaterial)
+		{
+			UMaterialInstanceDynamic* KneeMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			if (KneeMID)
+			{
+				KneeMID->SetVectorParameterValue(TEXT("DiffuseColor"), FLinearColor(1.f, 0.56f, 0.f));
+				KneeMaterial = KneeMID;
+			}
+			if (!KneeMaterial)
+			{
+				KneeMaterial = BaseMaterial;
+			}
+		}
+	}
+
+	const float FootScale = 40.f / 50.f;
+	const float KneeScale = 28.f / 50.f;
+
+	for (int32 Index = 0; Index < WalkerLegCalibrations.Num(); ++Index)
+	{
+		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[Index];
+
+		UStaticMeshComponent* FootComp = NewObject<UStaticMeshComponent>(Walker);
+		if (FootComp)
+		{
+			FootComp->SetStaticMesh(SphereMesh);
+			FootComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			FootComp->SetMobility(EComponentMobility::Movable);
+			FootComp->SetCastShadow(false);
+			FootComp->SetIsVisualizationComponent(true);
+			if (FootMaterial)
+			{
+				FootComp->SetMaterial(0, FootMaterial);
+			}
+			FootComp->RegisterComponent();
+			FootComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+			FootComp->SetWorldScale3D(FVector(FootScale));
+			FootComp->SetWorldLocation(PoseableComp->GetBoneLocation(LegData.FootBone, EBoneSpaces::WorldSpace));
+			FootComp->SetVisibility(true, true);
+		}
+		WalkerFootDebugMeshes[Index] = FootComp;
+
+		UStaticMeshComponent* KneeComp = NewObject<UStaticMeshComponent>(Walker);
+		if (KneeComp)
+		{
+			KneeComp->SetStaticMesh(SphereMesh);
+			KneeComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			KneeComp->SetMobility(EComponentMobility::Movable);
+			KneeComp->SetCastShadow(false);
+			KneeComp->SetIsVisualizationComponent(true);
+			if (KneeMaterial)
+			{
+				KneeComp->SetMaterial(0, KneeMaterial);
+			}
+			KneeComp->RegisterComponent();
+			KneeComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+			KneeComp->SetWorldScale3D(FVector(KneeScale));
+			KneeComp->SetWorldLocation(PoseableComp->GetBoneLocation(LegData.KneeAxleBone, EBoneSpaces::WorldSpace));
+			KneeComp->SetVisibility(true, true);
+		}
+		WalkerKneeDebugMeshes[Index] = KneeComp;
+	}
+}
+
+void AGameManager::UpdateWalkerDebugMeshes(const UPoseableMeshComponent* PoseableComp)
+{
+	if (!bWalkerCalibrationActive || !PoseableComp || !CalibratingWalker.IsValid())
+	{
+		return;
+	}
+
+	const int32 DesiredCount = WalkerLegCalibrations.Num();
+	if (WalkerFootDebugMeshes.Num() != DesiredCount || WalkerKneeDebugMeshes.Num() != DesiredCount)
+	{
+		CreateWalkerDebugMeshes(CalibratingWalker.Get(), const_cast<UPoseableMeshComponent*>(PoseableComp));
+		return;
+	}
+
+	for (int32 Index = 0; Index < DesiredCount; ++Index)
+	{
+		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[Index];
+
+		if (UStaticMeshComponent* FootComp = WalkerFootDebugMeshes[Index].Get())
+		{
+			FootComp->SetWorldLocation(PoseableComp->GetBoneLocation(LegData.FootBone, EBoneSpaces::WorldSpace));
+		}
+		else
+		{
+			CreateWalkerDebugMeshes(CalibratingWalker.Get(), const_cast<UPoseableMeshComponent*>(PoseableComp));
+			return;
+		}
+
+		if (UStaticMeshComponent* KneeComp = WalkerKneeDebugMeshes[Index].Get())
+		{
+			KneeComp->SetWorldLocation(PoseableComp->GetBoneLocation(LegData.KneeAxleBone, EBoneSpaces::WorldSpace));
+		}
+		else
+		{
+			CreateWalkerDebugMeshes(CalibratingWalker.Get(), const_cast<UPoseableMeshComponent*>(PoseableComp));
+			return;
+		}
+	}
+}
+
+void AGameManager::ClearWalkerDebugMeshes()
+{
+	for (TWeakObjectPtr<UStaticMeshComponent>& MeshPtr : WalkerFootDebugMeshes)
+	{
+		if (UStaticMeshComponent* Comp = MeshPtr.Get())
+		{
+			Comp->DestroyComponent();
+		}
+	}
+	WalkerFootDebugMeshes.Empty();
+
+	for (TWeakObjectPtr<UStaticMeshComponent>& MeshPtr : WalkerKneeDebugMeshes)
+	{
+		if (UStaticMeshComponent* Comp = MeshPtr.Get())
+		{
+			Comp->DestroyComponent();
+		}
+	}
+	WalkerKneeDebugMeshes.Empty();
 }
 
 void AGameManager::SyncOrbSimDriverParameters()
@@ -1261,18 +1922,20 @@ bool AGameManager::FindStoredClusterByOrbsOnly(const USimWorldHex::FClusterTempl
 {
 	// Generate canonical key for orbs-only template
 	FClusterCanonicalKey OrbsOnlyKey = GenerateCanonicalKey(OrbsOnlyTemplate);
-	
-	// Search through stored templates using cached orbs-only keys
+
+	// Search through stored templates by rebuilding their orbs-only canonical keys on demand
 	for (const auto& KV : ClusterCounts)
 	{
 		const FClusterCanonicalKey& StoredFullKey = KV.Key;
-		FClusterCanonicalKey StoredOrbsOnlyKey = GetOrbsOnlyKeyForStoredTemplate(StoredFullKey);
-		
-		// Compare canonical keys (which should match if orb structures are the same)
-		if (OrbsOnlyKey == StoredOrbsOnlyKey)
+
+		if (const USimWorldHex::FClusterTemplate* FoundTemplate = StoredClusterTemplates.Find(StoredFullKey))
 		{
-			// Found a match!
-			if (const USimWorldHex::FClusterTemplate* FoundTemplate = StoredClusterTemplates.Find(StoredFullKey))
+			USimWorldHex::FClusterTemplate StoredOrbsOnlyTemplate;
+			StoredOrbsOnlyTemplate.Orbs = FoundTemplate->Orbs; // ignore bonds for orbs-only match
+
+			FClusterCanonicalKey StoredOrbsOnlyKey = GenerateCanonicalKey(StoredOrbsOnlyTemplate);
+
+			if (OrbsOnlyKey == StoredOrbsOnlyKey)
 			{
 				OutTemplate = FoundTemplate;
 				OutCount = KV.Value;
@@ -1281,35 +1944,8 @@ bool AGameManager::FindStoredClusterByOrbsOnly(const USimWorldHex::FClusterTempl
 			}
 		}
 	}
-	
-	return false;
-}
 
-FClusterCanonicalKey AGameManager::GetOrbsOnlyKeyForStoredTemplate(const FClusterCanonicalKey& FullKey) const
-{
-	// Check cache first
-	if (const FClusterCanonicalKey* Cached = StoredOrbsOnlyKeysCache.Find(FullKey))
-	{
-		return *Cached;
-	}
-	
-	// Build orbs-only template from stored template
-	if (const USimWorldHex::FClusterTemplate* Template = StoredClusterTemplates.Find(FullKey))
-	{
-		USimWorldHex::FClusterTemplate OrbsOnlyTemplate;
-		OrbsOnlyTemplate.Orbs = Template->Orbs;
-		// Leave bonds empty
-		
-		FClusterCanonicalKey OrbsOnlyKey = GenerateCanonicalKey(OrbsOnlyTemplate);
-		
-		// Cache it
-		StoredOrbsOnlyKeysCache.Add(FullKey, OrbsOnlyKey);
-		
-		return OrbsOnlyKey;
-	}
-	
-	// Fallback: return empty key
-	return FClusterCanonicalKey();
+	return false;
 }
 
 uint8 AGameManager::FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplate& ClusterTemplate)
@@ -1319,12 +1955,12 @@ uint8 AGameManager::FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplat
 		UE_LOG(LogTemp, Warning, TEXT("FindOrRegisterTemplateId: No sim available"));
 		return 0;
 	}
-	
+
 	USimWorldHex* Sim = OrbSimDriver->GetSim();
-	
+
 	// Generate canonical key for the template
 	FClusterCanonicalKey Key = GenerateCanonicalKey(ClusterTemplate);
-	
+
 	// Check if we have a cached TemplateId for this canonical key
 	for (const auto& KV : TemplateIdToCanonicalKey)
 	{
@@ -1334,7 +1970,7 @@ uint8 AGameManager::FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplat
 			return KV.Key;
 		}
 	}
-	
+
 	// Check if sim already has a matching template
 	const TMap<uint8, USimWorldHex::FClusterTemplate>& SimTemplates = Sim->GetClusterTemplates();
 	for (const auto& KV : SimTemplates)
@@ -1353,26 +1989,26 @@ uint8 AGameManager::FindOrRegisterTemplateId(const USimWorldHex::FClusterTemplat
 			}
 		}
 	}
-	
+
 	// No existing template found - register a new one
 	uint8 NewTemplateId = Sim->GenerateNewTemplateId();
-	
+
 	// Convert bonds to TPair format
 	TArray<TPair<int32, int32>> BondPairs;
 	for (const TPair<int32, int32>& Bond : ClusterTemplate.Bonds)
 	{
 		BondPairs.Add(Bond);
 	}
-	
+
 	// Register the template in the sim
 	Sim->RegisterClusterTemplate(NewTemplateId, ClusterTemplate.Orbs, BondPairs, ClusterTemplate.Name);
-	
+
 	// Cache the mapping
 	TemplateIdToCanonicalKey.Add(NewTemplateId, Key);
-	
-	UE_LOG(LogTemp, Log, TEXT("FindOrRegisterTemplateId: Registered new template ID %d for cluster with %d orbs"), 
+
+	UE_LOG(LogTemp, Log, TEXT("FindOrRegisterTemplateId: Registered new template ID %d for cluster with %d orbs"),
 		NewTemplateId, ClusterTemplate.Orbs.Num());
-	
+
 	return NewTemplateId;
 }
 

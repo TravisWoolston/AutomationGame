@@ -1560,24 +1560,6 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 		}
 	}
 
-	// CRITICAL: Update SimArmIndex for all arms that were shifted down by the removal
-	if (RemovedArmIndex >= 0)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			for (TActorIterator<ABasicArm> It(World); It; ++It)
-			{
-				ABasicArm* Arm = *It;
-				if (Arm && Arm->SimArmIndex > RemovedArmIndex)
-				{
-					Arm->SimArmIndex--; // Shift down by 1
-					UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Updated arm at (%d,%d) SimIndex: %d -> %d"),
-						Arm->Q, Arm->R, Arm->SimArmIndex + 1, Arm->SimArmIndex);
-				}
-			}
-		}
-	}
-
 	// Remove runtime spawned arm actors at this hex
 	if (UWorld* World = GetWorld())
 	{
@@ -1590,6 +1572,67 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 				Arm->Destroy();
 				break;
 			}
+		}
+	}
+
+	// Remove walkers at this hex
+	int32 RemovedWalkerIndex = -1;
+	for (int32 WalkerIndex = Sim->Walkers.Num() - 1; WalkerIndex >= 0; WalkerIndex--)
+	{
+		const FWalkerState& WalkerState = Sim->Walkers[WalkerIndex];
+		if (WalkerState.BaseHex.Q == Hex.Q && WalkerState.BaseHex.R == Hex.R)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Removing walker from simulation at (%d,%d) SimIndex=%d (total walkers before: %d)"),
+				Hex.Q, Hex.R, WalkerIndex, Sim->Walkers.Num());
+			RemovedWalkerIndex = WalkerIndex;
+			Sim->Walkers.RemoveAt(WalkerIndex);
+			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - After removal, total walkers: %d"), Sim->Walkers.Num());
+			break;
+		}
+	}
+
+	if (RemovedWalkerIndex >= 0)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ABasicWalker> It(World); It; ++It)
+			{
+				ABasicWalker* WalkerActor = *It;
+				if (WalkerActor && WalkerActor->SimWalkerIndex > RemovedWalkerIndex)
+				{
+					WalkerActor->SimWalkerIndex--;
+					UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Updated walker at (%d,%d) SimIndex: %d -> %d"),
+						WalkerActor->Q, WalkerActor->R, WalkerActor->SimWalkerIndex + 1, WalkerActor->SimWalkerIndex);
+				}
+			}
+		}
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicWalker> It(World); It; ++It)
+		{
+			ABasicWalker* WalkerActor = *It;
+			if (WalkerActor && WalkerActor->Q == Hex.Q && WalkerActor->R == Hex.R)
+			{
+				UE_LOG(LogTemp, Log, TEXT("Destroying walker actor at (%d,%d)"), Hex.Q, Hex.R);
+				WalkerActor->Destroy();
+				break;
+			}
+		}
+	}
+
+	// Update scenario specs for walkers when deleting tiles
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ATestLevelDirector> It(World); It; ++It)
+		{
+			ATestLevelDirector* TLD = *It;
+			if (TLD)
+			{
+				TLD->RemoveWalkerSpec(Hex.Q, Hex.R);
+			}
+			break;
 		}
 	}
 

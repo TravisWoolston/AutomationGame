@@ -99,10 +99,11 @@ struct FHeldOrbRef
 
 void USimWorldHex::Initialize(int32 /*Radius*/)
 {
-	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::Initialize() clearing %d arms from simulation"), Arms.Num());
+	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::Initialize() clearing %d arms and %d walkers from simulation"), Arms.Num(), Walkers.Num());
 	TileMap.Empty();
 	ItemMap.Empty();
 	Arms.Empty();
+	Walkers.Empty();
 	OutputCount = 0;
 	TileRevision = 0;
 	NextItemId = 1;

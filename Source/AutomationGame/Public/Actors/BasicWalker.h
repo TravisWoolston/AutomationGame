@@ -101,6 +101,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
 	int32 SimWalkerIndex;
 
+	/** Starting location for Reset command (set when placed) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	FHex HomeHex;
+
+	USkeletalMeshComponent* GetBodyComponent() const { return BodyComp; }
+
 public:
 	void PushProgramToSim();
 	TArray<FWalkerInstr> BuildProgramFromInstructions(const TArray<FWalkerInstr>& InProgram) const;
@@ -137,9 +143,6 @@ private:
 	FHex CurrentHex;
 	FHex TargetHex;
 	float MovementProgress = 0.0f;  // 0.0 to 1.0
-
-	// Remember where Reset should point us
-	FHex HomeHex;     // captured at BeginPlay
 
 	// Helpers
 	void EnsureComps();

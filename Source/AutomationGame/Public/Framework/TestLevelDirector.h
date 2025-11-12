@@ -5,6 +5,8 @@
 #include "Sim/HexTypes.h"
 #include "Sim/Tiles.h"
 #include "Actors/BasicArm.h"
+#include "Actors/BasicWalker.h"
+#include "Sim/WalkerTypes.h"
 #include "TestLevelDirector.generated.h"
 
 class AGameTickManager;
@@ -49,6 +51,19 @@ struct FArmSpawnSpec
 };
 
 USTRUCT(BlueprintType)
+struct FWalkerSpawnSpec
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Q = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 R = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex StartingLocation;  // Set when placed
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerInstr> Program;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bLoopProgram = true;
+	UPROPERTY(Transient) ABasicWalker* Spawned = nullptr;
+};
+
+USTRUCT(BlueprintType)
 struct FScenarioSpec
 {
 	GENERATED_BODY()
@@ -59,6 +74,7 @@ struct FScenarioSpec
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FPlacedTileSpec> Tiles;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FArmSpawnSpec> Arms;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerSpawnSpec> Walkers;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bAutoPlay = true;
 };
 
@@ -77,6 +93,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AGameTickManager> TickManagerClass;
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AOrbSimDriver>   DriverClass;
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<ABasicArm> ArmClass;
+	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<ABasicWalker> WalkerClass;
 
 	UPROPERTY(EditAnywhere, Category = "Scenarios") TArray<FScenarioSpec> Scenarios;
 	UPROPERTY(EditAnywhere, Category = "Scenarios", meta = (ClampMin = 0)) int32 ActiveScenarioIndex = 0;
@@ -120,6 +137,10 @@ public:
 	void UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	bool RemoveArmSpec(int32 Q, int32 R);
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	void UpsertWalkerSpec(int32 Q, int32 R, const FHex& StartingLocation, const TArray<FWalkerInstr>& Program, bool bLoop);
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	bool RemoveWalkerSpec(int32 Q, int32 R);
 
 	// Control what runtime edits get written back into scenario specs.
 	UPROPERTY(EditAnywhere, Category = "Scenarios|Runtime Capture")
