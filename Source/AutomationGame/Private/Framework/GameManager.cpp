@@ -3,6 +3,7 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "Engine/Engine.h"
 #include "Actors/BasicArm.h"
 #include "Actors/OrbSimDriver.h"
 #include "Sim/HexCoord.h"
@@ -80,9 +81,42 @@ AGameManager::AGameManager()
 	TimelineWidgetOffset = FVector(0.0f, 0.0f, 100.0f);
 }
 
+AGameManager::~AGameManager()
+{
+	// Destructor
+}
+
+void AGameManager::BeginDestroy()
+{
+	// Clean up walker calibration data before destruction (when UE closes or actor is destroyed)
+	if (bWalkerCalibrationActive)
+	{
+		CancelWalkerCalibration();
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Cancelled walker calibration on BeginDestroy"));
+	}
+	
+	// Clear cluster storage maps safely
+	ClusterCounts.Empty();
+	StoredClusterTemplates.Empty();
+	ClusterIcons.Empty();
+	TemplateIdToCanonicalKey.Empty();
+	StoredOrbsOnlyKeysCache.Empty();
+	
+	Super::BeginDestroy();
+}
+
 void AGameManager::BeginPlay()
 {
 	Super::BeginPlay();
+	
+	// Cancel walker calibration if active (calibration is editor-only, not for PIE)
+	// This runs when PIE starts
+	if (bWalkerCalibrationActive)
+	{
+		CancelWalkerCalibration();
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Cancelled walker calibration on BeginPlay (PIE started)"));
+	}
+	
 	AutoFindRefs();
 	TryLoadInitial();
 	EnsureISM();
@@ -98,6 +132,18 @@ void AGameManager::BeginPlay()
 
 	// Apply timeline visibility settings to all existing arms
 	UpdateAllArmTimelineWidgets();
+}
+
+void AGameManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// Cancel walker calibration if active (calibration is editor-only)
+	if (bWalkerCalibrationActive)
+	{
+		CancelWalkerCalibration();
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Cancelled walker calibration on EndPlay (Reason=%d)"), (int32)EndPlayReason);
+	}
+	
+	Super::EndPlay(EndPlayReason);
 }
 
 void AGameManager::Tick(float DeltaSeconds)
@@ -140,6 +186,57 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
 			{
 				SetStandHeight();
+			}
+		}
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance))
+		{
+			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
+			{
+				USkeletalMeshComponent* BodyComp = CalibratingWalker->GetBodyComponent();
+				if (BodyComp)
+				{
+					ApplyStartingFootDistance(BodyComp);
+					// Force update to make changes visible immediately
+					BodyComp->TickAnimation(0.f, false);
+					BodyComp->RefreshBoneTransforms();
+					BodyComp->UpdateComponentToWorld();
+					SetIKRigGoalPositions(BodyComp, CurrentStandHeight);
+					UpdateWalkerDebugMeshes(BodyComp);
+					
+					UE_LOG(LogTemp, Log, TEXT("GameManager: StartingFootDistance updated to %.1f"), StartingFootDistance);
+				}
+			}
+		}
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants) || 
+		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ReachDistance))
+		{
+			if (bWalkerCalibrationActive)
+			{
+				UpdateLegTileQuadrantVisualization();
+			}
+		}
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepHeight) ||
+		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ActiveFoot) ||
+		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bActiveFootPreview))
+		{
+			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
+			{
+				USkeletalMeshComponent* BodyComp = CalibratingWalker->GetBodyComponent();
+				if (BodyComp)
+				{
+					if (bActiveFootPreview)
+					{
+						// Apply step height to active foot
+						SetStepHeight();
+					}
+					else
+					{
+						// Reset all feet to base position when preview is disabled
+						ApplyStartingFootDistance(BodyComp);
+						SetIKRigGoalPositions(BodyComp, CurrentStandHeight);
+						UpdateWalkerDebugMeshes(BodyComp);
+					}
+				}
 			}
 		}
 	}
@@ -381,6 +478,17 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 	}
 
 	FVector Loc = OrbSimDriver->MapHexToWorld(Hex);
+	// Apply BaseZ offset so walker spawns at correct height (default is 10.f)
+	// Get BaseZ from the walker class default object
+	float WalkerBaseZ = 10.f;
+	if (BasicWalkerClass)
+	{
+		if (const ABasicWalker* DefaultWalker = GetDefault<ABasicWalker>(BasicWalkerClass))
+		{
+			WalkerBaseZ = DefaultWalker->BaseZ;
+		}
+	}
+	Loc.Z += WalkerBaseZ;
 
 	FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	ABasicWalker* Walker = GetWorld()->SpawnActor<ABasicWalker>(BasicWalkerClass, FTransform(FRotator::ZeroRotator, Loc), S);
@@ -404,7 +512,15 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		WalkerState.WaitCounter = 0;
 		WalkerState.bMoving = false;
 		WalkerState.MovementProgress = 0.0f;
-		WalkerState.TileTraverseRate = Walker->TileTraverseRate;
+		
+		// Apply calibration settings from GameManager
+		WalkerState.StepHeight = StepHeight;
+		WalkerState.StepRaiseTicks = StepRaiseTicks;
+		WalkerState.StepMoveTicks = StepMoveTicks;
+		WalkerState.StepLowerTicks = StepLowerTicks;
+		WalkerState.ReachDistance = ReachDistance;
+		WalkerState.StandHeight = SavedWalkerCalibration.StandHeight; // Apply saved stand height
+		
 		// Don't set program here - let SetProgram handle it after SimWalkerIndex is assigned
 		WalkerState.Program = TArray<FWalkerInstr>(); // Empty for now
 
@@ -415,8 +531,8 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		Walker->SetProgram(Program, bLoop);
 		Walker->Start();
 
-		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered walker at Hex(%d,%d) SimIndex=%d ProgramLen=%d"),
-			Hex.Q, Hex.R, WalkerIndex, Program.Num());
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered walker at Hex(%d,%d) SimIndex=%d ProgramLen=%d, StepHeight=%.1f, ReachDist=%d, Ticks=(%d,%d,%d)"),
+			Hex.Q, Hex.R, WalkerIndex, Program.Num(), StepHeight, ReachDistance, StepRaiseTicks, StepMoveTicks, StepLowerTicks);
 	}
 	else
 	{
@@ -431,9 +547,36 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 void AGameManager::SyncOrbSimDriverParameters()
 {
 	if (!OrbSimDriver) return;
+	
+	// Store previous values to detect changes
+	static EHexOrientation PrevOrientation = EHexOrientation::PointyTop;
+	static float PrevYaw = 0.f;
+	static float PrevTileSize = 0.f;
+	static float PrevSphereR = 0.f;
+	static bool PrevSphereGrid = false;
+	
+	const float CurrentSphereR = GetEffectiveSphereRadius();
+	const bool bParamsChanged = (PrevOrientation != GridOrientation) || 
+	                            !FMath::IsNearlyEqual(PrevYaw, GridYawDeg, 0.01f) ||
+	                            !FMath::IsNearlyEqual(PrevTileSize, TileSizeUU, 0.01f) ||
+	                            !FMath::IsNearlyEqual(PrevSphereR, CurrentSphereR, 0.01f) ||
+	                            (PrevSphereGrid != bSphereGrid);
+	
 	OrbSimDriver->SetGridParameters(GridOrientation, GridYawDeg, TileSizeUU, GridAnchor);
-	OrbSimDriver->ApplySphereSettings(bSphereGrid, GetEffectiveSphereRadius());
-	UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver params Orientation=%d Yaw=%.1f TileSpacing=%.1f SphereR=%.1f Auto=%d"), (int32)GridOrientation, GridYawDeg, TileSizeUU, GetEffectiveSphereRadius(), bAutoSphereRadius ? 1 : 0);
+	OrbSimDriver->ApplySphereSettings(bSphereGrid, CurrentSphereR);
+	
+	// Only log if parameters actually changed
+	if (bParamsChanged)
+	{
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver params Orientation=%d Yaw=%.1f TileSpacing=%.1f SphereR=%.1f Auto=%d"), (int32)GridOrientation, GridYawDeg, TileSizeUU, CurrentSphereR, bAutoSphereRadius ? 1 : 0);
+		
+		// Update stored values
+		PrevOrientation = GridOrientation;
+		PrevYaw = GridYawDeg;
+		PrevTileSize = TileSizeUU;
+		PrevSphereR = CurrentSphereR;
+		PrevSphereGrid = bSphereGrid;
+	}
 }
 
 FVector AGameManager::GetWorldForHex(const FHex& H) const
@@ -1585,3 +1728,4 @@ UTexture2D* AGameManager::GetClusterIcon(const USimWorldHex::FClusterTemplate& C
 
 	return NewIcon;
 }
+

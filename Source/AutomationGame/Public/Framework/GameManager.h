@@ -10,6 +10,16 @@
 #include "Sim/SimWorldHex.h"
 #include "GameManager.generated.h"
 
+/** Walker foot selection for calibration */
+UENUM(BlueprintType)
+enum class EWalkerFoot : uint8
+{
+	DFoot     UMETA(DisplayName = "D Foot"),
+	LFoot     UMETA(DisplayName = "L Foot"),
+	RFoot     UMETA(DisplayName = "R Foot"),
+	UFoot     UMETA(DisplayName = "U Foot")
+};
+
 class AGameTickManager;
 class UInstancedStaticMeshComponent;
 class UStaticMesh;
@@ -19,6 +29,43 @@ class UGoldbergGrid; // NEW
 class UTexture2D;
 class UArmTimelineWidget;
 class UPoseableMeshComponent;
+
+/** Persistent walker calibration data (saved between sessions) */
+USTRUCT()
+struct AUTOMATIONGAME_API FWalkerCalibrationSettings
+{
+	GENERATED_BODY()
+	
+	UPROPERTY()
+	float StandHeight = 0.f;
+	
+	UPROPERTY()
+	float StartingFootDistance = 0.f;
+	
+	UPROPERTY()
+	float StepHeight = 50.f;
+	
+	UPROPERTY()
+	int32 StepRaiseTicks = 3;
+	
+	UPROPERTY()
+	int32 StepMoveTicks = 3;
+	
+	UPROPERTY()
+	int32 StepLowerTicks = 3;
+	
+	UPROPERTY()
+	int32 ReachDistance = 2;
+	
+	UPROPERTY()
+	EWalkerFoot ActiveFoot = EWalkerFoot::DFoot;
+	
+	UPROPERTY()
+	TArray<FVector> OriginalFootPositions;
+	
+	UPROPERTY()
+	TMap<FName, FQuat> SittingPose;
+};
 
 /** Canonical representation of a cluster structure for storage and comparison */
 struct AUTOMATIONGAME_API FClusterCanonicalKey
@@ -41,6 +88,8 @@ class AUTOMATIONGAME_API AGameManager : public AActor
 	GENERATED_BODY()
 public:
 	AGameManager();
+	virtual ~AGameManager();
+	virtual void BeginDestroy() override;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Factory|Arms")
 	TSubclassOf<ABasicArm> BasicArmClass;
@@ -64,24 +113,63 @@ public:
 
 	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
 	void CalibrateWalker();
-
+	
 	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
-	void SetStandHeight();
+	void SetStepHeight();
+	
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
+	void SetStandHeightButton(); // Manually apply DesiredStandHeight
+	
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
+	void ApplyStandHeight(); // Apply current DesiredStandHeight manually
+	
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
+	void ResetStandHeight(); // Reset to sitting position (DesiredStandHeight = 0)
+	
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
+	void SaveWalkerCalibration();
 
 	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
 	void CancelWalkerCalibration();
 
-	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
-	void ToggleStance();
-
-	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "-200.0", ClampMax = "1000.0"))
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "-200.0", ClampMax = "1000.0", Tooltip = "Target stand height - changes are applied automatically"))
 	float DesiredStandHeight = 0.f;
 
-	UPROPERTY(VisibleAnywhere, Category = "Walker|Calibration")
+	UPROPERTY(VisibleAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Current actual stand height after leg reach constraints"))
 	float CurrentStandHeight = 0.f;
 
 	UPROPERTY(VisibleAnywhere, Category = "Walker|Calibration")
 	bool bWalkerStanding = false;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Distance offset for foot starting positions"))
+	float StartingFootDistance = 0.f;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0.0", Tooltip = "Height feet raise when stepping"))
+	float StepHeight = 50.f;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Ticks for raising foot"))
+	int32 StepRaiseTicks = 3;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Ticks for moving foot horizontally"))
+	int32 StepMoveTicks = 3;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Ticks for lowering foot"))
+	int32 StepLowerTicks = 3;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Selected foot for step height preview"))
+	EWalkerFoot ActiveFoot = EWalkerFoot::DFoot;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Enable active foot preview updates (applies step height to selected foot)"))
+	bool bActiveFootPreview = false;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "1", Tooltip = "Tile range each leg can reach"))
+	int32 ReachDistance = 2;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
+	bool bShowLegTileQuadrants = false;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Debug")
+	bool bDebugWalkers = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Refs")
 	AGameTickManager* TickManager = nullptr;
@@ -386,6 +474,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaSeconds) override;
 #if WITH_EDITOR
 	virtual void OnConstruction(const FTransform& Transform) override;
@@ -431,24 +520,36 @@ private:
 
 	bool bWalkerCalibrationActive = false;
 	TWeakObjectPtr<ABasicWalker> CalibratingWalker;
-	TWeakObjectPtr<UPoseableMeshComponent> WalkerCalibrationPoseable;
 	FVector WalkerCalibrationBaseLocation = FVector::ZeroVector;
 	TMap<FName, FQuat> WalkerSittingPose;
 	TArray<FWalkerLegCalibrationData> WalkerLegCalibrations;
 	float WalkerStandAlpha = 0.f;
 	FVector WalkerBodyBaseWorldLocation = FVector::ZeroVector;
 	FVector WalkerBodyActorOffset = FVector::ZeroVector;
+	TArray<FVector> WalkerOriginalFootPositions; // Store original foot positions for offset calculation
+	TArray<UStaticMeshComponent*> WalkerQuadrantTileMarkers; // Visual markers for reachable tiles
+	float SavedStandHeight = 0.f; // Saved height for reset operations
+	
+	// Persistent calibration settings (Config property allows it to persist between sessions)
+	UPROPERTY(Config)
+	FWalkerCalibrationSettings SavedWalkerCalibration;
+	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
 	UMaterialInterface* WalkerFootDebugMaterial = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
 	UMaterialInterface* WalkerKneeDebugMaterial = nullptr;
-	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0.0"))
-	float StartingFootDistance = 0.f;
+	
+	void SetStandHeight(); // Internal function called automatically when DesiredStandHeight changes
 	void GatherWalkerCalibrationData(class USkeletalMeshComponent* BodyComp);
+	void ApplyStartingFootDistance(class USkeletalMeshComponent* BodyComp);
 	void SetIKRigGoalPositions(class USkeletalMeshComponent* BodyComp, float HeightOffset);
+	void UpdateLegTileQuadrantVisualization();
+	void ClearLegTileQuadrantVisualization();
 	void CreateWalkerDebugMeshes(class ABasicWalker* Walker, class USkeletalMeshComponent* BodyComp);
 	void UpdateWalkerDebugMeshes(const class USkeletalMeshComponent* BodyComp);
 	void ClearWalkerDebugMeshes();
+	void LoadWalkerCalibration();
+	void SaveWalkerCalibrationToConfig();
 
 	void AutoFindRefs();
 	void TryLoadInitial();

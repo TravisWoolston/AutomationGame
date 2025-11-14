@@ -191,7 +191,9 @@ private:
 			Placer->RotateCCW(); 
 		}
 	}
-
+	
+	void RequestMoveToTile(); // Request nearest walker to move to cursor position
+	
 	// Type cycling (works for both Input and Output based on current placement mode)
 	// For Kind8 blueprint mode with TypeSelectionActive, cycles DifficultyValue
 	void CycleInputTypeNext();

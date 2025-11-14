@@ -156,6 +156,18 @@ AOrbSimDriver* AOrbSimDriver::Find(UWorld* World)
 
 void AOrbSimDriver::SetGridParameters(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor)
 {
+	// Only update and log if values actually changed
+	const bool bOrientationChanged = GridOrientation != InOrientation;
+	const bool bYawChanged = !FMath::IsNearlyEqual(GridYawDeg, InYawDeg, 0.01f);
+	const bool bTileSizeChanged = !FMath::IsNearlyEqual(TileSizeUU, InTileSizeUU, 0.01f);
+	const bool bAnchorChanged = GridAnchor != InAnchor;
+	
+	if (!bOrientationChanged && !bYawChanged && !bTileSizeChanged && !bAnchorChanged)
+	{
+		// No changes, skip update and logging
+		return;
+	}
+	
 	GridOrientation = InOrientation;
 	GridYawDeg = InYawDeg;
 	TileSizeUU = InTileSizeUU;

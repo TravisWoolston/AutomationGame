@@ -3,6 +3,71 @@
 #include "Sim/HexTypes.h"
 #include "WalkerTypes.generated.h"
 
+/** Walker stance state for sitting/standing transitions */
+UENUM(BlueprintType)
+enum class EWalkerStance : uint8
+{
+	Sitting      UMETA(DisplayName = "Sitting"),
+	StandingUp   UMETA(DisplayName = "Standing Up"),
+	Standing     UMETA(DisplayName = "Standing"),
+	SittingDown  UMETA(DisplayName = "Sitting Down")
+};
+
+/** Foot step state for multi-step walking animation */
+UENUM(BlueprintType)
+enum class EFootStepState : uint8
+{
+	Planted  UMETA(DisplayName = "Planted"),
+	Raising  UMETA(DisplayName = "Raising"),
+	Moving   UMETA(DisplayName = "Moving"),
+	Lowering UMETA(DisplayName = "Lowering")
+};
+
+/** Walker movement request */
+USTRUCT(BlueprintType)
+struct AUTOMATIONGAME_API FWalkerRequest
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FHex TargetHex;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 Priority = 0; // Higher priority requests processed first
+
+	bool operator==(const FWalkerRequest& Other) const
+	{
+		return TargetHex == Other.TargetHex && Priority == Other.Priority;
+	}
+	bool operator!=(const FWalkerRequest& Other) const
+	{
+		return !(*this == Other);
+	}
+};
+
+/** Foot state for individual leg tracking */
+USTRUCT(BlueprintType)
+struct AUTOMATIONGAME_API FFootState
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FHex CurrentTile;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FHex TargetTile;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	EFootStepState StepState = EFootStepState::Planted;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 StepProgress = 0; // 0-3 for raising, 0-3 for moving, 0-3 for lowering
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	float HeightOffset = 0.f; // Visual height offset for raised foot
+};
+
+// Legacy instruction system (kept for backward compatibility with scenario saving)
 UENUM(BlueprintType)
 enum class EWalkerCmd : uint8
 {
@@ -46,29 +111,45 @@ struct AUTOMATIONGAME_API FWalkerState
 	GENERATED_BODY()
 
 	// --- Core state ---
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex    BaseHex;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex    BaseHex; // Body position
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex    HomeHex;  // Starting location for Reset
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex    TargetHex;  // Current movement target
+	
+	// --- Stance and transitions ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) EWalkerStance Stance = EWalkerStance::Sitting;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StanceTransitionProgress = 0; // 0-3 for sit/stand transitions
+	
+	// --- Request queue ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerRequest> Requests;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex CurrentTargetHex; // Current request target
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bProcessingRequest = false;
+	
+	// --- Foot states (D, L, R, U order) ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FFootState DFoot;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FFootState LFoot;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FFootState RFoot;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FFootState UFoot;
+	
+	// --- Walking parameters ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float StepHeight = 50.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StepRaiseTicks = 3;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StepMoveTicks = 3;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StepLowerTicks = 3;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 ReachDistance = 2; // Tiles each leg can reach
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float StandHeight = 0.f; // Body height offset when standing
+	
+	// --- Legacy program support (kept for scenario compatibility) ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerInstr> Program;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32   PC = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32   WaitCounter = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool    bMoving = false;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) float   MovementProgress = 0.0f;  // 0.0 to 1.0
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) float   TileTraverseRate = 1.0f;  // Tiles per tick
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerInstr> Program;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float   MovementProgress = 0.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex    TargetHex;
 
 	// Added equality operator so TArray<FWalkerState>::IndexOfByKey works
 	bool operator==(const FWalkerState& Other) const
 	{
 		return BaseHex == Other.BaseHex && 
-		       HomeHex == Other.HomeHex && 
-		       TargetHex == Other.TargetHex &&
-		       PC == Other.PC &&
-		       WaitCounter == Other.WaitCounter &&
-		       bMoving == Other.bMoving &&
-		       FMath::IsNearlyEqual(MovementProgress, Other.MovementProgress) &&
-		       FMath::IsNearlyEqual(TileTraverseRate, Other.TileTraverseRate) &&
-		       Program == Other.Program;
+		       HomeHex == Other.HomeHex;
 	}
 	bool operator!=(const FWalkerState& Other) const
 	{

@@ -856,7 +856,6 @@ USkeletalMesh* UHexPlacementComponent::SelectSkeletalPreviewMesh() const
 						ABasicWalker* DefaultWalker = GameManager->BasicWalkerClass->GetDefaultObject<ABasicWalker>();
 						if (DefaultWalker && DefaultWalker->WalkerSkeletalMesh)
 						{
-							UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Using actual walker skeletal mesh: %s"), *DefaultWalker->WalkerSkeletalMesh->GetName());
 							return DefaultWalker->WalkerSkeletalMesh;
 						}
 						else

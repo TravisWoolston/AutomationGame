@@ -55,16 +55,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	float BaseZ = 10.f;
 
-	/** Leg span - opposite feet span 8-10 tiles */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual", meta = (ClampMin = 8, ClampMax = 10))
-	int32 LegSpan = 9;
-
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
 	FVector BaseScale = FVector(1.f);
-
-	/** TileTraverseRate determines how fast it can move to its designated location (tiles per tick) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement", meta = (ClampMin = 0.1))
-	float TileTraverseRate = 1.0f;
 
 	// --- Program control (Blueprint-friendly) ---
 	/** Program editable in BP (looped if bLoopProgram). */
@@ -143,6 +135,25 @@ private:
 	FHex CurrentHex;
 	FHex TargetHex;
 	float MovementProgress = 0.0f;  // 0.0 to 1.0
+	
+	// Foot positions for visual sync
+	FHex DFootHex;
+	FHex LFootHex;
+	FHex RFootHex;
+	FHex UFootHex;
+	
+	// Foot height offsets for visual sync
+	float DFootHeightOffset = 0.f;
+	float LFootHeightOffset = 0.f;
+	float RFootHeightOffset = 0.f;
+	float UFootHeightOffset = 0.f;
+	
+	// Foot step states (to determine which feet are planted)
+	EFootStepState DFootStepState = EFootStepState::Planted;
+	EFootStepState LFootStepState = EFootStepState::Planted;
+	EFootStepState RFootStepState = EFootStepState::Planted;
+	EFootStepState UFootStepState = EFootStepState::Planted;
+	
 
 	// Helpers
 	void EnsureComps();

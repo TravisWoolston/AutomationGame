@@ -154,6 +154,30 @@ int32 USimWorldHex::AddWalker(const FWalkerState& Walker)
 {
 	int32 NewIndex = Walkers.Add(Walker);
 	FWalkerState& S = Walkers[NewIndex];
+	S.BaseHex = Walker.BaseHex;
+	S.HomeHex = Walker.HomeHex;
+	S.Stance = EWalkerStance::Sitting;
+	S.StanceTransitionProgress = 0;
+	S.bProcessingRequest = false;
+	
+	// Initialize foot positions around the body in a cross pattern
+	S.DFoot.CurrentTile = FHex(S.HomeHex.Q + 1, S.HomeHex.R);
+	S.DFoot.TargetTile = S.DFoot.CurrentTile;
+	S.DFoot.StepState = EFootStepState::Planted;
+	
+	S.LFoot.CurrentTile = FHex(S.HomeHex.Q, S.HomeHex.R + 1);
+	S.LFoot.TargetTile = S.LFoot.CurrentTile;
+	S.LFoot.StepState = EFootStepState::Planted;
+	
+	S.RFoot.CurrentTile = FHex(S.HomeHex.Q - 1, S.HomeHex.R);
+	S.RFoot.TargetTile = S.RFoot.CurrentTile;
+	S.RFoot.StepState = EFootStepState::Planted;
+	
+	S.UFoot.CurrentTile = FHex(S.HomeHex.Q, S.HomeHex.R - 1);
+	S.UFoot.TargetTile = S.UFoot.CurrentTile;
+	S.UFoot.StepState = EFootStepState::Planted;
+	
+	// Legacy support
 	S.PC = S.PC % FMath::Max(1, S.Program.Num());
 	S.WaitCounter = 0;
 	S.bMoving = false;
@@ -163,6 +187,62 @@ int32 USimWorldHex::AddWalker(const FWalkerState& Walker)
 		Walker.BaseHex.Q, Walker.BaseHex.R, NewIndex, Walkers.Num());
 
 	return NewIndex;
+}
+
+int32 USimWorldHex::FindNearestAvailableWalker(const FHex& FromHex)
+{
+	int32 NearestIndex = INDEX_NONE;
+	float NearestDist = MAX_flt;
+	
+	for (int32 i = 0; i < Walkers.Num(); ++i)
+	{
+		const FWalkerState& W = Walkers[i];
+		
+		// Calculate hex distance
+		const int32 dQ = W.BaseHex.Q - FromHex.Q;
+		const int32 dR = W.BaseHex.R - FromHex.R;
+		const float Dist = FMath::Max(FMath::Max(FMath::Abs(float(dQ)), FMath::Abs(float(dR))), FMath::Abs(float(dQ + dR)));
+		
+		if (Dist < NearestDist)
+		{
+			NearestDist = Dist;
+			NearestIndex = i;
+		}
+	}
+	
+	return NearestIndex;
+}
+
+bool USimWorldHex::RequestWalkerMoveTo(int32 WalkerIndex, const FHex& TargetHex, int32 Priority)
+{
+	if (WalkerIndex < 0 || WalkerIndex >= Walkers.Num())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::RequestWalkerMoveTo: Invalid walker index %d (total: %d)"), WalkerIndex, Walkers.Num());
+		return false;
+	}
+	
+	FWalkerState& W = Walkers[WalkerIndex];
+	
+	FWalkerRequest Request;
+	Request.TargetHex = TargetHex;
+	Request.Priority = Priority;
+	
+	// Insert request sorted by priority (higher priority first)
+	int32 InsertIndex = W.Requests.Num();
+	for (int32 i = 0; i < W.Requests.Num(); ++i)
+	{
+		if (Request.Priority > W.Requests[i].Priority)
+		{
+			InsertIndex = i;
+			break;
+		}
+	}
+	W.Requests.Insert(Request, InsertIndex);
+	
+	UE_LOG(LogTemp, Log, TEXT("SimWorldHex::RequestWalkerMoveTo: Added request to walker %d to move to (%d, %d) - Total requests: %d, Stance: %d"),
+		WalkerIndex, TargetHex.Q, TargetHex.R, W.Requests.Num(), (int32)W.Stance);
+	
+	return true;
 }
 
 bool USimWorldHex::TryPutItem(const FHex& H, const FItem& I)

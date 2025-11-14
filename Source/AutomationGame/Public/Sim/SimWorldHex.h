@@ -110,6 +110,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Build") int32 AddArm(const FArmState& Arm);
 	UFUNCTION(BlueprintCallable, Category = "Build") int32 AddWalker(const FWalkerState& Walker);
 	
+	// Walker request API
+	UFUNCTION(BlueprintCallable, Category = "Sim|Walker")
+	int32 FindNearestAvailableWalker(const FHex& FromHex);
+	UFUNCTION(BlueprintCallable, Category = "Sim|Walker")
+	bool RequestWalkerMoveTo(int32 WalkerIndex, const FHex& TargetHex, int32 Priority = 0);
+	
 	// Cluster template API (C++ only - TPair is not Blueprint-compatible)
 	// Cluster template structure (must be public for external access)
 	struct FClusterTemplate

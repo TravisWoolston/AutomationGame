@@ -247,6 +247,9 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 
 	IC->BindAction("RotateCW", IE_Pressed, this, &AHexTopDownPawn::RotCW);
 	IC->BindAction("RotateCCW", IE_Pressed, this, &AHexTopDownPawn::RotCCW);
+	
+	// Walker control
+	IC->BindAction("RequestWalkerMove", IE_Pressed, this, &AHexTopDownPawn::RequestMoveToTile);
 
 	IC->BindAction("Kind1", IE_Pressed, this, &AHexTopDownPawn::SetInputMode1);
 	IC->BindAction("Kind2", IE_Pressed, this, &AHexTopDownPawn::SetInputMode2);
@@ -308,6 +311,56 @@ void AHexTopDownPawn::SetInputMode5() { if (Placer) Placer->SetPlaceKind(EPlaceK
 void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Unbond); }
 void AHexTopDownPawn::SetInputMode7() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterOutput); }
 void AHexTopDownPawn::SetInputMode9() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterInput); }
+void AHexTopDownPawn::RequestMoveToTile()
+{
+	if (!Placer || !Placer->IsHoverValid())
+	{
+		return;
+	}
+	
+	FHex TargetHex = Placer->GetHoverHex();
+	
+	// Get simulation
+	UWorld* W = GetWorld();
+	if (!W)
+	{
+		return;
+	}
+	
+	AOrbSimDriver* Driver = nullptr;
+	for (TActorIterator<AOrbSimDriver> It(W); It; ++It)
+	{
+		Driver = *It;
+		break;
+	}
+	
+	if (!Driver || !Driver->GetSim())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn: No simulation found for walker request."));
+		return;
+	}
+	
+	USimWorldHex* Sim = Driver->GetSim();
+	
+	// Find nearest available walker
+	int32 WalkerIndex = Sim->FindNearestAvailableWalker(TargetHex);
+	if (WalkerIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn: No walkers found for move request."));
+		return;
+	}
+	
+	// Issue move request
+	if (Sim->RequestWalkerMoveTo(WalkerIndex, TargetHex, 0))
+	{
+		UE_LOG(LogTemp, Log, TEXT("HexTopDownPawn: Requested walker %d to move to (%d, %d)"), WalkerIndex, TargetHex.Q, TargetHex.R);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn: Failed to request walker move."));
+	}
+}
+
 void AHexTopDownPawn::SetInputMode8()
 {
 	// Find GameManager to get DifficultyValue
