@@ -442,11 +442,12 @@ private:
 	UMaterialInterface* WalkerFootDebugMaterial = nullptr;
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
 	UMaterialInterface* WalkerKneeDebugMaterial = nullptr;
-	void GatherWalkerCalibrationData(class UPoseableMeshComponent* PoseableComp);
-	void RestoreWalkerSittingPose(class UPoseableMeshComponent* PoseableComp) const;
-	void SolveWalkerLeg(class UPoseableMeshComponent* PoseableComp, const FWalkerLegCalibrationData& LegData) const;
-	void CreateWalkerDebugMeshes(class ABasicWalker* Walker, class UPoseableMeshComponent* PoseableComp);
-	void UpdateWalkerDebugMeshes(const class UPoseableMeshComponent* PoseableComp);
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0.0"))
+	float StartingFootDistance = 0.f;
+	void GatherWalkerCalibrationData(class USkeletalMeshComponent* BodyComp);
+	void SetIKRigGoalPositions(class USkeletalMeshComponent* BodyComp, float HeightOffset);
+	void CreateWalkerDebugMeshes(class ABasicWalker* Walker, class USkeletalMeshComponent* BodyComp);
+	void UpdateWalkerDebugMeshes(const class USkeletalMeshComponent* BodyComp);
 	void ClearWalkerDebugMeshes();
 
 	void AutoFindRefs();

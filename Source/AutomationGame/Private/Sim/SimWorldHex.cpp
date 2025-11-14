@@ -161,7 +161,7 @@ int32 USimWorldHex::AddWalker(const FWalkerState& Walker)
 	
 	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::AddWalker - Added walker at (%d,%d) assigned SimIndex=%d (total walkers: %d)"),
 		Walker.BaseHex.Q, Walker.BaseHex.R, NewIndex, Walkers.Num());
-	
+
 	return NewIndex;
 }
 
