@@ -208,7 +208,8 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 			}
 		}
 		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants) || 
-		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ReachDistance))
+		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ReachDistance) ||
+		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, LegQuadrantOffset))
 		{
 			if (bWalkerCalibrationActive)
 			{
@@ -490,8 +491,8 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 	}
 	Loc.Z += WalkerBaseZ;
 
-	FActorSpawnParameters S; S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	ABasicWalker* Walker = GetWorld()->SpawnActor<ABasicWalker>(BasicWalkerClass, FTransform(FRotator::ZeroRotator, Loc), S);
+	FActorSpawnParameters SpawnParams; SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	ABasicWalker* Walker = GetWorld()->SpawnActor<ABasicWalker>(BasicWalkerClass, FTransform(FRotator::ZeroRotator, Loc), SpawnParams);
 	if (!Walker) return nullptr;
 
 	// Initialize actor-side data
@@ -527,12 +528,93 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		const int32 WalkerIndex = Sim->AddWalker(WalkerState);
 		Walker->SimWalkerIndex = WalkerIndex;
 
+		// Apply StartingFootDistance to walker's foot positions in the sim
+		// This applies the calibration setting to runtime walkers
+		if (WalkerIndex >= 0 && WalkerIndex < Sim->Walkers.Num() && !FMath::IsNearlyZero(SavedWalkerCalibration.StartingFootDistance))
+		{
+			FWalkerState& SimWalkerState = Sim->Walkers[WalkerIndex];
+			
+			// Get body world position
+			const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(Hex);
+			
+			// Apply StartingFootDistance to each foot
+			// Foot order: D, L, R, U (matches cross pattern initialization)
+			FHex* FeetHexes[] = { &SimWalkerState.DFoot.CurrentTile, &SimWalkerState.LFoot.CurrentTile, &SimWalkerState.RFoot.CurrentTile, &SimWalkerState.UFoot.CurrentTile };
+			FHex* FeetTargets[] = { &SimWalkerState.DFoot.TargetTile, &SimWalkerState.LFoot.TargetTile, &SimWalkerState.RFoot.TargetTile, &SimWalkerState.UFoot.TargetTile };
+			
+			// Initial foot positions (cross pattern)
+			FHex InitialFeet[] = {
+				FHex(Hex.Q + 1, Hex.R),  // D
+				FHex(Hex.Q, Hex.R + 1),  // L
+				FHex(Hex.Q - 1, Hex.R),  // R
+				FHex(Hex.Q, Hex.R - 1)   // U
+			};
+			
+			for (int32 i = 0; i < 4; ++i)
+			{
+				const FHex& InitialFootHex = InitialFeet[i];
+				const FVector InitialFootWorld = OrbSimDriver->MapHexToWorld(InitialFootHex);
+				
+				// Calculate direction from body to foot in horizontal plane
+				const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
+				const FVector FootWorld2D = FVector(InitialFootWorld.X, InitialFootWorld.Y, 0.f);
+				FVector BodyToFootDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
+				
+				// If direction is invalid, use a default direction based on foot index
+				if (BodyToFootDir.IsNearlyZero())
+				{
+					// Default directions for each foot (approximate)
+					const FVector DefaultDirs[] = {
+						FVector(1.f, 0.f, 0.f),   // D
+						FVector(0.f, 1.f, 0.f),   // L
+						FVector(-1.f, 0.f, 0.f),  // R
+						FVector(0.f, -1.f, 0.f)   // U
+					};
+					BodyToFootDir = DefaultDirs[i];
+				}
+				
+				// Calculate new position by adding offset along the direction from body to foot
+				const FVector Offset2D = BodyToFootDir * SavedWalkerCalibration.StartingFootDistance;
+				const FVector NewFootWorld2D = FootWorld2D + Offset2D;
+				
+				// Convert to hex
+				FHex NewFootHex;
+				if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, InitialFootWorld.Z), NewFootHex))
+				{
+					// Check if within reach distance
+					const int32 dq = NewFootHex.Q - Hex.Q;
+					const int32 dr = NewFootHex.R - Hex.R;
+					const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+					
+					if (HexDist <= ReachDistance)
+					{
+						*FeetHexes[i] = NewFootHex;
+						*FeetTargets[i] = NewFootHex;
+					}
+					else
+					{
+						// Too far, keep original position
+						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too far (dist=%d > %d), keeping original"), 
+							i, HexDist, ReachDistance);
+					}
+				}
+				else
+				{
+					// Conversion failed, keep original position
+					UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d failed to convert to hex, keeping original"), i);
+				}
+			}
+			
+			UE_LOG(LogTemp, Log, TEXT("GameManager: Applied StartingFootDistance=%.1f to walker %d foot positions"), 
+				SavedWalkerCalibration.StartingFootDistance, WalkerIndex);
+		}
+
 		// Now that SimWalkerIndex is set, we can call SetProgram
 		Walker->SetProgram(Program, bLoop);
 		Walker->Start();
 
-		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered walker at Hex(%d,%d) SimIndex=%d ProgramLen=%d, StepHeight=%.1f, ReachDist=%d, Ticks=(%d,%d,%d)"),
-			Hex.Q, Hex.R, WalkerIndex, Program.Num(), StepHeight, ReachDistance, StepRaiseTicks, StepMoveTicks, StepLowerTicks);
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered walker at Hex(%d,%d) SimIndex=%d ProgramLen=%d, StepHeight=%.1f, ReachDist=%d, Ticks=(%d,%d,%d), StartingFootDist=%.1f"),
+			Hex.Q, Hex.R, WalkerIndex, Program.Num(), StepHeight, ReachDistance, StepRaiseTicks, StepMoveTicks, StepLowerTicks, SavedWalkerCalibration.StartingFootDistance);
 	}
 	else
 	{

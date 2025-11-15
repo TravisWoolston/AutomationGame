@@ -69,6 +69,80 @@ void ABasicWalker::BeginPlay()
 		
 		UE_LOG(LogTemp, Log, TEXT("BasicWalker '%s': Initialized foot positions from sim - D(%d,%d) L(%d,%d) R(%d,%d) U(%d,%d)"),
 			*GetName(), DFootHex.Q, DFootHex.R, LFootHex.Q, LFootHex.R, RFootHex.Q, RFootHex.R, UFootHex.Q, UFootHex.R);
+		
+		// Initialize body position from hex location using actual grid settings
+		// This ensures the walker is positioned correctly even before the first tick
+		if (Driver)
+		{
+			const FVector HexWorldPos = Driver->MapHexToWorld(CurrentHex);
+			// Set actor location to hex position (body position will be calculated from feet in Tick)
+			SetActorLocation(HexWorldPos);
+			
+			// Initialize IK goals to current foot positions (using actual grid settings)
+			if (BodyComp && BodyComp->GetAnimInstance())
+			{
+				// Calculate foot positions using actual grid settings
+				const FVector DFootWorld = Driver->MapHexToWorld(DFootHex);
+				const FVector LFootWorld = Driver->MapHexToWorld(LFootHex);
+				const FVector RFootWorld = Driver->MapHexToWorld(RFootHex);
+				const FVector UFootWorld = Driver->MapHexToWorld(UFootHex);
+				
+				// Set initial IK goals via animation blueprint
+				UAnimInstance* AnimInstance = BodyComp->GetAnimInstance();
+				if (AnimInstance)
+				{
+					const FName FootGoalNames[] = { TEXT("DFootGoal"), TEXT("LFootGoal"), TEXT("RFootGoal"), TEXT("UFootGoal") };
+					const FVector FootPositions[] = { DFootWorld, LFootWorld, RFootWorld, UFootWorld };
+					
+					for (int32 i = 0; i < 4; ++i)
+					{
+						if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
+						{
+							if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+							{
+								if (StructProp->Struct == TBaseStructure<FVector>::Get())
+								{
+									FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+									if (GoalValue)
+									{
+										*GoalValue = FootPositions[i];
+									}
+								}
+							}
+						}
+					}
+					
+					// Set body goal to hex position
+					if (FProperty* BodyGoalProperty = AnimInstance->GetClass()->FindPropertyByName(TEXT("BodyGoal")))
+					{
+						if (FStructProperty* StructProp = CastField<FStructProperty>(BodyGoalProperty))
+						{
+							if (StructProp->Struct == TBaseStructure<FVector>::Get())
+							{
+								FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+								if (GoalValue)
+								{
+									*GoalValue = HexWorldPos;
+								}
+							}
+						}
+					}
+					
+					// Force animation update
+					AnimInstance->BlueprintThreadSafeUpdateAnimation(0.f);
+					BodyComp->TickAnimation(0.f, false);
+					BodyComp->RefreshBoneTransforms();
+				}
+			}
+			
+			UE_LOG(LogTemp, Log, TEXT("BasicWalker '%s': Initialized position from hex (%d,%d) to world (%.1f,%.1f,%.1f) using Driver=%s"),
+				*GetName(), CurrentHex.Q, CurrentHex.R, HexWorldPos.X, HexWorldPos.Y, HexWorldPos.Z,
+				Driver ? *Driver->GetName() : TEXT("null"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BasicWalker '%s': No Driver set - cannot initialize position from grid settings"), *GetName());
+		}
 	}
 
 	// hook shared fixed tick
@@ -238,8 +312,9 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		else
 		{
 			// No feet planted, use hex position as base (horizontal) with height offset
+			// Use Driver's MapHexToWorld to ensure we use actual grid settings
 			FVector HexWorld = HexToWorld(CurrentHex);
-			BodyEndWorld = FVector(HexWorld.X, HexWorld.Y, GetActorLocation().Z);
+			BodyEndWorld = FVector(HexWorld.X, HexWorld.Y, HexWorld.Z);
 			BodyEndWorld.Z += BodyHeightOffset;
 		}
 		
@@ -301,10 +376,51 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		if (GM && GM->bDebugWalkers)
 		{
 			const FVector BodyLocation = GetActorLocation();
-			DrawDebugLine(GetWorld(), BodyLocation, DFootEndWorld, FColor::Red, false, -1.f, 0, 2.f);
-			DrawDebugLine(GetWorld(), BodyLocation, LFootEndWorld, FColor::Green, false, -1.f, 0, 2.f);
-			DrawDebugLine(GetWorld(), BodyLocation, RFootEndWorld, FColor::Blue, false, -1.f, 0, 2.f);
-			DrawDebugLine(GetWorld(), BodyLocation, UFootEndWorld, FColor::Yellow, false, -1.f, 0, 2.f);
+			
+			// Get quadrant colors for each leg (applies LegQuadrantOffset)
+			// Leg order: D (0), L (1), R (2), U (3)
+			FLinearColor DColor = GM->GetLegQuadrantColor(TEXT("D"), 0);
+			FLinearColor LColor = GM->GetLegQuadrantColor(TEXT("L"), 1);
+			FLinearColor RColor = GM->GetLegQuadrantColor(TEXT("R"), 2);
+			FLinearColor UColor = GM->GetLegQuadrantColor(TEXT("U"), 3);
+			
+			// Draw lines from body to foot goals with quadrant colors
+			DrawDebugLine(GetWorld(), BodyLocation, DFootEndWorld, DColor.ToFColor(true), false, -1.f, 0, 3.f);
+			DrawDebugLine(GetWorld(), BodyLocation, LFootEndWorld, LColor.ToFColor(true), false, -1.f, 0, 3.f);
+			DrawDebugLine(GetWorld(), BodyLocation, RFootEndWorld, RColor.ToFColor(true), false, -1.f, 0, 3.f);
+			DrawDebugLine(GetWorld(), BodyLocation, UFootEndWorld, UColor.ToFColor(true), false, -1.f, 0, 3.f);
+			
+			// Draw spheres at foot positions with quadrant colors
+			DrawDebugSphere(GetWorld(), DFootEndWorld, 15.f, 8, DColor.ToFColor(true), false, -1.f, 0, 2.f);
+			DrawDebugSphere(GetWorld(), LFootEndWorld, 15.f, 8, LColor.ToFColor(true), false, -1.f, 0, 2.f);
+			DrawDebugSphere(GetWorld(), RFootEndWorld, 15.f, 8, RColor.ToFColor(true), false, -1.f, 0, 2.f);
+			DrawDebugSphere(GetWorld(), UFootEndWorld, 15.f, 8, UColor.ToFColor(true), false, -1.f, 0, 2.f);
+			
+			// Draw text showing foot hex positions and quadrant assignments
+			if (Driver)
+			{
+				FHex DFootHexLocal, LFootHexLocal, RFootHexLocal, UFootHexLocal;
+				if (Driver->WorldToHex(DFootEndWorld, DFootHexLocal))
+				{
+					FString DText = FString::Printf(TEXT("D:(%d,%d)"), DFootHexLocal.Q, DFootHexLocal.R);
+					DrawDebugString(GetWorld(), DFootEndWorld + FVector(0, 0, 20), DText, nullptr, DColor.ToFColor(true), 0.f, true, 1.2f);
+				}
+				if (Driver->WorldToHex(LFootEndWorld, LFootHexLocal))
+				{
+					FString LText = FString::Printf(TEXT("L:(%d,%d)"), LFootHexLocal.Q, LFootHexLocal.R);
+					DrawDebugString(GetWorld(), LFootEndWorld + FVector(0, 0, 20), LText, nullptr, LColor.ToFColor(true), 0.f, true, 1.2f);
+				}
+				if (Driver->WorldToHex(RFootEndWorld, RFootHexLocal))
+				{
+					FString RText = FString::Printf(TEXT("R:(%d,%d)"), RFootHexLocal.Q, RFootHexLocal.R);
+					DrawDebugString(GetWorld(), RFootEndWorld + FVector(0, 0, 20), RText, nullptr, RColor.ToFColor(true), 0.f, true, 1.2f);
+				}
+				if (Driver->WorldToHex(UFootEndWorld, UFootHexLocal))
+				{
+					FString UText = FString::Printf(TEXT("U:(%d,%d)"), UFootHexLocal.Q, UFootHexLocal.R);
+					DrawDebugString(GetWorld(), UFootEndWorld + FVector(0, 0, 20), UText, nullptr, UColor.ToFColor(true), 0.f, true, 1.2f);
+				}
+			}
 		}
 		
 		// Set actor location to body end position
@@ -353,7 +469,12 @@ void ABasicWalker::RefreshMeshes()
 
 FVector ABasicWalker::HexToWorld(const FHex& H) const
 {
-	if (!Driver) return GetActorLocation();
+	if (!Driver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BasicWalker '%s': HexToWorld called without Driver - using actor location"), *GetName());
+		return GetActorLocation();
+	}
+	// Always use the Driver's MapHexToWorld which uses actual grid settings (tile size, orientation, yaw, anchor)
 	return Driver->MapHexToWorld(H);
 }
 

@@ -1032,7 +1032,8 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 	}
 
 	ABasicWalker* Walker = CalibratingWalker.Get();
-	if (!Walker)
+	USkeletalMeshComponent* BodyComp = Walker ? Walker->GetBodyComponent() : nullptr;
+	if (!Walker || !BodyComp)
 	{
 		return;
 	}
@@ -1044,22 +1045,410 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 		return;
 	}
 
+	// Helper function to apply quadrant offset
+	// Quadrant order: D (0), L (1), R (2), U (3)
+	// Offset rotates the quadrant assignment
+	auto ApplyQuadrantOffset = [](const FString& OriginalQuadrant, int32 Offset) -> FString
+	{
+		static const TArray<FString> QuadrantOrder = { TEXT("D"), TEXT("L"), TEXT("R"), TEXT("U") };
+		int32 OriginalIndex = -1;
+		for (int32 i = 0; i < QuadrantOrder.Num(); ++i)
+		{
+			if (QuadrantOrder[i] == OriginalQuadrant)
+			{
+				OriginalIndex = i;
+				break;
+			}
+		}
+		if (OriginalIndex < 0)
+		{
+			return OriginalQuadrant; // Invalid quadrant, return as-is
+		}
+		// Apply offset and wrap around
+		int32 OffsetValue = FMath::Clamp(Offset, 0, 3);
+		int32 NewIndex = (OriginalIndex + OffsetValue) % 4;
+		return QuadrantOrder[NewIndex];
+	};
+
 	// Base color mapping for each leg quadrant (consistent colors, no variation)
+	// Colors are assigned based on actual tile quadrant colors, not bone names
 	static const TMap<FString, FLinearColor> LegBaseColors = {
-		{ TEXT("D"), FLinearColor(1.0f, 0.0f, 0.0f) },  // Red
-		{ TEXT("L"), FLinearColor(0.0f, 1.0f, 0.0f) },  // Green
-		{ TEXT("R"), FLinearColor(0.0f, 0.0f, 1.0f) },  // Blue
-		{ TEXT("U"), FLinearColor(1.0f, 1.0f, 0.0f) }   // Yellow
+		{ TEXT("D"), FLinearColor(1.0f, 1.0f, 0.0f) },  // Yellow (D leg gets yellow tiles)
+		{ TEXT("L"), FLinearColor(0.0f, 0.0f, 1.0f) },  // Blue (L leg gets blue tiles)
+		{ TEXT("R"), FLinearColor(0.0f, 1.0f, 0.0f) },  // Green (R leg gets green tiles)
+		{ TEXT("U"), FLinearColor(1.0f, 0.0f, 0.0f) }   // Red (U leg gets red tiles)
 	};
 
 	// Get tile size for marker scaling
 	const float TileSize = OrbSimDriver->GetTileSize();
 	const float MarkerScale = 0.25f; // Scale relative to tile size
+	const float KneeMarkerScale = 0.35f; // Slightly larger for knee markers
 
 	UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	if (!SphereMesh)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("GameManager: Failed to load sphere mesh for quadrant visualization."));
+		return;
+	}
+
+	// Helper function to determine fixed quadrant from hex coordinates
+	// Fixed quadrants are based on hex coordinates relative to body, NOT leg positions or offset
+	// Walker initialization pattern: D: Q+1, L: R+1, R: Q-1, U: R-1
+	auto GetFixedQuadrantFromHex = [](const FHex& BodyHex, const FHex& TestHex) -> FString
+	{
+		// Use hex coordinate differences to determine fixed quadrant
+		// Match walker initialization: D=Q+1, L=R+1, R=Q-1, U=R-1
+		const int32 dq = TestHex.Q - BodyHex.Q;
+		const int32 dr = TestHex.R - BodyHex.R;
+		
+		// For axis-aligned hexes:
+		if (dq > 0 && dr == 0)
+		{
+			return TEXT("D"); // Positive Q (Q+1)
+		}
+		else if (dq == 0 && dr > 0)
+		{
+			return TEXT("L"); // Positive R (R+1)
+		}
+		else if (dq < 0 && dr == 0)
+		{
+			return TEXT("R"); // Negative Q (Q-1)
+		}
+		else if (dq == 0 && dr < 0)
+		{
+			return TEXT("U"); // Negative R (R-1)
+		}
+		// For diagonal hexes, use the dominant direction
+		else if (FMath::Abs(dq) > FMath::Abs(dr))
+		{
+			// Q direction is dominant
+			return (dq > 0) ? TEXT("D") : TEXT("R");
+		}
+		else if (FMath::Abs(dr) > FMath::Abs(dq))
+		{
+			// R direction is dominant
+			return (dr > 0) ? TEXT("L") : TEXT("U");
+		}
+		else
+		{
+			// Equal magnitude - use diagonal assignment based on signs
+			// Prioritize based on walker initialization pattern
+			if (dq > 0 && dr > 0)
+			{
+				// Southeast diagonal - prioritize R (positive R is L)
+				return TEXT("L");
+			}
+			else if (dq > 0 && dr < 0)
+			{
+				// Northeast diagonal - prioritize Q (positive Q is D)
+				return TEXT("D");
+			}
+			else if (dq < 0 && dr > 0)
+			{
+				// Southwest diagonal - prioritize R (positive R is L)
+				return TEXT("L");
+			}
+			else // dq < 0 && dr < 0
+			{
+				// Northwest diagonal - prioritize R (negative R is U)
+				return TEXT("U");
+			}
+		}
+	};
+
+	// First pass: Map legs to quadrants (with offset applied)
+	// Map: LegIndex -> AssignedQuadrant
+	TMap<int32, FString> LegToQuadrantMap;
+	TMap<int32, FLinearColor> LegToColorMap;
+	TMap<int32, FName> LegToKneeBoneMap;
+	
+	for (int32 LegIndex = 0; LegIndex < WalkerLegCalibrations.Num(); ++LegIndex)
+	{
+		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[LegIndex];
+		
+		// Determine leg quadrant from bone name
+		FString OriginalQuadrant;
+		const FString HipName = LegData.HipAxleBone.ToString();
+		if (HipName.StartsWith(TEXT("D")))
+		{
+			OriginalQuadrant = TEXT("D");
+		}
+		else if (HipName.StartsWith(TEXT("L")))
+		{
+			OriginalQuadrant = TEXT("L");
+		}
+		else if (HipName.StartsWith(TEXT("R")))
+		{
+			OriginalQuadrant = TEXT("R");
+		}
+		else if (HipName.StartsWith(TEXT("U")))
+		{
+			OriginalQuadrant = TEXT("U");
+		}
+		else
+		{
+			continue;
+		}
+
+		// Apply quadrant offset (same offset for all legs - rotates which quadrant each leg is assigned to)
+		int32 Offset = FMath::Clamp(LegQuadrantOffset, 0, 3);
+		FString AssignedQuadrant = ApplyQuadrantOffset(OriginalQuadrant, Offset);
+
+		const FLinearColor* QuadrantBaseColor = LegBaseColors.Find(AssignedQuadrant);
+		if (!QuadrantBaseColor)
+		{
+			continue;
+		}
+
+		LegToQuadrantMap.Add(LegIndex, AssignedQuadrant);
+		LegToColorMap.Add(LegIndex, *QuadrantBaseColor);
+		LegToKneeBoneMap.Add(LegIndex, LegData.KneeAxleBone);
+	}
+
+	// Second pass: Assign tiles to fixed quadrants based on hex coordinates (NO offset applied)
+	// Map: Hex -> FixedQuadrant (D, L, R, U based on hex position)
+	TMap<FHex, FString> HexToQuadrantMap;
+	
+	const int32 SearchRadius = ReachDistance + 1;
+	for (int32 q = -SearchRadius; q <= SearchRadius; ++q)
+	{
+		for (int32 r = -SearchRadius; r <= SearchRadius; ++r)
+		{
+			FHex TestHex(BodyHex.Q + q, BodyHex.R + r);
+			
+			// Skip body hex itself
+			if (TestHex == BodyHex)
+			{
+				continue;
+			}
+			
+			// Check hex distance from body
+			const int32 dq = TestHex.Q - BodyHex.Q;
+			const int32 dr = TestHex.R - BodyHex.R;
+			const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+			
+			if (HexDist > ReachDistance)
+			{
+				continue;
+			}
+			
+			// Assign hex to fixed quadrant based on hex coordinates and world angle (no offset - this is the actual spatial quadrant)
+			FString FixedQuadrant = GetFixedQuadrantFromHex(BodyHex, TestHex);
+			HexToQuadrantMap.Add(TestHex, FixedQuadrant);
+		}
+	}
+	
+	// Third pass: Map fixed quadrants to legs (using offset)
+	// Then create Hex -> LegIndex mapping
+	TMap<FHex, int32> HexToLegMap;
+	
+	// Create reverse mapping: FixedQuadrant -> LegIndex (which leg is assigned to this fixed quadrant)
+	TMap<FString, int32> QuadrantToLegMap;
+	for (const auto& LegQuadPair : LegToQuadrantMap)
+	{
+		QuadrantToLegMap.Add(LegQuadPair.Value, LegQuadPair.Key);
+	}
+	
+	// Assign each hex to the leg that's assigned to its fixed quadrant
+	for (const auto& HexQuadPair : HexToQuadrantMap)
+	{
+		const FHex& Hex = HexQuadPair.Key;
+		const FString& FixedQuadrant = HexQuadPair.Value;
+		
+		// Find which leg is assigned to this fixed quadrant (after offset)
+		const int32* LegIndexPtr = QuadrantToLegMap.Find(FixedQuadrant);
+		if (LegIndexPtr)
+		{
+			HexToLegMap.Add(Hex, *LegIndexPtr);
+		}
+	}
+
+	// Fourth pass: Create material instances for each leg (one per leg, shared across all tiles)
+	TMap<int32, UMaterialInstanceDynamic*> LegMaterials;
+	
+	if (UMaterialInterface* BaseMaterial = GEngine->DebugMeshMaterial)
+	{
+		for (const auto& LegColorPair : LegToColorMap)
+		{
+			const int32 LegIndex = LegColorPair.Key;
+			const FLinearColor& LegColor = LegColorPair.Value;
+			
+			UMaterialInstanceDynamic* LegMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			if (LegMaterial)
+			{
+				// Use consistent color for this leg (no variation)
+				LegMaterial->SetVectorParameterValue(TEXT("Color"), LegColor);
+				LegMaterial->SetVectorParameterValue(TEXT("BaseColor"), LegColor);
+				LegMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LegColor);
+				LegMaterial->SetVectorParameterValue(TEXT("DiffuseColor"), LegColor);
+				
+				LegMaterials.Add(LegIndex, LegMaterial);
+			}
+		}
+	}
+
+	// Fourth pass: Create tile markers (each hex gets exactly one marker with its assigned leg's color)
+	for (const auto& HexLegPair : HexToLegMap)
+	{
+		const FHex& ReachableHex = HexLegPair.Key;
+		const int32 LegIndex = HexLegPair.Value;
+		
+		UMaterialInstanceDynamic** LegMaterialPtr = LegMaterials.Find(LegIndex);
+		if (!LegMaterialPtr || !*LegMaterialPtr)
+		{
+			continue;
+		}
+		
+		const FVector TileWorld = OrbSimDriver->MapHexToWorld(ReachableHex);
+		
+		UStaticMeshComponent* MarkerComp = NewObject<UStaticMeshComponent>(Walker);
+		if (MarkerComp)
+		{
+			MarkerComp->SetStaticMesh(SphereMesh);
+			MarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			MarkerComp->SetMobility(EComponentMobility::Movable);
+			MarkerComp->SetCastShadow(false);
+			MarkerComp->SetIsVisualizationComponent(true);
+			
+			// Use the assigned leg's consistent material
+			MarkerComp->SetMaterial(0, *LegMaterialPtr);
+			
+			MarkerComp->RegisterComponent();
+			MarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+			MarkerComp->SetWorldScale3D(FVector(MarkerScale));
+			MarkerComp->SetWorldLocation(TileWorld + FVector(0.f, 0.f, 5.f)); // Slightly above ground
+			MarkerComp->SetVisibility(true, true);
+		}
+		WalkerQuadrantTileMarkers.Add(MarkerComp);
+	}
+
+	// Fifth pass: Create knee markers with leg quadrant colors
+	for (const auto& LegKneePair : LegToKneeBoneMap)
+	{
+		const int32 LegIndex = LegKneePair.Key;
+		const FName& KneeBone = LegKneePair.Value;
+		
+		// Get knee world position
+		const FVector KneeWorldPos = BodyComp->GetBoneLocation(KneeBone, EBoneSpaces::WorldSpace);
+		
+		UMaterialInstanceDynamic** LegMaterialPtr = LegMaterials.Find(LegIndex);
+		if (!LegMaterialPtr || !*LegMaterialPtr)
+		{
+			continue;
+		}
+		
+		UStaticMeshComponent* KneeMarkerComp = NewObject<UStaticMeshComponent>(Walker);
+		if (KneeMarkerComp)
+		{
+			KneeMarkerComp->SetStaticMesh(SphereMesh);
+			KneeMarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			KneeMarkerComp->SetMobility(EComponentMobility::Movable);
+			KneeMarkerComp->SetCastShadow(false);
+			KneeMarkerComp->SetIsVisualizationComponent(true);
+			
+			// Use the leg's quadrant color (after offset applied)
+			KneeMarkerComp->SetMaterial(0, *LegMaterialPtr);
+			
+			KneeMarkerComp->RegisterComponent();
+			KneeMarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+			KneeMarkerComp->SetWorldScale3D(FVector(KneeMarkerScale));
+			KneeMarkerComp->SetWorldLocation(KneeWorldPos);
+			KneeMarkerComp->SetVisibility(true, true);
+		}
+		WalkerQuadrantTileMarkers.Add(KneeMarkerComp);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Updated leg tile quadrant visualization with %d tile markers and %d knee markers"), 
+		HexToLegMap.Num(), LegToKneeBoneMap.Num());
+}
+
+void AGameManager::ClearLegTileQuadrantVisualization()
+{
+	for (UStaticMeshComponent* MarkerComp : WalkerQuadrantTileMarkers)
+	{
+		if (MarkerComp)
+		{
+			MarkerComp->DestroyComponent();
+		}
+	}
+	WalkerQuadrantTileMarkers.Empty();
+}
+
+void AGameManager::LoadWalkerCalibration()
+{
+	// Load from saved config
+	if (SavedWalkerCalibration.StandHeight != 0.f || SavedWalkerCalibration.StartingFootDistance != 0.f || SavedWalkerCalibration.LegQuadrantOffset != 0)
+	{
+		DesiredStandHeight = SavedWalkerCalibration.StandHeight;
+		StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
+		StepHeight = SavedWalkerCalibration.StepHeight;
+		StepRaiseTicks = SavedWalkerCalibration.StepRaiseTicks;
+		StepMoveTicks = SavedWalkerCalibration.StepMoveTicks;
+		StepLowerTicks = SavedWalkerCalibration.StepLowerTicks;
+		ReachDistance = SavedWalkerCalibration.ReachDistance;
+		ActiveFoot = SavedWalkerCalibration.ActiveFoot;
+		LegQuadrantOffset = SavedWalkerCalibration.LegQuadrantOffset;
+		// Don't load WalkerOriginalFootPositions or WalkerSittingPose from saved config
+		// These will be gathered fresh from the mesh in GatherWalkerCalibrationData()
+		// Saved positions are only for reference, not for active calibration
+		
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Loaded walker calibration settings from config - StandHeight=%.1f, StartingFootDistance=%.1f, LegQuadrantOffset=%d"), 
+			DesiredStandHeight, StartingFootDistance, LegQuadrantOffset);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("GameManager: No saved walker calibration found, using defaults"));
+	}
+}
+
+void AGameManager::SaveWalkerCalibrationToConfig()
+{
+	// Save current settings to config
+	SavedWalkerCalibration.StandHeight = DesiredStandHeight;
+	SavedWalkerCalibration.StartingFootDistance = StartingFootDistance;
+	SavedWalkerCalibration.StepHeight = StepHeight;
+	SavedWalkerCalibration.StepRaiseTicks = StepRaiseTicks;
+	SavedWalkerCalibration.StepMoveTicks = StepMoveTicks;
+	SavedWalkerCalibration.StepLowerTicks = StepLowerTicks;
+	SavedWalkerCalibration.ReachDistance = ReachDistance;
+	SavedWalkerCalibration.ActiveFoot = ActiveFoot;
+	SavedWalkerCalibration.OriginalFootPositions = WalkerOriginalFootPositions;
+	SavedWalkerCalibration.SittingPose = WalkerSittingPose;
+	SavedWalkerCalibration.LegQuadrantOffset = LegQuadrantOffset;
+	
+	// Save to config file
+	SaveConfig();
+	
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Saved walker calibration to config file"));
+}
+
+void AGameManager::FootToOuterMostTile()
+{
+	if (!bWalkerCalibrationActive || !CalibratingWalker.IsValid() || !OrbSimDriver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: FootToOuterMostTile called without an active calibration."));
+		return;
+	}
+
+	ABasicWalker* Walker = CalibratingWalker.Get();
+	if (!Walker)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Calibration walker missing."));
+		return;
+	}
+
+	USkeletalMeshComponent* BodyComp = Walker->GetBodyComponent();
+	if (!BodyComp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Calibration walker has no skeletal mesh component."));
+		return;
+	}
+
+	// Get body hex position
+	FHex BodyHex;
+	if (!OrbSimDriver->WorldToHex(WalkerBodyBaseWorldLocation, BodyHex))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Cannot determine body hex position."));
 		return;
 	}
 
@@ -1084,196 +1473,281 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 	// Get body world position
 	const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(BodyHex);
 
-	// For each leg, create a cone-shaped quadrant from body center
+	// Helper function to apply quadrant offset (same as in UpdateLegTileQuadrantVisualization)
+	auto ApplyQuadrantOffset = [](const FString& OriginalQuadrant, int32 Offset) -> FString
+	{
+		static const TArray<FString> QuadrantOrder = { TEXT("D"), TEXT("L"), TEXT("R"), TEXT("U") };
+		int32 OriginalIndex = -1;
+		for (int32 i = 0; i < QuadrantOrder.Num(); ++i)
+		{
+			if (QuadrantOrder[i] == OriginalQuadrant)
+			{
+				OriginalIndex = i;
+				break;
+			}
+		}
+		if (OriginalIndex < 0)
+		{
+			return OriginalQuadrant; // Invalid quadrant, return as-is
+		}
+		// Apply offset and wrap around
+		int32 OffsetValue = FMath::Clamp(Offset, 0, 3);
+		int32 NewIndex = (OriginalIndex + OffsetValue) % 4;
+		return QuadrantOrder[NewIndex];
+	};
+
+	// Helper function to determine fixed quadrant from hex coordinates (same as UpdateLegTileQuadrantVisualization)
+	// Fixed quadrants are based on hex coordinates relative to body, NOT leg positions or offset
+	auto GetFixedQuadrantFromHex = [](const FHex& BodyHex, const FHex& TestHex) -> FString
+	{
+		const int32 dq = TestHex.Q - BodyHex.Q;
+		const int32 dr = TestHex.R - BodyHex.R;
+		
+		// Use hex coordinate differences to determine fixed quadrant
+		// Match walker initialization: D=Q+1, L=R+1, R=Q-1, U=R-1
+		if (dq > 0 && dr == 0)
+		{
+			return TEXT("D"); // Positive Q (Q+1)
+		}
+		else if (dq == 0 && dr > 0)
+		{
+			return TEXT("L"); // Positive R (R+1)
+		}
+		else if (dq < 0 && dr == 0)
+		{
+			return TEXT("R"); // Negative Q (Q-1)
+		}
+		else if (dq == 0 && dr < 0)
+		{
+			return TEXT("U"); // Negative R (R-1)
+		}
+		// For diagonal hexes, use the dominant direction
+		else if (FMath::Abs(dq) > FMath::Abs(dr))
+		{
+			return (dq > 0) ? TEXT("D") : TEXT("R");
+		}
+		else if (FMath::Abs(dr) > FMath::Abs(dq))
+		{
+			return (dr > 0) ? TEXT("L") : TEXT("U");
+		}
+		else
+		{
+			// Equal magnitude - use diagonal assignment based on signs
+			if (dq > 0 && dr > 0)
+			{
+				return TEXT("L");
+			}
+			else if (dq > 0 && dr < 0)
+			{
+				return TEXT("D");
+			}
+			else if (dq < 0 && dr > 0)
+			{
+				return TEXT("L");
+			}
+			else // dq < 0 && dr < 0
+			{
+				return TEXT("U");
+			}
+		}
+	};
+	
+	// First pass: Map legs to quadrants (with offset applied)
+	// Map: LegIndex -> AssignedQuadrant (which fixed quadrant this leg is assigned to)
+	TMap<int32, FString> LegToQuadrantMap;
+	
 	for (int32 LegIndex = 0; LegIndex < WalkerLegCalibrations.Num(); ++LegIndex)
 	{
 		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[LegIndex];
 		
 		// Determine leg quadrant from bone name
-		FString LegQuadrant;
+		FString OriginalQuadrant;
 		const FString HipName = LegData.HipAxleBone.ToString();
 		if (HipName.StartsWith(TEXT("D")))
 		{
-			LegQuadrant = TEXT("D");
+			OriginalQuadrant = TEXT("D");
 		}
 		else if (HipName.StartsWith(TEXT("L")))
 		{
-			LegQuadrant = TEXT("L");
+			OriginalQuadrant = TEXT("L");
 		}
 		else if (HipName.StartsWith(TEXT("R")))
 		{
-			LegQuadrant = TEXT("R");
+			OriginalQuadrant = TEXT("R");
 		}
 		else if (HipName.StartsWith(TEXT("U")))
 		{
-			LegQuadrant = TEXT("U");
+			OriginalQuadrant = TEXT("U");
 		}
 		else
 		{
 			continue;
 		}
-
-		const FLinearColor* QuadrantBaseColor = LegBaseColors.Find(LegQuadrant);
-		if (!QuadrantBaseColor)
+		
+		// Apply quadrant offset (same offset for all legs - rotates which quadrant each leg is assigned to)
+		int32 Offset = FMath::Clamp(LegQuadrantOffset, 0, 3);
+		FString AssignedQuadrant = ApplyQuadrantOffset(OriginalQuadrant, Offset);
+		
+		LegToQuadrantMap.Add(LegIndex, AssignedQuadrant);
+	}
+	
+	// Create reverse mapping: FixedQuadrant -> LegIndex (which leg is assigned to this fixed quadrant)
+	TMap<FString, int32> QuadrantToLegMap;
+	for (const auto& LegQuadPair : LegToQuadrantMap)
+	{
+		QuadrantToLegMap.Add(LegQuadPair.Value, LegQuadPair.Key);
+	}
+	
+	// Second pass: Find furthest tile in each leg's assigned quadrant
+	TMap<int32, FHex> LegToFurthestHex;
+	TMap<int32, float> LegToFurthestDistance;
+	
+	const int32 SearchRadius = ReachDistance + 1;
+	
+	for (int32 q = -SearchRadius; q <= SearchRadius; ++q)
+	{
+		for (int32 r = -SearchRadius; r <= SearchRadius; ++r)
 		{
+			FHex TestHex(BodyHex.Q + q, BodyHex.R + r);
+			
+			// Skip body hex itself
+			if (TestHex == BodyHex)
+			{
+				continue;
+			}
+			
+			// Check hex distance from body
+			const int32 dq = TestHex.Q - BodyHex.Q;
+			const int32 dr = TestHex.R - BodyHex.R;
+			const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+			
+			if (HexDist > ReachDistance)
+			{
+				continue;
+			}
+			
+			// Assign hex to fixed quadrant based on hex coordinates (no offset)
+			FString FixedQuadrant = GetFixedQuadrantFromHex(BodyHex, TestHex);
+			
+			// Find which leg is assigned to this fixed quadrant (after offset)
+			const int32* LegIndexPtr = QuadrantToLegMap.Find(FixedQuadrant);
+			if (!LegIndexPtr)
+			{
+				continue;
+			}
+			
+			const int32 LegIndex = *LegIndexPtr;
+			
+			// Get test hex world position for distance calculation
+			const FVector TestWorldPos = OrbSimDriver->MapHexToWorld(TestHex);
+			const float Distance = FVector::Dist2D(BodyWorldPos, TestWorldPos);
+			
+			// Update furthest hex for this leg if this hex is further
+			float* ExistingDistance = LegToFurthestDistance.Find(LegIndex);
+			if (!ExistingDistance || Distance > *ExistingDistance)
+			{
+				LegToFurthestHex.Add(LegIndex, TestHex);
+				LegToFurthestDistance.Add(LegIndex, Distance);
+			}
+		}
+	}
+
+	// Third pass: Update foot positions to furthest tiles
+	bool bAnyUpdated = false;
+	for (int32 LegIndex = 0; LegIndex < WalkerLegCalibrations.Num(); ++LegIndex)
+	{
+		const FHex* FurthestHex = LegToFurthestHex.Find(LegIndex);
+		if (!FurthestHex)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GameManager: No furthest hex found for leg %d"), LegIndex);
 			continue;
 		}
-
-		// Get foot world position (this defines the cone direction)
-		const FVector FootWorldPos = LegData.FootAxleWorldLocation;
 		
-		// Calculate direction from body to foot in world space (this defines the cone center)
-		const float LegDirectionAngle = CalculateWorldAngle(BodyWorldPos, FootWorldPos);
+		// Find which quadrant this leg is assigned to (after offset)
+		const FString* AssignedQuadrantPtr = LegToQuadrantMap.Find(LegIndex);
+		if (!AssignedQuadrantPtr)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GameManager: No quadrant assignment found for leg %d"), LegIndex);
+			continue;
+		}
 		
-		// Cone angle (90 degrees = PI/2 radians half-angle = 180 degrees total cone)
-		// This creates a wide cone that covers the leg's reach area
-		const float ConeHalfAngle = PI / 2.f; // 90 degrees half-angle
+		FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[LegIndex];
+		const FVector FurthestWorld = OrbSimDriver->MapHexToWorld(*FurthestHex);
 		
-		// Find all hexes within ReachDistance from body that are in the cone
-		TArray<FHex> ReachableHexes;
-		const int32 SearchRadius = ReachDistance + 1; // Search slightly beyond reach distance
-		for (int32 q = -SearchRadius; q <= SearchRadius; ++q)
-		{
-			for (int32 r = -SearchRadius; r <= SearchRadius; ++r)
-			{
-				FHex TestHex(BodyHex.Q + q, BodyHex.R + r);
-				
-				// Skip body hex itself
-				if (TestHex == BodyHex)
-				{
-					continue;
-				}
-				
-				// Check hex distance from body
-				const int32 dq = TestHex.Q - BodyHex.Q;
-				const int32 dr = TestHex.R - BodyHex.R;
-				const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-				
-				if (HexDist > ReachDistance)
-				{
-					continue;
-				}
-				
-				// Get test hex world position
-				const FVector TestWorldPos = OrbSimDriver->MapHexToWorld(TestHex);
-				
-				// Calculate angle from body to test hex in world space
-				const float TestAngle = CalculateWorldAngle(BodyWorldPos, TestWorldPos);
-				
-				// Calculate angle difference (handle wrap-around)
-				const float AngleDiff = NormalizeAngleDiff(TestAngle, LegDirectionAngle);
-				
-				// Check if within cone
-				if (AngleDiff <= ConeHalfAngle)
-				{
-					ReachableHexes.Add(TestHex);
-				}
-			}
-		}
-
-		// Create visual markers for each reachable tile with consistent leg color
-		// Use a single material instance per leg for better performance
-		UMaterialInstanceDynamic* LegMaterial = nullptr;
-		if (UMaterialInterface* BaseMaterial = GEngine->DebugMeshMaterial)
-		{
-			LegMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-			if (LegMaterial)
-			{
-				// Use consistent color for this leg (no variation)
-				LegMaterial->SetVectorParameterValue(TEXT("Color"), *QuadrantBaseColor);
-				LegMaterial->SetVectorParameterValue(TEXT("BaseColor"), *QuadrantBaseColor);
-				LegMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), *QuadrantBaseColor);
-				LegMaterial->SetVectorParameterValue(TEXT("DiffuseColor"), *QuadrantBaseColor);
-			}
-		}
-
-		for (const FHex& ReachableHex : ReachableHexes)
-		{
-			const FVector TileWorld = OrbSimDriver->MapHexToWorld(ReachableHex);
-			
-			UStaticMeshComponent* MarkerComp = NewObject<UStaticMeshComponent>(Walker);
-			if (MarkerComp)
-			{
-				MarkerComp->SetStaticMesh(SphereMesh);
-				MarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-				MarkerComp->SetMobility(EComponentMobility::Movable);
-				MarkerComp->SetCastShadow(false);
-				MarkerComp->SetIsVisualizationComponent(true);
-				
-				// Use the leg's consistent material
-				if (LegMaterial)
-				{
-					MarkerComp->SetMaterial(0, LegMaterial);
-				}
-				
-				MarkerComp->RegisterComponent();
-				MarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
-				MarkerComp->SetWorldScale3D(FVector(MarkerScale));
-				MarkerComp->SetWorldLocation(TileWorld + FVector(0.f, 0.f, 5.f)); // Slightly above ground
-				MarkerComp->SetVisibility(true, true);
-			}
-			WalkerQuadrantTileMarkers.Add(MarkerComp);
-		}
+		// Update foot position to furthest hex (keep original Z coordinate)
+		const float OriginalZ = LegData.FootAxleWorldLocation.Z;
+		LegData.FootAxleWorldLocation = FVector(FurthestWorld.X, FurthestWorld.Y, OriginalZ);
+		
+		bAnyUpdated = true;
+		
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Updated leg %d (assigned to quadrant %s) to furthest hex (%d,%d) at distance %.1f"),
+			LegIndex, **AssignedQuadrantPtr, FurthestHex->Q, FurthestHex->R, LegToFurthestDistance[LegIndex]);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("GameManager: Updated leg tile quadrant visualization with %d markers"), WalkerQuadrantTileMarkers.Num());
+	if (bAnyUpdated)
+	{
+		// Apply the updated foot positions via IK Rig
+		SetIKRigGoalPositions(BodyComp, CurrentStandHeight);
+		UpdateWalkerDebugMeshes(BodyComp);
+		
+		// Update quadrant visualization if enabled
+		if (bShowLegTileQuadrants)
+		{
+			UpdateLegTileQuadrantVisualization();
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("GameManager: FootToOuterMostTile completed - updated %d feet"), LegToFurthestHex.Num());
+	}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GameManager: FootToOuterMostTile found no valid tiles to update"));
+		}
 }
 
-void AGameManager::ClearLegTileQuadrantVisualization()
+FLinearColor AGameManager::GetLegQuadrantColor(const FString& OriginalQuadrant, int32 LegIndex) const
 {
-	for (UStaticMeshComponent* MarkerComp : WalkerQuadrantTileMarkers)
-	{
-		if (MarkerComp)
-		{
-			MarkerComp->DestroyComponent();
-		}
-	}
-	WalkerQuadrantTileMarkers.Empty();
-}
-
-void AGameManager::LoadWalkerCalibration()
-{
-	// Load from saved config
-	if (SavedWalkerCalibration.StandHeight != 0.f || SavedWalkerCalibration.StartingFootDistance != 0.f)
-	{
-		DesiredStandHeight = SavedWalkerCalibration.StandHeight;
-		StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
-		StepHeight = SavedWalkerCalibration.StepHeight;
-		StepRaiseTicks = SavedWalkerCalibration.StepRaiseTicks;
-		StepMoveTicks = SavedWalkerCalibration.StepMoveTicks;
-		StepLowerTicks = SavedWalkerCalibration.StepLowerTicks;
-		ReachDistance = SavedWalkerCalibration.ReachDistance;
-		ActiveFoot = SavedWalkerCalibration.ActiveFoot;
-		// Don't load WalkerOriginalFootPositions or WalkerSittingPose from saved config
-		// These will be gathered fresh from the mesh in GatherWalkerCalibrationData()
-		// Saved positions are only for reference, not for active calibration
-		
-		UE_LOG(LogTemp, Log, TEXT("GameManager: Loaded walker calibration settings from config - StandHeight=%.1f, StartingFootDistance=%.1f"), 
-			DesiredStandHeight, StartingFootDistance);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("GameManager: No saved walker calibration found, using defaults"));
-	}
-}
-
-void AGameManager::SaveWalkerCalibrationToConfig()
-{
-	// Save current settings to config
-	SavedWalkerCalibration.StandHeight = DesiredStandHeight;
-	SavedWalkerCalibration.StartingFootDistance = StartingFootDistance;
-	SavedWalkerCalibration.StepHeight = StepHeight;
-	SavedWalkerCalibration.StepRaiseTicks = StepRaiseTicks;
-	SavedWalkerCalibration.StepMoveTicks = StepMoveTicks;
-	SavedWalkerCalibration.StepLowerTicks = StepLowerTicks;
-	SavedWalkerCalibration.ReachDistance = ReachDistance;
-	SavedWalkerCalibration.ActiveFoot = ActiveFoot;
-	SavedWalkerCalibration.OriginalFootPositions = WalkerOriginalFootPositions;
-	SavedWalkerCalibration.SittingPose = WalkerSittingPose;
+	// Base color mapping for each leg quadrant (consistent colors, no variation)
+	static const TMap<FString, FLinearColor> LegBaseColors = {
+		{ TEXT("D"), FLinearColor(1.0f, 1.0f, 0.0f) },  // Yellow (D leg gets yellow tiles)
+		{ TEXT("L"), FLinearColor(0.0f, 0.0f, 1.0f) },  // Blue (L leg gets blue tiles)
+		{ TEXT("R"), FLinearColor(0.0f, 1.0f, 0.0f) },  // Green (R leg gets green tiles)
+		{ TEXT("U"), FLinearColor(1.0f, 0.0f, 0.0f) }   // Red (U leg gets red tiles)
+	};
 	
-	// Save to config file
-	SaveConfig();
+	// Helper function to apply quadrant offset
+	auto ApplyQuadrantOffset = [](const FString& OriginalQuadrant, int32 Offset) -> FString
+	{
+		static const TArray<FString> QuadrantOrder = { TEXT("D"), TEXT("L"), TEXT("R"), TEXT("U") };
+		int32 OriginalIndex = -1;
+		for (int32 i = 0; i < QuadrantOrder.Num(); ++i)
+		{
+			if (QuadrantOrder[i] == OriginalQuadrant)
+			{
+				OriginalIndex = i;
+				break;
+			}
+		}
+		if (OriginalIndex < 0)
+		{
+			return OriginalQuadrant; // Invalid quadrant, return as-is
+		}
+		// Apply offset and wrap around
+		int32 OffsetValue = FMath::Clamp(Offset, 0, 3);
+		int32 NewIndex = (OriginalIndex + OffsetValue) % 4;
+		return QuadrantOrder[NewIndex];
+	};
 	
-	UE_LOG(LogTemp, Log, TEXT("GameManager: Saved walker calibration to config file"));
+	// Apply quadrant offset (same offset for all legs - rotates all quadrants clockwise)
+	int32 Offset = FMath::Clamp(LegQuadrantOffset, 0, 3);
+	FString AssignedQuadrant = ApplyQuadrantOffset(OriginalQuadrant, Offset);
+	
+	const FLinearColor* QuadrantBaseColor = LegBaseColors.Find(AssignedQuadrant);
+	if (QuadrantBaseColor)
+	{
+		return *QuadrantBaseColor;
+	}
+	
+	// Default to white if quadrant not found
+	return FLinearColor::White;
 }
 

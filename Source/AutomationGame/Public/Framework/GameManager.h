@@ -65,6 +65,9 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	
 	UPROPERTY()
 	TMap<FName, FQuat> SittingPose;
+	
+	UPROPERTY()
+	int32 LegQuadrantOffset = 0; // Rotate all leg quadrant assignments clockwise by this value (0-3)
 };
 
 /** Canonical representation of a cluster structure for storage and comparison */
@@ -131,6 +134,9 @@ public:
 
 	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
 	void CancelWalkerCalibration();
+	
+	UFUNCTION(CallInEditor, Category = "Walker|Calibration", meta = (Tooltip = "Move each foot to the furthest tile in its assigned quadrant (debug function)"))
+	void FootToOuterMostTile();
 
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "-200.0", ClampMax = "1000.0", Tooltip = "Target stand height - changes are applied automatically"))
 	float DesiredStandHeight = 0.f;
@@ -168,8 +174,15 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
 	bool bShowLegTileQuadrants = false;
 	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0", ClampMax = "3", Tooltip = "Rotate all leg quadrant assignments clockwise by this value (0-3). 0=no change, 1=90deg CW, 2=180deg, 3=270deg CW"))
+	int32 LegQuadrantOffset = 0;
+	
 	UPROPERTY(EditAnywhere, Category = "Walker|Debug")
 	bool bDebugWalkers = false;
+	
+	// Helper to get quadrant color for a leg (for runtime debug visualization)
+	UFUNCTION(BlueprintCallable, Category = "Walker|Debug")
+	FLinearColor GetLegQuadrantColor(const FString& OriginalQuadrant, int32 LegIndex) const;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Refs")
 	AGameTickManager* TickManager = nullptr;
@@ -550,7 +563,6 @@ private:
 	void ClearWalkerDebugMeshes();
 	void LoadWalkerCalibration();
 	void SaveWalkerCalibrationToConfig();
-
 	void AutoFindRefs();
 	void TryLoadInitial();
 	void EnsureISM();
