@@ -2,6 +2,7 @@
 #include "Sim/HexTypes.h"
 #include "Sim/WalkerTypes.h"
 #include "Sim/HexCoord.h"
+#include "Algo/Sort.h"
 
 // Helper to check if a hex is occupied by obstacles
 static bool IsHexOccupied(const USimWorldHex* Sim, const FHex& H, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes)
@@ -45,23 +46,63 @@ static TArray<FFootState*> GetAllFeet(FWalkerState& W)
 // Helper to check if two feet are adjacent (using bone naming convention)
 static bool AreFeetAdjacent(int32 FootIndexA, int32 FootIndexB)
 {
-	// Foot order: D=0, L=1, R=2, U=3
-	// Adjacent pairs: (D,L), (L,U), (U,R), (R,D)
+	// We treat the physical legs in clockwise order around the body as U, R, D, L.
+	// Index mapping (walker state order -> clockwise ring position):
+	//   D=0 -> ring index 2 (Down/South)
+	//   L=1 -> ring index 3 (Left/West)
+	//   R=2 -> ring index 1 (Right/East)
+	//   U=3 -> ring index 0 (Up/North)
+	// Adjacent means neighbors on this ring: (U,R), (R,D), (D,L), (L,U).
 	if (FootIndexA == FootIndexB) return false;
-	
-	const int32 MinIdx = FMath::Min(FootIndexA, FootIndexB);
-	const int32 MaxIdx = FMath::Max(FootIndexA, FootIndexB);
-	
-	// Check adjacent pairs
-	if ((MinIdx == 0 && MaxIdx == 1) || // D-L
-	    (MinIdx == 1 && MaxIdx == 3) || // L-U
-	    (MinIdx == 0 && MaxIdx == 2) || // D-R
-	    (MinIdx == 2 && MaxIdx == 3))   // R-U
+
+	auto GetRingIndex = [](int32 FootIndex) -> int32
 	{
-		return true;
+		switch (FootIndex)
+		{
+		case 0: return 2; // D
+		case 1: return 3; // L
+		case 2: return 1; // R
+		case 3: return 0; // U
+		default: return -1;
+		}
+	};
+
+	const int32 RingA = GetRingIndex(FootIndexA);
+	const int32 RingB = GetRingIndex(FootIndexB);
+	if (RingA < 0 || RingB < 0) return false;
+
+	// Neighbors on 4‑element ring: diff of 1 or 3 (wraparound)
+	const int32 Diff = FMath::Abs(RingA - RingB);
+	return (Diff == 1 || Diff == 3);
+}
+
+// Helper: map a hex around BodyHex into a compass quadrant label N/E/S/W
+static FString GetFixedQuadrantFromHex(const FHex& BodyHex, const FHex& TestHex)
+{
+	const int32 dq = TestHex.Q - BodyHex.Q;
+	const int32 dr = TestHex.R - BodyHex.R;
+
+	// Axis‑aligned
+	if (dq > 0 && dr == 0)  return TEXT("E"); // Q+1
+	if (dq < 0 && dr == 0)  return TEXT("W"); // Q-1
+	if (dq == 0 && dr > 0)  return TEXT("S"); // R+1
+	if (dq == 0 && dr < 0)  return TEXT("N"); // R-1
+
+	// Dominant axis
+	if (FMath::Abs(dq) > FMath::Abs(dr))
+	{
+		return (dq > 0) ? TEXT("E") : TEXT("W");
 	}
-	
-	return false;
+	if (FMath::Abs(dr) > FMath::Abs(dq))
+	{
+		return (dr > 0) ? TEXT("S") : TEXT("N");
+	}
+
+	// Diagonals – bias to a compass direction
+	if (dq > 0 && dr > 0)   return TEXT("S"); // SE
+	if (dq > 0 && dr < 0)   return TEXT("E"); // NE
+	if (dq < 0 && dr > 0)   return TEXT("W"); // SW
+	/* dq < 0 && dr < 0 */  return TEXT("N"); // NW
 }
 
 void USimWorldHex::StepWalkers()
@@ -118,7 +159,7 @@ void USimWorldHex::StepWalkers()
 		}
 	}
 	
-	// Step each walker
+		// Step each walker
 	for (int32 WalkerIndex = 0; WalkerIndex < Walkers.Num(); ++WalkerIndex)
 	{
 		FWalkerState& W = Walkers[WalkerIndex];
@@ -210,11 +251,25 @@ void USimWorldHex::StepWalkers()
 			
 			// Get all feet
 			TArray<FFootState*> Feet = GetAllFeet(W);
+
+			// Precompute distance of each foot from the body center (hex distance), used to
+			// prioritize feet that are closer to the edge of their allowed reach.
+			const int32 NumFeet = Feet.Num();
+			TArray<float> FootBodyDist;
+			FootBodyDist.SetNum(NumFeet);
+			for (int32 i = 0; i < NumFeet; ++i)
+			{
+				const FHex& FH = Feet[i]->CurrentTile;
+				const int32 dq = FH.Q - W.BaseHex.Q;
+				const int32 dr = FH.R - W.BaseHex.R;
+				const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+				FootBodyDist[i] = (float)HexDist;
+			}
 			
 			// Count how many feet are currently raised (not planted)
 			int32 RaisedCount = 0;
 			TArray<int32> RaisedIndices;
-			for (int32 i = 0; i < Feet.Num(); ++i)
+			for (int32 i = 0; i < NumFeet; ++i)
 			{
 				if (Feet[i]->StepState != EFootStepState::Planted)
 				{
@@ -222,10 +277,24 @@ void USimWorldHex::StepWalkers()
 					RaisedIndices.Add(i);
 				}
 			}
-			
-			// Process feet in step sequence
-			for (int32 FootIndex = 0; FootIndex < Feet.Num(); ++FootIndex)
+
+			// Determine processing order: feet nearer the edge of their reach (larger distance
+			// from the body) are considered first, so legs near their quadrant boundary move earlier.
+			TArray<int32> FootOrder;
+			for (int32 i = 0; i < NumFeet; ++i)
 			{
+				FootOrder.Add(i);
+			}
+			FootOrder.Sort([&](int32 A, int32 B)
+			{
+				// Sort descending by distance from body (farther first)
+				return FootBodyDist[A] > FootBodyDist[B];
+			});
+			
+			// Process feet in prioritized order
+			for (int32 OrderIdx = 0; OrderIdx < FootOrder.Num(); ++OrderIdx)
+			{
+				const int32 FootIndex = FootOrder[OrderIdx];
 				FFootState& Foot = *Feet[FootIndex];
 				
 				switch (Foot.StepState)
@@ -268,27 +337,47 @@ void USimWorldHex::StepWalkers()
 						break; // Adjacent foot is raised
 					}
 					
-					// Find best tile for this foot within ReachDistance
-					// Goal: move foot toward target hex
+					// Find best tile for this foot within ReachDistance and its assigned quadrant.
+					// Goal: move foot toward target hex while respecting the leg's quadrant.
 					FHex BestTile = Foot.CurrentTile;
 					float BestScore = MAX_flt;
 					int32 TestedTiles = 0;
 					int32 OccupiedTiles = 0;
 					int32 OtherFootTiles = 0;
 					
+					// Map this foot index to its compass quadrant: D->S, L->W, R->E, U->N
+					FString FootQuadrant;
+					switch (FootIndex)
+					{
+					case 0: FootQuadrant = TEXT("S"); break; // D (down) -> South
+					case 1: FootQuadrant = TEXT("W"); break; // L -> West
+					case 2: FootQuadrant = TEXT("E"); break; // R -> East
+					case 3: FootQuadrant = TEXT("N"); break; // U -> North
+					default: FootQuadrant = TEXT("N"); break;
+					}
+					
 					for (int32 q = -W.ReachDistance; q <= W.ReachDistance; ++q)
 					{
 						for (int32 r = -W.ReachDistance; r <= W.ReachDistance; ++r)
 						{
-							FHex TestHex(Foot.CurrentTile.Q + q, Foot.CurrentTile.R + r);
+							// Candidate tiles are chosen around the body center so that each leg
+							// cannot exceed its global reach distance from the body.
+							FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r);
 							
-							// Check hex distance from foot
-							const int32 dq = q;
-							const int32 dr = r;
+							// Check hex distance from body
+							const int32 dq = TestHex.Q - W.BaseHex.Q;
+							const int32 dr = TestHex.R - W.BaseHex.R;
 							const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
 							if (HexDist > W.ReachDistance || HexDist == 0)
 							{
-								continue; // Out of reach or same tile
+								continue; // Out of reach or body tile
+							}
+
+							// Enforce per‑leg quadrant: skip tiles outside this foot's compass sector.
+							const FString FixedQuadrant = GetFixedQuadrantFromHex(W.BaseHex, TestHex);
+							if (!FixedQuadrant.Equals(FootQuadrant, ESearchCase::CaseSensitive))
+							{
+								continue;
 							}
 							
 							TestedTiles++;
@@ -319,21 +408,89 @@ void USimWorldHex::StepWalkers()
 								continue; // Another foot is here
 							}
 							
-							// Score based on distance to target hex
-							const int32 ToTargetDQ = W.CurrentTargetHex.Q - TestHex.Q;
-							const int32 ToTargetDR = W.CurrentTargetHex.R - TestHex.R;
-							const float DistToTarget = FMath::Max(FMath::Max(FMath::Abs(float(ToTargetDQ)), FMath::Abs(float(ToTargetDR))), FMath::Abs(float(ToTargetDQ + ToTargetDR)));
+							// Score based on how well this foot position helps center the body on the target tile
+							// Calculate what the body position would be if this foot were at TestHex
+							// (assuming other feet stay where they are)
+							int32 ProjectedBodyQ = 0;
+							int32 ProjectedBodyR = 0;
+							int32 PlantedCount = 0;
 							
-							// Also prefer tiles that are in the general direction of the target
-							const int32 CurrentToTargetDQ = W.CurrentTargetHex.Q - Foot.CurrentTile.Q;
-							const int32 CurrentToTargetDR = W.CurrentTargetHex.R - Foot.CurrentTile.R;
-							const float CurrentDistToTarget = FMath::Max(FMath::Max(FMath::Abs(float(CurrentToTargetDQ)), FMath::Abs(float(CurrentToTargetDR))), FMath::Abs(float(CurrentToTargetDQ + CurrentToTargetDR)));
-							
-							// Only step if it gets us closer to the target (or at least not farther)
-							if (DistToTarget <= CurrentDistToTarget && DistToTarget < BestScore)
+							for (int32 OtherIdx = 0; OtherIdx < Feet.Num(); ++OtherIdx)
 							{
-								BestScore = DistToTarget;
-								BestTile = TestHex;
+								if (OtherIdx == FootIndex)
+								{
+									// Use the candidate position for this foot
+									ProjectedBodyQ += TestHex.Q;
+									ProjectedBodyR += TestHex.R;
+									PlantedCount++;
+								}
+								else
+								{
+									// Use current position for other feet (only if they're planted or about to be)
+									FFootState* OtherFoot = Feet[OtherIdx];
+									if (OtherFoot->StepState == EFootStepState::Planted || 
+										(OtherFoot->StepState == EFootStepState::Lowering && OtherFoot->StepProgress + 1 >= W.StepLowerTicks))
+									{
+										ProjectedBodyQ += OtherFoot->CurrentTile.Q;
+										ProjectedBodyR += OtherFoot->CurrentTile.R;
+										PlantedCount++;
+									}
+								}
+							}
+							
+							if (PlantedCount > 0)
+							{
+								ProjectedBodyQ /= PlantedCount;
+								ProjectedBodyR /= PlantedCount;
+								
+								// Calculate current body distance to target
+								const int32 CurrentBodyToTargetDQ = W.CurrentTargetHex.Q - W.BaseHex.Q;
+								const int32 CurrentBodyToTargetDR = W.CurrentTargetHex.R - W.BaseHex.R;
+								const float CurrentBodyDistToTarget = FMath::Max(FMath::Max(FMath::Abs(float(CurrentBodyToTargetDQ)), FMath::Abs(float(CurrentBodyToTargetDR))), FMath::Abs(float(CurrentBodyToTargetDQ + CurrentBodyToTargetDR)));
+								
+								// Only attempt to center body on target when close enough (within reach distance)
+								// This prevents legs from trying to adjust when too far away
+								bool bShouldCenterOnTarget = (CurrentBodyDistToTarget <= W.ReachDistance);
+								
+								if (bShouldCenterOnTarget)
+								{
+									// Score based on how close the projected body position is to the target
+									const int32 BodyToTargetDQ = W.CurrentTargetHex.Q - ProjectedBodyQ;
+									const int32 BodyToTargetDR = W.CurrentTargetHex.R - ProjectedBodyR;
+									const float BodyDistToTarget = FMath::Max(FMath::Max(FMath::Abs(float(BodyToTargetDQ)), FMath::Abs(float(BodyToTargetDR))), FMath::Abs(float(BodyToTargetDQ + BodyToTargetDR)));
+									
+									// Prefer positions that move the body closer to the target (or at least not farther)
+									// Use a combined score: body distance to target (primary) + small penalty for foot distance from current body
+									const int32 FootFromBodyDQ = TestHex.Q - W.BaseHex.Q;
+									const int32 FootFromBodyDR = TestHex.R - W.BaseHex.R;
+									const float FootFromBodyDist = FMath::Max(FMath::Max(FMath::Abs(float(FootFromBodyDQ)), FMath::Abs(float(FootFromBodyDR))), FMath::Abs(float(FootFromBodyDQ + FootFromBodyDR)));
+									const float CombinedScore = BodyDistToTarget + FootFromBodyDist * 0.1f; // Small penalty for moving foot far from body
+									
+									// Only consider if it improves body position (or at least doesn't make it worse)
+									if (BodyDistToTarget <= CurrentBodyDistToTarget && CombinedScore < BestScore)
+									{
+										BestScore = CombinedScore;
+										BestTile = TestHex;
+									}
+								}
+								else
+								{
+									// When far from target, use simpler scoring: just move toward target
+									const int32 ToTargetDQ = W.CurrentTargetHex.Q - TestHex.Q;
+									const int32 ToTargetDR = W.CurrentTargetHex.R - TestHex.R;
+									const float DistToTarget = FMath::Max(FMath::Max(FMath::Abs(float(ToTargetDQ)), FMath::Abs(float(ToTargetDR))), FMath::Abs(float(ToTargetDQ + ToTargetDR)));
+									
+									const int32 CurrentToTargetDQ = W.CurrentTargetHex.Q - Foot.CurrentTile.Q;
+									const int32 CurrentToTargetDR = W.CurrentTargetHex.R - Foot.CurrentTile.R;
+									const float CurrentDistToTarget = FMath::Max(FMath::Max(FMath::Abs(float(CurrentToTargetDQ)), FMath::Abs(float(CurrentToTargetDR))), FMath::Abs(float(CurrentToTargetDQ + CurrentToTargetDR)));
+									
+									// Only step if it gets us closer to the target (or at least not farther)
+									if (DistToTarget <= CurrentDistToTarget && DistToTarget < BestScore)
+									{
+										BestScore = DistToTarget;
+										BestTile = TestHex;
+									}
+								}
 							}
 						}
 					}
@@ -420,11 +577,37 @@ void USimWorldHex::StepWalkers()
 				}
 			}
 			
-			// Update body position to center of feet (average of foot positions)
-			if (Feet.Num() == 4)
+		}
+		
+		// Update body position to center of feet (average of foot positions)
+		// This should always update, not just when processing requests, so legs know their range
+		if (W.Stance == EWalkerStance::Standing || W.Stance == EWalkerStance::StandingUp || W.Stance == EWalkerStance::SittingDown)
+		{
+			// Calculate average of all planted feet (feet that are currently at their CurrentTile)
+			TArray<FFootState*> AllFeet = GetAllFeet(W);
+			TArray<FHex> PlantedFootHexes;
+			
+			for (FFootState* Foot : AllFeet)
 			{
-				int32 AvgQ = (W.DFoot.CurrentTile.Q + W.LFoot.CurrentTile.Q + W.RFoot.CurrentTile.Q + W.UFoot.CurrentTile.Q) / 4;
-				int32 AvgR = (W.DFoot.CurrentTile.R + W.LFoot.CurrentTile.R + W.RFoot.CurrentTile.R + W.UFoot.CurrentTile.R) / 4;
+				// Include feet that are planted, or feet that are lowering and will be planted soon
+				if (Foot->StepState == EFootStepState::Planted || 
+					(Foot->StepState == EFootStepState::Lowering && Foot->StepProgress + 1 >= W.StepLowerTicks))
+				{
+					PlantedFootHexes.Add(Foot->CurrentTile);
+				}
+			}
+			
+			if (PlantedFootHexes.Num() > 0)
+			{
+				int32 SumQ = 0;
+				int32 SumR = 0;
+				for (const FHex& FootHex : PlantedFootHexes)
+				{
+					SumQ += FootHex.Q;
+					SumR += FootHex.R;
+				}
+				int32 AvgQ = SumQ / PlantedFootHexes.Num();
+				int32 AvgR = SumR / PlantedFootHexes.Num();
 				W.BaseHex = FHex(AvgQ, AvgR);
 			}
 		}

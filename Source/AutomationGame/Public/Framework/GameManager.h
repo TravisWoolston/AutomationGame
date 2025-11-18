@@ -43,6 +43,9 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	float StartingFootDistance = 0.f;
 	
 	UPROPERTY()
+	float AssignedTileOffset = 0.f; // Offset in tiles to move assigned tiles without updating feet
+	
+	UPROPERTY()
 	float StepHeight = 50.f;
 	
 	UPROPERTY()
@@ -67,7 +70,23 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	TMap<FName, FQuat> SittingPose;
 	
 	UPROPERTY()
-	int32 LegQuadrantOffset = 0; // Rotate all leg quadrant assignments clockwise by this value (0-3)
+	int32 LegQuadrantOffset = 0; // Legacy: global leg quadrant offset (kept for config compatibility, no longer used directly)
+
+	// Persistent per-quadrant leg mapping and tile rotation
+	UPROPERTY()
+	EWalkerFoot NQuadrantLeg = EWalkerFoot::UFoot;
+
+	UPROPERTY()
+	EWalkerFoot EQuadrantLeg = EWalkerFoot::RFoot;
+
+	UPROPERTY()
+	EWalkerFoot WQuadrantLeg = EWalkerFoot::LFoot;
+
+	UPROPERTY()
+	EWalkerFoot SQuadrantLeg = EWalkerFoot::DFoot;
+
+	UPROPERTY()
+	int32 TileQuadrantOffset = 0;
 };
 
 /** Canonical representation of a cluster structure for storage and comparison */
@@ -141,14 +160,17 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "-200.0", ClampMax = "1000.0", Tooltip = "Target stand height - changes are applied automatically"))
 	float DesiredStandHeight = 0.f;
 
-	UPROPERTY(VisibleAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Current actual stand height after leg reach constraints"))
-	float CurrentStandHeight = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Calibration", meta = (Tooltip = "Current actual stand height after leg reach constraints"))
+	float StandHeight = 0.f;
 
 	UPROPERTY(VisibleAnywhere, Category = "Walker|Calibration")
 	bool bWalkerStanding = false;
 	
-	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Distance offset for foot starting positions"))
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Horizontal offset in tiles from the body-aligned tile for foot starting positions"))
 	float StartingFootDistance = 0.f;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Offset in tiles to move assigned tiles without updating feet (calculated same way as StartingFootDistance)"))
+	float AssignedTileOffset = 0.f;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0.0", Tooltip = "Height feet raise when stepping"))
 	float StepHeight = 50.f;
@@ -174,8 +196,22 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
 	bool bShowLegTileQuadrants = false;
 	
-	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0", ClampMax = "3", Tooltip = "Rotate all leg quadrant assignments clockwise by this value (0-3). 0=no change, 1=90deg CW, 2=180deg, 3=270deg CW"))
-	int32 LegQuadrantOffset = 0;
+	/** Per-quadrant leg assignment (which leg controls each spatial quadrant) */
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Leg controlling the North (R-1) quadrant"))
+	EWalkerFoot NQuadrantLeg = EWalkerFoot::UFoot;
+
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Leg controlling the East (Q+1) quadrant"))
+	EWalkerFoot EQuadrantLeg = EWalkerFoot::RFoot;
+
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Leg controlling the West (Q-1) quadrant"))
+	EWalkerFoot WQuadrantLeg = EWalkerFoot::LFoot;
+
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Leg controlling the South (R+1) quadrant"))
+	EWalkerFoot SQuadrantLeg = EWalkerFoot::DFoot;
+
+	/** Global rotation for tile quadrants around the body center (does not change which leg controls which logical quadrant) */
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0", ClampMax = "3", Tooltip = "Rotate tile quadrants clockwise around the body center by this value (0-3). 0=no rotation, 1=90deg CW, 2=180deg, 3=270deg CW"))
+	int32 TileQuadrantOffset = 0;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Debug")
 	bool bDebugWalkers = false;
@@ -540,6 +576,9 @@ private:
 	FVector WalkerBodyBaseWorldLocation = FVector::ZeroVector;
 	FVector WalkerBodyActorOffset = FVector::ZeroVector;
 	TArray<FVector> WalkerOriginalFootPositions; // Store original foot positions for offset calculation
+	// Backup of foot positions when toggling FootToOuterMostTile so we can return to the previous state
+	TArray<FVector> WalkerFootPositionsBeforeOuterMost;
+	bool bFeetAtOuterMost = false;
 	TArray<UStaticMeshComponent*> WalkerQuadrantTileMarkers; // Visual markers for reachable tiles
 	float SavedStandHeight = 0.f; // Saved height for reset operations
 	
@@ -563,6 +602,7 @@ private:
 	void ClearWalkerDebugMeshes();
 	void LoadWalkerCalibration();
 	void SaveWalkerCalibrationToConfig();
+	void UpdateAllWalkersAssignedTiles(); // Update assigned tiles for all runtime walkers when AssignedTileOffset changes
 	void AutoFindRefs();
 	void TryLoadInitial();
 	void EnsureISM();

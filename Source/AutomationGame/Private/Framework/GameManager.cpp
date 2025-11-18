@@ -22,6 +22,10 @@
 #include "UObject/UnrealType.h"
 #include "UObject/Class.h"
 
+// Forward declaration for helper function
+// (FHex, USimWorldHex, and AOrbSimDriver are already included via headers)
+void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, AOrbSimDriver* OrbSimDriver);
+
 // Local helper to build orthonormal basis from Up + arbitrary forward (similar to HexFactoryActor)
 namespace {
 	inline void BuildSafeBasisGM(const FVector& InUpRaw, const FVector& InForwardRaw, FVector& OutF, FVector& OutR, FVector& OutU)
@@ -94,21 +98,21 @@ void AGameManager::BeginDestroy()
 		CancelWalkerCalibration();
 		UE_LOG(LogTemp, Log, TEXT("GameManager: Cancelled walker calibration on BeginDestroy"));
 	}
-	
+
 	// Clear cluster storage maps safely
 	ClusterCounts.Empty();
 	StoredClusterTemplates.Empty();
 	ClusterIcons.Empty();
 	TemplateIdToCanonicalKey.Empty();
 	StoredOrbsOnlyKeysCache.Empty();
-	
+
 	Super::BeginDestroy();
 }
 
 void AGameManager::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
 	// Cancel walker calibration if active (calibration is editor-only, not for PIE)
 	// This runs when PIE starts
 	if (bWalkerCalibrationActive)
@@ -116,7 +120,7 @@ void AGameManager::BeginPlay()
 		CancelWalkerCalibration();
 		UE_LOG(LogTemp, Log, TEXT("GameManager: Cancelled walker calibration on BeginPlay (PIE started)"));
 	}
-	
+
 	AutoFindRefs();
 	TryLoadInitial();
 	EnsureISM();
@@ -142,7 +146,7 @@ void AGameManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		CancelWalkerCalibration();
 		UE_LOG(LogTemp, Log, TEXT("GameManager: Cancelled walker calibration on EndPlay (Reason=%d)"), (int32)EndPlayReason);
 	}
-	
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -188,28 +192,137 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 				SetStandHeight();
 			}
 		}
-		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance))
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance) || PropName == GET_MEMBER_NAME_CHECKED(AGameManager, AssignedTileOffset))
 		{
 			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
 			{
 				USkeletalMeshComponent* BodyComp = CalibratingWalker->GetBodyComponent();
 				if (BodyComp)
 				{
-					ApplyStartingFootDistance(BodyComp);
-					// Force update to make changes visible immediately
-					BodyComp->TickAnimation(0.f, false);
-					BodyComp->RefreshBoneTransforms();
-					BodyComp->UpdateComponentToWorld();
-					SetIKRigGoalPositions(BodyComp, CurrentStandHeight);
-					UpdateWalkerDebugMeshes(BodyComp);
-					
-					UE_LOG(LogTemp, Log, TEXT("GameManager: StartingFootDistance updated to %.1f"), StartingFootDistance);
+					if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance))
+					{
+						ApplyStartingFootDistance(BodyComp);
+						// Force update to make changes visible immediately
+						BodyComp->TickAnimation(0.f, false);
+						BodyComp->RefreshBoneTransforms();
+						BodyComp->UpdateComponentToWorld();
+						SetIKRigGoalPositions(BodyComp, StandHeight);
+						UpdateWalkerDebugMeshes(BodyComp);
+
+						UE_LOG(LogTemp, Log, TEXT("GameManager: StartingFootDistance updated to %.1f"), StartingFootDistance);
+					}
+					else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, AssignedTileOffset))
+					{
+						// Update assigned tiles in simulation for calibration walker
+						if (OrbSimDriver && CalibratingWalker.IsValid())
+						{
+							USimWorldHex* Sim = OrbSimDriver->GetSim();
+							if (Sim && CalibratingWalker->SimWalkerIndex >= 0 && CalibratingWalker->SimWalkerIndex < Sim->Walkers.Num())
+							{
+								// Calibration walker is in simulation - update its assigned tiles
+								FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
+								ApplyAssignedTileOffsetToWalker(Sim, CalibratingWalker->SimWalkerIndex, BodyHex, ReachDistance, AssignedTileOffset, OrbSimDriver);
+
+								// Sync the walker actor to reflect the updated assigned tiles
+								CalibratingWalker->SyncFromCurrentSim();
+							}
+							else
+							{
+								// Calibration walker is not in simulation - update foot goals directly
+								// Calculate assigned tiles from body position and AssignedTileOffset
+								if (OrbSimDriver)
+								{
+									FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
+									const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(BodyHex);
+									const float TileSize = OrbSimDriver->GetTileSize();
+
+									// Calculate assigned tiles for each foot
+									FHex BaseFeet[] = {
+										FHex(BodyHex.Q + 1, BodyHex.R),  // D
+										FHex(BodyHex.Q, BodyHex.R + 1),  // L
+										FHex(BodyHex.Q - 1, BodyHex.R),  // R
+										FHex(BodyHex.Q, BodyHex.R - 1)   // U
+									};
+
+									const FName FootGoalNames[] = { TEXT("DFootGoal"), TEXT("LFootGoal"), TEXT("RFootGoal"), TEXT("UFootGoal") };
+
+									if (UAnimInstance* AnimInstance = BodyComp->GetAnimInstance())
+									{
+										const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
+										const FTransform ComponentToWorld = BodyComp->GetComponentToWorld();
+										const FRotator ComponentRotation = BodyComp->GetComponentRotation();
+										const FTransform ComponentTransformNoScale(ComponentRotation, ComponentToWorld.GetLocation(), FVector(1.f));
+										const FTransform WorldToComponentNoScale = ComponentTransformNoScale.Inverse();
+
+										for (int32 i = 0; i < 4; ++i)
+										{
+											const FHex& BaseFootHex = BaseFeet[i];
+											const FVector BaseFootWorld = OrbSimDriver->MapHexToWorld(BaseFootHex);
+											const FVector FootWorld2D = FVector(BaseFootWorld.X, BaseFootWorld.Y, 0.f);
+											FVector BodyToFootDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
+
+											if (BodyToFootDir.IsNearlyZero())
+											{
+												const FVector DefaultDirs[] = {
+													FVector(1.f, 0.f, 0.f),   // D
+													FVector(0.f, 1.f, 0.f),   // L
+													FVector(-1.f, 0.f, 0.f),  // R
+													FVector(0.f, -1.f, 0.f)   // U
+												};
+												BodyToFootDir = DefaultDirs[i];
+											}
+
+											const FVector Offset2D = BodyToFootDir * (AssignedTileOffset * TileSize);
+											const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
+
+											FHex NewFootHex;
+											if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootWorld.Z), NewFootHex))
+											{
+												const FVector AssignedTileWorld = OrbSimDriver->MapHexToWorld(NewFootHex);
+												const FVector FootGoalWorld = AssignedTileWorld;
+
+												if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
+												{
+													if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+													{
+														if (StructProp->Struct == TBaseStructure<FVector>::Get())
+														{
+															FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+															if (GoalValue)
+															{
+																*GoalValue = WorldToComponentNoScale.TransformPosition(FootGoalWorld);
+															}
+														}
+													}
+												}
+											}
+										}
+
+										// Force update to make changes visible immediately
+										BodyComp->TickAnimation(0.f, false);
+										BodyComp->RefreshBoneTransforms();
+										BodyComp->UpdateComponentToWorld();
+									}
+								}
+							}
+						}
+
+						// Also update all runtime walkers
+						UpdateAllWalkersAssignedTiles();
+
+						// Update visualization
+						if (bShowLegTileQuadrants)
+						{
+							UpdateLegTileQuadrantVisualization();
+						}
+
+						UE_LOG(LogTemp, Log, TEXT("GameManager: AssignedTileOffset updated to %.1f"), AssignedTileOffset);
+					}
 				}
 			}
 		}
-		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants) || 
-		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ReachDistance) ||
-		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, LegQuadrantOffset))
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ReachDistance))
 		{
 			if (bWalkerCalibrationActive)
 			{
@@ -217,8 +330,8 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 			}
 		}
 		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepHeight) ||
-		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ActiveFoot) ||
-		         PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bActiveFootPreview))
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ActiveFoot) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bActiveFootPreview))
 		{
 			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
 			{
@@ -234,7 +347,7 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 					{
 						// Reset all feet to base position when preview is disabled
 						ApplyStartingFootDistance(BodyComp);
-						SetIKRigGoalPositions(BodyComp, CurrentStandHeight);
+						SetIKRigGoalPositions(BodyComp, StandHeight);
 						UpdateWalkerDebugMeshes(BodyComp);
 					}
 				}
@@ -513,7 +626,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		WalkerState.WaitCounter = 0;
 		WalkerState.bMoving = false;
 		WalkerState.MovementProgress = 0.0f;
-		
+
 		// Apply calibration settings from GameManager
 		WalkerState.StepHeight = StepHeight;
 		WalkerState.StepRaiseTicks = StepRaiseTicks;
@@ -521,7 +634,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		WalkerState.StepLowerTicks = StepLowerTicks;
 		WalkerState.ReachDistance = ReachDistance;
 		WalkerState.StandHeight = SavedWalkerCalibration.StandHeight; // Apply saved stand height
-		
+
 		// Don't set program here - let SetProgram handle it after SimWalkerIndex is assigned
 		WalkerState.Program = TArray<FWalkerInstr>(); // Empty for now
 
@@ -533,15 +646,15 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		if (WalkerIndex >= 0 && WalkerIndex < Sim->Walkers.Num() && !FMath::IsNearlyZero(SavedWalkerCalibration.StartingFootDistance))
 		{
 			FWalkerState& SimWalkerState = Sim->Walkers[WalkerIndex];
-			
+
 			// Get body world position
 			const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(Hex);
-			
+
 			// Apply StartingFootDistance to each foot
 			// Foot order: D, L, R, U (matches cross pattern initialization)
 			FHex* FeetHexes[] = { &SimWalkerState.DFoot.CurrentTile, &SimWalkerState.LFoot.CurrentTile, &SimWalkerState.RFoot.CurrentTile, &SimWalkerState.UFoot.CurrentTile };
 			FHex* FeetTargets[] = { &SimWalkerState.DFoot.TargetTile, &SimWalkerState.LFoot.TargetTile, &SimWalkerState.RFoot.TargetTile, &SimWalkerState.UFoot.TargetTile };
-			
+
 			// Initial foot positions (cross pattern)
 			FHex InitialFeet[] = {
 				FHex(Hex.Q + 1, Hex.R),  // D
@@ -549,17 +662,17 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 				FHex(Hex.Q - 1, Hex.R),  // R
 				FHex(Hex.Q, Hex.R - 1)   // U
 			};
-			
+
 			for (int32 i = 0; i < 4; ++i)
 			{
 				const FHex& InitialFootHex = InitialFeet[i];
 				const FVector InitialFootWorld = OrbSimDriver->MapHexToWorld(InitialFootHex);
-				
+
 				// Calculate direction from body to foot in horizontal plane
 				const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
 				const FVector FootWorld2D = FVector(InitialFootWorld.X, InitialFootWorld.Y, 0.f);
 				FVector BodyToFootDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
-				
+
 				// If direction is invalid, use a default direction based on foot index
 				if (BodyToFootDir.IsNearlyZero())
 				{
@@ -572,11 +685,11 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 					};
 					BodyToFootDir = DefaultDirs[i];
 				}
-				
+
 				// Calculate new position by adding offset along the direction from body to foot
 				const FVector Offset2D = BodyToFootDir * SavedWalkerCalibration.StartingFootDistance;
 				const FVector NewFootWorld2D = FootWorld2D + Offset2D;
-				
+
 				// Convert to hex
 				FHex NewFootHex;
 				if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, InitialFootWorld.Z), NewFootHex))
@@ -585,7 +698,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 					const int32 dq = NewFootHex.Q - Hex.Q;
 					const int32 dr = NewFootHex.R - Hex.R;
 					const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-					
+
 					if (HexDist <= ReachDistance)
 					{
 						*FeetHexes[i] = NewFootHex;
@@ -594,7 +707,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 					else
 					{
 						// Too far, keep original position
-						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too far (dist=%d > %d), keeping original"), 
+						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too far (dist=%d > %d), keeping original"),
 							i, HexDist, ReachDistance);
 					}
 				}
@@ -604,10 +717,14 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 					UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d failed to convert to hex, keeping original"), i);
 				}
 			}
-			
-			UE_LOG(LogTemp, Log, TEXT("GameManager: Applied StartingFootDistance=%.1f to walker %d foot positions"), 
+
+			UE_LOG(LogTemp, Log, TEXT("GameManager: Applied StartingFootDistance=%.1f to walker %d foot positions"),
 				SavedWalkerCalibration.StartingFootDistance, WalkerIndex);
 		}
+
+		// Apply AssignedTileOffset to walker's assigned tiles
+		// This moves the assigned tiles outward to align with feet
+		ApplyAssignedTileOffsetToWalker(Sim, WalkerIndex, Hex, ReachDistance, SavedWalkerCalibration.AssignedTileOffset, OrbSimDriver);
 
 		// Now that SimWalkerIndex is set, we can call SetProgram
 		Walker->SetProgram(Program, bLoop);
@@ -629,29 +746,29 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 void AGameManager::SyncOrbSimDriverParameters()
 {
 	if (!OrbSimDriver) return;
-	
+
 	// Store previous values to detect changes
 	static EHexOrientation PrevOrientation = EHexOrientation::PointyTop;
 	static float PrevYaw = 0.f;
 	static float PrevTileSize = 0.f;
 	static float PrevSphereR = 0.f;
 	static bool PrevSphereGrid = false;
-	
+
 	const float CurrentSphereR = GetEffectiveSphereRadius();
-	const bool bParamsChanged = (PrevOrientation != GridOrientation) || 
-	                            !FMath::IsNearlyEqual(PrevYaw, GridYawDeg, 0.01f) ||
-	                            !FMath::IsNearlyEqual(PrevTileSize, TileSizeUU, 0.01f) ||
-	                            !FMath::IsNearlyEqual(PrevSphereR, CurrentSphereR, 0.01f) ||
-	                            (PrevSphereGrid != bSphereGrid);
-	
+	const bool bParamsChanged = (PrevOrientation != GridOrientation) ||
+		!FMath::IsNearlyEqual(PrevYaw, GridYawDeg, 0.01f) ||
+		!FMath::IsNearlyEqual(PrevTileSize, TileSizeUU, 0.01f) ||
+		!FMath::IsNearlyEqual(PrevSphereR, CurrentSphereR, 0.01f) ||
+		(PrevSphereGrid != bSphereGrid);
+
 	OrbSimDriver->SetGridParameters(GridOrientation, GridYawDeg, TileSizeUU, GridAnchor);
 	OrbSimDriver->ApplySphereSettings(bSphereGrid, CurrentSphereR);
-	
+
 	// Only log if parameters actually changed
 	if (bParamsChanged)
 	{
 		UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver params Orientation=%d Yaw=%.1f TileSpacing=%.1f SphereR=%.1f Auto=%d"), (int32)GridOrientation, GridYawDeg, TileSizeUU, CurrentSphereR, bAutoSphereRadius ? 1 : 0);
-		
+
 		// Update stored values
 		PrevOrientation = GridOrientation;
 		PrevYaw = GridYawDeg;
@@ -1809,5 +1926,131 @@ UTexture2D* AGameManager::GetClusterIcon(const USimWorldHex::FClusterTemplate& C
 	}
 
 	return NewIcon;
+}
+
+// Helper function to apply AssignedTileOffset to a walker
+void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, AOrbSimDriver* OrbSimDriver)
+{
+	if (WalkerIndex < 0 || WalkerIndex >= Sim->Walkers.Num() || !OrbSimDriver)
+	{
+		return;
+	}
+
+	FWalkerState& SimWalkerState = Sim->Walkers[WalkerIndex];
+
+	// Get body world position
+	const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(BodyHex);
+
+	// Apply AssignedTileOffset to each foot's assigned tile
+	// Foot order: D, L, R, U (matches cross pattern initialization)
+	FHex* FeetHexes[] = { &SimWalkerState.DFoot.CurrentTile, &SimWalkerState.LFoot.CurrentTile, &SimWalkerState.RFoot.CurrentTile, &SimWalkerState.UFoot.CurrentTile };
+	FHex* FeetTargets[] = { &SimWalkerState.DFoot.TargetTile, &SimWalkerState.LFoot.TargetTile, &SimWalkerState.RFoot.TargetTile, &SimWalkerState.UFoot.TargetTile };
+
+	// Get base foot positions (before StartingFootDistance and AssignedTileOffset)
+	// These are the initial cross pattern positions
+	FHex BaseFeet[] = {
+		FHex(BodyHex.Q + 1, BodyHex.R),  // D
+		FHex(BodyHex.Q, BodyHex.R + 1),  // L
+		FHex(BodyHex.Q - 1, BodyHex.R),  // R
+		FHex(BodyHex.Q, BodyHex.R - 1)   // U
+	};
+
+	const float TileSize = OrbSimDriver->GetTileSize();
+
+	// If AssignedTileOffset is zero, just use the base feet positions
+	if (FMath::IsNearlyZero(AssignedTileOffset))
+	{
+		for (int32 i = 0; i < 4; ++i)
+		{
+			*FeetHexes[i] = BaseFeet[i];
+			*FeetTargets[i] = BaseFeet[i];
+		}
+		return;
+	}
+
+	for (int32 i = 0; i < 4; ++i)
+	{
+		const FHex& BaseFootHex = BaseFeet[i];
+		const FVector BaseFootWorld = OrbSimDriver->MapHexToWorld(BaseFootHex);
+
+		// Calculate direction from body to base foot in horizontal plane
+		const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
+		const FVector FootWorld2D = FVector(BaseFootWorld.X, BaseFootWorld.Y, 0.f);
+		FVector BodyToFootDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
+
+		// If direction is invalid, use a default direction based on foot index
+		if (BodyToFootDir.IsNearlyZero())
+		{
+			// Default directions for each foot (cross pattern)
+			const FVector DefaultDirs[] = {
+				FVector(1.f, 0.f, 0.f),   // D (Q+1)
+				FVector(0.f, 1.f, 0.f),   // L (R+1)
+				FVector(-1.f, 0.f, 0.f),  // R (Q-1)
+				FVector(0.f, -1.f, 0.f)   // U (R-1)
+			};
+			BodyToFootDir = DefaultDirs[i];
+		}
+
+		// Calculate new position by adding offset along the direction from body to foot
+		const FVector Offset2D = BodyToFootDir * (AssignedTileOffset * TileSize);
+		const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
+
+		// Convert to hex
+		FHex NewFootHex;
+		if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootWorld.Z), NewFootHex))
+		{
+			// Check if within reach distance
+			const int32 dq = NewFootHex.Q - BodyHex.Q;
+			const int32 dr = NewFootHex.R - BodyHex.R;
+			const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+
+			if (HexDist <= ReachDistance)
+			{
+				*FeetHexes[i] = NewFootHex;
+				*FeetTargets[i] = NewFootHex;
+			}
+			else
+			{
+				// Too far, keep base position
+				*FeetHexes[i] = BaseFootHex;
+				*FeetTargets[i] = BaseFootHex;
+				UE_LOG(LogTemp, Warning, TEXT("AssignedTileOffset for foot %d resulted in hex too far (dist=%d > %d), using base position"),
+					i, HexDist, ReachDistance);
+			}
+		}
+		else
+		{
+			// Conversion failed, keep base position
+			*FeetHexes[i] = BaseFootHex;
+			*FeetTargets[i] = BaseFootHex;
+			UE_LOG(LogTemp, Warning, TEXT("AssignedTileOffset for foot %d failed to convert to hex, using base position"), i);
+		}
+	}
+}
+
+void AGameManager::UpdateAllWalkersAssignedTiles()
+{
+	if (!OrbSimDriver)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UpdateAllWalkersAssignedTiles: No OrbSimDriver"));
+		return;
+	}
+
+	USimWorldHex* Sim = OrbSimDriver->GetSim();
+	if (!Sim)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UpdateAllWalkersAssignedTiles: No Sim"));
+		return;
+	}
+
+	// Update all walkers in the simulation
+	for (int32 i = 0; i < Sim->Walkers.Num(); ++i)
+	{
+		FWalkerState& WalkerState = Sim->Walkers[i];
+		ApplyAssignedTileOffsetToWalker(Sim, i, WalkerState.BaseHex, ReachDistance, AssignedTileOffset, OrbSimDriver);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("UpdateAllWalkersAssignedTiles: Updated %d walkers with AssignedTileOffset=%.1f"),
+		Sim->Walkers.Num(), AssignedTileOffset);
 }
 

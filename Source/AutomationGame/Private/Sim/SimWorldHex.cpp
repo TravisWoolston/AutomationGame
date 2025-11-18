@@ -160,20 +160,37 @@ int32 USimWorldHex::AddWalker(const FWalkerState& Walker)
 	S.StanceTransitionProgress = 0;
 	S.bProcessingRequest = false;
 	
-	// Initialize foot positions around the body in a cross pattern
-	S.DFoot.CurrentTile = FHex(S.HomeHex.Q + 1, S.HomeHex.R);
+	// Initialize foot positions to outer tiles at ReachDistance
+	// Find the axis-aligned tiles at ReachDistance for each direction
+	// Quadrant mapping: D->S (R+), L->W (Q-), R->E (Q+), U->N (R-)
+	const int32 ReachDist = FMath::Max(1, S.ReachDistance); // Ensure at least 1
+	
+	// For axis-aligned directions at ReachDistance:
+	// D (South): Q unchanged, R + ReachDist
+	// L (West): Q - ReachDist, R unchanged  
+	// R (East): Q + ReachDist, R unchanged
+	// U (North): Q unchanged, R - ReachDist
+	FHex OuterTiles[4] = {
+		FHex(S.HomeHex.Q, S.HomeHex.R + ReachDist),      // D -> S (South)
+		FHex(S.HomeHex.Q - ReachDist, S.HomeHex.R),      // L -> W (West)
+		FHex(S.HomeHex.Q + ReachDist, S.HomeHex.R),      // R -> E (East)
+		FHex(S.HomeHex.Q, S.HomeHex.R - ReachDist)       // U -> N (North)
+	};
+	
+	// Set foot positions to outer tiles
+	S.DFoot.CurrentTile = OuterTiles[0];  // D -> S
 	S.DFoot.TargetTile = S.DFoot.CurrentTile;
 	S.DFoot.StepState = EFootStepState::Planted;
 	
-	S.LFoot.CurrentTile = FHex(S.HomeHex.Q, S.HomeHex.R + 1);
+	S.LFoot.CurrentTile = OuterTiles[1];  // L -> W
 	S.LFoot.TargetTile = S.LFoot.CurrentTile;
 	S.LFoot.StepState = EFootStepState::Planted;
 	
-	S.RFoot.CurrentTile = FHex(S.HomeHex.Q - 1, S.HomeHex.R);
+	S.RFoot.CurrentTile = OuterTiles[2];  // R -> E
 	S.RFoot.TargetTile = S.RFoot.CurrentTile;
 	S.RFoot.StepState = EFootStepState::Planted;
 	
-	S.UFoot.CurrentTile = FHex(S.HomeHex.Q, S.HomeHex.R - 1);
+	S.UFoot.CurrentTile = OuterTiles[3];  // U -> N
 	S.UFoot.TargetTile = S.UFoot.CurrentTile;
 	S.UFoot.StepState = EFootStepState::Planted;
 	

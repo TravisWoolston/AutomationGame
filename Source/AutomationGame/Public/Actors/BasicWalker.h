@@ -90,6 +90,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Program")
 	bool IsMoving() const { return bMoving; }
 
+	/** True when the walker is being used in CalibrateWalker */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Calibration")
+	bool Calibrating = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
 	int32 SimWalkerIndex;
 
@@ -98,6 +102,31 @@ public:
 	FHex HomeHex;
 
 	USkeletalMeshComponent* GetBodyComponent() const { return BodyComp; }
+
+	/** World locations of assigned tiles for each foot (updated from simulation) */
+	UPROPERTY(BlueprintReadOnly, Category = "Foot Positions")
+	FVector DFootAssignedTileWorldLocation = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Foot Positions")
+	FVector LFootAssignedTileWorldLocation = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Foot Positions")
+	FVector RFootAssignedTileWorldLocation = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Foot Positions")
+	FVector UFootAssignedTileWorldLocation = FVector::ZeroVector;
+
+	/** Get bone location in world space by bone name */
+	UFUNCTION(BlueprintCallable, Category = "Bone Access")
+	FVector GetBoneLocationByName(const FName& BoneName, bool bWorldSpace = true) const;
+
+	/** Get bone location in world space by bone name (string version for Blueprint convenience) */
+	UFUNCTION(BlueprintCallable, Category = "Bone Access", meta = (CallInEditor = "true"))
+	FVector GetBoneLocationByNameString(const FString& BoneName, bool bWorldSpace = true) const;
+
+	/** Get bone location in component space by bone name */
+	UFUNCTION(BlueprintCallable, Category = "Bone Access")
+	FVector GetBoneLocationComponentSpace(const FName& BoneName) const;
 
 public:
 	void PushProgramToSim();
@@ -164,5 +193,7 @@ private:
 
 	void    StepProgram();                           // advance one instruction (or wait)
 	void    ExpandResetAtPC();                       // turn Reset into MoveTo home location
+	
+	void    UpdateAssignedTileWorldLocations();      // update public world location properties from foot hex positions
 };
 

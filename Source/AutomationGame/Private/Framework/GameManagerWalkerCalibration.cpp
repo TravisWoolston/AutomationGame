@@ -11,8 +11,12 @@
 #include "Animation/AnimInstance.h"
 #include "Sim/HexTypes.h"
 #include "Sim/HexCoord.h"
+#include "Sim/SimWorldHex.h"
 #include "DrawDebugHelpers.h"
 #include "HAL/PlatformProcess.h"
+
+// Forward declaration for helper function (defined in GameManager.cpp)
+void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, AOrbSimDriver* OrbSimDriver);
 
 // Local helper structures and constants for walker calibration
 namespace {
@@ -61,10 +65,10 @@ void AGameManager::CalibrateWalker()
 	WalkerLegCalibrations.Empty();
 	WalkerSittingPose.Empty();
 	WalkerOriginalFootPositions.Empty();
-	
+
 	// Load saved calibration settings if they exist
 	LoadWalkerCalibration();
-	
+
 	// Clear only the walker actor and visual debug elements, not the settings
 	if (CalibratingWalker.IsValid())
 	{
@@ -99,18 +103,18 @@ void AGameManager::CalibrateWalker()
 
 	// Wait a moment for the walker to fully initialize
 	FPlatformProcess::Sleep(0.05f);
-	
+
 	// Ensure animation instance is initialized before gathering data
 	if (!BodyComp->GetAnimInstance() && BodyComp->GetAnimClass())
 	{
 		BodyComp->InitAnim(true);
 		FPlatformProcess::Sleep(0.02f);
 	}
-	
+
 	// Force an initial update
 	BodyComp->RefreshBoneTransforms();
 	BodyComp->UpdateComponentToWorld();
-	
+
 	// Capture bone positions from current pose (animation should be initialized by now)
 	// If animation hasn't stretched the bones yet, we'll get reference pose anyway
 	WalkerBodyBaseWorldLocation = BodyComp->GetBoneLocation(WalkerBodyBoneName, EBoneSpaces::WorldSpace);
@@ -119,7 +123,7 @@ void AGameManager::CalibrateWalker()
 
 	// Gather calibration data (this will get current bone positions)
 	GatherWalkerCalibrationData(BodyComp);
-	
+
 	// Now ensure animation is fully updated with initial IK goals
 	BodyComp->RefreshBoneTransforms();
 	BodyComp->UpdateComponentToWorld();
@@ -133,19 +137,69 @@ void AGameManager::CalibrateWalker()
 	}
 
 	CalibratingWalker = Walker;
+	Walker->Calibrating = true;
 
 	bWalkerCalibrationActive = true;
 	bWalkerStanding = false;
-	CurrentStandHeight = 0.f;
+	StandHeight = 0.f;
 	WalkerStandAlpha = 0.f;
 
 	// Apply StartingFootDistance offset to foot positions
 	ApplyStartingFootDistance(BodyComp);
 
+	// Check if walker is in simulation and log assigned tiles
+	if (Walker->SimWalkerIndex >= 0 && OrbSimDriver)
+	{
+		if (USimWorldHex* Sim = OrbSimDriver->GetSim())
+		{
+			if (Walker->SimWalkerIndex < Sim->Walkers.Num())
+			{
+				const FWalkerState& SimState = Sim->Walkers[Walker->SimWalkerIndex];
+				UE_LOG(LogTemp, Warning, TEXT("CalibrateWalker: Walker is in simulation (index=%d). Assigned tiles:"), Walker->SimWalkerIndex);
+				UE_LOG(LogTemp, Warning, TEXT("  DFoot: (%d,%d), LFoot: (%d,%d), RFoot: (%d,%d), UFoot: (%d,%d)"),
+					SimState.DFoot.CurrentTile.Q, SimState.DFoot.CurrentTile.R,
+					SimState.LFoot.CurrentTile.Q, SimState.LFoot.CurrentTile.R,
+					SimState.RFoot.CurrentTile.Q, SimState.RFoot.CurrentTile.R,
+					SimState.UFoot.CurrentTile.Q, SimState.UFoot.CurrentTile.R);
+				
+				// Log world positions of assigned tiles
+				const FVector DWorld = OrbSimDriver->MapHexToWorld(SimState.DFoot.CurrentTile);
+				const FVector LWorld = OrbSimDriver->MapHexToWorld(SimState.LFoot.CurrentTile);
+				const FVector RWorld = OrbSimDriver->MapHexToWorld(SimState.RFoot.CurrentTile);
+				const FVector UWorld = OrbSimDriver->MapHexToWorld(SimState.UFoot.CurrentTile);
+				UE_LOG(LogTemp, Warning, TEXT("  Assigned tile world positions: D(%.1f,%.1f,%.1f) L(%.1f,%.1f,%.1f) R(%.1f,%.1f,%.1f) U(%.1f,%.1f,%.1f)"),
+					DWorld.X, DWorld.Y, DWorld.Z, LWorld.X, LWorld.Y, LWorld.Z,
+					RWorld.X, RWorld.Y, RWorld.Z, UWorld.X, UWorld.Y, UWorld.Z);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("CalibrateWalker: Walker SimWalkerIndex=%d but Sim only has %d walkers"), Walker->SimWalkerIndex, Sim->Walkers.Num());
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("CalibrateWalker: Walker SimWalkerIndex=%d but Sim is null"), Walker->SimWalkerIndex);
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CalibrateWalker: Walker is NOT in simulation (SimWalkerIndex=%d, OrbSimDriver=%d)"), 
+			Walker->SimWalkerIndex, OrbSimDriver ? 1 : 0);
+	}
+
+	// Log current FootAxleWorldLocation from calibration data
+	UE_LOG(LogTemp, Warning, TEXT("CalibrateWalker: FootAxleWorldLocation from calibration data:"));
+	for (int32 i = 0; i < WalkerLegCalibrations.Num(); ++i)
+	{
+		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[i];
+		UE_LOG(LogTemp, Warning, TEXT("  Leg %d (%s): FootAxleWorldLocation=(%.1f,%.1f,%.1f)"),
+			i, *LegData.HipAxleBone.ToString(), LegData.FootAxleWorldLocation.X, LegData.FootAxleWorldLocation.Y, LegData.FootAxleWorldLocation.Z);
+	}
+
 	// Initialize IK Rig goal positions to current foot positions (updated by StartingFootDistance)
 	// Use saved DesiredStandHeight if it was previously calibrated
 	SetIKRigGoalPositions(BodyComp, DesiredStandHeight);
-	
+
 	if (!FMath::IsNearlyZero(DesiredStandHeight))
 	{
 		SetStandHeight();
@@ -156,12 +210,12 @@ void AGameManager::CalibrateWalker()
 		UpdateWalkerDebugMeshes(BodyComp);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("GameManager: Walker calibration started (%d legs). Loaded settings: StandHeight=%.1f, StartingFootDistance=%.1f, StepHeight=%.1f"), 
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Walker calibration started (%d legs). Loaded settings: StandHeight=%.1f, StartingFootDistance=%.1f, StepHeight=%.1f"),
 		WalkerLegCalibrations.Num(), DesiredStandHeight, StartingFootDistance, StepHeight);
 
 	CreateWalkerDebugMeshes(Walker, BodyComp);
 	UpdateWalkerDebugMeshes(BodyComp);
-	
+
 	// Update quadrant visualization if enabled
 	if (bShowLegTileQuadrants)
 	{
@@ -227,11 +281,17 @@ void AGameManager::SetStandHeight()
 
 	UpdateWalkerDebugMeshes(BodyComp);
 
-	CurrentStandHeight = ActualHeight;
-	bWalkerStanding = !FMath::IsNearlyZero(CurrentStandHeight, 1.0f);
-	
+	// Update tile/assigned-tile visualization when foot positions change
+	if (bShowLegTileQuadrants)
+	{
+		UpdateLegTileQuadrantVisualization();
+	}
+
+	StandHeight = ActualHeight;
+	bWalkerStanding = !FMath::IsNearlyZero(StandHeight, 1.0f);
+
 	UE_LOG(LogTemp, Log, TEXT("GameManager: Stand height updated - Desired=%.1f, Actual=%.1f, Standing=%d"),
-		DesiredStandHeight, CurrentStandHeight, bWalkerStanding ? 1 : 0);
+		DesiredStandHeight, StandHeight, bWalkerStanding ? 1 : 0);
 }
 
 void AGameManager::SetStandHeightButton()
@@ -241,7 +301,7 @@ void AGameManager::SetStandHeightButton()
 		UE_LOG(LogTemp, Warning, TEXT("GameManager: SetStandHeightButton called without an active calibration."));
 		return;
 	}
-	
+
 	// Manually trigger SetStandHeight with current DesiredStandHeight
 	SetStandHeight();
 	UE_LOG(LogTemp, Log, TEXT("GameManager: SetStandHeight applied manually - Height=%.1f"), DesiredStandHeight);
@@ -254,7 +314,7 @@ void AGameManager::ApplyStandHeight()
 		UE_LOG(LogTemp, Warning, TEXT("GameManager: ApplyStandHeight called without an active calibration."));
 		return;
 	}
-	
+
 	// Manually trigger SetStandHeight with current DesiredStandHeight
 	SetStandHeight();
 }
@@ -287,7 +347,7 @@ void AGameManager::SaveWalkerCalibration()
 	}
 
 	SaveWalkerCalibrationToConfig();
-	
+
 	UE_LOG(LogTemp, Log, TEXT("GameManager: Walker Calibration Saved to Config:"));
 	UE_LOG(LogTemp, Log, TEXT("  - StandHeight: %.2f"), DesiredStandHeight);
 	UE_LOG(LogTemp, Log, TEXT("  - StartingFootDistance: %.2f"), StartingFootDistance);
@@ -298,7 +358,7 @@ void AGameManager::SaveWalkerCalibration()
 	UE_LOG(LogTemp, Log, TEXT("  - ReachDistance: %d"), ReachDistance);
 	UE_LOG(LogTemp, Log, TEXT("  - ActiveFoot: %s"), *StaticEnum<EWalkerFoot>()->GetNameStringByValue((int32)ActiveFoot));
 	UE_LOG(LogTemp, Log, TEXT("  - Legs: %d"), WalkerLegCalibrations.Num());
-	
+
 	for (int32 i = 0; i < WalkerLegCalibrations.Num() && i < WalkerOriginalFootPositions.Num(); ++i)
 	{
 		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[i];
@@ -315,6 +375,7 @@ void AGameManager::CancelWalkerCalibration()
 	// DO NOT clear settings - they persist between sessions
 	if (CalibratingWalker.IsValid())
 	{
+		CalibratingWalker->Calibrating = false;
 		CalibratingWalker->Destroy();
 		CalibratingWalker.Reset();
 	}
@@ -322,14 +383,14 @@ void AGameManager::CancelWalkerCalibration()
 	// Clear runtime data only
 	WalkerLegCalibrations.Empty();
 	bWalkerCalibrationActive = false;
-	CurrentStandHeight = 0.f;
+	StandHeight = 0.f;
 	bWalkerStanding = false;
 	WalkerBodyBaseWorldLocation = FVector::ZeroVector;
 	WalkerBodyActorOffset = FVector::ZeroVector;
 	WalkerStandAlpha = 0.f;
 	ClearWalkerDebugMeshes();
 	ClearLegTileQuadrantVisualization();
-	
+
 	// Settings like DesiredStandHeight, StartingFootDistance, StepHeight, ReachDistance, etc.
 	// are NOT cleared - they persist for the next calibration session
 	UE_LOG(LogTemp, Log, TEXT("GameManager: Walker calibration cancelled. Settings preserved for next session."));
@@ -481,7 +542,7 @@ void AGameManager::GatherWalkerCalibrationData(USkeletalMeshComponent* BodyComp)
 		Data.FootRelativeTransform = FootXform.GetRelativeTransform(FootAxleXform);
 
 		WalkerLegCalibrations.Add(Data);
-		
+
 		// Store original foot position for offset calculation
 		WalkerOriginalFootPositions.Add(Data.FootAxleWorldLocation);
 
@@ -497,7 +558,7 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 {
 	if (!bWalkerCalibrationActive || !OrbSimDriver || WalkerLegCalibrations.Num() == 0 || WalkerOriginalFootPositions.Num() != WalkerLegCalibrations.Num())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyStartingFootDistance: Conditions not met - Active=%d, Driver=%d, Legs=%d, Origins=%d"), 
+		UE_LOG(LogTemp, Warning, TEXT("ApplyStartingFootDistance: Conditions not met - Active=%d, Driver=%d, Legs=%d, Origins=%d"),
 			bWalkerCalibrationActive ? 1 : 0, OrbSimDriver ? 1 : 0, WalkerLegCalibrations.Num(), WalkerOriginalFootPositions.Num());
 		return;
 	}
@@ -512,20 +573,27 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 		UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Restored original foot positions (StartingFootDistance=0)"));
 		return;
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Applying offset %.1f to %d legs"), StartingFootDistance, WalkerLegCalibrations.Num());
+
+	UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Applying horizontal offset of %.1f tiles to %d legs"), StartingFootDistance, WalkerLegCalibrations.Num());
+
+	// Apply offset from the body-aligned tile in the horizontal plane, expressed in tile distance.
+	// StartingFootDistance is interpreted as "number of tiles away from the body tile" along the
+	// direction from body to the original foot position.
+	const float TileSize = OrbSimDriver->GetTileSize();
+
+	// Body position in XY plane (used as origin for tile-based offset)
+	const FVector BodyWorld2D = FVector(WalkerBodyBaseWorldLocation.X, WalkerBodyBaseWorldLocation.Y, 0.f);
 
 	// Apply offset from original positions
 	for (int32 Index = 0; Index < WalkerLegCalibrations.Num(); ++Index)
 	{
 		FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[Index];
 		const FVector& OriginalPos = WalkerOriginalFootPositions[Index];
-		
+
 		// Calculate direction from body to original foot position in horizontal plane
-		const FVector BodyWorld2D = FVector(WalkerBodyBaseWorldLocation.X, WalkerBodyBaseWorldLocation.Y, 0.f);
 		const FVector OriginalFoot2D = FVector(OriginalPos.X, OriginalPos.Y, 0.f);
 		FVector BodyToFootDir = (OriginalFoot2D - BodyWorld2D).GetSafeNormal();
-		
+
 		// If direction is invalid, use direction from body to hip
 		if (BodyToFootDir.IsNearlyZero())
 		{
@@ -544,23 +612,24 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 				}
 			}
 		}
-		
-		// Calculate new position by adding offset along the direction from body to original foot
-		const FVector Offset2D = BodyToFootDir * StartingFootDistance;
-		const FVector NewFootWorld2D = OriginalFoot2D + Offset2D;
-		
+
+		// Calculate new position by adding offset along the direction from body to original foot.
+		// Offset magnitude is expressed in tiles and converted to world units via TileSize.
+		const FVector Offset2D = BodyToFootDir * (StartingFootDistance * TileSize);
+		const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
+
 		// Snap to nearest grid tile
 		FHex NearestHex;
 		if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, OriginalPos.Z), NearestHex))
 		{
 			const FVector SnappedWorld = OrbSimDriver->MapHexToWorld(NearestHex);
-			
+
 			// Check if within leg reach
 			const float MaxLegLength = LegData.UpperLength + LegData.LowerLength;
 			const float VerticalDist = FMath::Abs(LegData.HipWorldLocation.Z - OriginalPos.Z);
 			const float MaxHorizontalReach = FMath::Sqrt(FMath::Max(0.f, MaxLegLength * MaxLegLength - VerticalDist * VerticalDist));
 			const float NewDistance = FVector::Dist2D(FVector(LegData.HipWorldLocation.X, LegData.HipWorldLocation.Y, 0.f), FVector(SnappedWorld.X, SnappedWorld.Y, 0.f));
-			
+
 			if (NewDistance <= MaxHorizontalReach * 0.98f)
 			{
 				LegData.FootAxleWorldLocation = FVector(SnappedWorld.X, SnappedWorld.Y, OriginalPos.Z);
@@ -573,7 +642,7 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 				const FVector HipToFootDir = (NewFootWorld2D - Hip2D).GetSafeNormal();
 				const FVector ReachablePos = Hip2D + HipToFootDir * (MaxHorizontalReach * 0.95f);
 				LegData.FootAxleWorldLocation = FVector(ReachablePos.X, ReachablePos.Y, OriginalPos.Z);
-				UE_LOG(LogTemp, Warning, TEXT("ApplyStartingFootDistance: Leg %d clamped to reachable distance (%.1f > %.1f)"), 
+				UE_LOG(LogTemp, Warning, TEXT("ApplyStartingFootDistance: Leg %d clamped to reachable distance (%.1f > %.1f)"),
 					Index, NewDistance, MaxHorizontalReach * 0.98f);
 			}
 		}
@@ -584,8 +653,15 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 			UE_LOG(LogTemp, Warning, TEXT("ApplyStartingFootDistance: Leg %d snap to hex failed, using offset position"), Index);
 		}
 	}
-	
+
 	UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Updated %d foot positions"), WalkerLegCalibrations.Num());
+
+	// Keep quadrant/assigned-tile visualization in sync whenever starting foot distance
+	// changes the base foot positions.
+	if (bShowLegTileQuadrants && CalibratingWalker.IsValid())
+	{
+		UpdateLegTileQuadrantVisualization();
+	}
 }
 
 // Helper function to convert EWalkerFoot enum to foot bone name
@@ -613,7 +689,7 @@ void AGameManager::SetStepHeight()
 	{
 		return;
 	}
-	
+
 	if (!bWalkerCalibrationActive || !CalibratingWalker.IsValid())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("GameManager: SetStepHeight called without an active calibration."));
@@ -655,19 +731,19 @@ void AGameManager::SetStepHeight()
 	}
 
 	FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[ActiveLegIndex];
-	
+
 	// Get the base foot position (original position + StartingFootDistance offset, but without step height)
 	// First, restore to original position
 	FVector BaseFootPos = WalkerOriginalFootPositions[ActiveLegIndex];
-	
+
 	// Apply StartingFootDistance offset if it was set
 	if (StartingFootDistance != 0.f && OrbSimDriver)
 	{
-		// Recalculate the offset position (same logic as ApplyStartingFootDistance)
+		// Recalculate the offset position (same logic as ApplyStartingFootDistance, using tile distance)
 		const FVector BodyWorld2D = FVector(WalkerBodyBaseWorldLocation.X, WalkerBodyBaseWorldLocation.Y, 0.f);
 		const FVector OriginalFoot2D = FVector(BaseFootPos.X, BaseFootPos.Y, 0.f);
 		FVector BodyToFootDir = (OriginalFoot2D - BodyWorld2D).GetSafeNormal();
-		
+
 		if (BodyToFootDir.IsNearlyZero())
 		{
 			const FVector HipWorld2D = FVector(LegData.HipWorldLocation.X, LegData.HipWorldLocation.Y, 0.f);
@@ -684,10 +760,11 @@ void AGameManager::SetStepHeight()
 				}
 			}
 		}
-		
-		const FVector Offset2D = BodyToFootDir * StartingFootDistance;
-		const FVector NewFootWorld2D = OriginalFoot2D + Offset2D;
-		
+
+		const float TileSize = OrbSimDriver->GetTileSize();
+		const FVector Offset2D = BodyToFootDir * (StartingFootDistance * TileSize);
+		const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
+
 		// Snap to grid
 		FHex NearestHex;
 		if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootPos.Z), NearestHex))
@@ -700,16 +777,22 @@ void AGameManager::SetStepHeight()
 			BaseFootPos = FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootPos.Z);
 		}
 	}
-	
+
 	// Raise the active foot by StepHeight from the base position
 	LegData.FootAxleWorldLocation = FVector(BaseFootPos.X, BaseFootPos.Y, BaseFootPos.Z + StepHeight);
-	
+
 	// Update IK Rig goal positions
-	SetIKRigGoalPositions(BodyComp, CurrentStandHeight);
-	
+	SetIKRigGoalPositions(BodyComp, StandHeight);
+
 	// Update debug meshes
 	UpdateWalkerDebugMeshes(BodyComp);
-	
+
+	// Update tile/assigned-tile visualization so highlighted tiles follow the previewed foot
+	if (bShowLegTileQuadrants)
+	{
+		UpdateLegTileQuadrantVisualization();
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("GameManager: Set step height %.1f for foot %s"), StepHeight, *ActiveFootBoneName.ToString());
 }
 
@@ -735,54 +818,119 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 	}
 
 	// Map leg calibration data to IK Rig goal positions
-	// These goal variables should be UPROPERTY(BlueprintReadWrite) FVector properties on the Animation Blueprint
-	// so they can be used directly in the IK Rig:
-	// - UFootGoal, DFootGoal, LFootGoal, RFootGoal, BodyGoal
-	
+	// IK Rig goals should position the foot BONE at the target world location (tile center)
+	// The goal is where we want the foot bone to end up after IK is applied
+
 	// Get the component transform for space conversion
-	const FTransform ComponentTransform = BodyComp->GetComponentTransform();
-	
+	// IK Rig typically works in component-local space
+	const FTransform ComponentToWorld = BodyComp->GetComponentToWorld();
+	const FRotator ComponentRotation = BodyComp->GetComponentRotation();
+	const FTransform ComponentTransformNoScale(ComponentRotation, ComponentToWorld.GetLocation(), FVector(1.f));
+	const FTransform WorldToComponentNoScale = ComponentTransformNoScale.Inverse();
+
 	// Get the body goal position (current body location + height offset) in world space
 	const FVector BodyGoalWorld = WalkerBodyBaseWorldLocation + FVector(0.f, 0.f, HeightOffset);
-	
-	// Convert body goal to component space (IK Rig might need component space)
-	const FVector BodyGoalComponent = ComponentTransform.InverseTransformPosition(BodyGoalWorld);
-	
-	// Set foot goal positions to their original world locations (feet stay planted)
+
+	// Convert body goal to component space
+	const FVector BodyGoalComponent = WorldToComponentNoScale.TransformPosition(BodyGoalWorld);
+
+	// Set foot goal positions - these should position the foot BONE at the tile center
 	// Map each leg to its corresponding goal:
 	// D -> DFootGoal, L -> LFootGoal, R -> RFootGoal, U -> UFootGoal
-	
+
+	// Check if walker is in simulation and get assigned tiles
+	FHex AssignedTiles[4] = { FHex(), FHex(), FHex(), FHex() };
+	bool bHasSimTiles = false;
+	if (Walker->SimWalkerIndex >= 0 && OrbSimDriver)
+	{
+		if (USimWorldHex* Sim = OrbSimDriver->GetSim())
+		{
+			if (Walker->SimWalkerIndex < Sim->Walkers.Num())
+			{
+				const FWalkerState& SimState = Sim->Walkers[Walker->SimWalkerIndex];
+				AssignedTiles[0] = SimState.DFoot.CurrentTile;  // D
+				AssignedTiles[1] = SimState.LFoot.CurrentTile;  // L
+				AssignedTiles[2] = SimState.RFoot.CurrentTile;  // R
+				AssignedTiles[3] = SimState.UFoot.CurrentTile;  // U
+				bHasSimTiles = true;
+				UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Using assigned tiles from simulation"));
+			}
+		}
+	}
+
 	for (int32 Index = 0; Index < WalkerLegCalibrations.Num(); ++Index)
 	{
 		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[Index];
-		const FVector FootGoalWorld = LegData.FootAxleWorldLocation;
-		
-		// Convert foot goal to component space (IK Rig might need component space)
-		const FVector FootGoalComponent = ComponentTransform.InverseTransformPosition(FootGoalWorld);
-		
+
 		// Determine which goal this leg corresponds to based on bone names
 		FString GoalName;
+		int32 FootIndex = -1; // 0=D, 1=L, 2=R, 3=U
 		const FString HipName = LegData.HipAxleBone.ToString();
 		if (HipName.Contains(TEXT("DHip")))
 		{
 			GoalName = TEXT("DFootGoal");
+			FootIndex = 0;
 		}
 		else if (HipName.Contains(TEXT("LHip")))
 		{
 			GoalName = TEXT("LFootGoal");
+			FootIndex = 1;
 		}
 		else if (HipName.Contains(TEXT("RHip")))
 		{
 			GoalName = TEXT("RFootGoal");
+			FootIndex = 2;
 		}
 		else if (HipName.Contains(TEXT("UHip")))
 		{
 			GoalName = TEXT("UFootGoal");
+			FootIndex = 3;
 		}
-		
+
+		// Determine target world position - prefer assigned tile from simulation if available
+		FVector FootGoalWorld = LegData.FootAxleWorldLocation;
+		FHex TargetHex;
+		bool bUsingAssignedTile = false;
+
+		if (bHasSimTiles && FootIndex >= 0 && FootIndex < 4)
+		{
+			// Use assigned tile from simulation
+			TargetHex = AssignedTiles[FootIndex];
+			FootGoalWorld = OrbSimDriver->MapHexToWorld(TargetHex);
+			bUsingAssignedTile = true;
+			UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Leg %d (%s) using assigned tile (%d,%d) -> world (%.1f,%.1f,%.1f)"),
+				Index, *HipName, TargetHex.Q, TargetHex.R, FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z);
+		}
+		else
+		{
+			// Use FootAxleWorldLocation from calibration data
+			if (OrbSimDriver && OrbSimDriver->WorldToHex(FootGoalWorld, TargetHex))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Leg %d (%s) using FootAxleWorldLocation (%.1f,%.1f,%.1f) -> hex (%d,%d)"),
+					Index, *HipName, FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z, TargetHex.Q, TargetHex.R);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Leg %d (%s) using FootAxleWorldLocation (%.1f,%.1f,%.1f) [could not convert to hex]"),
+					Index, *HipName, FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z);
+			}
+		}
+
+		// Log comparison if we have both
+		if (bHasSimTiles && FootIndex >= 0 && FootIndex < 4)
+		{
+			const FVector CalibrationWorld = LegData.FootAxleWorldLocation;
+			const float Distance = FVector::Dist(CalibrationWorld, FootGoalWorld);
+			UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Leg %d comparison - Calibration: (%.1f,%.1f,%.1f) vs Assigned: (%.1f,%.1f,%.1f) [Distance=%.1f]"),
+				Index, CalibrationWorld.X, CalibrationWorld.Y, CalibrationWorld.Z,
+				FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z, Distance);
+		}
+
+		// Convert foot goal to component-local space (without scale to avoid distortion)
+		const FVector FootGoalComponent = WorldToComponentNoScale.TransformPosition(FootGoalWorld);
+
 		// Set the goal position on the animation blueprint instance via reflection
-		// These should be UPROPERTY(BlueprintReadWrite, Category = "IK Rig") FVector properties on the Animation Blueprint
-		// Try both world space and component space - IK Rig typically uses world space, but check your setup
+			// The goal should be in component-local space so IK Rig can apply it correctly
 		if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(*GoalName))
 		{
 			if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
@@ -792,17 +940,34 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 					FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
 					if (GoalValue)
 					{
-						// Use world space (IK Rig goals are typically in world space)
-						// If your IK Rig setup uses component space, change this to FootGoalComponent
-						*GoalValue = FootGoalWorld;
+						// Use component-local space (no scale) so IK Rig positions the foot bone correctly
+						*GoalValue = FootGoalComponent;
+						UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Set %s to component space (%.1f,%.1f,%.1f)"),
+							*GoalName, FootGoalComponent.X, FootGoalComponent.Y, FootGoalComponent.Z);
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Failed to get value pointer for %s"), *GoalName);
 					}
 				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: %s is not a FVector property"), *GoalName);
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: %s is not a struct property"), *GoalName);
 			}
 		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Property %s not found on Animation Blueprint %s"),
+				*GoalName, *AnimInstance->GetClass()->GetName());
+		}
 	}
-	
+
 	// Set BodyGoal position on the animation blueprint instance
-	// IK Rig goals are typically in world space, but some setups use component space
 	if (FProperty* BodyGoalProperty = AnimInstance->GetClass()->FindPropertyByName(TEXT("BodyGoal")))
 	{
 		if (FStructProperty* StructProp = CastField<FStructProperty>(BodyGoalProperty))
@@ -812,9 +977,8 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 				FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
 				if (GoalValue)
 				{
-					// Use world space (IK Rig goals are typically in world space)
-					// If your IK Rig setup uses component space, change this to BodyGoalComponent
-					*GoalValue = BodyGoalWorld;
+					// Use component-local space (no scale)
+					*GoalValue = BodyGoalComponent;
 				}
 			}
 		}
@@ -825,23 +989,21 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: BodyGoal property not found on Animation Blueprint %s"), 
+		UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: BodyGoal property not found on Animation Blueprint %s"),
 			*AnimInstance->GetClass()->GetName());
 	}
 
 	// Force the animation system to update with the new values
-	// Setting values via reflection doesn't automatically trigger updates, so we need to force it
-	// In the editor, we need to explicitly evaluate the animation blueprint
 	if (AnimInstance)
 	{
 		// Force animation blueprint to update with new goal values
 		AnimInstance->BlueprintThreadSafeUpdateAnimation(0.f);
-		
+
 		// Force skeletal mesh to refresh from animation
 		BodyComp->TickAnimation(0.f, false);
 		BodyComp->RefreshBoneTransforms();
 		BodyComp->UpdateComponentToWorld();
-		
+
 		// Mark for render update in editor
 		if (GIsEditor && !GIsPlayInEditorWorld)
 		{
@@ -1025,8 +1187,10 @@ void AGameManager::ClearWalkerDebugMeshes()
 void AGameManager::UpdateLegTileQuadrantVisualization()
 {
 	ClearLegTileQuadrantVisualization();
-	
-	if (!bShowLegTileQuadrants || !bWalkerCalibrationActive || !CalibratingWalker.IsValid() || !OrbSimDriver)
+
+	// Knee/leg-color markers should always be visible when calibration is active,
+	// tile markers are gated by bShowLegTileQuadrants further down.
+	if (!bWalkerCalibrationActive || !CalibratingWalker.IsValid() || !OrbSimDriver)
 	{
 		return;
 	}
@@ -1046,43 +1210,48 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 	}
 
 	// Helper function to apply quadrant offset
-	// Quadrant order: D (0), L (1), R (2), U (3)
+	// Quadrant order: N (0), E (1), S (2), W (3) - clockwise around the body
 	// Offset rotates the quadrant assignment
 	auto ApplyQuadrantOffset = [](const FString& OriginalQuadrant, int32 Offset) -> FString
-	{
-		static const TArray<FString> QuadrantOrder = { TEXT("D"), TEXT("L"), TEXT("R"), TEXT("U") };
-		int32 OriginalIndex = -1;
-		for (int32 i = 0; i < QuadrantOrder.Num(); ++i)
 		{
-			if (QuadrantOrder[i] == OriginalQuadrant)
+			static const TArray<FString> QuadrantOrder = { TEXT("N"), TEXT("E"), TEXT("S"), TEXT("W") };
+			int32 OriginalIndex = -1;
+			for (int32 i = 0; i < QuadrantOrder.Num(); ++i)
 			{
-				OriginalIndex = i;
-				break;
+				if (QuadrantOrder[i] == OriginalQuadrant)
+				{
+					OriginalIndex = i;
+					break;
+				}
 			}
-		}
-		if (OriginalIndex < 0)
-		{
-			return OriginalQuadrant; // Invalid quadrant, return as-is
-		}
-		// Apply offset and wrap around
-		int32 OffsetValue = FMath::Clamp(Offset, 0, 3);
-		int32 NewIndex = (OriginalIndex + OffsetValue) % 4;
-		return QuadrantOrder[NewIndex];
-	};
+			if (OriginalIndex < 0)
+			{
+				return OriginalQuadrant; // Invalid quadrant, return as-is
+			}
+			// Apply offset and wrap around
+			int32 OffsetValue = FMath::Clamp(Offset, 0, 3);
+			int32 NewIndex = (OriginalIndex + OffsetValue) % 4;
+			return QuadrantOrder[NewIndex];
+		};
 
 	// Base color mapping for each leg quadrant (consistent colors, no variation)
 	// Colors are assigned based on actual tile quadrant colors, not bone names
+	// NOTE: Colors preserve previous semantics where:
+	// - South (formerly D)  = Yellow
+	// - West  (formerly L)  = Blue
+	// - East  (formerly R)  = Red
+	// - North (formerly U)  = Green
 	static const TMap<FString, FLinearColor> LegBaseColors = {
-		{ TEXT("D"), FLinearColor(1.0f, 1.0f, 0.0f) },  // Yellow (D leg gets yellow tiles)
-		{ TEXT("L"), FLinearColor(0.0f, 0.0f, 1.0f) },  // Blue (L leg gets blue tiles)
-		{ TEXT("R"), FLinearColor(0.0f, 1.0f, 0.0f) },  // Green (R leg gets green tiles)
-		{ TEXT("U"), FLinearColor(1.0f, 0.0f, 0.0f) }   // Red (U leg gets red tiles)
+		{ TEXT("N"), FLinearColor(0.0f, 1.0f, 0.0f) },  // Green
+		{ TEXT("E"), FLinearColor(1.0f, 0.0f, 0.0f) },  // Red
+		{ TEXT("W"), FLinearColor(0.0f, 0.0f, 1.0f) },  // Blue
+		{ TEXT("S"), FLinearColor(1.0f, 1.0f, 0.0f) }   // Yellow
 	};
 
 	// Get tile size for marker scaling
 	const float TileSize = OrbSimDriver->GetTileSize();
-	const float MarkerScale = 0.25f; // Scale relative to tile size
-	const float KneeMarkerScale = 0.35f; // Slightly larger for knee markers
+	const float MarkerScale = 0.4f;      // Larger tile markers
+	const float KneeMarkerScale = 0.6f;  // Larger knee markers
 
 	UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	if (!SphereMesh)
@@ -1093,123 +1262,178 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 
 	// Helper function to determine fixed quadrant from hex coordinates
 	// Fixed quadrants are based on hex coordinates relative to body, NOT leg positions or offset
-	// Walker initialization pattern: D: Q+1, L: R+1, R: Q-1, U: R-1
+	// Compass mapping on axial coordinates:
+	//   East  (E) = Q+1
+	//   West  (W) = Q-1
+	//   South (S) = R+1
+	//   North (N) = R-1
 	auto GetFixedQuadrantFromHex = [](const FHex& BodyHex, const FHex& TestHex) -> FString
 	{
 		// Use hex coordinate differences to determine fixed quadrant
-		// Match walker initialization: D=Q+1, L=R+1, R=Q-1, U=R-1
 		const int32 dq = TestHex.Q - BodyHex.Q;
 		const int32 dr = TestHex.R - BodyHex.R;
 		
 		// For axis-aligned hexes:
 		if (dq > 0 && dr == 0)
 		{
-			return TEXT("D"); // Positive Q (Q+1)
+			return TEXT("E"); // Positive Q (Q+1)
 		}
 		else if (dq == 0 && dr > 0)
 		{
-			return TEXT("L"); // Positive R (R+1)
+			return TEXT("S"); // Positive R (R+1)
 		}
 		else if (dq < 0 && dr == 0)
 		{
-			return TEXT("R"); // Negative Q (Q-1)
+			return TEXT("W"); // Negative Q (Q-1)
 		}
 		else if (dq == 0 && dr < 0)
 		{
-			return TEXT("U"); // Negative R (R-1)
+			return TEXT("N"); // Negative R (R-1)
 		}
 		// For diagonal hexes, use the dominant direction
 		else if (FMath::Abs(dq) > FMath::Abs(dr))
 		{
 			// Q direction is dominant
-			return (dq > 0) ? TEXT("D") : TEXT("R");
+			return (dq > 0) ? TEXT("E") : TEXT("W");
 		}
 		else if (FMath::Abs(dr) > FMath::Abs(dq))
 		{
 			// R direction is dominant
-			return (dr > 0) ? TEXT("L") : TEXT("U");
+			return (dr > 0) ? TEXT("S") : TEXT("N");
 		}
 		else
 		{
 			// Equal magnitude - use diagonal assignment based on signs
-			// Prioritize based on walker initialization pattern
+			// Prioritize based on compass-style mapping
 			if (dq > 0 && dr > 0)
 			{
-				// Southeast diagonal - prioritize R (positive R is L)
-				return TEXT("L");
+				// Southeast diagonal - closer to South / East; prefer South
+				return TEXT("S");
 			}
 			else if (dq > 0 && dr < 0)
 			{
-				// Northeast diagonal - prioritize Q (positive Q is D)
-				return TEXT("D");
+				// Northeast diagonal - closer to North / East; prefer East
+				return TEXT("E");
 			}
 			else if (dq < 0 && dr > 0)
 			{
-				// Southwest diagonal - prioritize R (positive R is L)
-				return TEXT("L");
+				// Southwest diagonal - closer to South / West; prefer West
+				return TEXT("W");
 			}
 			else // dq < 0 && dr < 0
 			{
-				// Northwest diagonal - prioritize R (negative R is U)
-				return TEXT("U");
+				// Northwest diagonal - closer to North / West; prefer North
+				return TEXT("N");
 			}
 		}
 	};
 
-	// First pass: Map legs to quadrants (with offset applied)
-	// Map: LegIndex -> AssignedQuadrant
-	TMap<int32, FString> LegToQuadrantMap;
-	TMap<int32, FLinearColor> LegToColorMap;
-	TMap<int32, FName> LegToKneeBoneMap;
-	
+	// First pass: determine leg indices for each physical leg from bone names
+	// We keep the physical bone naming (D,L,R,U) but map them into compass quadrants
+	int32 DLegIndex = INDEX_NONE; // Physical "Down" leg
+	int32 LLegIndex = INDEX_NONE; // Physical "Left" leg
+	int32 RLegIndex = INDEX_NONE; // Physical "Right" leg
+	int32 ULegIndex = INDEX_NONE; // Physical "Up" leg
 	for (int32 LegIndex = 0; LegIndex < WalkerLegCalibrations.Num(); ++LegIndex)
 	{
 		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[LegIndex];
-		
-		// Determine leg quadrant from bone name
-		FString OriginalQuadrant;
 		const FString HipName = LegData.HipAxleBone.ToString();
 		if (HipName.StartsWith(TEXT("D")))
 		{
-			OriginalQuadrant = TEXT("D");
+			DLegIndex = LegIndex;
 		}
 		else if (HipName.StartsWith(TEXT("L")))
 		{
-			OriginalQuadrant = TEXT("L");
+			LLegIndex = LegIndex;
 		}
 		else if (HipName.StartsWith(TEXT("R")))
 		{
-			OriginalQuadrant = TEXT("R");
+			RLegIndex = LegIndex;
 		}
 		else if (HipName.StartsWith(TEXT("U")))
 		{
-			OriginalQuadrant = TEXT("U");
+			ULegIndex = LegIndex;
 		}
-		else
+	}
+
+	// Helper to convert an EWalkerFoot selection to a leg index
+	auto GetLegIndexForFoot = [&](EWalkerFoot Foot) -> int32
+	{
+		switch (Foot)
 		{
-			continue;
+		case EWalkerFoot::DFoot: return DLegIndex;
+		case EWalkerFoot::LFoot: return LLegIndex;
+		case EWalkerFoot::RFoot: return RLegIndex;
+		case EWalkerFoot::UFoot: return ULegIndex;
+		default: return INDEX_NONE;
+		}
+	};
+
+	// Map: LegIndex -> AssignedQuadrant and color, using per-quadrant leg selection
+	TMap<int32, FString> LegToQuadrantMap;
+	TMap<int32, FLinearColor> LegToColorMap;
+	TMap<int32, FName> LegToKneeBoneMap;
+
+	auto AssignQuadrantToLeg = [&](const FString& Quadrant, EWalkerFoot QuadrantLeg)
+	{
+		const int32 LegIndex = GetLegIndexForFoot(QuadrantLeg);
+		if (LegIndex == INDEX_NONE || !WalkerLegCalibrations.IsValidIndex(LegIndex))
+		{
+			return;
 		}
 
-		// Apply quadrant offset (same offset for all legs - rotates which quadrant each leg is assigned to)
-		int32 Offset = FMath::Clamp(LegQuadrantOffset, 0, 3);
-		FString AssignedQuadrant = ApplyQuadrantOffset(OriginalQuadrant, Offset);
-
-		const FLinearColor* QuadrantBaseColor = LegBaseColors.Find(AssignedQuadrant);
+		const FLinearColor* QuadrantBaseColor = LegBaseColors.Find(Quadrant);
 		if (!QuadrantBaseColor)
 		{
-			continue;
+			return;
 		}
 
-		LegToQuadrantMap.Add(LegIndex, AssignedQuadrant);
+		LegToQuadrantMap.Add(LegIndex, Quadrant);
 		LegToColorMap.Add(LegIndex, *QuadrantBaseColor);
-		LegToKneeBoneMap.Add(LegIndex, LegData.KneeAxleBone);
+		LegToKneeBoneMap.Add(LegIndex, WalkerLegCalibrations[LegIndex].KneeAxleBone);
+	};
+
+	// Apply per-quadrant leg assignment (compass order N,E,S,W around the body)
+	AssignQuadrantToLeg(TEXT("N"), NQuadrantLeg);
+	AssignQuadrantToLeg(TEXT("E"), EQuadrantLeg);
+	AssignQuadrantToLeg(TEXT("W"), WQuadrantLeg);
+	AssignQuadrantToLeg(TEXT("S"), SQuadrantLeg);
+
+	// Fallback: if no legs were assigned via N/E/W/S mapping (e.g., due to invalid enum values),
+	// fall back to physical leg mapping D/L/R/U -> S/W/E/N so that visualization always has data.
+	if (LegToQuadrantMap.Num() == 0)
+	{
+		auto AddDefaultLegMapping = [&](int32 LegIndex, const FString& Quadrant)
+		{
+			if (LegIndex == INDEX_NONE || !WalkerLegCalibrations.IsValidIndex(LegIndex))
+			{
+				return;
+			}
+
+			const FLinearColor* QuadrantBaseColor = LegBaseColors.Find(Quadrant);
+			if (!QuadrantBaseColor)
+			{
+				return;
+			}
+
+			LegToQuadrantMap.Add(LegIndex, Quadrant);
+			LegToColorMap.Add(LegIndex, *QuadrantBaseColor);
+			LegToKneeBoneMap.Add(LegIndex, WalkerLegCalibrations[LegIndex].KneeAxleBone);
+		};
+
+		// Map physical legs to compass quadrants (matches original D/L/R/U semantics):
+		// D -> S, L -> W, R -> E, U -> N
+		AddDefaultLegMapping(DLegIndex, TEXT("S"));
+		AddDefaultLegMapping(LLegIndex, TEXT("W"));
+		AddDefaultLegMapping(RLegIndex, TEXT("E"));
+		AddDefaultLegMapping(ULegIndex, TEXT("N"));
 	}
 
 	// Second pass: Assign tiles to fixed quadrants based on hex coordinates (NO offset applied)
-	// Map: Hex -> FixedQuadrant (D, L, R, U based on hex position)
+	// Map: Hex -> FixedQuadrant (N, E, W, S based on hex position)
 	TMap<FHex, FString> HexToQuadrantMap;
 	
-	const int32 SearchRadius = ReachDistance + 1;
+	const int32 SearchRadius = ReachDistance;
 	for (int32 q = -SearchRadius; q <= SearchRadius; ++q)
 	{
 		for (int32 r = -SearchRadius; r <= SearchRadius; ++r)
@@ -1232,8 +1456,15 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 				continue;
 			}
 			
-			// Assign hex to fixed quadrant based on hex coordinates and world angle (no offset - this is the actual spatial quadrant)
+			// Assign hex to fixed quadrant based on hex coordinates (spatial quadrant around body)
 			FString FixedQuadrant = GetFixedQuadrantFromHex(BodyHex, TestHex);
+
+			// Apply global tile quadrant rotation around the center (does NOT change which leg is assigned
+			// to each logical D/L/R/U quadrant, only which spatial slice gets which logical label)
+			if (TileQuadrantOffset != 0)
+			{
+				FixedQuadrant = ApplyQuadrantOffset(FixedQuadrant, TileQuadrantOffset);
+			}
 			HexToQuadrantMap.Add(TestHex, FixedQuadrant);
 		}
 	}
@@ -1288,48 +1519,172 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 	}
 
 	// Fourth pass: Create tile markers (each hex gets exactly one marker with its assigned leg's color)
-	for (const auto& HexLegPair : HexToLegMap)
+	// Instead of orbs at tile centers, we draw flat tile outlines using the grid's TileMesh (if assigned).
+	if (bShowLegTileQuadrants)
 	{
-		const FHex& ReachableHex = HexLegPair.Key;
-		const int32 LegIndex = HexLegPair.Value;
-		
-		UMaterialInstanceDynamic** LegMaterialPtr = LegMaterials.Find(LegIndex);
-		if (!LegMaterialPtr || !*LegMaterialPtr)
+		// Choose a mesh for tile outlines: prefer the GameManager's TileMesh, otherwise fall back to sphere.
+		UStaticMesh* TileOutlineMesh = TileMesh ? TileMesh : SphereMesh;
+
+		for (const auto& HexLegPair : HexToLegMap)
 		{
-			continue;
+			const FHex& ReachableHex = HexLegPair.Key;
+			const int32 LegIndex = HexLegPair.Value;
+			
+			UMaterialInstanceDynamic** LegMaterialPtr = LegMaterials.Find(LegIndex);
+			if (!LegMaterialPtr || !*LegMaterialPtr)
+			{
+				continue;
+			}
+
+			const FVector TileWorld = OrbSimDriver->MapHexToWorld(ReachableHex);
+			
+			UStaticMeshComponent* MarkerComp = NewObject<UStaticMeshComponent>(Walker);
+			if (MarkerComp)
+			{
+				MarkerComp->SetStaticMesh(TileOutlineMesh);
+				MarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+				MarkerComp->SetMobility(EComponentMobility::Movable);
+				MarkerComp->SetCastShadow(false);
+				MarkerComp->SetIsVisualizationComponent(true);
+				
+				// Use the assigned leg's material
+				MarkerComp->SetMaterial(0, *LegMaterialPtr);
+				
+				MarkerComp->RegisterComponent();
+				MarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+
+				// Draw a thin outline over the tile by slightly scaling down and lifting above the base tiles.
+				const float BaseZOffset = 2.f;
+				const float BaseScale = MarkerScale;
+
+				MarkerComp->SetWorldScale3D(FVector(BaseScale));
+				MarkerComp->SetWorldLocation(TileWorld + FVector(0.f, 0.f, BaseZOffset)); // Slightly above ground
+				MarkerComp->SetVisibility(true, true);
+			}
+			WalkerQuadrantTileMarkers.Add(MarkerComp);
 		}
-		
-		const FVector TileWorld = OrbSimDriver->MapHexToWorld(ReachableHex);
-		
-		UStaticMeshComponent* MarkerComp = NewObject<UStaticMeshComponent>(Walker);
-		if (MarkerComp)
+
+		// Fifth pass: explicitly highlight the currently assigned tile for each foot with a white marker
+		// rendered above the colored quadrant tiles so it is always visible.
+		// We compute the current tile purely from each leg's FootAxleWorldLocation, independent of the
+		// quadrant assignment used for reach visualization.
+		if (UMaterialInterface* BaseMaterial = GEngine->DebugMeshMaterial)
 		{
-			MarkerComp->SetStaticMesh(SphereMesh);
-			MarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			MarkerComp->SetMobility(EComponentMobility::Movable);
-			MarkerComp->SetCastShadow(false);
-			MarkerComp->SetIsVisualizationComponent(true);
-			
-			// Use the assigned leg's consistent material
-			MarkerComp->SetMaterial(0, *LegMaterialPtr);
-			
-			MarkerComp->RegisterComponent();
-			MarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
-			MarkerComp->SetWorldScale3D(FVector(MarkerScale));
-			MarkerComp->SetWorldLocation(TileWorld + FVector(0.f, 0.f, 5.f)); // Slightly above ground
-			MarkerComp->SetVisibility(true, true);
+			UMaterialInstanceDynamic* FootHighlightMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			if (FootHighlightMaterial)
+			{
+				const FLinearColor WhiteColor = FLinearColor::White;
+				FootHighlightMaterial->SetVectorParameterValue(TEXT("Color"), WhiteColor);
+				FootHighlightMaterial->SetVectorParameterValue(TEXT("BaseColor"), WhiteColor);
+				FootHighlightMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), WhiteColor);
+				FootHighlightMaterial->SetVectorParameterValue(TEXT("DiffuseColor"), WhiteColor);
+
+				// Use the same outline mesh but scaled/lifted a bit more so it visually sits on top.
+				UStaticMesh* FootTileOutlineMesh = TileMesh ? TileMesh : SphereMesh;
+
+				// Try to get assigned tiles from simulation if calibration walker is in sim
+				FHex AssignedTiles[4] = { FHex(), FHex(), FHex(), FHex() };
+				bool bHasSimTiles = false;
+				if (CalibratingWalker.IsValid() && CalibratingWalker->SimWalkerIndex >= 0 && OrbSimDriver)
+				{
+					if (USimWorldHex* Sim = OrbSimDriver->GetSim())
+					{
+						if (CalibratingWalker->SimWalkerIndex < Sim->Walkers.Num())
+						{
+							const FWalkerState& SimState = Sim->Walkers[CalibratingWalker->SimWalkerIndex];
+							AssignedTiles[0] = SimState.DFoot.CurrentTile;  // D
+							AssignedTiles[1] = SimState.LFoot.CurrentTile;  // L
+							AssignedTiles[2] = SimState.RFoot.CurrentTile;  // R
+							AssignedTiles[3] = SimState.UFoot.CurrentTile;  // U
+							bHasSimTiles = true;
+						}
+					}
+				}
+
+				for (int32 LegIndex = 0; LegIndex < WalkerLegCalibrations.Num(); ++LegIndex)
+				{
+					const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[LegIndex];
+					
+					FHex FootHex;
+					if (bHasSimTiles)
+					{
+						// Use assigned tile from simulation (has AssignedTileOffset applied)
+						// Map leg index to foot: D=0, L=1, R=2, U=3
+						const FString HipName = LegData.HipAxleBone.ToString();
+						if (HipName.Contains(TEXT("DHip")))
+						{
+							FootHex = AssignedTiles[0];
+						}
+						else if (HipName.Contains(TEXT("LHip")))
+						{
+							FootHex = AssignedTiles[1];
+						}
+						else if (HipName.Contains(TEXT("RHip")))
+						{
+							FootHex = AssignedTiles[2];
+						}
+						else if (HipName.Contains(TEXT("UHip")))
+						{
+							FootHex = AssignedTiles[3];
+						}
+						else
+						{
+							// Fallback to foot bone location if we can't determine leg
+							const FVector& FootWorld = LegData.FootAxleWorldLocation;
+							if (!OrbSimDriver->WorldToHex(FVector(FootWorld.X, FootWorld.Y, WalkerBodyBaseWorldLocation.Z), FootHex))
+							{
+								continue;
+							}
+						}
+					}
+					else
+					{
+						// Fallback: use foot bone location if not in simulation
+						const FVector& FootWorld = LegData.FootAxleWorldLocation;
+						if (!OrbSimDriver->WorldToHex(FVector(FootWorld.X, FootWorld.Y, WalkerBodyBaseWorldLocation.Z), FootHex))
+						{
+							continue;
+						}
+					}
+
+					const FVector FootTileWorld = OrbSimDriver->MapHexToWorld(FootHex);
+
+					UStaticMeshComponent* FootMarkerComp = NewObject<UStaticMeshComponent>(Walker);
+					if (FootMarkerComp)
+					{
+						FootMarkerComp->SetStaticMesh(FootTileOutlineMesh);
+						FootMarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+						FootMarkerComp->SetMobility(EComponentMobility::Movable);
+						FootMarkerComp->SetCastShadow(false);
+						FootMarkerComp->SetIsVisualizationComponent(true);
+
+						FootMarkerComp->SetMaterial(0, FootHighlightMaterial);
+
+						FootMarkerComp->RegisterComponent();
+						FootMarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+
+						const float HighlightScaleMult = 1.35f;
+						const float HighlightZOffset = 6.f;
+
+						FootMarkerComp->SetWorldScale3D(FVector(MarkerScale * HighlightScaleMult));
+						FootMarkerComp->SetWorldLocation(FootTileWorld + FVector(0.f, 0.f, HighlightZOffset));
+						FootMarkerComp->SetVisibility(true, true);
+
+						WalkerQuadrantTileMarkers.Add(FootMarkerComp);
+					}
+				}
+			}
 		}
-		WalkerQuadrantTileMarkers.Add(MarkerComp);
 	}
 
-	// Fifth pass: Create knee markers with leg quadrant colors
+	// Sixth pass: Create knee markers with leg quadrant colors (always visible while calibration is active)
 	for (const auto& LegKneePair : LegToKneeBoneMap)
 	{
 		const int32 LegIndex = LegKneePair.Key;
 		const FName& KneeBone = LegKneePair.Value;
 		
-		// Get knee world position
-		const FVector KneeWorldPos = BodyComp->GetBoneLocation(KneeBone, EBoneSpaces::WorldSpace);
+		// Get knee world position and raise marker a bit above the joint for better visibility
+		const FVector KneeWorldPos = BodyComp->GetBoneLocation(KneeBone, EBoneSpaces::WorldSpace) + FVector(0.f, 0.f, 200.f);
 		
 		UMaterialInstanceDynamic** LegMaterialPtr = LegMaterials.Find(LegIndex);
 		if (!LegMaterialPtr || !*LegMaterialPtr)
@@ -1377,23 +1732,28 @@ void AGameManager::ClearLegTileQuadrantVisualization()
 void AGameManager::LoadWalkerCalibration()
 {
 	// Load from saved config
-	if (SavedWalkerCalibration.StandHeight != 0.f || SavedWalkerCalibration.StartingFootDistance != 0.f || SavedWalkerCalibration.LegQuadrantOffset != 0)
+	if (SavedWalkerCalibration.StandHeight != 0.f || SavedWalkerCalibration.StartingFootDistance != 0.f || !FMath::IsNearlyZero(SavedWalkerCalibration.AssignedTileOffset))
 	{
 		DesiredStandHeight = SavedWalkerCalibration.StandHeight;
 		StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
+		AssignedTileOffset = SavedWalkerCalibration.AssignedTileOffset;
 		StepHeight = SavedWalkerCalibration.StepHeight;
 		StepRaiseTicks = SavedWalkerCalibration.StepRaiseTicks;
 		StepMoveTicks = SavedWalkerCalibration.StepMoveTicks;
 		StepLowerTicks = SavedWalkerCalibration.StepLowerTicks;
 		ReachDistance = SavedWalkerCalibration.ReachDistance;
 		ActiveFoot = SavedWalkerCalibration.ActiveFoot;
-		LegQuadrantOffset = SavedWalkerCalibration.LegQuadrantOffset;
+		NQuadrantLeg = SavedWalkerCalibration.NQuadrantLeg;
+		EQuadrantLeg = SavedWalkerCalibration.EQuadrantLeg;
+		WQuadrantLeg = SavedWalkerCalibration.WQuadrantLeg;
+		SQuadrantLeg = SavedWalkerCalibration.SQuadrantLeg;
+		TileQuadrantOffset = SavedWalkerCalibration.TileQuadrantOffset;
 		// Don't load WalkerOriginalFootPositions or WalkerSittingPose from saved config
 		// These will be gathered fresh from the mesh in GatherWalkerCalibrationData()
 		// Saved positions are only for reference, not for active calibration
 		
-		UE_LOG(LogTemp, Log, TEXT("GameManager: Loaded walker calibration settings from config - StandHeight=%.1f, StartingFootDistance=%.1f, LegQuadrantOffset=%d"), 
-			DesiredStandHeight, StartingFootDistance, LegQuadrantOffset);
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Loaded walker calibration settings from config - StandHeight=%.1f, StartingFootDistance=%.1f, TileQuadrantOffset=%d"), 
+			DesiredStandHeight, StartingFootDistance, TileQuadrantOffset);
 	}
 	else
 	{
@@ -1404,8 +1764,10 @@ void AGameManager::LoadWalkerCalibration()
 void AGameManager::SaveWalkerCalibrationToConfig()
 {
 	// Save current settings to config
-	SavedWalkerCalibration.StandHeight = DesiredStandHeight;
+	// Save StandHeight (actual applied height) instead of DesiredStandHeight
+	SavedWalkerCalibration.StandHeight = StandHeight;
 	SavedWalkerCalibration.StartingFootDistance = StartingFootDistance;
+	SavedWalkerCalibration.AssignedTileOffset = AssignedTileOffset;
 	SavedWalkerCalibration.StepHeight = StepHeight;
 	SavedWalkerCalibration.StepRaiseTicks = StepRaiseTicks;
 	SavedWalkerCalibration.StepMoveTicks = StepMoveTicks;
@@ -1414,7 +1776,13 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	SavedWalkerCalibration.ActiveFoot = ActiveFoot;
 	SavedWalkerCalibration.OriginalFootPositions = WalkerOriginalFootPositions;
 	SavedWalkerCalibration.SittingPose = WalkerSittingPose;
-	SavedWalkerCalibration.LegQuadrantOffset = LegQuadrantOffset;
+	// Legacy field; keep zeroed for backwards compatibility
+	SavedWalkerCalibration.LegQuadrantOffset = 0;
+	SavedWalkerCalibration.NQuadrantLeg = NQuadrantLeg;
+	SavedWalkerCalibration.EQuadrantLeg = EQuadrantLeg;
+	SavedWalkerCalibration.WQuadrantLeg = WQuadrantLeg;
+	SavedWalkerCalibration.SQuadrantLeg = SQuadrantLeg;
+	SavedWalkerCalibration.TileQuadrantOffset = TileQuadrantOffset;
 	
 	// Save to config file
 	SaveConfig();
@@ -1424,324 +1792,250 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 
 void AGameManager::FootToOuterMostTile()
 {
-	if (!bWalkerCalibrationActive || !CalibratingWalker.IsValid() || !OrbSimDriver)
+	if (!bWalkerCalibrationActive || !CalibratingWalker.IsValid())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("GameManager: FootToOuterMostTile called without an active calibration."));
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: FootToOuterMostTile called without active calibration"));
 		return;
 	}
 
-	ABasicWalker* Walker = CalibratingWalker.Get();
-	if (!Walker)
+	USkeletalMeshComponent* BodyComp = CalibratingWalker->GetBodyComponent();
+	if (!BodyComp || !OrbSimDriver)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("GameManager: Calibration walker missing."));
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: No BodyComp or OrbSimDriver for FootToOuterMostTile"));
 		return;
 	}
 
-	USkeletalMeshComponent* BodyComp = Walker->GetBodyComponent();
-	if (!BodyComp)
+	UAnimInstance* AnimInstance = BodyComp->GetAnimInstance();
+	if (!AnimInstance)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("GameManager: Calibration walker has no skeletal mesh component."));
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: No AnimInstance for FootToOuterMostTile"));
 		return;
 	}
 
-	// Get body hex position
-	FHex BodyHex;
-	if (!OrbSimDriver->WorldToHex(WalkerBodyBaseWorldLocation, BodyHex))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("GameManager: Cannot determine body hex position."));
-		return;
-	}
+	// Toggle state
+	bFeetAtOuterMost = !bFeetAtOuterMost;
 
-	// Helper function to calculate angle between two world positions (in radians, XY plane)
-	auto CalculateWorldAngle = [](const FVector& From, const FVector& To) -> float
-	{
-		const FVector2D Dir(To.X - From.X, To.Y - From.Y);
-		return FMath::Atan2(Dir.Y, Dir.X);
-	};
+	// Declare FootGoalNames at function scope to avoid duplicate declaration
+	const FName FootGoalNames[] = { TEXT("DFootGoal"), TEXT("LFootGoal"), TEXT("RFootGoal"), TEXT("UFootGoal") };
 
-	// Helper function to normalize angle difference to [0, PI]
-	auto NormalizeAngleDiff = [](float Angle1, float Angle2) -> float
+	if (bFeetAtOuterMost)
 	{
-		float Diff = FMath::Abs(Angle1 - Angle2);
-		if (Diff > PI)
+		// Save current foot positions before moving to outer most
+		WalkerFootPositionsBeforeOuterMost.Empty();
+		
+		for (int32 i = 0; i < 4; ++i)
 		{
-			Diff = 2.f * PI - Diff;
+			if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
+			{
+				if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+				{
+					if (StructProp->Struct == TBaseStructure<FVector>::Get())
+					{
+						FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+						if (GoalValue)
+						{
+							WalkerFootPositionsBeforeOuterMost.Add(*GoalValue);
+						}
+					}
+				}
+			}
 		}
-		return Diff;
-	};
 
-	// Get body world position
-	const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(BodyHex);
+		// Get body hex position
+		FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
+		const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(BodyHex);
+		
+		// Map foot indices to compass quadrants using the per-quadrant leg mapping
+		// This determines which leg (D/L/R/U) controls each spatial quadrant (N/E/S/W)
+		auto GetLegForQuadrant = [this](const FString& Quadrant) -> int32
+		{
+			// Map quadrant name to leg index (0=D, 1=L, 2=R, 3=U)
+			EWalkerFoot LegFoot;
+			if (Quadrant == TEXT("N")) LegFoot = NQuadrantLeg;
+			else if (Quadrant == TEXT("E")) LegFoot = EQuadrantLeg;
+			else if (Quadrant == TEXT("W")) LegFoot = WQuadrantLeg;
+			else if (Quadrant == TEXT("S")) LegFoot = SQuadrantLeg;
+			else return -1;
+			
+			return static_cast<int32>(LegFoot);
+		};
 
-	// Helper function to apply quadrant offset (same as in UpdateLegTileQuadrantVisualization)
-	auto ApplyQuadrantOffset = [](const FString& OriginalQuadrant, int32 Offset) -> FString
-	{
-		static const TArray<FString> QuadrantOrder = { TEXT("D"), TEXT("L"), TEXT("R"), TEXT("U") };
-		int32 OriginalIndex = -1;
-		for (int32 i = 0; i < QuadrantOrder.Num(); ++i)
+		// Find outermost tile in each quadrant
+		struct FQuadrantResult
 		{
-			if (QuadrantOrder[i] == OriginalQuadrant)
+			FHex OuterMostHex;
+			int32 MaxDist = -1;
+		};
+		
+		TMap<FString, FQuadrantResult> QuadrantResults;
+		QuadrantResults.Add(TEXT("N"), FQuadrantResult());
+		QuadrantResults.Add(TEXT("E"), FQuadrantResult());
+		QuadrantResults.Add(TEXT("S"), FQuadrantResult());
+		QuadrantResults.Add(TEXT("W"), FQuadrantResult());
+		
+		// Search all tiles within reach distance
+		for (int32 q = -ReachDistance; q <= ReachDistance; ++q)
+		{
+			for (int32 r = -ReachDistance; r <= ReachDistance; ++r)
 			{
-				OriginalIndex = i;
-				break;
+				FHex TestHex(BodyHex.Q + q, BodyHex.R + r);
+				const int32 dq = TestHex.Q - BodyHex.Q;
+				const int32 dr = TestHex.R - BodyHex.R;
+				const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+				
+				if (HexDist <= ReachDistance && HexDist > 0)
+				{
+					// Determine which quadrant this tile belongs to
+					FString Quadrant;
+					if (dq > 0 && dr == 0) Quadrant = TEXT("E");
+					else if (dq < 0 && dr == 0) Quadrant = TEXT("W");
+					else if (dq == 0 && dr > 0) Quadrant = TEXT("S");
+					else if (dq == 0 && dr < 0) Quadrant = TEXT("N");
+					else if (FMath::Abs(dq) > FMath::Abs(dr))
+						Quadrant = (dq > 0) ? TEXT("E") : TEXT("W");
+					else if (FMath::Abs(dr) > FMath::Abs(dq))
+						Quadrant = (dr > 0) ? TEXT("S") : TEXT("N");
+					else
+					{
+						if (dq > 0 && dr > 0) Quadrant = TEXT("S");
+						else if (dq > 0 && dr < 0) Quadrant = TEXT("E");
+						else if (dq < 0 && dr > 0) Quadrant = TEXT("W");
+						else Quadrant = TEXT("N");
+					}
+					
+					// Update outermost tile for this quadrant if this tile is farther
+					FQuadrantResult& Result = QuadrantResults[Quadrant];
+					if (HexDist > Result.MaxDist)
+					{
+						Result.OuterMostHex = TestHex;
+						Result.MaxDist = HexDist;
+					}
+				}
 			}
 		}
-		if (OriginalIndex < 0)
-		{
-			return OriginalQuadrant; // Invalid quadrant, return as-is
-		}
-		// Apply offset and wrap around
-		int32 OffsetValue = FMath::Clamp(Offset, 0, 3);
-		int32 NewIndex = (OriginalIndex + OffsetValue) % 4;
-		return QuadrantOrder[NewIndex];
-	};
-
-	// Helper function to determine fixed quadrant from hex coordinates (same as UpdateLegTileQuadrantVisualization)
-	// Fixed quadrants are based on hex coordinates relative to body, NOT leg positions or offset
-	auto GetFixedQuadrantFromHex = [](const FHex& BodyHex, const FHex& TestHex) -> FString
-	{
-		const int32 dq = TestHex.Q - BodyHex.Q;
-		const int32 dr = TestHex.R - BodyHex.R;
 		
-		// Use hex coordinate differences to determine fixed quadrant
-		// Match walker initialization: D=Q+1, L=R+1, R=Q-1, U=R-1
-		if (dq > 0 && dr == 0)
+		// Apply outermost positions to feet AND update assigned tiles in simulation
+		const FTransform ComponentToWorld = BodyComp->GetComponentToWorld();
+		const FRotator ComponentRotation = BodyComp->GetComponentRotation();
+		const FTransform ComponentTransformNoScale(ComponentRotation, ComponentToWorld.GetLocation(), FVector(1.f));
+		const FTransform WorldToComponentNoScale = ComponentTransformNoScale.Inverse();
+		
+		// Update assigned tiles in simulation
+		if (CalibratingWalker->SimWalkerIndex >= 0 && OrbSimDriver)
 		{
-			return TEXT("D"); // Positive Q (Q+1)
-		}
-		else if (dq == 0 && dr > 0)
-		{
-			return TEXT("L"); // Positive R (R+1)
-		}
-		else if (dq < 0 && dr == 0)
-		{
-			return TEXT("R"); // Negative Q (Q-1)
-		}
-		else if (dq == 0 && dr < 0)
-		{
-			return TEXT("U"); // Negative R (R-1)
-		}
-		// For diagonal hexes, use the dominant direction
-		else if (FMath::Abs(dq) > FMath::Abs(dr))
-		{
-			return (dq > 0) ? TEXT("D") : TEXT("R");
-		}
-		else if (FMath::Abs(dr) > FMath::Abs(dq))
-		{
-			return (dr > 0) ? TEXT("L") : TEXT("U");
-		}
-		else
-		{
-			// Equal magnitude - use diagonal assignment based on signs
-			if (dq > 0 && dr > 0)
+			USimWorldHex* Sim = OrbSimDriver->GetSim();
+			if (Sim && CalibratingWalker->SimWalkerIndex < Sim->Walkers.Num())
 			{
-				return TEXT("L");
-			}
-			else if (dq > 0 && dr < 0)
-			{
-				return TEXT("D");
-			}
-			else if (dq < 0 && dr > 0)
-			{
-				return TEXT("L");
-			}
-			else // dq < 0 && dr < 0
-			{
-				return TEXT("U");
+				FWalkerState& SimWalkerState = Sim->Walkers[CalibratingWalker->SimWalkerIndex];
+				
+				// Update each foot's assigned tile to the outermost tile in its quadrant
+				for (const auto& Pair : QuadrantResults)
+				{
+					const FString& Quadrant = Pair.Key;
+					const FQuadrantResult& Result = Pair.Value;
+					
+					// Get which leg controls this quadrant
+					int32 LegIndex = GetLegForQuadrant(Quadrant);
+					if (LegIndex < 0 || LegIndex > 3) continue;
+					
+					// Update assigned tile in simulation
+					FFootState* Feet[] = { &SimWalkerState.DFoot, &SimWalkerState.LFoot, &SimWalkerState.RFoot, &SimWalkerState.UFoot };
+					FFootState* Foot = Feet[LegIndex];
+					Foot->CurrentTile = Result.OuterMostHex;
+					Foot->TargetTile = Result.OuterMostHex;
+					
+					// Also update IK goal
+					const FVector OuterMostWorld = OrbSimDriver->MapHexToWorld(Result.OuterMostHex);
+					
+					if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[LegIndex]))
+					{
+						if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+						{
+							if (StructProp->Struct == TBaseStructure<FVector>::Get())
+							{
+								FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+								if (GoalValue)
+								{
+									*GoalValue = WorldToComponentNoScale.TransformPosition(OuterMostWorld);
+								}
+							}
+						}
+					}
+					
+					UE_LOG(LogTemp, Log, TEXT("GameManager: Set foot %d (quadrant %s) assigned tile to outermost (%d,%d) at distance %d"),
+						LegIndex, *Quadrant, Result.OuterMostHex.Q, Result.OuterMostHex.R, Result.MaxDist);
+				}
 			}
 		}
-	};
-	
-	// First pass: Map legs to quadrants (with offset applied)
-	// Map: LegIndex -> AssignedQuadrant (which fixed quadrant this leg is assigned to)
-	TMap<int32, FString> LegToQuadrantMap;
-	
-	for (int32 LegIndex = 0; LegIndex < WalkerLegCalibrations.Num(); ++LegIndex)
-	{
-		const FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[LegIndex];
 		
-		// Determine leg quadrant from bone name
-		FString OriginalQuadrant;
-		const FString HipName = LegData.HipAxleBone.ToString();
-		if (HipName.StartsWith(TEXT("D")))
-		{
-			OriginalQuadrant = TEXT("D");
-		}
-		else if (HipName.StartsWith(TEXT("L")))
-		{
-			OriginalQuadrant = TEXT("L");
-		}
-		else if (HipName.StartsWith(TEXT("R")))
-		{
-			OriginalQuadrant = TEXT("R");
-		}
-		else if (HipName.StartsWith(TEXT("U")))
-		{
-			OriginalQuadrant = TEXT("U");
-		}
-		else
-		{
-			continue;
-		}
+		// Force animation update
+		BodyComp->TickAnimation(0.f, false);
+		BodyComp->RefreshBoneTransforms();
+		BodyComp->UpdateComponentToWorld();
 		
-		// Apply quadrant offset (same offset for all legs - rotates which quadrant each leg is assigned to)
-		int32 Offset = FMath::Clamp(LegQuadrantOffset, 0, 3);
-		FString AssignedQuadrant = ApplyQuadrantOffset(OriginalQuadrant, Offset);
-		
-		LegToQuadrantMap.Add(LegIndex, AssignedQuadrant);
-	}
-	
-	// Create reverse mapping: FixedQuadrant -> LegIndex (which leg is assigned to this fixed quadrant)
-	TMap<FString, int32> QuadrantToLegMap;
-	for (const auto& LegQuadPair : LegToQuadrantMap)
-	{
-		QuadrantToLegMap.Add(LegQuadPair.Value, LegQuadPair.Key);
-	}
-	
-	// Second pass: Find furthest tile in each leg's assigned quadrant
-	TMap<int32, FHex> LegToFurthestHex;
-	TMap<int32, float> LegToFurthestDistance;
-	
-	const int32 SearchRadius = ReachDistance + 1;
-	
-	for (int32 q = -SearchRadius; q <= SearchRadius; ++q)
-	{
-		for (int32 r = -SearchRadius; r <= SearchRadius; ++r)
-		{
-			FHex TestHex(BodyHex.Q + q, BodyHex.R + r);
-			
-			// Skip body hex itself
-			if (TestHex == BodyHex)
-			{
-				continue;
-			}
-			
-			// Check hex distance from body
-			const int32 dq = TestHex.Q - BodyHex.Q;
-			const int32 dr = TestHex.R - BodyHex.R;
-			const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-			
-			if (HexDist > ReachDistance)
-			{
-				continue;
-			}
-			
-			// Assign hex to fixed quadrant based on hex coordinates (no offset)
-			FString FixedQuadrant = GetFixedQuadrantFromHex(BodyHex, TestHex);
-			
-			// Find which leg is assigned to this fixed quadrant (after offset)
-			const int32* LegIndexPtr = QuadrantToLegMap.Find(FixedQuadrant);
-			if (!LegIndexPtr)
-			{
-				continue;
-			}
-			
-			const int32 LegIndex = *LegIndexPtr;
-			
-			// Get test hex world position for distance calculation
-			const FVector TestWorldPos = OrbSimDriver->MapHexToWorld(TestHex);
-			const float Distance = FVector::Dist2D(BodyWorldPos, TestWorldPos);
-			
-			// Update furthest hex for this leg if this hex is further
-			float* ExistingDistance = LegToFurthestDistance.Find(LegIndex);
-			if (!ExistingDistance || Distance > *ExistingDistance)
-			{
-				LegToFurthestHex.Add(LegIndex, TestHex);
-				LegToFurthestDistance.Add(LegIndex, Distance);
-			}
-		}
-	}
-
-	// Third pass: Update foot positions to furthest tiles
-	bool bAnyUpdated = false;
-	for (int32 LegIndex = 0; LegIndex < WalkerLegCalibrations.Num(); ++LegIndex)
-	{
-		const FHex* FurthestHex = LegToFurthestHex.Find(LegIndex);
-		if (!FurthestHex)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("GameManager: No furthest hex found for leg %d"), LegIndex);
-			continue;
-		}
-		
-		// Find which quadrant this leg is assigned to (after offset)
-		const FString* AssignedQuadrantPtr = LegToQuadrantMap.Find(LegIndex);
-		if (!AssignedQuadrantPtr)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("GameManager: No quadrant assignment found for leg %d"), LegIndex);
-			continue;
-		}
-		
-		FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[LegIndex];
-		const FVector FurthestWorld = OrbSimDriver->MapHexToWorld(*FurthestHex);
-		
-		// Update foot position to furthest hex (keep original Z coordinate)
-		const float OriginalZ = LegData.FootAxleWorldLocation.Z;
-		LegData.FootAxleWorldLocation = FVector(FurthestWorld.X, FurthestWorld.Y, OriginalZ);
-		
-		bAnyUpdated = true;
-		
-		UE_LOG(LogTemp, Log, TEXT("GameManager: Updated leg %d (assigned to quadrant %s) to furthest hex (%d,%d) at distance %.1f"),
-			LegIndex, **AssignedQuadrantPtr, FurthestHex->Q, FurthestHex->R, LegToFurthestDistance[LegIndex]);
-	}
-
-	if (bAnyUpdated)
-	{
-		// Apply the updated foot positions via IK Rig
-		SetIKRigGoalPositions(BodyComp, CurrentStandHeight);
+		// Update debug visualization
 		UpdateWalkerDebugMeshes(BodyComp);
 		
-		// Update quadrant visualization if enabled
-		if (bShowLegTileQuadrants)
-		{
-			UpdateLegTileQuadrantVisualization();
-		}
-		
-		UE_LOG(LogTemp, Log, TEXT("GameManager: FootToOuterMostTile completed - updated %d feet"), LegToFurthestHex.Num());
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Moved feet to outermost tiles in each quadrant (reach distance = %d)"), ReachDistance);
 	}
-		else
+	else
+	{
+		// Restore previous foot positions
+		if (WalkerFootPositionsBeforeOuterMost.Num() == 4)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("GameManager: FootToOuterMostTile found no valid tiles to update"));
+			for (int32 i = 0; i < 4; ++i)
+			{
+				if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
+				{
+					if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+					{
+						if (StructProp->Struct == TBaseStructure<FVector>::Get())
+						{
+							FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+							if (GoalValue)
+							{
+								*GoalValue = WalkerFootPositionsBeforeOuterMost[i];
+							}
+						}
+					}
+				}
+			}
+			
+			// Also restore assigned tiles in simulation
+			if (CalibratingWalker->SimWalkerIndex >= 0 && OrbSimDriver)
+			{
+				USimWorldHex* Sim = OrbSimDriver->GetSim();
+				if (Sim && CalibratingWalker->SimWalkerIndex < Sim->Walkers.Num())
+				{
+					FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
+					ApplyAssignedTileOffsetToWalker(Sim, CalibratingWalker->SimWalkerIndex, BodyHex, ReachDistance, AssignedTileOffset, OrbSimDriver);
+				}
+			}
+			
+			// Force animation update
+			BodyComp->TickAnimation(0.f, false);
+			BodyComp->RefreshBoneTransforms();
+			BodyComp->UpdateComponentToWorld();
+			
+			// Update debug visualization
+			UpdateWalkerDebugMeshes(BodyComp);
+			
+			UE_LOG(LogTemp, Log, TEXT("GameManager: Restored previous foot positions"));
 		}
+	}
 }
 
 FLinearColor AGameManager::GetLegQuadrantColor(const FString& OriginalQuadrant, int32 LegIndex) const
 {
 	// Base color mapping for each leg quadrant (consistent colors, no variation)
 	static const TMap<FString, FLinearColor> LegBaseColors = {
-		{ TEXT("D"), FLinearColor(1.0f, 1.0f, 0.0f) },  // Yellow (D leg gets yellow tiles)
-		{ TEXT("L"), FLinearColor(0.0f, 0.0f, 1.0f) },  // Blue (L leg gets blue tiles)
-		{ TEXT("R"), FLinearColor(0.0f, 1.0f, 0.0f) },  // Green (R leg gets green tiles)
-		{ TEXT("U"), FLinearColor(1.0f, 0.0f, 0.0f) }   // Red (U leg gets red tiles)
+		{ TEXT("N"), FLinearColor(0.0f, 1.0f, 0.0f) },  // Green (North)
+		{ TEXT("E"), FLinearColor(1.0f, 0.0f, 0.0f) },  // Red   (East)
+		{ TEXT("W"), FLinearColor(0.0f, 0.0f, 1.0f) },  // Blue  (West)
+		{ TEXT("S"), FLinearColor(1.0f, 1.0f, 0.0f) }   // Yellow(South)
 	};
 	
-	// Helper function to apply quadrant offset
-	auto ApplyQuadrantOffset = [](const FString& OriginalQuadrant, int32 Offset) -> FString
-	{
-		static const TArray<FString> QuadrantOrder = { TEXT("D"), TEXT("L"), TEXT("R"), TEXT("U") };
-		int32 OriginalIndex = -1;
-		for (int32 i = 0; i < QuadrantOrder.Num(); ++i)
-		{
-			if (QuadrantOrder[i] == OriginalQuadrant)
-			{
-				OriginalIndex = i;
-				break;
-			}
-		}
-		if (OriginalIndex < 0)
-		{
-			return OriginalQuadrant; // Invalid quadrant, return as-is
-		}
-		// Apply offset and wrap around
-		int32 OffsetValue = FMath::Clamp(Offset, 0, 3);
-		int32 NewIndex = (OriginalIndex + OffsetValue) % 4;
-		return QuadrantOrder[NewIndex];
-	};
-	
-	// Apply quadrant offset (same offset for all legs - rotates all quadrants clockwise)
-	int32 Offset = FMath::Clamp(LegQuadrantOffset, 0, 3);
-	FString AssignedQuadrant = ApplyQuadrantOffset(OriginalQuadrant, Offset);
-	
-	const FLinearColor* QuadrantBaseColor = LegBaseColors.Find(AssignedQuadrant);
+	const FLinearColor* QuadrantBaseColor = LegBaseColors.Find(OriginalQuadrant);
 	if (QuadrantBaseColor)
 	{
 		return *QuadrantBaseColor;
