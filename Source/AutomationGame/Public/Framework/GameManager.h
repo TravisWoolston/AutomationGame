@@ -59,6 +59,9 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	
 	UPROPERTY()
 	int32 ReachDistance = 2;
+
+	UPROPERTY()
+	float MinimumReachDistance = 0.f;
 	
 	UPROPERTY()
 	EWalkerFoot ActiveFoot = EWalkerFoot::DFoot;
@@ -192,6 +195,12 @@ public:
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "1", Tooltip = "Tile range each leg can reach"))
 	int32 ReachDistance = 2;
+
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0.0", Tooltip = "Minimum tile distance from the body for foot placement"))
+	float MinimumReachDistance = 0.f;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "When true, foot goals are set manually via Event Graph instead of automatically by script"))
+	bool bManualFootGoal = false;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
 	bool bShowLegTileQuadrants = false;
@@ -521,6 +530,19 @@ public:
 	/** Get the icon texture for a stored cluster (generates if needed) (C++ only) */
 	UTexture2D* GetClusterIcon(const USimWorldHex::FClusterTemplate& ClusterTemplate);
 
+	// ------------ Walker Calibration (Public for access from BasicWalker) ------------
+	/** Whether walker calibration is currently active */
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Calibration")
+	bool bWalkerCalibrationActive = false;
+	
+	/** The walker currently being calibrated */
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Calibration")
+	TWeakObjectPtr<ABasicWalker> CalibratingWalker;
+
+	/** Get the foot axle world location for a given hip bone name during calibration */
+	UFUNCTION(BlueprintCallable, Category = "Walker|Calibration")
+	FVector GetFootAxleWorldLocationForBone(const FName& HipBoneName) const;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -567,8 +589,6 @@ private:
 		float BaseKneeHeight = 0.f;
 	};
 
-	bool bWalkerCalibrationActive = false;
-	TWeakObjectPtr<ABasicWalker> CalibratingWalker;
 	FVector WalkerCalibrationBaseLocation = FVector::ZeroVector;
 	TMap<FName, FQuat> WalkerSittingPose;
 	TArray<FWalkerLegCalibrationData> WalkerLegCalibrations;

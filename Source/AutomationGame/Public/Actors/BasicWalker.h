@@ -13,6 +13,9 @@ class AGameTickManager;
 class UStaticMeshComponent;
 class USimWorldHex;
 
+/** Event that fires when assigned tile world locations are updated */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAssignedTilesUpdated);
+
 UCLASS()
 class AUTOMATIONGAME_API ABasicWalker : public AActor
 {
@@ -20,7 +23,16 @@ class AUTOMATIONGAME_API ABasicWalker : public AActor
 
 public:
 	ABasicWalker();
+	/** Trace from foot bone toward assigned tile and get foot goal in component space for IK */
+UFUNCTION(BlueprintCallable, Category = "Walker|Foot Goals")
+FVector GetFootGoalFromBoneToTile(const FName& FootBoneName, const FVector& AssignedTileWorldLocation, bool bTraceDownward = true) const;
 
+/** Trace from foot bone toward assigned tile and get foot goal in component space (string version) */
+UFUNCTION(BlueprintCallable, Category = "Walker|Foot Goals")
+FVector GetFootGoalFromBoneToTileString(const FString& FootBoneName, const FVector& AssignedTileWorldLocation, bool bTraceDownward = true) const;
+/** Convert a world space position to component space (for IK goals) */
+UFUNCTION(BlueprintCallable, Category = "Walker")
+FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	// Engine
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
@@ -103,6 +115,10 @@ public:
 
 	USkeletalMeshComponent* GetBodyComponent() const { return BodyComp; }
 
+	/** Get the animation blueprint instance from the body component */
+	UFUNCTION(BlueprintCallable, Category = "Animation")
+	UAnimInstance* GetAnimInstance() const;
+
 	/** World locations of assigned tiles for each foot (updated from simulation) */
 	UPROPERTY(BlueprintReadOnly, Category = "Foot Positions")
 	FVector DFootAssignedTileWorldLocation = FVector::ZeroVector;
@@ -128,12 +144,32 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Bone Access")
 	FVector GetBoneLocationComponentSpace(const FName& BoneName) const;
 
+	/** Line trace from a world position downward to find the grid surface */
+	UFUNCTION(BlueprintCallable, Category = "Line Trace")
+	bool LineTraceToGrid(const FVector& StartLocation, FVector& OutHitLocation, float TraceDistance = 1000.0f) const;
+
+	/** Line trace from a world position in a specific direction to find the grid surface */
+	UFUNCTION(BlueprintCallable, Category = "Line Trace")
+	bool LineTraceToGridDirection(const FVector& StartLocation, const FVector& Direction, FVector& OutHitLocation, float TraceDistance = 1000.0f) const;
+
+	/** Debug version that logs trace details */
+	UFUNCTION(BlueprintCallable, Category = "Line Trace", meta = (CallInEditor = "true"))
+	bool LineTraceToGridDebug(const FVector& StartLocation, FVector& OutHitLocation, float TraceDistance = 1000.0f, bool bDrawDebug = true) const;
+
 public:
 	void PushProgramToSim();
 	TArray<FWalkerInstr> BuildProgramFromInstructions(const TArray<FWalkerInstr>& InProgram) const;
 	
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void RebuildProgramFromInstructions();          // runtime/editor safe manual push
+
+	/** Update public world location properties from foot hex positions (public for GameManager calibration) */
+	UFUNCTION(BlueprintCallable, Category = "Walker")
+	void UpdateAssignedTileWorldLocations();
+
+	/** Event that fires when assigned tile world locations are updated (use in Event Graph to trigger foot goal updates) */
+	UPROPERTY(BlueprintAssignable, Category = "Walker|Events")
+	FOnAssignedTilesUpdated OnAssignedTilesUpdated;
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
@@ -193,7 +229,5 @@ private:
 
 	void    StepProgram();                           // advance one instruction (or wait)
 	void    ExpandResetAtPC();                       // turn Reset into MoveTo home location
-	
-	void    UpdateAssignedTileWorldLocations();      // update public world location properties from foot hex positions
 };
 

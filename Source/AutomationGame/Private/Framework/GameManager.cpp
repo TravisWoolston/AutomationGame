@@ -24,7 +24,7 @@
 
 // Forward declaration for helper function
 // (FHex, USimWorldHex, and AOrbSimDriver are already included via headers)
-void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, AOrbSimDriver* OrbSimDriver);
+void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, float MinimumReachDistance, AOrbSimDriver* OrbSimDriver);
 
 // Local helper to build orthonormal basis from Up + arbitrary forward (similar to HexFactoryActor)
 namespace {
@@ -221,7 +221,7 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 							{
 								// Calibration walker is in simulation - update its assigned tiles
 								FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
-								ApplyAssignedTileOffsetToWalker(Sim, CalibratingWalker->SimWalkerIndex, BodyHex, ReachDistance, AssignedTileOffset, OrbSimDriver);
+								ApplyAssignedTileOffsetToWalker(Sim, CalibratingWalker->SimWalkerIndex, BodyHex, ReachDistance, AssignedTileOffset, MinimumReachDistance, OrbSimDriver);
 
 								// Sync the walker actor to reflect the updated assigned tiles
 								CalibratingWalker->SyncFromCurrentSim();
@@ -352,6 +352,17 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 					}
 				}
 			}
+		}
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, MinimumReachDistance))
+		{
+			MinimumReachDistance = FMath::Max(0.f, MinimumReachDistance);
+			if (ReachDistance > 0 && MinimumReachDistance > ReachDistance)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("GameManager: MinimumReachDistance (%.2f) exceeds ReachDistance (%d) - clamping to ReachDistance when applied"),
+					MinimumReachDistance, ReachDistance);
+			}
+			UpdateAllWalkersAssignedTiles();
+			UE_LOG(LogTemp, Log, TEXT("GameManager: MinimumReachDistance updated to %.2f"), MinimumReachDistance);
 		}
 	}
 }
@@ -724,7 +735,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 
 		// Apply AssignedTileOffset to walker's assigned tiles
 		// This moves the assigned tiles outward to align with feet
-		ApplyAssignedTileOffsetToWalker(Sim, WalkerIndex, Hex, ReachDistance, SavedWalkerCalibration.AssignedTileOffset, OrbSimDriver);
+		ApplyAssignedTileOffsetToWalker(Sim, WalkerIndex, Hex, ReachDistance, SavedWalkerCalibration.AssignedTileOffset, SavedWalkerCalibration.MinimumReachDistance, OrbSimDriver);
 
 		// Now that SimWalkerIndex is set, we can call SetProgram
 		Walker->SetProgram(Program, bLoop);
@@ -1929,7 +1940,7 @@ UTexture2D* AGameManager::GetClusterIcon(const USimWorldHex::FClusterTemplate& C
 }
 
 // Helper function to apply AssignedTileOffset to a walker
-void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, AOrbSimDriver* OrbSimDriver)
+void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, float MinimumReachDistance, AOrbSimDriver* OrbSimDriver)
 {
 	if (WalkerIndex < 0 || WalkerIndex >= Sim->Walkers.Num() || !OrbSimDriver)
 	{
@@ -1937,90 +1948,93 @@ void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const
 	}
 
 	FWalkerState& SimWalkerState = Sim->Walkers[WalkerIndex];
-
-	// Get body world position
 	const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(BodyHex);
+	const float TileSize = OrbSimDriver->GetTileSize();
+	const float MinReach = FMath::Max(0.f, MinimumReachDistance);
+	const float MaxReach = ReachDistance > 0 ? (float)ReachDistance : TNumericLimits<float>::Max();
 
-	// Apply AssignedTileOffset to each foot's assigned tile
-	// Foot order: D, L, R, U (matches cross pattern initialization)
+	auto HexDistance = [](const FHex& A, const FHex& B) -> int32
+	{
+		const int32 dq = A.Q - B.Q;
+		const int32 dr = A.R - B.R;
+		return FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+	};
+
 	FHex* FeetHexes[] = { &SimWalkerState.DFoot.CurrentTile, &SimWalkerState.LFoot.CurrentTile, &SimWalkerState.RFoot.CurrentTile, &SimWalkerState.UFoot.CurrentTile };
 	FHex* FeetTargets[] = { &SimWalkerState.DFoot.TargetTile, &SimWalkerState.LFoot.TargetTile, &SimWalkerState.RFoot.TargetTile, &SimWalkerState.UFoot.TargetTile };
 
-	// Get base foot positions (before StartingFootDistance and AssignedTileOffset)
-	// These are the initial cross pattern positions
 	FHex BaseFeet[] = {
-		FHex(BodyHex.Q + 1, BodyHex.R),  // D
-		FHex(BodyHex.Q, BodyHex.R + 1),  // L
-		FHex(BodyHex.Q - 1, BodyHex.R),  // R
-		FHex(BodyHex.Q, BodyHex.R - 1)   // U
+		FHex(BodyHex.Q + 1, BodyHex.R),
+		FHex(BodyHex.Q, BodyHex.R + 1),
+		FHex(BodyHex.Q - 1, BodyHex.R),
+		FHex(BodyHex.Q, BodyHex.R - 1)
 	};
-
-	const float TileSize = OrbSimDriver->GetTileSize();
-
-	// If AssignedTileOffset is zero, just use the base feet positions
-	if (FMath::IsNearlyZero(AssignedTileOffset))
-	{
-		for (int32 i = 0; i < 4; ++i)
-		{
-			*FeetHexes[i] = BaseFeet[i];
-			*FeetTargets[i] = BaseFeet[i];
-		}
-		return;
-	}
 
 	for (int32 i = 0; i < 4; ++i)
 	{
 		const FHex& BaseFootHex = BaseFeet[i];
 		const FVector BaseFootWorld = OrbSimDriver->MapHexToWorld(BaseFootHex);
 
-		// Calculate direction from body to base foot in horizontal plane
 		const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
 		const FVector FootWorld2D = FVector(BaseFootWorld.X, BaseFootWorld.Y, 0.f);
 		FVector BodyToFootDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
 
-		// If direction is invalid, use a default direction based on foot index
 		if (BodyToFootDir.IsNearlyZero())
 		{
-			// Default directions for each foot (cross pattern)
 			const FVector DefaultDirs[] = {
-				FVector(1.f, 0.f, 0.f),   // D (Q+1)
-				FVector(0.f, 1.f, 0.f),   // L (R+1)
-				FVector(-1.f, 0.f, 0.f),  // R (Q-1)
-				FVector(0.f, -1.f, 0.f)   // U (R-1)
+				FVector(1.f, 0.f, 0.f),
+				FVector(0.f, 1.f, 0.f),
+				FVector(-1.f, 0.f, 0.f),
+				FVector(0.f, -1.f, 0.f)
 			};
 			BodyToFootDir = DefaultDirs[i];
 		}
 
-		// Calculate new position by adding offset along the direction from body to foot
-		const FVector Offset2D = BodyToFootDir * (AssignedTileOffset * TileSize);
+		if (BodyToFootDir.IsNearlyZero())
+		{
+			*FeetHexes[i] = BaseFootHex;
+			*FeetTargets[i] = BaseFootHex;
+			continue;
+		}
+
+		const int32 BaseHexDistance = HexDistance(BodyHex, BaseFootHex);
+		float DesiredDistance = (float)BaseHexDistance + AssignedTileOffset;
+		float TargetDistance = DesiredDistance;
+		const float DistanceSign = (TargetDistance >= 0.f) ? 1.f : -1.f;
+
+		if (MinReach > 0.f)
+		{
+			TargetDistance = DistanceSign * FMath::Max(FMath::Abs(TargetDistance), MinReach);
+		}
+
+		if (ReachDistance > 0)
+		{
+			TargetDistance = DistanceSign * FMath::Min(FMath::Abs(TargetDistance), MaxReach);
+		}
+
+		const FVector Offset2D = BodyToFootDir * (TargetDistance * TileSize);
 		const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
 
-		// Convert to hex
 		FHex NewFootHex;
 		if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootWorld.Z), NewFootHex))
 		{
-			// Check if within reach distance
-			const int32 dq = NewFootHex.Q - BodyHex.Q;
-			const int32 dr = NewFootHex.R - BodyHex.R;
-			const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+			const int32 HexDist = HexDistance(BodyHex, NewFootHex);
 
-			if (HexDist <= ReachDistance)
+			if (HexDist <= ReachDistance || ReachDistance <= 0)
 			{
 				*FeetHexes[i] = NewFootHex;
 				*FeetTargets[i] = NewFootHex;
 			}
 			else
 			{
-				// Too far, keep base position
 				*FeetHexes[i] = BaseFootHex;
 				*FeetTargets[i] = BaseFootHex;
-				UE_LOG(LogTemp, Warning, TEXT("AssignedTileOffset for foot %d resulted in hex too far (dist=%d > %d), using base position"),
+				UE_LOG(LogTemp, Warning, TEXT("AssignedTileOffset for foot %d resulted in hex too far (dist=%d > %d) after clamping, using base position"),
 					i, HexDist, ReachDistance);
 			}
 		}
 		else
 		{
-			// Conversion failed, keep base position
 			*FeetHexes[i] = BaseFootHex;
 			*FeetTargets[i] = BaseFootHex;
 			UE_LOG(LogTemp, Warning, TEXT("AssignedTileOffset for foot %d failed to convert to hex, using base position"), i);
@@ -2047,7 +2061,7 @@ void AGameManager::UpdateAllWalkersAssignedTiles()
 	for (int32 i = 0; i < Sim->Walkers.Num(); ++i)
 	{
 		FWalkerState& WalkerState = Sim->Walkers[i];
-		ApplyAssignedTileOffsetToWalker(Sim, i, WalkerState.BaseHex, ReachDistance, AssignedTileOffset, OrbSimDriver);
+		ApplyAssignedTileOffsetToWalker(Sim, i, WalkerState.BaseHex, ReachDistance, AssignedTileOffset, MinimumReachDistance, OrbSimDriver);
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("UpdateAllWalkersAssignedTiles: Updated %d walkers with AssignedTileOffset=%.1f"),

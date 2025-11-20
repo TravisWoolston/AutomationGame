@@ -9,6 +9,7 @@
 
 class UInstancedStaticMeshComponent;
 class UProceduralMeshComponent;
+class UBoxComponent;
 class USimWorldHex;
 class AOrbSimDriver;
 class AHexBoardActor;
@@ -107,6 +108,9 @@ protected:
 	// Procedural mesh for Input/ClusterInput tiles with cutouts
 	UPROPERTY(Transient) UProceduralMeshComponent* InputTilesMesh = nullptr;
 
+	// Collision plane for line traces (more performant than individual tile meshes)
+	UPROPERTY(Transient) UBoxComponent* GridCollisionPlane = nullptr;
+
 	// References
 	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
 	UPROPERTY(Transient) AOrbSimDriver* Driver = nullptr;
@@ -140,6 +144,9 @@ protected:
 	// Generate a hexagon mesh with a circular hole cut out (for Input/ClusterInput tiles)
 	void GenerateHexWithHole(const FVector& Center, float HexRadius, float HoleRadius, 
 		UMaterialInterface* Material, int32 SectionIndex);
+
+	// Update the grid collision plane position to match the grid Z level
+	void UpdateGridCollisionPlane();
 
 private:
 	FVector HexToWorld(const FHex& H) const;

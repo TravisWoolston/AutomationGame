@@ -1,6 +1,7 @@
 #include "Actors/HexFactoryActor.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/BoxComponent.h"
 #include "ProceduralMeshComponent.h"
 #include "Actors/OrbSimDriver.h"
 #include "Actors/HexBoardActor.h"
@@ -22,7 +23,8 @@ AHexFactoryActor::AHexFactoryActor()
 
 	TileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("TileISM"));
 	TileISM->SetupAttachment(Root);
-	TileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	TileISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	TileISM->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
 
 	InputTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputTileISM"));
 	InputTileISM->SetupAttachment(Root);
@@ -30,15 +32,18 @@ AHexFactoryActor::AHexFactoryActor()
 
 	OutputTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputTileISM"));
 	OutputTileISM->SetupAttachment(Root);
-	OutputTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	OutputTileISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	OutputTileISM->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
 
 	BeltTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltTileISM"));
 	BeltTileISM->SetupAttachment(Root);
-	BeltTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BeltTileISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	BeltTileISM->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
 
 	BondTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BondTileISM"));
 	BondTileISM->SetupAttachment(Root);
-	BondTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BondTileISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	BondTileISM->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
 
 	UnbondTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("UnbondTileISM"));
 	UnbondTileISM->SetupAttachment(Root);
@@ -113,6 +118,16 @@ AHexFactoryActor::AHexFactoryActor()
 	InputCatalystXISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputCatalystXISM"));
 	InputCatalystXISM->SetupAttachment(Root);
 	InputCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Create collision plane for efficient line traces
+	GridCollisionPlane = CreateDefaultSubobject<UBoxComponent>(TEXT("GridCollisionPlane"));
+	GridCollisionPlane->SetupAttachment(Root);
+	GridCollisionPlane->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	GridCollisionPlane->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+	GridCollisionPlane->SetBoxExtent(FVector(50000.f, 50000.f, 1.f)); // Large plane, 2 units thick
+	GridCollisionPlane->SetRelativeLocation(FVector(0.f, 0.f, 0.f)); // Will be positioned at grid Z level
+	GridCollisionPlane->SetVisibility(false); // Invisible, collision only
+	GridCollisionPlane->SetHiddenInGame(true);
 }
 
 void AHexFactoryActor::EnsureComponents()
@@ -130,7 +145,16 @@ void AHexFactoryActor::EnsureComponents()
 				Comp = NewObject<UInstancedStaticMeshComponent>(this, Name);
 				Comp->SetupAttachment(GetRootComponent());
 				Comp->RegisterComponent();
+				// Enable collision for tile ISMs to support line traces
+			if (Comp == TileISM || Comp == OutputTileISM || Comp == BeltTileISM || Comp == BondTileISM || Comp == UnbondTileISM)
+			{
+				Comp->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+				Comp->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+			}
+			else
+			{
 				Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			}
 			}
 			Comp->SetVisibility(true, true);
 		};
@@ -178,9 +202,53 @@ void AHexFactoryActor::EnsureComponents()
 		InputTilesMesh = NewObject<UProceduralMeshComponent>(this, TEXT("InputTilesMesh_Runtime"));
 		InputTilesMesh->SetupAttachment(GetRootComponent());
 		InputTilesMesh->RegisterComponent();
-		InputTilesMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		InputTilesMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		InputTilesMesh->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
 	}
 	InputTilesMesh->SetVisibility(true, true);
+	
+	// Ensure grid collision plane exists
+	if (!GridCollisionPlane)
+	{
+		GridCollisionPlane = NewObject<UBoxComponent>(this, TEXT("GridCollisionPlane_Runtime"));
+		GridCollisionPlane->SetupAttachment(GetRootComponent());
+		GridCollisionPlane->RegisterComponent();
+		GridCollisionPlane->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		GridCollisionPlane->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+		GridCollisionPlane->SetBoxExtent(FVector(50000.f, 50000.f, 1.f)); // Large plane, 2 units thick
+		GridCollisionPlane->SetRelativeLocation(FVector(0.f, 0.f, 0.f));
+		GridCollisionPlane->SetVisibility(false);
+		GridCollisionPlane->SetHiddenInGame(true);
+	}
+	
+	// Update collision plane position to match grid Z level
+	UpdateGridCollisionPlane();
+}
+
+void AHexFactoryActor::UpdateGridCollisionPlane()
+{
+	if (!GridCollisionPlane)
+	{
+		return;
+	}
+	
+	const AActor* Anchor = GetAnchor();
+	if (!Anchor)
+	{
+		return;
+	}
+	
+	// Position the collision plane at the grid's Z level (anchor's Z)
+	// Use world space positioning - detach temporarily to set world location, then reattach
+	// This ensures the plane is at the exact Z level of the grid
+	const FVector AnchorLocation = Anchor->GetActorLocation();
+	
+	// Detach to set world location directly
+	GridCollisionPlane->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+	GridCollisionPlane->SetWorldLocation(FVector(AnchorLocation.X, AnchorLocation.Y, AnchorLocation.Z));
+	
+	// Reattach to root (this will convert world location to relative)
+	GridCollisionPlane->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
 }
 
 AActor* AHexFactoryActor::GetAnchor() const
@@ -240,6 +308,20 @@ void AHexFactoryActor::HandleSimStepComplete(float StepSeconds)
 void AHexFactoryActor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	
+	// Update collision plane position if anchor has moved
+	static FVector LastAnchorLocation = FVector::ZeroVector;
+	const AActor* Anchor = GetAnchor();
+	if (Anchor)
+	{
+		const FVector CurrentAnchorLocation = Anchor->GetActorLocation();
+		if (!CurrentAnchorLocation.Equals(LastAnchorLocation, 1.0f)) // Update if moved more than 1 unit
+		{
+			UpdateGridCollisionPlane();
+			LastAnchorLocation = CurrentAnchorLocation;
+		}
+	}
+	
 	if (!Sim) return;
 
 	const bool bBoardChanged = (Board && Board->BoardRevision != LastSeenBoardRevision);
@@ -283,6 +365,9 @@ void AHexFactoryActor::RebuildInternal()
 	// Note: Debug logging removed for performance
 	
 	EnsureComponents();
+	
+	// Update collision plane position when grid is rebuilt
+	UpdateGridCollisionPlane();
 	
 	// Reacquire Sim reference in case it was created after our BeginPlay
 	if (!Sim && Driver)

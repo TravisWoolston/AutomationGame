@@ -16,7 +16,7 @@
 #include "HAL/PlatformProcess.h"
 
 // Forward declaration for helper function (defined in GameManager.cpp)
-void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, AOrbSimDriver* OrbSimDriver);
+void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, float MinimumReachDistance, AOrbSimDriver* OrbSimDriver);
 
 // Local helper structures and constants for walker calibration
 namespace {
@@ -139,6 +139,18 @@ void AGameManager::CalibrateWalker()
 	CalibratingWalker = Walker;
 	Walker->Calibrating = true;
 
+	// Initialize walker on grid so it has a Driver and can access grid functions
+	// Use a default position (0,0) for calibration - the walker doesn't need to be in simulation
+	if (OrbSimDriver)
+	{
+		Walker->InitializeOnGrid(OrbSimDriver, 0, 0);
+		UE_LOG(LogTemp, Log, TEXT("CalibrateWalker: Initialized walker on grid with Driver"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CalibrateWalker: No OrbSimDriver available - assigned tile locations may not work"));
+	}
+
 	bWalkerCalibrationActive = true;
 	bWalkerStanding = false;
 	StandHeight = 0.f;
@@ -221,6 +233,14 @@ void AGameManager::CalibrateWalker()
 	{
 		UpdateLegTileQuadrantVisualization();
 	}
+
+	// Force update of assigned tile world locations now that calibration is set up
+	// This ensures the walker's public properties are populated even if BeginPlay hasn't run
+	if (Walker && Walker->Driver)
+	{
+		Walker->UpdateAssignedTileWorldLocations();
+		UE_LOG(LogTemp, Log, TEXT("CalibrateWalker: Forced update of assigned tile world locations"));
+	}
 }
 
 void AGameManager::SetStandHeight()
@@ -280,6 +300,13 @@ void AGameManager::SetStandHeight()
 	SetIKRigGoalPositions(BodyComp, ActualHeight);
 
 	UpdateWalkerDebugMeshes(BodyComp);
+
+	// Update assigned tile world locations in the walker
+	if (Walker && Walker->Driver)
+	{
+		Walker->UpdateAssignedTileWorldLocations();
+		UE_LOG(LogTemp, VeryVerbose, TEXT("SetStandHeight: Updated assigned tile world locations"));
+	}
 
 	// Update tile/assigned-tile visualization when foot positions change
 	if (bShowLegTileQuadrants)
@@ -356,6 +383,7 @@ void AGameManager::SaveWalkerCalibration()
 	UE_LOG(LogTemp, Log, TEXT("  - StepMoveTicks: %d"), StepMoveTicks);
 	UE_LOG(LogTemp, Log, TEXT("  - StepLowerTicks: %d"), StepLowerTicks);
 	UE_LOG(LogTemp, Log, TEXT("  - ReachDistance: %d"), ReachDistance);
+	UE_LOG(LogTemp, Log, TEXT("  - MinimumReachDistance: %.2f"), MinimumReachDistance);
 	UE_LOG(LogTemp, Log, TEXT("  - ActiveFoot: %s"), *StaticEnum<EWalkerFoot>()->GetNameStringByValue((int32)ActiveFoot));
 	UE_LOG(LogTemp, Log, TEXT("  - Legs: %d"), WalkerLegCalibrations.Num());
 
@@ -656,6 +684,13 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 
 	UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Updated %d foot positions"), WalkerLegCalibrations.Num());
 
+	// Update assigned tile world locations in the walker so they reflect the new foot positions
+	if (CalibratingWalker.IsValid() && CalibratingWalker->Driver)
+	{
+		CalibratingWalker->UpdateAssignedTileWorldLocations();
+		UE_LOG(LogTemp, VeryVerbose, TEXT("ApplyStartingFootDistance: Updated assigned tile world locations"));
+	}
+
 	// Keep quadrant/assigned-tile visualization in sync whenever starting foot distance
 	// changes the base foot positions.
 	if (bShowLegTileQuadrants && CalibratingWalker.IsValid())
@@ -787,6 +822,13 @@ void AGameManager::SetStepHeight()
 	// Update debug meshes
 	UpdateWalkerDebugMeshes(BodyComp);
 
+	// Update assigned tile world locations in the walker
+	if (Walker && Walker->Driver)
+	{
+		Walker->UpdateAssignedTileWorldLocations();
+		UE_LOG(LogTemp, VeryVerbose, TEXT("SetStepHeight: Updated assigned tile world locations"));
+	}
+
 	// Update tile/assigned-tile visualization so highlighted tiles follow the previewed foot
 	if (bShowLegTileQuadrants)
 	{
@@ -825,14 +867,133 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 	// IK Rig typically works in component-local space
 	const FTransform ComponentToWorld = BodyComp->GetComponentToWorld();
 	const FRotator ComponentRotation = BodyComp->GetComponentRotation();
+	
+	// Validate component transform before using it
+	if (ComponentToWorld.ContainsNaN() || ComponentRotation.ContainsNaN())
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetIKRigGoalPositions: Component transform contains NaN, skipping IK goal update"));
+		return;
+	}
+	
 	const FTransform ComponentTransformNoScale(ComponentRotation, ComponentToWorld.GetLocation(), FVector(1.f));
 	const FTransform WorldToComponentNoScale = ComponentTransformNoScale.Inverse();
+	
+	// Validate inverse transform
+	if (WorldToComponentNoScale.ContainsNaN())
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetIKRigGoalPositions: WorldToComponent transform contains NaN, skipping IK goal update"));
+		return;
+	}
 
 	// Get the body goal position (current body location + height offset) in world space
 	const FVector BodyGoalWorld = WalkerBodyBaseWorldLocation + FVector(0.f, 0.f, HeightOffset);
 
+	// Validate body goal world position
+	if (BodyGoalWorld.ContainsNaN())
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetIKRigGoalPositions: BodyGoalWorld contains NaN, skipping body goal update"));
+		return;
+	}
+	
 	// Convert body goal to component space
 	const FVector BodyGoalComponent = WorldToComponentNoScale.TransformPosition(BodyGoalWorld);
+	
+	// Validate body goal component space result
+	if (BodyGoalComponent.ContainsNaN())
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetIKRigGoalPositions: BodyGoalComponent contains NaN after transform, skipping body goal update"));
+		return;
+	}
+
+	// Set BodyGoal position on the animation blueprint instance (always set, even when ManualFootGoal is true)
+	if (FProperty* BodyGoalProperty = AnimInstance->GetClass()->FindPropertyByName(TEXT("BodyGoal")))
+	{
+		if (FStructProperty* StructProp = CastField<FStructProperty>(BodyGoalProperty))
+		{
+			if (StructProp->Struct == TBaseStructure<FVector>::Get())
+			{
+				FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+				if (GoalValue)
+				{
+					// Use component-local space (no scale)
+					*GoalValue = BodyGoalComponent;
+					UE_LOG(LogTemp, VeryVerbose, TEXT("SetIKRigGoalPositions: Set BodyGoal to component space (%.1f,%.1f,%.1f)"), 
+						BodyGoalComponent.X, BodyGoalComponent.Y, BodyGoalComponent.Z);
+				}
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: BodyGoal property not found or not a FVector on Animation Blueprint"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: BodyGoal property not found on Animation Blueprint %s"),
+			*AnimInstance->GetClass()->GetName());
+	}
+
+	// Skip automatic foot goal assignment if ManualFootGoal is enabled
+	if (bManualFootGoal)
+	{
+		UE_LOG(LogTemp, VeryVerbose, TEXT("SetIKRigGoalPositions: bManualFootGoal is true, skipping automatic foot goal assignment (BodyGoal was set)"));
+		
+		// Preserve foot goal values before animation update (they may be reset by event graph)
+		const FName FootGoalNames[] = { TEXT("DFootGoal"), TEXT("LFootGoal"), TEXT("RFootGoal"), TEXT("UFootGoal") };
+		FVector PreservedFootGoals[4];
+		bool bHasPreservedGoals[4] = { false, false, false, false };
+		
+		for (int32 i = 0; i < 4; ++i)
+		{
+			if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
+			{
+				if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+				{
+					if (StructProp->Struct == TBaseStructure<FVector>::Get())
+					{
+						FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+						if (GoalValue && !GoalValue->IsNearlyZero())
+						{
+							PreservedFootGoals[i] = *GoalValue;
+							bHasPreservedGoals[i] = true;
+						}
+					}
+				}
+			}
+		}
+		
+		// Force the animation system to update with the new body goal value
+		if (AnimInstance)
+		{
+			AnimInstance->BlueprintThreadSafeUpdateAnimation(0.f);
+			BodyComp->TickAnimation(0.f, false);
+			BodyComp->RefreshBoneTransforms();
+		}
+		
+		// Restore preserved foot goal values (in case event graph reset them)
+		for (int32 i = 0; i < 4; ++i)
+		{
+			if (bHasPreservedGoals[i])
+			{
+				if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
+				{
+					if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+					{
+						if (StructProp->Struct == TBaseStructure<FVector>::Get())
+						{
+							FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+							if (GoalValue)
+							{
+								*GoalValue = PreservedFootGoals[i];
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		return;
+	}
 
 	// Set foot goal positions - these should position the foot BONE at the tile center
 	// Map each leg to its corresponding goal:
@@ -926,8 +1087,39 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 				FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z, Distance);
 		}
 
+		// Validate foot goal world position before transformation
+		if (FootGoalWorld.ContainsNaN())
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetIKRigGoalPositions: Leg %d (%s) FootGoalWorld contains NaN, skipping"), Index, *HipName);
+			continue;
+		}
+		
 		// Convert foot goal to component-local space (without scale to avoid distortion)
 		const FVector FootGoalComponent = WorldToComponentNoScale.TransformPosition(FootGoalWorld);
+		
+		// Validate component space result
+		if (FootGoalComponent.ContainsNaN())
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetIKRigGoalPositions: Leg %d (%s) FootGoalComponent contains NaN after transform, skipping"), Index, *HipName);
+			continue;
+		}
+
+		// Log distance between assigned tile and actual foot bone location
+		const FVector BoneWorldLocation = BodyComp->GetBoneLocation(LegData.FootBone, EBoneSpaces::WorldSpace);
+		if (!BoneWorldLocation.ContainsNaN())
+		{
+			const float AssignedDistance = FVector::Dist(FootGoalWorld, BoneWorldLocation);
+			UE_LOG(LogTemp, Warning, TEXT("WalkerCalib: %s tile vs bone distance %.1f (Tile: %.1f, %.1f, %.1f | Bone: %.1f, %.1f, %.1f)"),
+				*LegData.FootBone.ToString(),
+				AssignedDistance,
+				FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z,
+				BoneWorldLocation.X, BoneWorldLocation.Y, BoneWorldLocation.Z);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("WalkerCalib: %s bone location contains NaN, skipping distance calculation"),
+				*LegData.FootBone.ToString());
+		}
 
 		// Set the goal position on the animation blueprint instance via reflection
 			// The goal should be in component-local space so IK Rig can apply it correctly
@@ -965,32 +1157,6 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 			UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Property %s not found on Animation Blueprint %s"),
 				*GoalName, *AnimInstance->GetClass()->GetName());
 		}
-	}
-
-	// Set BodyGoal position on the animation blueprint instance
-	if (FProperty* BodyGoalProperty = AnimInstance->GetClass()->FindPropertyByName(TEXT("BodyGoal")))
-	{
-		if (FStructProperty* StructProp = CastField<FStructProperty>(BodyGoalProperty))
-		{
-			if (StructProp->Struct == TBaseStructure<FVector>::Get())
-			{
-				FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
-				if (GoalValue)
-				{
-					// Use component-local space (no scale)
-					*GoalValue = BodyGoalComponent;
-				}
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: BodyGoal property not found or not a FVector on Animation Blueprint"));
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: BodyGoal property not found on Animation Blueprint %s"),
-			*AnimInstance->GetClass()->GetName());
 	}
 
 	// Force the animation system to update with the new values
@@ -1455,6 +1621,11 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 			{
 				continue;
 			}
+
+			if (MinimumReachDistance > 0.f && (float)HexDist < MinimumReachDistance)
+			{
+				continue;
+			}
 			
 			// Assign hex to fixed quadrant based on hex coordinates (spatial quadrant around body)
 			FString FixedQuadrant = GetFixedQuadrantFromHex(BodyHex, TestHex);
@@ -1485,6 +1656,14 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 	{
 		const FHex& Hex = HexQuadPair.Key;
 		const FString& FixedQuadrant = HexQuadPair.Value;
+		const int32 HexDist = FMath::Max(
+			FMath::Max(FMath::Abs(Hex.Q - BodyHex.Q), FMath::Abs(Hex.R - BodyHex.R)),
+			FMath::Abs((Hex.Q - BodyHex.Q) + (Hex.R - BodyHex.R)));
+
+		if (MinimumReachDistance > 0.f && (float)HexDist < MinimumReachDistance)
+		{
+			continue;
+		}
 		
 		// Find which leg is assigned to this fixed quadrant (after offset)
 		const int32* LegIndexPtr = QuadrantToLegMap.Find(FixedQuadrant);
@@ -1742,6 +1921,12 @@ void AGameManager::LoadWalkerCalibration()
 		StepMoveTicks = SavedWalkerCalibration.StepMoveTicks;
 		StepLowerTicks = SavedWalkerCalibration.StepLowerTicks;
 		ReachDistance = SavedWalkerCalibration.ReachDistance;
+		MinimumReachDistance = SavedWalkerCalibration.MinimumReachDistance;
+		if (ReachDistance > 0 && MinimumReachDistance > ReachDistance)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GameManager: Loaded MinimumReachDistance=%.2f greater than ReachDistance=%d, clamping to ReachDistance when applied"),
+				MinimumReachDistance, ReachDistance);
+		}
 		ActiveFoot = SavedWalkerCalibration.ActiveFoot;
 		NQuadrantLeg = SavedWalkerCalibration.NQuadrantLeg;
 		EQuadrantLeg = SavedWalkerCalibration.EQuadrantLeg;
@@ -1773,6 +1958,7 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	SavedWalkerCalibration.StepMoveTicks = StepMoveTicks;
 	SavedWalkerCalibration.StepLowerTicks = StepLowerTicks;
 	SavedWalkerCalibration.ReachDistance = ReachDistance;
+	SavedWalkerCalibration.MinimumReachDistance = MinimumReachDistance;
 	SavedWalkerCalibration.ActiveFoot = ActiveFoot;
 	SavedWalkerCalibration.OriginalFootPositions = WalkerOriginalFootPositions;
 	SavedWalkerCalibration.SittingPose = WalkerSittingPose;
@@ -2008,7 +2194,7 @@ void AGameManager::FootToOuterMostTile()
 				if (Sim && CalibratingWalker->SimWalkerIndex < Sim->Walkers.Num())
 				{
 					FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
-					ApplyAssignedTileOffsetToWalker(Sim, CalibratingWalker->SimWalkerIndex, BodyHex, ReachDistance, AssignedTileOffset, OrbSimDriver);
+					ApplyAssignedTileOffsetToWalker(Sim, CalibratingWalker->SimWalkerIndex, BodyHex, ReachDistance, AssignedTileOffset, MinimumReachDistance, OrbSimDriver);
 				}
 			}
 			
@@ -2043,5 +2229,24 @@ FLinearColor AGameManager::GetLegQuadrantColor(const FString& OriginalQuadrant, 
 	
 	// Default to white if quadrant not found
 	return FLinearColor::White;
+}
+
+FVector AGameManager::GetFootAxleWorldLocationForBone(const FName& HipBoneName) const
+{
+	if (!bWalkerCalibrationActive)
+	{
+		return FVector::ZeroVector;
+	}
+
+	// Find the calibration data for this bone
+	for (const FWalkerLegCalibrationData& LegData : WalkerLegCalibrations)
+	{
+		if (LegData.HipAxleBone == HipBoneName)
+		{
+			return LegData.FootAxleWorldLocation;
+		}
+	}
+
+	return FVector::ZeroVector;
 }
 
