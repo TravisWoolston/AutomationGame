@@ -135,6 +135,7 @@ struct AUTOMATIONGAME_API FWalkerState
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StepMoveTicks = 3;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StepLowerTicks = 3;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 ReachDistance = 2; // Tiles each leg can reach
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float MinimumReachDistance = 0.f; // Minimum tile distance from body for foot placement
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float StandHeight = 0.f; // Body height offset when standing
 	
 	// --- Legacy program support (kept for scenario compatibility) ---

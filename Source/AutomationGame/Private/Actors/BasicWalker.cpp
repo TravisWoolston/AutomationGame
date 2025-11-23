@@ -103,38 +103,65 @@ void ABasicWalker::BeginPlay()
 			if (bShouldSetFootGoals && BodyComp && BodyComp->GetAnimInstance())
 			{
 				// Calculate foot positions using actual grid settings
-				const FVector DFootWorld = Driver->MapHexToWorld(DFootHex);
-				const FVector LFootWorld = Driver->MapHexToWorld(LFootHex);
-				const FVector RFootWorld = Driver->MapHexToWorld(RFootHex);
-				const FVector UFootWorld = Driver->MapHexToWorld(UFootHex);
+				// Map based on bone names to match calibration logic (DHip→DFoot, LHip→LFoot, etc.)
+				const FName BoneNames[] = { TEXT("DHipAxle41"), TEXT("LHipAxle17"), TEXT("RHipAxle5"), TEXT("UHipAxle29") };
+				const FName FootGoalNames[] = { TEXT("DFootGoal"), TEXT("LFootGoal"), TEXT("RFootGoal"), TEXT("UFootGoal") };
+				const FHex FootHexes[] = { DFootHex, LFootHex, RFootHex, UFootHex };
 
 				// Set initial IK goals via animation blueprint
 				UAnimInstance* AnimInstance = BodyComp->GetAnimInstance();
 				if (AnimInstance)
 				{
-					const FName FootGoalNames[] = { TEXT("DFootGoal"), TEXT("LFootGoal"), TEXT("RFootGoal"), TEXT("UFootGoal") };
-					const FVector FootPositions[] = { DFootWorld, LFootWorld, RFootWorld, UFootWorld };
-
 					// Get the component transform for space conversion (no scale)
 					const FTransform ComponentToWorld = BodyComp->GetComponentToWorld();
 					const FRotator ComponentRotation = BodyComp->GetComponentRotation();
 					const FTransform ComponentTransformNoScale(ComponentRotation, ComponentToWorld.GetLocation(), FVector(1.f));
 					const FTransform WorldToComponentNoScale = ComponentTransformNoScale.Inverse();
 
-					for (int32 i = 0; i < 4; ++i)
+					// Map each bone to its corresponding simulation foot and goal
+					for (int32 BoneIdx = 0; BoneIdx < 4; ++BoneIdx)
 					{
-						if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
+						const FName& BoneName = BoneNames[BoneIdx];
+						const FName& GoalName = FootGoalNames[BoneIdx];
+						
+						// Determine which simulation foot this bone corresponds to based on bone name
+						int32 SimFootIndex = -1;
+						const FString BoneNameStr = BoneName.ToString();
+						if (BoneNameStr.Contains(TEXT("DHip")))
 						{
-							if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+							SimFootIndex = 0; // DFoot
+						}
+						else if (BoneNameStr.Contains(TEXT("LHip")))
+						{
+							SimFootIndex = 1; // LFoot
+						}
+						else if (BoneNameStr.Contains(TEXT("RHip")))
+						{
+							SimFootIndex = 2; // RFoot
+						}
+						else if (BoneNameStr.Contains(TEXT("UHip")))
+						{
+							SimFootIndex = 3; // UFoot
+						}
+						
+						if (SimFootIndex >= 0 && SimFootIndex < 4)
+						{
+							if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(GoalName))
 							{
-								if (StructProp->Struct == TBaseStructure<FVector>::Get())
+								if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
 								{
-									FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
-									if (GoalValue)
+									if (StructProp->Struct == TBaseStructure<FVector>::Get())
 									{
-										// Convert world-space goal to component-local space (no scale)
-										// The goal should position the foot BONE at the tile center
-										*GoalValue = WorldToComponentNoScale.TransformPosition(FootPositions[i]);
+										FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+										if (GoalValue)
+										{
+											// Get the world position for the correct simulation foot
+											const FVector FootWorld = Driver->MapHexToWorld(FootHexes[SimFootIndex]);
+											
+											// Convert world-space goal to component-local space (no scale)
+											// The goal should position the foot BONE at the tile center
+											*GoalValue = WorldToComponentNoScale.TransformPosition(FootWorld);
+										}
 									}
 								}
 							}
@@ -420,6 +447,23 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		RFootStepState = SimState.RFoot.StepState;
 		UFootStepState = SimState.UFoot.StepState;
 
+		// Update animation status booleans for Event Graph
+		bDFootRaising = (DFootStepState == EFootStepState::Raising);
+		bDFootMoving = (DFootStepState == EFootStepState::Moving);
+		bDFootLowering = (DFootStepState == EFootStepState::Lowering);
+
+		bLFootRaising = (LFootStepState == EFootStepState::Raising);
+		bLFootMoving = (LFootStepState == EFootStepState::Moving);
+		bLFootLowering = (LFootStepState == EFootStepState::Lowering);
+
+		bRFootRaising = (RFootStepState == EFootStepState::Raising);
+		bRFootMoving = (RFootStepState == EFootStepState::Moving);
+		bRFootLowering = (RFootStepState == EFootStepState::Lowering);
+
+		bUFootRaising = (UFootStepState == EFootStepState::Raising);
+		bUFootMoving = (UFootStepState == EFootStepState::Moving);
+		bUFootLowering = (UFootStepState == EFootStepState::Lowering);
+
 		// Helper function to calculate end-of-tick foot position based on step state and progress
 		auto CalculateEndOfTickFootPosition = [&](const FFootState& FootState, const FHex& CurrentHex, const FHex& TargetHex) -> FVector
 			{
@@ -525,25 +569,25 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		}
 		}
 
-		// Calculate body position: lerp X/Y from foot positions, use StandHeight for Z
+		// Calculate body position: lerp X/Y from foot positions, add StandHeight to ground Z
 		FVector BodyEndWorld;
 		if (PlantedFootPositions.Num() > 0)
 		{
-			// Average X and Y from planted feet
-			FVector SumXY = FVector::ZeroVector;
+			// Average X, Y, and Z from planted feet (Z represents ground level)
+			FVector Sum = FVector::ZeroVector;
 			for (const FVector& FootPos : PlantedFootPositions)
 			{
-				SumXY += FVector(FootPos.X, FootPos.Y, 0.f);
+				Sum += FootPos;
 			}
-			FVector AvgXY = SumXY / PlantedFootPositions.Num();
-			// Use StandHeight for Z (not BodyHeightOffset which includes transition lerping)
-			BodyEndWorld = FVector(AvgXY.X, AvgXY.Y, SimState.StandHeight);
+			FVector Avg = Sum / PlantedFootPositions.Num();
+			// Add StandHeight to the average ground Z (not BodyHeightOffset which includes transition lerping)
+			BodyEndWorld = FVector(Avg.X, Avg.Y, Avg.Z + SimState.StandHeight);
 		}
 		else
 		{
-			// No feet planted, use hex position as base (horizontal) with StandHeight for Z
+			// No feet planted, use hex position as base and add StandHeight to ground Z
 			FVector HexWorld = HexToWorld(CurrentHex);
-			BodyEndWorld = FVector(HexWorld.X, HexWorld.Y, SimState.StandHeight);
+			BodyEndWorld = FVector(HexWorld.X, HexWorld.Y, HexWorld.Z + SimState.StandHeight);
 		}
 
 		// Update IK Rig goals via animation blueprint with end-of-tick values (no interpolation - handled in event graph)
@@ -572,43 +616,77 @@ void ABasicWalker::Tick(float DeltaSeconds)
 
 			// Set foot goal positions - IK Rig goals position the foot BONE at the assigned tile center
 			// Only set if ManualFootGoal is disabled
+			// Map based on bone names to match calibration logic (DHip→DFoot, LHip→LFoot, etc.)
 			if (bShouldSetFootGoals)
 			{
+				// Bone names that correspond to each foot goal
+				const FName BoneNames[] = { TEXT("DHipAxle41"), TEXT("LHipAxle17"), TEXT("RHipAxle5"), TEXT("UHipAxle29") };
 				const FName FootGoalNames[] = { TEXT("DFootGoal"), TEXT("LFootGoal"), TEXT("RFootGoal"), TEXT("UFootGoal") };
 				const FFootState* FootStates[] = { &SimState.DFoot, &SimState.LFoot, &SimState.RFoot, &SimState.UFoot };
 
-				for (int32 i = 0; i < 4; ++i)
-			{
-				if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
+				// Map each bone to its corresponding simulation foot and goal
+				for (int32 BoneIdx = 0; BoneIdx < 4; ++BoneIdx)
 				{
-					if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+					const FName& BoneName = BoneNames[BoneIdx];
+					const FName& GoalName = FootGoalNames[BoneIdx];
+					
+					// Determine which simulation foot this bone corresponds to based on bone name
+					int32 SimFootIndex = -1;
+					const FString BoneNameStr = BoneName.ToString();
+					if (BoneNameStr.Contains(TEXT("DHip")))
 					{
-						if (StructProp->Struct == TBaseStructure<FVector>::Get())
+						SimFootIndex = 0; // DFoot
+					}
+					else if (BoneNameStr.Contains(TEXT("LHip")))
+					{
+						SimFootIndex = 1; // LFoot
+					}
+					else if (BoneNameStr.Contains(TEXT("RHip")))
+					{
+						SimFootIndex = 2; // RFoot
+					}
+					else if (BoneNameStr.Contains(TEXT("UHip")))
+					{
+						SimFootIndex = 3; // UFoot
+					}
+					
+					if (SimFootIndex >= 0 && SimFootIndex < 4)
+					{
+						if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(GoalName))
 						{
-							FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
-							if (GoalValue && BodyComp)
+							if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
 							{
-								// Get assigned tile world position (CurrentTile already has AssignedTileOffset applied)
-								const FHex AssignedTile = FootStates[i]->CurrentTile;
-								const FVector FootGoalWorld = HexToWorld(AssignedTile);
-								
-								// Convert to component-local space (without scale)
-								*GoalValue = WorldToComponentNoScale.TransformPosition(FootGoalWorld);
-								
-								// Debug: Log first foot occasionally
-								static int32 LogCounter = 0;
-								if (i == 0 && (++LogCounter % 60 == 0))
+								if (StructProp->Struct == TBaseStructure<FVector>::Get())
 								{
-									// UE_LOG(LogTemp, Warning, TEXT("Walker IK: Foot %s Tile(%d,%d) World(%.1f,%.1f,%.1f) Local(%.1f,%.1f,%.1f)"),
-										// *FootGoalNames[i].ToString(), AssignedTile.Q, AssignedTile.R,
-										// FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z,
-										// GoalValue->X, GoalValue->Y, GoalValue->Z);
+									FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+									if (GoalValue && BodyComp)
+									{
+									// Get assigned tile world position from the correct simulation foot
+									const FHex AssignedTile = FootStates[SimFootIndex]->CurrentTile;
+										const FVector FootGoalWorld = HexToWorld(AssignedTile);
+										
+										// Convert to component-local space (without scale)
+										*GoalValue = WorldToComponentNoScale.TransformPosition(FootGoalWorld);
+										
+										// Debug: Log occasionally
+										static int32 LogCounter = 0;
+										if (BoneIdx == 0 && (++LogCounter % 60 == 0))
+										{
+											UE_LOG(LogTemp, VeryVerbose, TEXT("Walker IK: Bone %s → Goal %s → SimFoot[%d] Tile(%d,%d) World(%.1f,%.1f,%.1f)"),
+												*BoneName.ToString(), *GoalName.ToString(), SimFootIndex,
+												AssignedTile.Q, AssignedTile.R,
+												FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z);
+										}
+									}
 								}
 							}
 						}
 					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("Walker IK: Could not determine SimFootIndex for bone %s"), *BoneName.ToString());
+					}
 				}
-			}
 			}
 
 			// Set body goal position (end-of-tick target), expressed in component-local space
@@ -644,287 +722,15 @@ void ABasicWalker::Tick(float DeltaSeconds)
 
 		if (GM && GM->bDebugWalkers)
 		{
-			// Use body location from simulation state (BaseHex) instead of actor location
-			const FVector BodyLocation = HexToWorld(CurrentHex);
-
-			// Get quadrant colors for each leg (applies LegQuadrantOffset)
-			// Leg order: D (0), L (1), R (2), U (3)
-			FLinearColor DColor = GM->GetLegQuadrantColor(TEXT("D"), 0);
-			FLinearColor LColor = GM->GetLegQuadrantColor(TEXT("L"), 1);
-			FLinearColor RColor = GM->GetLegQuadrantColor(TEXT("R"), 2);
-			FLinearColor UColor = GM->GetLegQuadrantColor(TEXT("U"), 3);
-
-			// Draw body location sphere
-			DrawDebugSphere(GetWorld(), BodyLocation, 20.f, 12, FColor::White, false, -1.f, 0, 2.f);
-
-			// Draw text showing body hex position
-			if (Driver)
+			// Use the same tile marking approach as CalibrateWalker
+			GM->UpdateWalkerQuadrantVisualization(this);
+		}
+		else
+		{
+			// Clear visualization when debug is disabled
+			if (GM)
 			{
-				FString BodyText = FString::Printf(TEXT("Body:(%d,%d)"), CurrentHex.Q, CurrentHex.R);
-				DrawDebugString(GetWorld(), BodyLocation + FVector(0, 0, 30), BodyText, nullptr, FColor::White, 0.f, true, 1.2f);
-			}
-
-			// Draw lines from body to foot goals with quadrant colors
-			DrawDebugLine(GetWorld(), BodyLocation, DFootEndWorld, DColor.ToFColor(true), false, -1.f, 0, 3.f);
-			DrawDebugLine(GetWorld(), BodyLocation, LFootEndWorld, LColor.ToFColor(true), false, -1.f, 0, 3.f);
-			DrawDebugLine(GetWorld(), BodyLocation, RFootEndWorld, RColor.ToFColor(true), false, -1.f, 0, 3.f);
-			DrawDebugLine(GetWorld(), BodyLocation, UFootEndWorld, UColor.ToFColor(true), false, -1.f, 0, 3.f);
-
-			// Draw spheres at foot positions with quadrant colors
-			DrawDebugSphere(GetWorld(), DFootEndWorld, 15.f, 8, DColor.ToFColor(true), false, -1.f, 0, 2.f);
-			DrawDebugSphere(GetWorld(), LFootEndWorld, 15.f, 8, LColor.ToFColor(true), false, -1.f, 0, 2.f);
-			DrawDebugSphere(GetWorld(), RFootEndWorld, 15.f, 8, RColor.ToFColor(true), false, -1.f, 0, 2.f);
-			DrawDebugSphere(GetWorld(), UFootEndWorld, 15.f, 8, UColor.ToFColor(true), false, -1.f, 0, 2.f);
-
-			// Draw text showing foot hex positions and quadrant assignments
-			if (Driver)
-			{
-				FHex DFootHexLocal, LFootHexLocal, RFootHexLocal, UFootHexLocal;
-				if (Driver->WorldToHex(DFootEndWorld, DFootHexLocal))
-				{
-					FString DText = FString::Printf(TEXT("D:(%d,%d)"), DFootHexLocal.Q, DFootHexLocal.R);
-					DrawDebugString(GetWorld(), DFootEndWorld + FVector(0, 0, 20), DText, nullptr, DColor.ToFColor(true), 0.f, true, 1.2f);
-				}
-				if (Driver->WorldToHex(LFootEndWorld, LFootHexLocal))
-				{
-					FString LText = FString::Printf(TEXT("L:(%d,%d)"), LFootHexLocal.Q, LFootHexLocal.R);
-					DrawDebugString(GetWorld(), LFootEndWorld + FVector(0, 0, 20), LText, nullptr, LColor.ToFColor(true), 0.f, true, 1.2f);
-				}
-				if (Driver->WorldToHex(RFootEndWorld, RFootHexLocal))
-				{
-					FString RText = FString::Printf(TEXT("R:(%d,%d)"), RFootHexLocal.Q, RFootHexLocal.R);
-					DrawDebugString(GetWorld(), RFootEndWorld + FVector(0, 0, 20), RText, nullptr, RColor.ToFColor(true), 0.f, true, 1.2f);
-				}
-				if (Driver->WorldToHex(UFootEndWorld, UFootHexLocal))
-				{
-					FString UText = FString::Printf(TEXT("U:(%d,%d)"), UFootHexLocal.Q, UFootHexLocal.R);
-					DrawDebugString(GetWorld(), UFootEndWorld + FVector(0, 0, 20), UText, nullptr, UColor.ToFColor(true), 0.f, true, 1.2f);
-				}
-			}
-
-			// Draw quadrant outlines showing the outermost edges of each quadrant
-			if (Driver)
-			{
-				const int32 ReachDist = SimState.ReachDistance;
-				const FHex& BodyHex = CurrentHex;
-
-				// Helper function to get quadrant from hex (same logic as GetFixedQuadrantFromHex)
-				auto GetQuadrant = [](const FHex& BodyHex, const FHex& TestHex) -> FString
-					{
-						const int32 dq = TestHex.Q - BodyHex.Q;
-						const int32 dr = TestHex.R - BodyHex.R;
-
-						if (dq > 0 && dr == 0)  return TEXT("E");
-						if (dq < 0 && dr == 0)  return TEXT("W");
-						if (dq == 0 && dr > 0)  return TEXT("S");
-						if (dq == 0 && dr < 0)  return TEXT("N");
-
-						if (FMath::Abs(dq) > FMath::Abs(dr))
-							return (dq > 0) ? TEXT("E") : TEXT("W");
-						if (FMath::Abs(dr) > FMath::Abs(dq))
-							return (dr > 0) ? TEXT("S") : TEXT("N");
-
-						if (dq > 0 && dr > 0)   return TEXT("S");
-						if (dq > 0 && dr < 0)   return TEXT("E");
-						if (dq < 0 && dr > 0)   return TEXT("W");
-						return TEXT("N");
-					};
-
-				// Find all tiles in each quadrant (within reach distance)
-				// Map: D->S, L->W, R->E, U->N
-				TSet<FHex> STiles, WTiles, ETiles, NTiles;
-
-				for (int32 q = -ReachDist; q <= ReachDist; ++q)
-				{
-					for (int32 r = -ReachDist; r <= ReachDist; ++r)
-					{
-						FHex TestHex(BodyHex.Q + q, BodyHex.R + r);
-						const int32 dq = TestHex.Q - BodyHex.Q;
-						const int32 dr = TestHex.R - BodyHex.R;
-						const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-
-						if (HexDist <= ReachDist && HexDist > 0)
-						{
-							FString Quad = GetQuadrant(BodyHex, TestHex);
-							if (Quad == TEXT("S")) STiles.Add(TestHex);
-							else if (Quad == TEXT("W")) WTiles.Add(TestHex);
-							else if (Quad == TEXT("E")) ETiles.Add(TestHex);
-							else if (Quad == TEXT("N")) NTiles.Add(TestHex);
-						}
-					}
-				}
-
-				// Helper to get hex vertex positions (for pointy-top hexes)
-				// Vertices are at angles: 0°, 60°, 120°, 180°, 240°, 300° from +X axis
-				auto GetHexVertices = [this](const FHex& Hex) -> TArray<FVector>
-					{
-						const FVector Center = HexToWorld(Hex);
-						const float TileSize = Driver ? Driver->GetTileSize() : 100.f;
-						const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
-						const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
-
-						// For pointy-top hexes, radius (center to vertex) equals tile size
-						// Vertices are at 0°, 60°, 120°, 180°, 240°, 300° from +X
-						const float Radius = TileSize;
-
-						TArray<FVector> Vertices;
-						for (int32 i = 0; i < 6; ++i)
-						{
-							// Start at 0° (pointing right/East) for pointy-top
-							const float AngleDeg = 60.f * i;
-							const float AngleRad = FMath::DegreesToRadians(AngleDeg);
-
-							// Calculate vertex in local hex space
-							FVector2D LocalVertex(
-								Radius * FMath::Cos(AngleRad),
-								Radius * FMath::Sin(AngleRad)
-							);
-
-							// Apply grid yaw rotation
-							FVector2D RotatedVertex = HexCoord::Rotate2D(LocalVertex, GridYaw);
-
-							// Convert to world space
-							const FVector Vertex = Center + FVector(RotatedVertex.X, RotatedVertex.Y, 0.f);
-							Vertices.Add(Vertex);
-						}
-						return Vertices;
-					};
-
-				// Helper to draw quadrant outline by finding perimeter edges and connecting them into a continuous path
-				// An edge is on the perimeter if the neighbor in that direction is NOT in the same quadrant
-				auto DrawQuadrantOutline = [this, &GetQuadrant, &GetHexVertices, &BodyHex](
-					const TSet<FHex>& QuadrantTiles,
-					const FLinearColor& Color,
-					float ZOffset)
-					{
-						if (QuadrantTiles.Num() == 0) return;
-
-						// Collect all perimeter edges (edges that are on the boundary)
-						// Use a map to track edges by their vertex positions (to avoid duplicates and enable path building)
-						struct FEdge
-						{
-							FVector Start;
-							FVector End;
-							bool bUsed = false;
-						};
-
-						TArray<FEdge> PerimeterEdges;
-
-						// For each tile in the quadrant, check each of its 6 edges
-						for (const FHex& Tile : QuadrantTiles)
-						{
-							const TArray<FVector> Vertices = GetHexVertices(Tile);
-
-							// Check each of the 6 edges (each edge connects two vertices)
-							for (int32 EdgeIdx = 0; EdgeIdx < 6; ++EdgeIdx)
-							{
-								const int32 NextIdx = (EdgeIdx + 1) % 6;
-								const FVector Start = Vertices[EdgeIdx] + FVector(0, 0, ZOffset);
-								const FVector End = Vertices[NextIdx] + FVector(0, 0, ZOffset);
-
-								// Get the neighbor in the direction of this edge
-								// Edge directions: 0=E, 1=NE, 2=NW, 3=W, 4=SW, 5=SE
-								const EHexDir NeighborDir = static_cast<EHexDir>(EdgeIdx);
-								const FHex Neighbor = HexUtil::Neighbor(Tile, NeighborDir);
-
-								// This edge is on the perimeter if the neighbor is NOT in the same quadrant
-								FString NeighborQuad = GetQuadrant(BodyHex, Neighbor);
-								FString TileQuad = GetQuadrant(BodyHex, Tile);
-
-								if (!NeighborQuad.Equals(TileQuad, ESearchCase::CaseSensitive) || !QuadrantTiles.Contains(Neighbor))
-								{
-									// Add this perimeter edge
-									FEdge Edge;
-									Edge.Start = Start;
-									Edge.End = End;
-									PerimeterEdges.Add(Edge);
-								}
-							}
-						}
-
-						// Build continuous paths by connecting edges that share vertices
-						// Use a tolerance for vertex matching (floating point comparison)
-						const float VertexTolerance = 1.0f;
-
-						while (PerimeterEdges.Num() > 0)
-						{
-							// Find an unused edge to start a new path
-							int32 StartEdgeIdx = -1;
-							for (int32 i = 0; i < PerimeterEdges.Num(); ++i)
-							{
-								if (!PerimeterEdges[i].bUsed)
-								{
-									StartEdgeIdx = i;
-									break;
-								}
-							}
-
-							if (StartEdgeIdx == -1) break; // All edges used
-
-							// Build a continuous path starting from this edge
-							TArray<FVector> Path;
-							FEdge& CurrentEdge = PerimeterEdges[StartEdgeIdx];
-							CurrentEdge.bUsed = true;
-
-							// Start the path with the first edge
-							Path.Add(CurrentEdge.Start);
-							Path.Add(CurrentEdge.End);
-							FVector CurrentEnd = CurrentEdge.End;
-
-							// Try to extend the path by finding edges that connect
-							bool bExtended = true;
-							while (bExtended)
-							{
-								bExtended = false;
-
-								// Look for an edge that connects to CurrentEnd
-								for (int32 i = 0; i < PerimeterEdges.Num(); ++i)
-								{
-									if (PerimeterEdges[i].bUsed) continue;
-
-									FEdge& Candidate = PerimeterEdges[i];
-
-									// Check if candidate edge connects to current path end
-									if (FVector::Dist(CurrentEnd, Candidate.Start) < VertexTolerance)
-									{
-										// Connect forward
-										Path.Add(Candidate.End);
-										CurrentEnd = Candidate.End;
-										Candidate.bUsed = true;
-										bExtended = true;
-										break;
-									}
-									else if (FVector::Dist(CurrentEnd, Candidate.End) < VertexTolerance)
-									{
-										// Connect backward (reverse the edge)
-										Path.Add(Candidate.Start);
-										CurrentEnd = Candidate.Start;
-										Candidate.bUsed = true;
-										bExtended = true;
-										break;
-									}
-								}
-							}
-
-							// Draw the continuous path
-							if (Path.Num() >= 2)
-							{
-								for (int32 i = 0; i < Path.Num() - 1; ++i)
-								{
-									DrawDebugLine(GetWorld(), Path[i], Path[i + 1], Color.ToFColor(true), false, -1.f, 0, 2.f);
-								}
-							}
-
-							// Remove used edges
-							PerimeterEdges.RemoveAll([](const FEdge& E) { return E.bUsed; });
-						}
-					};
-
-				// Draw quadrant outlines (D->S, L->W, R->E, U->N)
-				DrawQuadrantOutline(STiles, DColor, 5.f);
-				DrawQuadrantOutline(WTiles, LColor, 5.f);
-				DrawQuadrantOutline(ETiles, RColor, 5.f);
-				DrawQuadrantOutline(NTiles, UColor, 5.f);
+				GM->ClearWalkerQuadrantVisualization(this);
 			}
 		}
 
@@ -1144,10 +950,11 @@ void ABasicWalker::UpdateAssignedTileWorldLocations()
 	if (Sim && SimWalkerIndex >= 0 && SimWalkerIndex < Sim->Walkers.Num())
 	{
 		const FWalkerState& SimState = Sim->Walkers[SimWalkerIndex];
-		SimFootHexes[0] = SimState.DFoot.CurrentTile;
-		SimFootHexes[1] = SimState.LFoot.CurrentTile;
-		SimFootHexes[2] = SimState.RFoot.CurrentTile;
-		SimFootHexes[3] = SimState.UFoot.CurrentTile;
+		// Use TargetTile instead of CurrentTile so the assigned tile updates immediately when raising begins
+		SimFootHexes[0] = SimState.DFoot.TargetTile;
+		SimFootHexes[1] = SimState.LFoot.TargetTile;
+		SimFootHexes[2] = SimState.RFoot.TargetTile;
+		SimFootHexes[3] = SimState.UFoot.TargetTile;
 		bHasSimTiles = true;
 	}
 	

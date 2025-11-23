@@ -43,9 +43,6 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	float StartingFootDistance = 0.f;
 	
 	UPROPERTY()
-	float AssignedTileOffset = 0.f; // Offset in tiles to move assigned tiles without updating feet
-	
-	UPROPERTY()
 	float StepHeight = 50.f;
 	
 	UPROPERTY()
@@ -171,9 +168,6 @@ public:
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Horizontal offset in tiles from the body-aligned tile for foot starting positions"))
 	float StartingFootDistance = 0.f;
-	
-	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Offset in tiles to move assigned tiles without updating feet (calculated same way as StartingFootDistance)"))
-	float AssignedTileOffset = 0.f;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0.0", Tooltip = "Height feet raise when stepping"))
 	float StepHeight = 50.f;
@@ -543,6 +537,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Walker|Calibration")
 	FVector GetFootAxleWorldLocationForBone(const FName& HipBoneName) const;
 
+	/** Update quadrant visualization for a runtime walker (uses same tile marking approach as CalibrateWalker) */
+	void UpdateWalkerQuadrantVisualization(class ABasicWalker* Walker);
+	
+	/** Clear quadrant visualization for a runtime walker */
+	void ClearWalkerQuadrantVisualization(class ABasicWalker* Walker);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -599,7 +599,8 @@ private:
 	// Backup of foot positions when toggling FootToOuterMostTile so we can return to the previous state
 	TArray<FVector> WalkerFootPositionsBeforeOuterMost;
 	bool bFeetAtOuterMost = false;
-	TArray<UStaticMeshComponent*> WalkerQuadrantTileMarkers; // Visual markers for reachable tiles
+	TArray<UStaticMeshComponent*> WalkerQuadrantTileMarkers; // Visual markers for reachable tiles (calibration walker)
+	TMap<TWeakObjectPtr<ABasicWalker>, TArray<UStaticMeshComponent*>> RuntimeWalkerQuadrantMarkers; // Visual markers per runtime walker
 	float SavedStandHeight = 0.f; // Saved height for reset operations
 	
 	// Persistent calibration settings (Config property allows it to persist between sessions)
@@ -622,7 +623,7 @@ private:
 	void ClearWalkerDebugMeshes();
 	void LoadWalkerCalibration();
 	void SaveWalkerCalibrationToConfig();
-	void UpdateAllWalkersAssignedTiles(); // Update assigned tiles for all runtime walkers when AssignedTileOffset changes
+	void ApplyCalibrationValuesToAllWalkers(); // Apply all calibration values (StepHeight, ReachDistance, StartingFootDistance, etc.) to walkers in simulation
 	void AutoFindRefs();
 	void TryLoadInitial();
 	void EnsureISM();

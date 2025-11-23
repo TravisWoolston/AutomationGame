@@ -239,12 +239,24 @@ void USimWorldHex::StepWalkers()
 		// If processing a request, execute walking animation
 		if (W.bProcessingRequest)
 		{
-			// Check if we've reached the target
-			if (W.BaseHex == W.CurrentTargetHex)
+			// Check if we've reached the target AND are stable (all feet planted)
+			// This ensures the body is truly centered and settled before moving on
+			bool bAllFeetPlanted = true;
+			TArray<FFootState*> CheckFeet = GetAllFeet(W);
+			for (FFootState* F : CheckFeet)
 			{
-				// Reached target, finish request
+				if (F->StepState != EFootStepState::Planted)
+				{
+					bAllFeetPlanted = false;
+					break;
+				}
+			}
+
+			if (W.BaseHex == W.CurrentTargetHex && bAllFeetPlanted)
+			{
+				// Reached target and stable, finish request
 				W.bProcessingRequest = false;
-				UE_LOG(LogTemp, Log, TEXT("Walker %d: Reached target (%d, %d)"), 
+				UE_LOG(LogTemp, Log, TEXT("Walker %d: Reached target (%d, %d) and stabilized"), 
 					WalkerIndex, W.CurrentTargetHex.Q, W.CurrentTargetHex.R);
 				continue;
 			}
@@ -368,9 +380,17 @@ void USimWorldHex::StepWalkers()
 							const int32 dq = TestHex.Q - W.BaseHex.Q;
 							const int32 dr = TestHex.R - W.BaseHex.R;
 							const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-							if (HexDist > W.ReachDistance || HexDist == 0)
+							const float HexDistFloat = (float)HexDist;
+							
+							// Must be within ReachDistance and at least MinimumReachDistance from body
+							// Apply hysteresis for the current tile to prevent oscillation at boundaries
+							bool bIsCurrentTile = (TestHex == Foot.CurrentTile);
+							float Hysteresis = bIsCurrentTile ? 0.5f : 0.f;
+							
+							if (HexDist == 0 || HexDist > (W.ReachDistance + (bIsCurrentTile ? 1 : 0)) || 
+								HexDistFloat < (W.MinimumReachDistance - Hysteresis))
 							{
-								continue; // Out of reach or body tile
+								continue; // Out of reach, body tile, or too close to body
 							}
 
 							// Enforce per‑leg quadrant: skip tiles outside this foot's compass sector.
@@ -411,8 +431,8 @@ void USimWorldHex::StepWalkers()
 							// Score based on how well this foot position helps center the body on the target tile
 							// Calculate what the body position would be if this foot were at TestHex
 							// (assuming other feet stay where they are)
-							int32 ProjectedBodyQ = 0;
-							int32 ProjectedBodyR = 0;
+							int32 ProjectedBodySumQ = 0;
+							int32 ProjectedBodySumR = 0;
 							int32 PlantedCount = 0;
 							
 							for (int32 OtherIdx = 0; OtherIdx < Feet.Num(); ++OtherIdx)
@@ -420,8 +440,8 @@ void USimWorldHex::StepWalkers()
 								if (OtherIdx == FootIndex)
 								{
 									// Use the candidate position for this foot
-									ProjectedBodyQ += TestHex.Q;
-									ProjectedBodyR += TestHex.R;
+									ProjectedBodySumQ += TestHex.Q;
+									ProjectedBodySumR += TestHex.R;
 									PlantedCount++;
 								}
 								else
@@ -431,8 +451,8 @@ void USimWorldHex::StepWalkers()
 									if (OtherFoot->StepState == EFootStepState::Planted || 
 										(OtherFoot->StepState == EFootStepState::Lowering && OtherFoot->StepProgress + 1 >= W.StepLowerTicks))
 									{
-										ProjectedBodyQ += OtherFoot->CurrentTile.Q;
-										ProjectedBodyR += OtherFoot->CurrentTile.R;
+										ProjectedBodySumQ += OtherFoot->CurrentTile.Q;
+										ProjectedBodySumR += OtherFoot->CurrentTile.R;
 										PlantedCount++;
 									}
 								}
@@ -440,8 +460,140 @@ void USimWorldHex::StepWalkers()
 							
 							if (PlantedCount > 0)
 							{
-								ProjectedBodyQ /= PlantedCount;
-								ProjectedBodyR /= PlantedCount;
+								// Calculate float average for precise scoring
+								float AvgBodyQ = (float)ProjectedBodySumQ / (float)PlantedCount;
+								float AvgBodyR = (float)ProjectedBodySumR / (float)PlantedCount;
+								
+								// Use RoundToInt for integer grid validation (matches body update logic)
+								int32 PBodyQ = FMath::RoundToInt(AvgBodyQ);
+								int32 PBodyR = FMath::RoundToInt(AvgBodyR);
+								FHex ProjectedBodyHex(PBodyQ, PBodyR);
+								
+								// Validate that projected body position respects MinimumReachDistance for all planted feet
+								bool bProjectedBodyValid = true;
+								for (int32 OtherIdx = 0; OtherIdx < Feet.Num(); ++OtherIdx)
+								{
+									FFootState* OtherFoot = Feet[OtherIdx];
+									FHex OtherFootHex;
+									
+									if (OtherIdx == FootIndex)
+									{
+										OtherFootHex = TestHex; // Use candidate position for this foot
+									}
+									else if (OtherFoot->StepState == EFootStepState::Planted || 
+										(OtherFoot->StepState == EFootStepState::Lowering && OtherFoot->StepProgress + 1 >= W.StepLowerTicks))
+									{
+										OtherFootHex = OtherFoot->CurrentTile; // Use current position for other planted feet
+									}
+									else
+									{
+										continue; // Skip non-planted feet
+									}
+									
+									const int32 fdq = OtherFootHex.Q - ProjectedBodyHex.Q;
+									const int32 fdr = OtherFootHex.R - ProjectedBodyHex.R;
+									const int32 fHexDist = FMath::Max(FMath::Max(FMath::Abs(fdq), FMath::Abs(fdr)), FMath::Abs(fdq + fdr));
+									const float fHexDistFloat = (float)fHexDist;
+									
+									// Check MinimumReachDistance
+									if (fHexDistFloat < W.MinimumReachDistance)
+									{
+										bProjectedBodyValid = false;
+										break;
+									}
+									
+									// Check ReachDistance
+									if (fHexDist > W.ReachDistance)
+									{
+										bProjectedBodyValid = false;
+										break;
+									}
+								}
+								
+								// If invalid due to MinimumReachDistance, try to optimize body position (move away from closest foot)
+								if (!bProjectedBodyValid && W.MinimumReachDistance > 0.f)
+								{
+									// Find closest foot
+									float MinDist = MAX_flt;
+									FHex ClosestFootHex;
+									
+									for (int32 OtherIdx = 0; OtherIdx < Feet.Num(); ++OtherIdx)
+									{
+										FFootState* OtherFoot = Feet[OtherIdx];
+										FHex OtherFootHex;
+										
+										if (OtherIdx == FootIndex) OtherFootHex = TestHex;
+										else if (OtherFoot->StepState == EFootStepState::Planted || 
+											(OtherFoot->StepState == EFootStepState::Lowering && OtherFoot->StepProgress + 1 >= W.StepLowerTicks))
+											OtherFootHex = OtherFoot->CurrentTile;
+										else continue;
+										
+										const int32 fdq = OtherFootHex.Q - ProjectedBodyHex.Q;
+										const int32 fdr = OtherFootHex.R - ProjectedBodyHex.R;
+										const float fHexDist = (float)FMath::Max(FMath::Max(FMath::Abs(fdq), FMath::Abs(fdr)), FMath::Abs(fdq + fdr));
+										if (fHexDist < MinDist)
+										{
+											MinDist = fHexDist;
+											ClosestFootHex = OtherFootHex;
+										}
+									}
+									
+									// Try to move body away from closest foot
+									if (MinDist < W.MinimumReachDistance)
+									{
+										const int32 bdq = ProjectedBodyHex.Q - ClosestFootHex.Q;
+										const int32 bdr = ProjectedBodyHex.R - ClosestFootHex.R;
+										float Dist = FMath::Max(FMath::Max(FMath::Abs((float)bdq), FMath::Abs((float)bdr)), FMath::Abs((float)(bdq + bdr)));
+										
+										if (Dist > 0.1f)
+										{
+											const float RequiredDist = W.MinimumReachDistance + 0.1f;
+											const float Scale = RequiredDist / Dist;
+											int32 NewQ = ClosestFootHex.Q + FMath::RoundToInt((float)bdq * Scale);
+											int32 NewR = ClosestFootHex.R + FMath::RoundToInt((float)bdr * Scale);
+											FHex NewBodyHex(NewQ, NewR);
+											
+											// Re-validate
+											bool bNewValid = true;
+											for (int32 OtherIdx = 0; OtherIdx < Feet.Num(); ++OtherIdx)
+											{
+												FFootState* OtherFoot = Feet[OtherIdx];
+												FHex OtherFootHex;
+												if (OtherIdx == FootIndex) OtherFootHex = TestHex;
+												else if (OtherFoot->StepState == EFootStepState::Planted || 
+													(OtherFoot->StepState == EFootStepState::Lowering && OtherFoot->StepProgress + 1 >= W.StepLowerTicks))
+													OtherFootHex = OtherFoot->CurrentTile;
+												else continue;
+												
+												const int32 fdq = OtherFootHex.Q - NewBodyHex.Q;
+												const int32 fdr = OtherFootHex.R - NewBodyHex.R;
+												const int32 fHexDist = FMath::Max(FMath::Max(FMath::Abs(fdq), FMath::Abs(fdr)), FMath::Abs(fdq + fdr));
+												
+												if ((float)fHexDist < W.MinimumReachDistance || fHexDist > W.ReachDistance)
+												{
+													bNewValid = false;
+													break;
+												}
+											}
+											
+											if (bNewValid)
+											{
+												ProjectedBodyHex = NewBodyHex;
+												// Update float average to match the optimized integer position
+												// so scoring reflects the actual valid body position
+												AvgBodyQ = (float)NewBodyHex.Q;
+												AvgBodyR = (float)NewBodyHex.R;
+												bProjectedBodyValid = true;
+											}
+										}
+									}
+								}
+								
+								// Only consider this tile if projected body position is valid
+								if (!bProjectedBodyValid)
+								{
+									continue;
+								}
 								
 								// Calculate current body distance to target
 								const int32 CurrentBodyToTargetDQ = W.CurrentTargetHex.Q - W.BaseHex.Q;
@@ -455,16 +607,21 @@ void USimWorldHex::StepWalkers()
 								if (bShouldCenterOnTarget)
 								{
 									// Score based on how close the projected body position is to the target
-									const int32 BodyToTargetDQ = W.CurrentTargetHex.Q - ProjectedBodyQ;
-									const int32 BodyToTargetDR = W.CurrentTargetHex.R - ProjectedBodyR;
-									const float BodyDistToTarget = FMath::Max(FMath::Max(FMath::Abs(float(BodyToTargetDQ)), FMath::Abs(float(BodyToTargetDR))), FMath::Abs(float(BodyToTargetDQ + BodyToTargetDR)));
+									// Use float precision to avoid getting stuck when integer rounding prevents updates
+									const float BodyToTargetDQ = (float)W.CurrentTargetHex.Q - AvgBodyQ;
+									const float BodyToTargetDR = (float)W.CurrentTargetHex.R - AvgBodyR;
+									const float BodyDistToTarget = FMath::Max(FMath::Max(FMath::Abs(BodyToTargetDQ), FMath::Abs(BodyToTargetDR)), FMath::Abs(BodyToTargetDQ + BodyToTargetDR));
 									
 									// Prefer positions that move the body closer to the target (or at least not farther)
 									// Use a combined score: body distance to target (primary) + small penalty for foot distance from current body
 									const int32 FootFromBodyDQ = TestHex.Q - W.BaseHex.Q;
 									const int32 FootFromBodyDR = TestHex.R - W.BaseHex.R;
 									const float FootFromBodyDist = FMath::Max(FMath::Max(FMath::Abs(float(FootFromBodyDQ)), FMath::Abs(float(FootFromBodyDR))), FMath::Abs(float(FootFromBodyDQ + FootFromBodyDR)));
-									const float CombinedScore = BodyDistToTarget + FootFromBodyDist * 0.1f; // Small penalty for moving foot far from body
+									
+									// Add stability bonus: penalize moving to a new tile unless it's significantly better
+									const float StabilityPenalty = (TestHex == Foot.CurrentTile) ? 0.0f : 0.5f;
+									
+									const float CombinedScore = BodyDistToTarget + FootFromBodyDist * 0.1f + StabilityPenalty; 
 									
 									// Only consider if it improves body position (or at least doesn't make it worse)
 									if (BodyDistToTarget <= CurrentBodyDistToTarget && CombinedScore < BestScore)
@@ -581,6 +738,7 @@ void USimWorldHex::StepWalkers()
 		
 		// Update body position to center of feet (average of foot positions)
 		// This should always update, not just when processing requests, so legs know their range
+		// Body position must respect MinimumReachDistance - no foot should be closer than MinimumReachDistance
 		if (W.Stance == EWalkerStance::Standing || W.Stance == EWalkerStance::StandingUp || W.Stance == EWalkerStance::SittingDown)
 		{
 			// Calculate average of all planted feet (feet that are currently at their CurrentTile)
@@ -599,6 +757,7 @@ void USimWorldHex::StepWalkers()
 			
 			if (PlantedFootHexes.Num() > 0)
 			{
+				// Calculate initial average body position (using RoundToInt for better centering)
 				int32 SumQ = 0;
 				int32 SumR = 0;
 				for (const FHex& FootHex : PlantedFootHexes)
@@ -606,9 +765,117 @@ void USimWorldHex::StepWalkers()
 					SumQ += FootHex.Q;
 					SumR += FootHex.R;
 				}
-				int32 AvgQ = SumQ / PlantedFootHexes.Num();
-				int32 AvgR = SumR / PlantedFootHexes.Num();
-				W.BaseHex = FHex(AvgQ, AvgR);
+				// Use RoundToInt to get the closest integer hex to the true center
+				int32 AvgQ = FMath::RoundToInt((float)SumQ / PlantedFootHexes.Num());
+				int32 AvgR = FMath::RoundToInt((float)SumR / PlantedFootHexes.Num());
+				FHex ProposedBodyHex(AvgQ, AvgR);
+				
+				// Validate that no foot violates MinimumReachDistance with this body position
+				bool bValidBodyPosition = true;
+				for (const FHex& FootHex : PlantedFootHexes)
+				{
+					const int32 dq = FootHex.Q - ProposedBodyHex.Q;
+					const int32 dr = FootHex.R - ProposedBodyHex.R;
+					const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+					const float HexDistFloat = (float)HexDist;
+					
+					// Check if foot would be too close to body
+					if (HexDistFloat < W.MinimumReachDistance)
+					{
+						bValidBodyPosition = false;
+						break;
+					}
+				}
+				
+				if (bValidBodyPosition)
+				{
+					// Body position is valid - use it
+					W.BaseHex = ProposedBodyHex;
+				}
+				else
+				{
+					// Body position would violate MinimumReachDistance - optimize to find valid position
+					// Strategy: Try to move body away from feet that are too close
+					// Find the foot that's closest to the proposed body position
+					float MinDist = MAX_flt;
+					FHex ClosestFootHex;
+					for (const FHex& FootHex : PlantedFootHexes)
+					{
+						const int32 dq = FootHex.Q - ProposedBodyHex.Q;
+						const int32 dr = FootHex.R - ProposedBodyHex.R;
+						const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+						const float HexDistFloat = (float)HexDist;
+						
+						if (HexDistFloat < MinDist)
+						{
+							MinDist = HexDistFloat;
+							ClosestFootHex = FootHex;
+						}
+					}
+					
+					// If closest foot is too close, move body away from it
+					if (MinDist < W.MinimumReachDistance)
+					{
+						// Calculate direction from closest foot to proposed body
+						const int32 dq = ProposedBodyHex.Q - ClosestFootHex.Q;
+						const int32 dr = ProposedBodyHex.R - ClosestFootHex.R;
+						
+						// Normalize direction (approximate)
+						float Dist = FMath::Max(FMath::Max(FMath::Abs((float)dq), FMath::Abs((float)dr)), FMath::Abs((float)(dq + dr)));
+						if (Dist > 0.1f)
+						{
+							// Move body away from closest foot by at least MinimumReachDistance
+							const float RequiredDist = W.MinimumReachDistance + 0.1f; // Add small buffer
+							const float Scale = RequiredDist / Dist;
+							
+							// Calculate new body position
+							int32 NewQ = ClosestFootHex.Q + FMath::RoundToInt((float)dq * Scale);
+							int32 NewR = ClosestFootHex.R + FMath::RoundToInt((float)dr * Scale);
+							
+							// Validate new position doesn't violate constraints for other feet
+							FHex NewBodyHex(NewQ, NewR);
+							bool bNewPositionValid = true;
+							for (const FHex& FootHex : PlantedFootHexes)
+							{
+								const int32 fdq = FootHex.Q - NewBodyHex.Q;
+								const int32 fdr = FootHex.R - NewBodyHex.R;
+								const int32 fHexDist = FMath::Max(FMath::Max(FMath::Abs(fdq), FMath::Abs(fdr)), FMath::Abs(fdq + fdr));
+								const float fHexDistFloat = (float)fHexDist;
+								
+								// Check MinimumReachDistance
+								if (fHexDistFloat < W.MinimumReachDistance)
+								{
+									bNewPositionValid = false;
+									break;
+								}
+								
+								// Check ReachDistance
+								if (fHexDist > W.ReachDistance)
+								{
+									bNewPositionValid = false;
+									break;
+								}
+							}
+							
+							if (bNewPositionValid)
+							{
+								W.BaseHex = NewBodyHex;
+							}
+							else
+							{
+								// Fallback: keep current body position if we can't find a valid one
+								// This prevents the walker from getting stuck
+								UE_LOG(LogTemp, Warning, TEXT("Walker %d: Could not find valid body position respecting MinimumReachDistance=%.1f, keeping current position"), 
+									WalkerIndex, W.MinimumReachDistance);
+							}
+						}
+					}
+					else
+					{
+						// Shouldn't happen, but use proposed position
+						W.BaseHex = ProposedBodyHex;
+					}
+				}
 			}
 		}
 		

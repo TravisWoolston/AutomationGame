@@ -113,6 +113,70 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
 	FHex HomeHex;
 
+	// --- GameManager-assigned values (public for runtime verification/editing) ---
+	
+	/** Step height (how high feet raise when stepping) - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	float StepHeight = 50.f;
+
+	/** Ticks for raising foot during step - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	int32 StepRaiseTicks = 3;
+
+	/** Ticks for moving foot during step - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	int32 StepMoveTicks = 3;
+
+	/** Ticks for lowering foot during step - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	int32 StepLowerTicks = 3;
+
+	/** Maximum reach distance in tiles - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	int32 ReachDistance = 2;
+
+	/** Minimum reach distance in tiles (feet cannot be placed closer than this) - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	float MinimumReachDistance = 0.f;
+
+	/** Stand height (body height offset when standing) - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	float StandHeight = 0.f;
+
+	/** Starting foot distance (initial foot placement distance from body) - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	float StartingFootDistance = 0.f;
+
+	// --- Foot Animation States ---
+
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bDFootRaising = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bDFootMoving = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bDFootLowering = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bLFootRaising = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bLFootMoving = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bLFootLowering = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bRFootRaising = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bRFootMoving = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bRFootLowering = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bUFootRaising = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bUFootMoving = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
+	bool bUFootLowering = false;
+
 	USkeletalMeshComponent* GetBodyComponent() const { return BodyComp; }
 
 	/** Get the animation blueprint instance from the body component */

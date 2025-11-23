@@ -15,8 +15,6 @@
 #include "DrawDebugHelpers.h"
 #include "HAL/PlatformProcess.h"
 
-// Forward declaration for helper function (defined in GameManager.cpp)
-void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, float MinimumReachDistance, AOrbSimDriver* OrbSimDriver);
 
 // Local helper structures and constants for walker calibration
 namespace {
@@ -1787,7 +1785,7 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 					FHex FootHex;
 					if (bHasSimTiles)
 					{
-						// Use assigned tile from simulation (has AssignedTileOffset applied)
+						// Use assigned tile from simulation
 						// Map leg index to foot: D=0, L=1, R=2, U=3
 						const FString HipName = LegData.HipAxleBone.ToString();
 						if (HipName.Contains(TEXT("DHip")))
@@ -1911,11 +1909,10 @@ void AGameManager::ClearLegTileQuadrantVisualization()
 void AGameManager::LoadWalkerCalibration()
 {
 	// Load from saved config
-	if (SavedWalkerCalibration.StandHeight != 0.f || SavedWalkerCalibration.StartingFootDistance != 0.f || !FMath::IsNearlyZero(SavedWalkerCalibration.AssignedTileOffset))
+	if (SavedWalkerCalibration.StandHeight != 0.f || SavedWalkerCalibration.StartingFootDistance != 0.f)
 	{
 		DesiredStandHeight = SavedWalkerCalibration.StandHeight;
 		StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
-		AssignedTileOffset = SavedWalkerCalibration.AssignedTileOffset;
 		StepHeight = SavedWalkerCalibration.StepHeight;
 		StepRaiseTicks = SavedWalkerCalibration.StepRaiseTicks;
 		StepMoveTicks = SavedWalkerCalibration.StepMoveTicks;
@@ -1952,7 +1949,6 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	// Save StandHeight (actual applied height) instead of DesiredStandHeight
 	SavedWalkerCalibration.StandHeight = StandHeight;
 	SavedWalkerCalibration.StartingFootDistance = StartingFootDistance;
-	SavedWalkerCalibration.AssignedTileOffset = AssignedTileOffset;
 	SavedWalkerCalibration.StepHeight = StepHeight;
 	SavedWalkerCalibration.StepRaiseTicks = StepRaiseTicks;
 	SavedWalkerCalibration.StepMoveTicks = StepMoveTicks;
@@ -2191,11 +2187,6 @@ void AGameManager::FootToOuterMostTile()
 			if (CalibratingWalker->SimWalkerIndex >= 0 && OrbSimDriver)
 			{
 				USimWorldHex* Sim = OrbSimDriver->GetSim();
-				if (Sim && CalibratingWalker->SimWalkerIndex < Sim->Walkers.Num())
-				{
-					FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
-					ApplyAssignedTileOffsetToWalker(Sim, CalibratingWalker->SimWalkerIndex, BodyHex, ReachDistance, AssignedTileOffset, MinimumReachDistance, OrbSimDriver);
-				}
 			}
 			
 			// Force animation update

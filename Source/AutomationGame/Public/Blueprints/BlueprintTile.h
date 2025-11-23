@@ -3,10 +3,8 @@
 #include "Sim/HexTypes.h"
 #include "Sim/HexCoord.h"
 #include "Sim/Tiles.h"
+#include "Actors/BasicArm.h"  // FArmInstr
 #include "BlueprintTile.generated.h"
-
-// Forward declaration of FArmInstr
-struct FArmInstr;
 
 USTRUCT(BlueprintType)
 struct AUTOMATIONGAME_API FBlueprintTile

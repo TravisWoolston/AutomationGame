@@ -5,6 +5,7 @@
 #include "EngineUtils.h"
 #include "Engine/Engine.h"
 #include "Actors/BasicArm.h"
+#include "Actors/BasicWalker.h"
 #include "Actors/OrbSimDriver.h"
 #include "Sim/HexCoord.h"
 #include "Sim/SimWorldHex.h"          // <-- ADDED for USimWorldHex / FArmState
@@ -24,7 +25,6 @@
 
 // Forward declaration for helper function
 // (FHex, USimWorldHex, and AOrbSimDriver are already included via headers)
-void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, float MinimumReachDistance, AOrbSimDriver* OrbSimDriver);
 
 // Local helper to build orthonormal basis from Up + arbitrary forward (similar to HexFactoryActor)
 namespace {
@@ -192,7 +192,7 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 				SetStandHeight();
 			}
 		}
-		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance) || PropName == GET_MEMBER_NAME_CHECKED(AGameManager, AssignedTileOffset))
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance))
 		{
 			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
 			{
@@ -204,133 +204,68 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 						ApplyStartingFootDistance(BodyComp);
 						// Force update to make changes visible immediately
 						BodyComp->TickAnimation(0.f, false);
-						BodyComp->RefreshBoneTransforms();
+						// BodyComp->RefreshBoneTransforms();
 						BodyComp->UpdateComponentToWorld();
 						SetIKRigGoalPositions(BodyComp, StandHeight);
 						UpdateWalkerDebugMeshes(BodyComp);
 
 						UE_LOG(LogTemp, Log, TEXT("GameManager: StartingFootDistance updated to %.1f"), StartingFootDistance);
-					}
-					else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, AssignedTileOffset))
-					{
-						// Update assigned tiles in simulation for calibration walker
-						if (OrbSimDriver && CalibratingWalker.IsValid())
-						{
-							USimWorldHex* Sim = OrbSimDriver->GetSim();
-							if (Sim && CalibratingWalker->SimWalkerIndex >= 0 && CalibratingWalker->SimWalkerIndex < Sim->Walkers.Num())
-							{
-								// Calibration walker is in simulation - update its assigned tiles
-								FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
-								ApplyAssignedTileOffsetToWalker(Sim, CalibratingWalker->SimWalkerIndex, BodyHex, ReachDistance, AssignedTileOffset, MinimumReachDistance, OrbSimDriver);
-
-								// Sync the walker actor to reflect the updated assigned tiles
-								CalibratingWalker->SyncFromCurrentSim();
-							}
-							else
-							{
-								// Calibration walker is not in simulation - update foot goals directly
-								// Calculate assigned tiles from body position and AssignedTileOffset
-								if (OrbSimDriver)
-								{
-									FHex BodyHex = FHex(CalibratingWalker->Q, CalibratingWalker->R);
-									const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(BodyHex);
-									const float TileSize = OrbSimDriver->GetTileSize();
-
-									// Calculate assigned tiles for each foot
-									FHex BaseFeet[] = {
-										FHex(BodyHex.Q + 1, BodyHex.R),  // D
-										FHex(BodyHex.Q, BodyHex.R + 1),  // L
-										FHex(BodyHex.Q - 1, BodyHex.R),  // R
-										FHex(BodyHex.Q, BodyHex.R - 1)   // U
-									};
-
-									const FName FootGoalNames[] = { TEXT("DFootGoal"), TEXT("LFootGoal"), TEXT("RFootGoal"), TEXT("UFootGoal") };
-
-									if (UAnimInstance* AnimInstance = BodyComp->GetAnimInstance())
-									{
-										const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
-										const FTransform ComponentToWorld = BodyComp->GetComponentToWorld();
-										const FRotator ComponentRotation = BodyComp->GetComponentRotation();
-										const FTransform ComponentTransformNoScale(ComponentRotation, ComponentToWorld.GetLocation(), FVector(1.f));
-										const FTransform WorldToComponentNoScale = ComponentTransformNoScale.Inverse();
-
-										for (int32 i = 0; i < 4; ++i)
-										{
-											const FHex& BaseFootHex = BaseFeet[i];
-											const FVector BaseFootWorld = OrbSimDriver->MapHexToWorld(BaseFootHex);
-											const FVector FootWorld2D = FVector(BaseFootWorld.X, BaseFootWorld.Y, 0.f);
-											FVector BodyToFootDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
-
-											if (BodyToFootDir.IsNearlyZero())
-											{
-												const FVector DefaultDirs[] = {
-													FVector(1.f, 0.f, 0.f),   // D
-													FVector(0.f, 1.f, 0.f),   // L
-													FVector(-1.f, 0.f, 0.f),  // R
-													FVector(0.f, -1.f, 0.f)   // U
-												};
-												BodyToFootDir = DefaultDirs[i];
-											}
-
-											const FVector Offset2D = BodyToFootDir * (AssignedTileOffset * TileSize);
-											const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
-
-											FHex NewFootHex;
-											if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootWorld.Z), NewFootHex))
-											{
-												const FVector AssignedTileWorld = OrbSimDriver->MapHexToWorld(NewFootHex);
-												const FVector FootGoalWorld = AssignedTileWorld;
-
-												if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(FootGoalNames[i]))
-												{
-													if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
-													{
-														if (StructProp->Struct == TBaseStructure<FVector>::Get())
-														{
-															FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
-															if (GoalValue)
-															{
-																*GoalValue = WorldToComponentNoScale.TransformPosition(FootGoalWorld);
-															}
-														}
-													}
-												}
-											}
-										}
-
-										// Force update to make changes visible immediately
-										BodyComp->TickAnimation(0.f, false);
-										BodyComp->RefreshBoneTransforms();
-										BodyComp->UpdateComponentToWorld();
-									}
-								}
-							}
-						}
-
-						// Also update all runtime walkers
-						UpdateAllWalkersAssignedTiles();
-
-						// Update visualization
-						if (bShowLegTileQuadrants)
-						{
-							UpdateLegTileQuadrantVisualization();
-						}
-
-						UE_LOG(LogTemp, Log, TEXT("GameManager: AssignedTileOffset updated to %.1f"), AssignedTileOffset);
-					}
+						
+					// Apply to all walkers in simulation
+					ApplyCalibrationValuesToAllWalkers();
+				}
 				}
 			}
 		}
-		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants) ||
-			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ReachDistance))
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants))
 		{
 			if (bWalkerCalibrationActive)
 			{
 				UpdateLegTileQuadrantVisualization();
 			}
 		}
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ReachDistance))
+		{
+			if (bWalkerCalibrationActive)
+			{
+				UpdateLegTileQuadrantVisualization();
+			}
+			// Apply to all walkers in simulation
+			ApplyCalibrationValuesToAllWalkers();
+		}
 		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepHeight) ||
-			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ActiveFoot) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepRaiseTicks) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepMoveTicks) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepLowerTicks) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StandHeight))
+		{
+			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
+			{
+				USkeletalMeshComponent* BodyComp = CalibratingWalker->GetBodyComponent();
+				if (BodyComp)
+				{
+					if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepHeight) && bActiveFootPreview)
+					{
+						// Apply step height to active foot
+						SetStepHeight();
+					}
+					else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StandHeight))
+					{
+						// StandHeight is handled by SetStandHeight() via DesiredStandHeight
+					}
+					else
+					{
+						// Reset all feet to base position when preview is disabled
+						ApplyStartingFootDistance(BodyComp);
+						SetIKRigGoalPositions(BodyComp, StandHeight);
+						UpdateWalkerDebugMeshes(BodyComp);
+					}
+				}
+			}
+			// Apply to all walkers in simulation
+			ApplyCalibrationValuesToAllWalkers();
+		}
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ActiveFoot) ||
 			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bActiveFootPreview))
 		{
 			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
@@ -361,7 +296,8 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 				UE_LOG(LogTemp, Warning, TEXT("GameManager: MinimumReachDistance (%.2f) exceeds ReachDistance (%d) - clamping to ReachDistance when applied"),
 					MinimumReachDistance, ReachDistance);
 			}
-			UpdateAllWalkersAssignedTiles();
+			// Apply to all walkers in simulation
+			ApplyCalibrationValuesToAllWalkers();
 			UE_LOG(LogTemp, Log, TEXT("GameManager: MinimumReachDistance updated to %.2f"), MinimumReachDistance);
 		}
 	}
@@ -624,6 +560,17 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 	Walker->Q = Hex.Q;
 	Walker->R = Hex.R;
 	Walker->HomeHex = Hex;
+	
+	// Set GameManager-assigned values on BasicWalker for runtime verification/editing
+	Walker->StepHeight = StepHeight;
+	Walker->StepRaiseTicks = StepRaiseTicks;
+	Walker->StepMoveTicks = StepMoveTicks;
+	Walker->StepLowerTicks = StepLowerTicks;
+	Walker->ReachDistance = ReachDistance;
+	Walker->MinimumReachDistance = SavedWalkerCalibration.MinimumReachDistance;
+	Walker->StandHeight = SavedWalkerCalibration.StandHeight;
+	Walker->StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
+	
 	// Don't call SetProgram yet - need SimWalkerIndex first
 
 	// --- Add to simulation so it actually runs ---
@@ -644,6 +591,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		WalkerState.StepMoveTicks = StepMoveTicks;
 		WalkerState.StepLowerTicks = StepLowerTicks;
 		WalkerState.ReachDistance = ReachDistance;
+		WalkerState.MinimumReachDistance = SavedWalkerCalibration.MinimumReachDistance; // Apply saved minimum reach distance
 		WalkerState.StandHeight = SavedWalkerCalibration.StandHeight; // Apply saved stand height
 
 		// Don't set program here - let SetProgram handle it after SimWalkerIndex is assigned
@@ -652,6 +600,9 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		const int32 WalkerIndex = Sim->AddWalker(WalkerState);
 		Walker->SimWalkerIndex = WalkerIndex;
 
+		// Update BasicWalker's StartingFootDistance property (already set above, but ensure it's current)
+		Walker->StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
+		
 		// Apply StartingFootDistance to walker's foot positions in the sim
 		// This applies the calibration setting to runtime walkers
 		if (WalkerIndex >= 0 && WalkerIndex < Sim->Walkers.Num() && !FMath::IsNearlyZero(SavedWalkerCalibration.StartingFootDistance))
@@ -666,14 +617,18 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 			FHex* FeetHexes[] = { &SimWalkerState.DFoot.CurrentTile, &SimWalkerState.LFoot.CurrentTile, &SimWalkerState.RFoot.CurrentTile, &SimWalkerState.UFoot.CurrentTile };
 			FHex* FeetTargets[] = { &SimWalkerState.DFoot.TargetTile, &SimWalkerState.LFoot.TargetTile, &SimWalkerState.RFoot.TargetTile, &SimWalkerState.UFoot.TargetTile };
 
-			// Initial foot positions (cross pattern)
+			// Initial foot positions (axis-aligned pattern matching SimWorldHex)
+			// Quadrant mapping: D->S (R+), L->W (Q-), R->E (Q+), U->N (R-)
 			FHex InitialFeet[] = {
-				FHex(Hex.Q + 1, Hex.R),  // D
-				FHex(Hex.Q, Hex.R + 1),  // L
-				FHex(Hex.Q - 1, Hex.R),  // R
-				FHex(Hex.Q, Hex.R - 1)   // U
+				FHex(Hex.Q, Hex.R + 1),      // D -> S (South: R increases)
+				FHex(Hex.Q - 1, Hex.R),      // L -> W (West: Q decreases)
+				FHex(Hex.Q + 1, Hex.R),      // R -> E (East: Q increases)
+				FHex(Hex.Q, Hex.R - 1)       // U -> N (North: R decreases)
 			};
 
+			// StartingFootDistance is in tiles, so convert to world units
+			const float TileSize = OrbSimDriver->GetTileSize();
+			
 			for (int32 i = 0; i < 4; ++i)
 			{
 				const FHex& InitialFootHex = InitialFeet[i];
@@ -698,28 +653,39 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 				}
 
 				// Calculate new position by adding offset along the direction from body to foot
-				const FVector Offset2D = BodyToFootDir * SavedWalkerCalibration.StartingFootDistance;
-				const FVector NewFootWorld2D = FootWorld2D + Offset2D;
+				// StartingFootDistance is in tiles, so multiply by TileSize to get world units
+				const FVector Offset2D = BodyToFootDir * (SavedWalkerCalibration.StartingFootDistance * TileSize);
+				const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
 
 				// Convert to hex
 				FHex NewFootHex;
 				if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, InitialFootWorld.Z), NewFootHex))
 				{
-					// Check if within reach distance
+					// Check if within reach distance and above minimum reach distance
 					const int32 dq = NewFootHex.Q - Hex.Q;
 					const int32 dr = NewFootHex.R - Hex.R;
 					const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+					const float MinReach = FMath::Max(0.f, SavedWalkerCalibration.MinimumReachDistance);
 
-					if (HexDist <= ReachDistance)
+					// Validate distance is within valid range
+					bool bValidDistance = true;
+					if (ReachDistance > 0 && HexDist > ReachDistance)
+					{
+						bValidDistance = false;
+						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too far (dist=%d > %d), keeping original"),
+							i, HexDist, ReachDistance);
+					}
+					else if (MinReach > 0.f && (float)HexDist < MinReach)
+					{
+						bValidDistance = false;
+						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too close (dist=%d < %.1f), keeping original"),
+							i, HexDist, MinReach);
+					}
+
+					if (bValidDistance)
 					{
 						*FeetHexes[i] = NewFootHex;
 						*FeetTargets[i] = NewFootHex;
-					}
-					else
-					{
-						// Too far, keep original position
-						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too far (dist=%d > %d), keeping original"),
-							i, HexDist, ReachDistance);
 					}
 				}
 				else
@@ -732,10 +698,6 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 			UE_LOG(LogTemp, Log, TEXT("GameManager: Applied StartingFootDistance=%.1f to walker %d foot positions"),
 				SavedWalkerCalibration.StartingFootDistance, WalkerIndex);
 		}
-
-		// Apply AssignedTileOffset to walker's assigned tiles
-		// This moves the assigned tiles outward to align with feet
-		ApplyAssignedTileOffsetToWalker(Sim, WalkerIndex, Hex, ReachDistance, SavedWalkerCalibration.AssignedTileOffset, SavedWalkerCalibration.MinimumReachDistance, OrbSimDriver);
 
 		// Now that SimWalkerIndex is set, we can call SetProgram
 		Walker->SetProgram(Program, bLoop);
@@ -1939,132 +1901,397 @@ UTexture2D* AGameManager::GetClusterIcon(const USimWorldHex::FClusterTemplate& C
 	return NewIcon;
 }
 
-// Helper function to apply AssignedTileOffset to a walker
-void ApplyAssignedTileOffsetToWalker(USimWorldHex* Sim, int32 WalkerIndex, const FHex& BodyHex, int32 ReachDistance, float AssignedTileOffset, float MinimumReachDistance, AOrbSimDriver* OrbSimDriver)
-{
-	if (WalkerIndex < 0 || WalkerIndex >= Sim->Walkers.Num() || !OrbSimDriver)
-	{
-		return;
-	}
 
-	FWalkerState& SimWalkerState = Sim->Walkers[WalkerIndex];
-	const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(BodyHex);
-	const float TileSize = OrbSimDriver->GetTileSize();
-	const float MinReach = FMath::Max(0.f, MinimumReachDistance);
-	const float MaxReach = ReachDistance > 0 ? (float)ReachDistance : TNumericLimits<float>::Max();
-
-	auto HexDistance = [](const FHex& A, const FHex& B) -> int32
-	{
-		const int32 dq = A.Q - B.Q;
-		const int32 dr = A.R - B.R;
-		return FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-	};
-
-	FHex* FeetHexes[] = { &SimWalkerState.DFoot.CurrentTile, &SimWalkerState.LFoot.CurrentTile, &SimWalkerState.RFoot.CurrentTile, &SimWalkerState.UFoot.CurrentTile };
-	FHex* FeetTargets[] = { &SimWalkerState.DFoot.TargetTile, &SimWalkerState.LFoot.TargetTile, &SimWalkerState.RFoot.TargetTile, &SimWalkerState.UFoot.TargetTile };
-
-	FHex BaseFeet[] = {
-		FHex(BodyHex.Q + 1, BodyHex.R),
-		FHex(BodyHex.Q, BodyHex.R + 1),
-		FHex(BodyHex.Q - 1, BodyHex.R),
-		FHex(BodyHex.Q, BodyHex.R - 1)
-	};
-
-	for (int32 i = 0; i < 4; ++i)
-	{
-		const FHex& BaseFootHex = BaseFeet[i];
-		const FVector BaseFootWorld = OrbSimDriver->MapHexToWorld(BaseFootHex);
-
-		const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
-		const FVector FootWorld2D = FVector(BaseFootWorld.X, BaseFootWorld.Y, 0.f);
-		FVector BodyToFootDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
-
-		if (BodyToFootDir.IsNearlyZero())
-		{
-			const FVector DefaultDirs[] = {
-				FVector(1.f, 0.f, 0.f),
-				FVector(0.f, 1.f, 0.f),
-				FVector(-1.f, 0.f, 0.f),
-				FVector(0.f, -1.f, 0.f)
-			};
-			BodyToFootDir = DefaultDirs[i];
-		}
-
-		if (BodyToFootDir.IsNearlyZero())
-		{
-			*FeetHexes[i] = BaseFootHex;
-			*FeetTargets[i] = BaseFootHex;
-			continue;
-		}
-
-		const int32 BaseHexDistance = HexDistance(BodyHex, BaseFootHex);
-		float DesiredDistance = (float)BaseHexDistance + AssignedTileOffset;
-		float TargetDistance = DesiredDistance;
-		const float DistanceSign = (TargetDistance >= 0.f) ? 1.f : -1.f;
-
-		if (MinReach > 0.f)
-		{
-			TargetDistance = DistanceSign * FMath::Max(FMath::Abs(TargetDistance), MinReach);
-		}
-
-		if (ReachDistance > 0)
-		{
-			TargetDistance = DistanceSign * FMath::Min(FMath::Abs(TargetDistance), MaxReach);
-		}
-
-		const FVector Offset2D = BodyToFootDir * (TargetDistance * TileSize);
-		const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
-
-		FHex NewFootHex;
-		if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootWorld.Z), NewFootHex))
-		{
-			const int32 HexDist = HexDistance(BodyHex, NewFootHex);
-
-			if (HexDist <= ReachDistance || ReachDistance <= 0)
-			{
-				*FeetHexes[i] = NewFootHex;
-				*FeetTargets[i] = NewFootHex;
-			}
-			else
-			{
-				*FeetHexes[i] = BaseFootHex;
-				*FeetTargets[i] = BaseFootHex;
-				UE_LOG(LogTemp, Warning, TEXT("AssignedTileOffset for foot %d resulted in hex too far (dist=%d > %d) after clamping, using base position"),
-					i, HexDist, ReachDistance);
-			}
-		}
-		else
-		{
-			*FeetHexes[i] = BaseFootHex;
-			*FeetTargets[i] = BaseFootHex;
-			UE_LOG(LogTemp, Warning, TEXT("AssignedTileOffset for foot %d failed to convert to hex, using base position"), i);
-		}
-	}
-}
-
-void AGameManager::UpdateAllWalkersAssignedTiles()
+void AGameManager::ApplyCalibrationValuesToAllWalkers()
 {
 	if (!OrbSimDriver)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UpdateAllWalkersAssignedTiles: No OrbSimDriver"));
+		UE_LOG(LogTemp, Warning, TEXT("ApplyCalibrationValuesToAllWalkers: No OrbSimDriver"));
 		return;
 	}
 
 	USimWorldHex* Sim = OrbSimDriver->GetSim();
 	if (!Sim)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UpdateAllWalkersAssignedTiles: No Sim"));
+		UE_LOG(LogTemp, Warning, TEXT("ApplyCalibrationValuesToAllWalkers: No Sim"));
 		return;
 	}
+
+	const float TileSize = OrbSimDriver->GetTileSize();
+	const int32 EffectiveReachDist = FMath::Max(1, ReachDistance);
 
 	// Update all walkers in the simulation
 	for (int32 i = 0; i < Sim->Walkers.Num(); ++i)
 	{
 		FWalkerState& WalkerState = Sim->Walkers[i];
-		ApplyAssignedTileOffsetToWalker(Sim, i, WalkerState.BaseHex, ReachDistance, AssignedTileOffset, MinimumReachDistance, OrbSimDriver);
+		
+		// Apply walking parameters
+		WalkerState.StepHeight = StepHeight;
+		WalkerState.StepRaiseTicks = StepRaiseTicks;
+		WalkerState.StepMoveTicks = StepMoveTicks;
+		WalkerState.StepLowerTicks = StepLowerTicks;
+		WalkerState.ReachDistance = ReachDistance;
+		WalkerState.MinimumReachDistance = MinimumReachDistance;
+		WalkerState.StandHeight = StandHeight;
+		
+		// Apply StartingFootDistance by recalculating foot positions
+		// StartingFootDistance is the number of tiles away from the body tile
+		if (!FMath::IsNearlyZero(StartingFootDistance))
+		{
+			const FHex& BodyHex = WalkerState.BaseHex;
+			const FVector BodyWorld2D = FVector(OrbSimDriver->MapHexToWorld(BodyHex).X, OrbSimDriver->MapHexToWorld(BodyHex).Y, 0.f);
+			
+			// Calculate base foot positions at ReachDistance
+			FHex BaseFootHexes[4] = {
+				FHex(BodyHex.Q, BodyHex.R + EffectiveReachDist),      // D -> S
+				FHex(BodyHex.Q - EffectiveReachDist, BodyHex.R),    // L -> W
+				FHex(BodyHex.Q + EffectiveReachDist, BodyHex.R),    // R -> E
+				FHex(BodyHex.Q, BodyHex.R - EffectiveReachDist)      // U -> N
+			};
+			
+			// Apply StartingFootDistance offset to each foot
+			FFootState* Feet[] = { &WalkerState.DFoot, &WalkerState.LFoot, &WalkerState.RFoot, &WalkerState.UFoot };
+			
+			for (int32 FootIdx = 0; FootIdx < 4; ++FootIdx)
+			{
+				const FHex& BaseFootHex = BaseFootHexes[FootIdx];
+				const FVector BaseFootWorld = OrbSimDriver->MapHexToWorld(BaseFootHex);
+				const FVector BaseFootWorld2D = FVector(BaseFootWorld.X, BaseFootWorld.Y, 0.f);
+				
+				// Calculate direction from body to base foot position
+				FVector BodyToFootDir = (BaseFootWorld2D - BodyWorld2D).GetSafeNormal();
+				
+				// If direction is zero, use default direction
+				if (BodyToFootDir.IsNearlyZero())
+				{
+					const FVector DefaultDirs[] = {
+						FVector(0.f, 1.f, 0.f),   // D (South)
+						FVector(-1.f, 0.f, 0.f),  // L (West)
+						FVector(1.f, 0.f, 0.f),   // R (East)
+						FVector(0.f, -1.f, 0.f)  // U (North)
+					};
+					BodyToFootDir = DefaultDirs[FootIdx];
+				}
+				
+				// Calculate new foot position with StartingFootDistance offset
+				const FVector Offset2D = BodyToFootDir * (StartingFootDistance * TileSize);
+				const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
+				
+				// Convert to hex
+				FHex NewFootHex;
+				if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootWorld.Z), NewFootHex))
+				{
+					// Validate distance
+					const int32 dq = NewFootHex.Q - BodyHex.Q;
+					const int32 dr = NewFootHex.R - BodyHex.R;
+					const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+					
+					bool bValid = true;
+					if (ReachDistance > 0 && HexDist > ReachDistance)
+					{
+						bValid = false;
+						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance (%.1f) for foot %d resulted in hex too far (dist=%d > %d), keeping original at ReachDistance. To fix, increase ReachDistance."),
+							StartingFootDistance, FootIdx, HexDist, ReachDistance);
+					}
+					else if (MinimumReachDistance > 0.f && (float)HexDist < MinimumReachDistance)
+					{
+						bValid = false;
+						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance (%.1f) for foot %d resulted in hex too close (dist=%d < %.1f), keeping original."),
+							StartingFootDistance, FootIdx, HexDist, MinimumReachDistance);
+					}
+
+					if (bValid)
+					{
+						Feet[FootIdx]->CurrentTile = NewFootHex;
+						Feet[FootIdx]->TargetTile = NewFootHex;
+						Feet[FootIdx]->StepState = EFootStepState::Planted;
+					}
+				}
+			}
+		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("UpdateAllWalkersAssignedTiles: Updated %d walkers with AssignedTileOffset=%.1f"),
-		Sim->Walkers.Num(), AssignedTileOffset);
+	// Also update BasicWalker actor instances with these values
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicWalker> It(World); It; ++It)
+		{
+			ABasicWalker* Walker = *It;
+			if (Walker && Walker->SimWalkerIndex >= 0 && Walker->SimWalkerIndex < Sim->Walkers.Num())
+			{
+				Walker->StepHeight = StepHeight;
+				Walker->StepRaiseTicks = StepRaiseTicks;
+				Walker->StepMoveTicks = StepMoveTicks;
+				Walker->StepLowerTicks = StepLowerTicks;
+				Walker->ReachDistance = ReachDistance;
+				Walker->MinimumReachDistance = MinimumReachDistance;
+				Walker->StandHeight = StandHeight;
+				Walker->StartingFootDistance = StartingFootDistance;
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("ApplyCalibrationValuesToAllWalkers: Updated %d walkers with StepHeight=%.1f, ReachDistance=%d, StartingFootDistance=%.1f, StandHeight=%.1f"),
+		Sim->Walkers.Num(), StepHeight, ReachDistance, StartingFootDistance, StandHeight);
+}
+
+void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
+{
+	if (!Walker || !OrbSimDriver || !bDebugWalkers)
+	{
+		return;
+	}
+
+	// Clear existing markers for this walker
+	ClearWalkerQuadrantVisualization(Walker);
+
+	// Get walker state from simulation
+	USimWorldHex* Sim = OrbSimDriver->GetSim();
+	if (!Sim || Walker->SimWalkerIndex < 0 || Walker->SimWalkerIndex >= Sim->Walkers.Num())
+	{
+		return;
+	}
+
+	const FWalkerState& WalkerState = Sim->Walkers[Walker->SimWalkerIndex];
+	const FHex BodyHex = WalkerState.BaseHex;
+	const int32 ReachDist = WalkerState.ReachDistance;
+	const float MinReachDist = WalkerState.MinimumReachDistance;
+
+	// Helper to get quadrant from hex (same as UpdateLegTileQuadrantVisualization)
+	auto GetFixedQuadrantFromHex = [](const FHex& BodyHex, const FHex& TestHex) -> FString
+	{
+		const int32 dq = TestHex.Q - BodyHex.Q;
+		const int32 dr = TestHex.R - BodyHex.R;
+		
+		if (dq > 0 && dr == 0) return TEXT("E");
+		if (dq == 0 && dr > 0) return TEXT("S");
+		if (dq < 0 && dr == 0) return TEXT("W");
+		if (dq == 0 && dr < 0) return TEXT("N");
+		
+		if (FMath::Abs(dq) > FMath::Abs(dr))
+			return (dq > 0) ? TEXT("E") : TEXT("W");
+		if (FMath::Abs(dr) > FMath::Abs(dq))
+			return (dr > 0) ? TEXT("S") : TEXT("N");
+		
+		if (dq > 0 && dr > 0) return TEXT("S");
+		if (dq > 0 && dr < 0) return TEXT("E");
+		if (dq < 0 && dr > 0) return TEXT("W");
+		return TEXT("N");
+	};
+
+	// Helper to apply quadrant offset
+	auto ApplyQuadrantOffset = [](const FString& OriginalQuadrant, int32 Offset) -> FString
+	{
+		static const TArray<FString> QuadrantOrder = { TEXT("N"), TEXT("E"), TEXT("S"), TEXT("W") };
+		int32 OriginalIndex = -1;
+		for (int32 i = 0; i < QuadrantOrder.Num(); ++i)
+		{
+			if (QuadrantOrder[i] == OriginalQuadrant)
+			{
+				OriginalIndex = i;
+				break;
+			}
+		}
+		if (OriginalIndex < 0) return OriginalQuadrant;
+		int32 OffsetValue = FMath::Clamp(Offset, 0, 3);
+		int32 NewIndex = (OriginalIndex + OffsetValue) % 4;
+		return QuadrantOrder[NewIndex];
+	};
+
+	// Map fixed quadrants to leg colors (using saved calibration settings)
+	// Map: FixedQuadrant -> LegColor
+	TMap<FString, FLinearColor> QuadrantToColorMap;
+	
+	// Use saved calibration settings to determine quadrant colors
+	// Map: D->S, L->W, R->E, U->N (physical leg to compass quadrant)
+	QuadrantToColorMap.Add(TEXT("S"), GetLegQuadrantColor(TEXT("D"), 0)); // D foot -> South
+	QuadrantToColorMap.Add(TEXT("W"), GetLegQuadrantColor(TEXT("L"), 1)); // L foot -> West
+	QuadrantToColorMap.Add(TEXT("E"), GetLegQuadrantColor(TEXT("R"), 2)); // R foot -> East
+	QuadrantToColorMap.Add(TEXT("N"), GetLegQuadrantColor(TEXT("U"), 3)); // U foot -> North
+
+	// Apply per-quadrant leg assignment from saved settings
+	// Map the saved quadrant leg assignments to colors
+	TMap<FString, FLinearColor> SavedQuadrantColors;
+	SavedQuadrantColors.Add(TEXT("N"), GetLegQuadrantColor(TEXT("U"), 3)); // Default: U foot -> North
+	SavedQuadrantColors.Add(TEXT("E"), GetLegQuadrantColor(TEXT("R"), 2)); // Default: R foot -> East
+	SavedQuadrantColors.Add(TEXT("S"), GetLegQuadrantColor(TEXT("D"), 0)); // Default: D foot -> South
+	SavedQuadrantColors.Add(TEXT("W"), GetLegQuadrantColor(TEXT("L"), 1)); // Default: L foot -> West
+
+	// Override with saved quadrant assignments if available
+	if (NQuadrantLeg == EWalkerFoot::DFoot) SavedQuadrantColors[TEXT("N")] = GetLegQuadrantColor(TEXT("D"), 0);
+	else if (NQuadrantLeg == EWalkerFoot::LFoot) SavedQuadrantColors[TEXT("N")] = GetLegQuadrantColor(TEXT("L"), 1);
+	else if (NQuadrantLeg == EWalkerFoot::RFoot) SavedQuadrantColors[TEXT("N")] = GetLegQuadrantColor(TEXT("R"), 2);
+	else if (NQuadrantLeg == EWalkerFoot::UFoot) SavedQuadrantColors[TEXT("N")] = GetLegQuadrantColor(TEXT("U"), 3);
+
+	if (EQuadrantLeg == EWalkerFoot::DFoot) SavedQuadrantColors[TEXT("E")] = GetLegQuadrantColor(TEXT("D"), 0);
+	else if (EQuadrantLeg == EWalkerFoot::LFoot) SavedQuadrantColors[TEXT("E")] = GetLegQuadrantColor(TEXT("L"), 1);
+	else if (EQuadrantLeg == EWalkerFoot::RFoot) SavedQuadrantColors[TEXT("E")] = GetLegQuadrantColor(TEXT("R"), 2);
+	else if (EQuadrantLeg == EWalkerFoot::UFoot) SavedQuadrantColors[TEXT("E")] = GetLegQuadrantColor(TEXT("U"), 3);
+
+	if (SQuadrantLeg == EWalkerFoot::DFoot) SavedQuadrantColors[TEXT("S")] = GetLegQuadrantColor(TEXT("D"), 0);
+	else if (SQuadrantLeg == EWalkerFoot::LFoot) SavedQuadrantColors[TEXT("S")] = GetLegQuadrantColor(TEXT("L"), 1);
+	else if (SQuadrantLeg == EWalkerFoot::RFoot) SavedQuadrantColors[TEXT("S")] = GetLegQuadrantColor(TEXT("R"), 2);
+	else if (SQuadrantLeg == EWalkerFoot::UFoot) SavedQuadrantColors[TEXT("S")] = GetLegQuadrantColor(TEXT("U"), 3);
+
+	if (WQuadrantLeg == EWalkerFoot::DFoot) SavedQuadrantColors[TEXT("W")] = GetLegQuadrantColor(TEXT("D"), 0);
+	else if (WQuadrantLeg == EWalkerFoot::LFoot) SavedQuadrantColors[TEXT("W")] = GetLegQuadrantColor(TEXT("L"), 1);
+	else if (WQuadrantLeg == EWalkerFoot::RFoot) SavedQuadrantColors[TEXT("W")] = GetLegQuadrantColor(TEXT("R"), 2);
+	else if (WQuadrantLeg == EWalkerFoot::UFoot) SavedQuadrantColors[TEXT("W")] = GetLegQuadrantColor(TEXT("U"), 3);
+
+	QuadrantToColorMap = SavedQuadrantColors;
+
+	// Find all reachable tiles and assign them to quadrants
+	TMap<FHex, FString> HexToQuadrantMap;
+	for (int32 q = -ReachDist; q <= ReachDist; ++q)
+	{
+		for (int32 r = -ReachDist; r <= ReachDist; ++r)
+		{
+			FHex TestHex(BodyHex.Q + q, BodyHex.R + r);
+			if (TestHex == BodyHex) continue;
+			
+			const int32 dq = TestHex.Q - BodyHex.Q;
+			const int32 dr = TestHex.R - BodyHex.R;
+			const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+			
+			if (HexDist > ReachDist || (MinReachDist > 0.f && (float)HexDist < MinReachDist))
+			{
+				continue;
+			}
+			
+			FString FixedQuadrant = GetFixedQuadrantFromHex(BodyHex, TestHex);
+			if (TileQuadrantOffset != 0)
+			{
+				FixedQuadrant = ApplyQuadrantOffset(FixedQuadrant, TileQuadrantOffset);
+			}
+			HexToQuadrantMap.Add(TestHex, FixedQuadrant);
+		}
+	}
+
+	// Create material instances for each quadrant
+	TMap<FString, UMaterialInstanceDynamic*> QuadrantMaterials;
+	if (UMaterialInterface* BaseMaterial = GEngine->DebugMeshMaterial)
+	{
+		for (const auto& QuadrantColorPair : QuadrantToColorMap)
+		{
+			UMaterialInstanceDynamic* QuadrantMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			if (QuadrantMaterial)
+			{
+				const FLinearColor& QuadrantColor = QuadrantColorPair.Value;
+				QuadrantMaterial->SetVectorParameterValue(TEXT("Color"), QuadrantColor);
+				QuadrantMaterial->SetVectorParameterValue(TEXT("BaseColor"), QuadrantColor);
+				QuadrantMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), QuadrantColor);
+				QuadrantMaterial->SetVectorParameterValue(TEXT("DiffuseColor"), QuadrantColor);
+				QuadrantMaterials.Add(QuadrantColorPair.Key, QuadrantMaterial);
+			}
+		}
+	}
+
+	// Create tile markers
+	UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	UStaticMesh* TileOutlineMesh = TileMesh ? TileMesh : SphereMesh;
+	const float MarkerScale = 0.95f;
+	const float BaseZOffset = 2.f;
+
+	TArray<UStaticMeshComponent*> WalkerMarkers;
+	for (const auto& HexQuadPair : HexToQuadrantMap)
+	{
+		const FHex& ReachableHex = HexQuadPair.Key;
+		const FString& Quadrant = HexQuadPair.Value;
+		
+		UMaterialInstanceDynamic** QuadrantMaterialPtr = QuadrantMaterials.Find(Quadrant);
+		if (!QuadrantMaterialPtr || !*QuadrantMaterialPtr)
+		{
+			continue;
+		}
+
+		const FVector TileWorld = OrbSimDriver->MapHexToWorld(ReachableHex);
+		
+		UStaticMeshComponent* MarkerComp = NewObject<UStaticMeshComponent>(Walker);
+		if (MarkerComp)
+		{
+			MarkerComp->SetStaticMesh(TileOutlineMesh);
+			MarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			MarkerComp->SetMobility(EComponentMobility::Movable);
+			MarkerComp->SetCastShadow(false);
+			MarkerComp->SetIsVisualizationComponent(true);
+			MarkerComp->SetMaterial(0, *QuadrantMaterialPtr);
+			MarkerComp->RegisterComponent();
+			MarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+			MarkerComp->SetWorldScale3D(FVector(MarkerScale));
+			MarkerComp->SetWorldLocation(TileWorld + FVector(0.f, 0.f, BaseZOffset));
+			MarkerComp->SetVisibility(true, true);
+			WalkerMarkers.Add(MarkerComp);
+		}
+	}
+
+	// Highlight assigned tiles with white markers
+	if (UMaterialInterface* BaseMaterial = GEngine->DebugMeshMaterial)
+	{
+		UMaterialInstanceDynamic* FootHighlightMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+		if (FootHighlightMaterial)
+		{
+			const FLinearColor WhiteColor = FLinearColor::White;
+			FootHighlightMaterial->SetVectorParameterValue(TEXT("Color"), WhiteColor);
+			FootHighlightMaterial->SetVectorParameterValue(TEXT("BaseColor"), WhiteColor);
+			FootHighlightMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), WhiteColor);
+			FootHighlightMaterial->SetVectorParameterValue(TEXT("DiffuseColor"), WhiteColor);
+
+			FHex AssignedTiles[4] = {
+				WalkerState.DFoot.CurrentTile,
+				WalkerState.LFoot.CurrentTile,
+				WalkerState.RFoot.CurrentTile,
+				WalkerState.UFoot.CurrentTile
+			};
+
+			for (int32 i = 0; i < 4; ++i)
+			{
+				const FHex& FootHex = AssignedTiles[i];
+				const FVector FootTileWorld = OrbSimDriver->MapHexToWorld(FootHex);
+
+				UStaticMeshComponent* FootMarkerComp = NewObject<UStaticMeshComponent>(Walker);
+				if (FootMarkerComp)
+				{
+					FootMarkerComp->SetStaticMesh(TileOutlineMesh);
+					FootMarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+					FootMarkerComp->SetMobility(EComponentMobility::Movable);
+					FootMarkerComp->SetCastShadow(false);
+					FootMarkerComp->SetIsVisualizationComponent(true);
+					FootMarkerComp->SetMaterial(0, FootHighlightMaterial);
+					FootMarkerComp->RegisterComponent();
+					FootMarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+					const float HighlightScaleMult = 1.35f;
+					const float HighlightZOffset = 6.f;
+					FootMarkerComp->SetWorldScale3D(FVector(MarkerScale * HighlightScaleMult));
+					FootMarkerComp->SetWorldLocation(FootTileWorld + FVector(0.f, 0.f, HighlightZOffset));
+					FootMarkerComp->SetVisibility(true, true);
+					WalkerMarkers.Add(FootMarkerComp);
+				}
+			}
+		}
+	}
+
+	// Store markers for this walker
+	RuntimeWalkerQuadrantMarkers.Add(Walker, WalkerMarkers);
+}
+
+void AGameManager::ClearWalkerQuadrantVisualization(ABasicWalker* Walker)
+{
+	if (!Walker)
+	{
+		return;
+	}
+
+	TArray<UStaticMeshComponent*>* MarkersPtr = RuntimeWalkerQuadrantMarkers.Find(Walker);
+	if (MarkersPtr)
+	{
+		for (UStaticMeshComponent* MarkerComp : *MarkersPtr)
+		{
+			if (MarkerComp)
+			{
+				MarkerComp->DestroyComponent();
+			}
+		}
+		RuntimeWalkerQuadrantMarkers.Remove(Walker);
+	}
 }
 
