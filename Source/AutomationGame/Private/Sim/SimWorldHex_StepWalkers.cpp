@@ -329,9 +329,40 @@ void USimWorldHex::StepWalkers()
 						if (FootIndex == 3) bLoggedFootState = true;
 					}
 					
-					if (RaisedCount >= 2)
+					if (RaisedCount >= 1)
 					{
-						break; // Too many feet raised
+						// Check progress of the raised foot for gait sequencing
+						// Allow overlapping steps if the current step is > 50% complete
+						bool bCanOverlap = false;
+						if (RaisedCount == 1 && RaisedIndices.Num() > 0)
+						{
+							int32 RaisedIdx = RaisedIndices[0];
+							const FFootState& RaisedFoot = *Feet[RaisedIdx];
+							
+							int32 TotalTicks = W.StepRaiseTicks + W.StepMoveTicks + W.StepLowerTicks;
+							int32 CurrentTick = 0;
+							if (RaisedFoot.StepState == EFootStepState::Raising) 
+								CurrentTick = RaisedFoot.StepProgress;
+							else if (RaisedFoot.StepState == EFootStepState::Moving) 
+								CurrentTick = W.StepRaiseTicks + RaisedFoot.StepProgress;
+							else if (RaisedFoot.StepState == EFootStepState::Lowering) 
+								CurrentTick = W.StepRaiseTicks + W.StepMoveTicks + RaisedFoot.StepProgress;
+							
+							if (CurrentTick > TotalTicks / 2)
+							{
+								bCanOverlap = true;
+							}
+						}
+						
+						if (!bCanOverlap)
+						{
+							break; // Wait for sequence
+						}
+						
+						if (RaisedCount >= 2)
+						{
+							break; // Hard limit of 2 feet
+						}
 					}
 					
 					// Check adjacent feet

@@ -555,6 +555,9 @@ private:
 	bool WouldRotationSweepOverlapStatic(const FArmState& RotatingArm, const FPredictiveArmState& PredictedRotating,
 		const FArmState& StaticArm);
 
+	// Check if an arm's movement (rotation sweep or extend/retract) would overlap with any of the given tiles
+	bool DoesArmSweepOverlapTiles(const FArmState& Arm, const FPredictiveArmState& Predicted, const TSet<FHex>& Tiles);
+
 	// Safety and validation methods
 	UFUNCTION(BlueprintCallable, Category = "Sim|Debug")
 	bool ValidateDataIntegrity() const;

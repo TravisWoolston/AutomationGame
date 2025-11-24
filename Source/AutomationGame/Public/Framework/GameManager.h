@@ -63,12 +63,9 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	UPROPERTY()
 	EWalkerFoot ActiveFoot = EWalkerFoot::DFoot;
 	
-	UPROPERTY()
-	TArray<FVector> OriginalFootPositions;
-	
-	UPROPERTY()
-	TMap<FName, FQuat> SittingPose;
-	
+	// Removed OriginalFootPositions and SittingPose as they are not used for restoration
+	// and TMap is not supported in Config files.
+
 	UPROPERTY()
 	int32 LegQuadrantOffset = 0; // Legacy: global leg quadrant offset (kept for config compatibility, no longer used directly)
 
@@ -87,6 +84,12 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 
 	UPROPERTY()
 	int32 TileQuadrantOffset = 0;
+
+	UPROPERTY()
+	float QuadrantRotationOffset = 0.f;
+
+	UPROPERTY()
+	int32 StartingFootOrientation = 0;
 };
 
 /** Canonical representation of a cluster structure for storage and comparison */
@@ -104,7 +107,7 @@ struct AUTOMATIONGAME_API FClusterCanonicalKey
 
 FORCEINLINE uint32 GetTypeHash(const FClusterCanonicalKey& Key);
 /** Lightweight coordinator that also renders a simple hex or Goldberg grid via ISM. */
-UCLASS(BlueprintType)
+UCLASS(BlueprintType, Config=Game)
 class AUTOMATIONGAME_API AGameManager : public AActor
 {
 	GENERATED_BODY()
@@ -169,6 +172,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Horizontal offset in tiles from the body-aligned tile for foot starting positions"))
 	float StartingFootDistance = 0.f;
 	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0", ClampMax = "5", Tooltip = "Rotates the StartingFootDistance direction by N * 60 degrees around the body center"))
+	int32 StartingFootOrientation = 0;
+
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0.0", Tooltip = "Height feet raise when stepping"))
 	float StepHeight = 50.f;
 	
@@ -215,6 +221,10 @@ public:
 	/** Global rotation for tile quadrants around the body center (does not change which leg controls which logical quadrant) */
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0", ClampMax = "3", Tooltip = "Rotate tile quadrants clockwise around the body center by this value (0-3). 0=no rotation, 1=90deg CW, 2=180deg, 3=270deg CW"))
 	int32 TileQuadrantOffset = 0;
+
+	/** Fine-tuned rotation offset in degrees for quadrant boundaries */
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Rotate the quadrant boundaries by this many degrees clockwise. Use this to center quadrants on your model's legs."))
+	float QuadrantRotationOffset = 0.f;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Debug")
 	bool bDebugWalkers = false;
@@ -542,6 +552,7 @@ public:
 	
 	/** Clear quadrant visualization for a runtime walker */
 	void ClearWalkerQuadrantVisualization(class ABasicWalker* Walker);
+
 
 protected:
 	virtual void BeginPlay() override;

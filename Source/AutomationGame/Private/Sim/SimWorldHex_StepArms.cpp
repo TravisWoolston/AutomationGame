@@ -28,7 +28,8 @@ void USimWorldHex::StepArms()
 		{
 			// ArmIndexB is the higher index arm in the collision pair
 			// Make ArmIndexB wait (arbitrary but consistent ordering)
-			int32 ArmToWait = CollisionInfo.ArmIndexB;
+			// If ArmIndexB is -1 (e.g. collision with Walker), make ArmIndexA wait
+			int32 ArmToWait = (CollisionInfo.ArmIndexB != -1) ? CollisionInfo.ArmIndexB : CollisionInfo.ArmIndexA;
 			
 			if (ArmToWait >= 0 && ArmToWait < Arms.Num())
 			{

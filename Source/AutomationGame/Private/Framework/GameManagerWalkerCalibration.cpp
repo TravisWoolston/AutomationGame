@@ -639,6 +639,14 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 			}
 		}
 
+		// Apply StartingFootOrientation rotation (N * 60 degrees)
+		if (StartingFootOrientation != 0)
+		{
+			float AngleDeg = StartingFootOrientation * 60.f;
+			FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(AngleDeg));
+			BodyToFootDir = Rot.RotateVector(BodyToFootDir);
+		}
+
 		// Calculate new position by adding offset along the direction from body to original foot.
 		// Offset magnitude is expressed in tiles and converted to world units via TileSize.
 		const FVector Offset2D = BodyToFootDir * (StartingFootDistance * TileSize);
@@ -794,6 +802,14 @@ void AGameManager::SetStepHeight()
 			}
 		}
 
+		// Apply StartingFootOrientation rotation (N * 60 degrees)
+		if (StartingFootOrientation != 0)
+		{
+			float AngleDeg = StartingFootOrientation * 60.f;
+			FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(AngleDeg));
+			BodyToFootDir = Rot.RotateVector(BodyToFootDir);
+		}
+
 		const float TileSize = OrbSimDriver->GetTileSize();
 		const FVector Offset2D = BodyToFootDir * (StartingFootDistance * TileSize);
 		const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
@@ -832,6 +848,8 @@ void AGameManager::SetStepHeight()
 	{
 		UpdateLegTileQuadrantVisualization();
 	}
+
+
 
 	UE_LOG(LogTemp, Log, TEXT("GameManager: Set step height %.1f for foot %s"), StepHeight, *ActiveFootBoneName.ToString());
 }
@@ -892,7 +910,7 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 		UE_LOG(LogTemp, Error, TEXT("SetIKRigGoalPositions: BodyGoalWorld contains NaN, skipping body goal update"));
 		return;
 	}
-	
+
 	// Convert body goal to component space
 	const FVector BodyGoalComponent = WorldToComponentNoScale.TransformPosition(BodyGoalWorld);
 	
@@ -1064,7 +1082,7 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 		{
 			// Use FootAxleWorldLocation from calibration data
 			if (OrbSimDriver && OrbSimDriver->WorldToHex(FootGoalWorld, TargetHex))
-			{
+		{
 				UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Leg %d (%s) using FootAxleWorldLocation (%.1f,%.1f,%.1f) -> hex (%d,%d)"),
 					Index, *HipName, FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z, TargetHex.Q, TargetHex.R);
 			}
@@ -1112,24 +1130,24 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 				AssignedDistance,
 				FootGoalWorld.X, FootGoalWorld.Y, FootGoalWorld.Z,
 				BoneWorldLocation.X, BoneWorldLocation.Y, BoneWorldLocation.Z);
-		}
+					}
 		else
 		{
 			UE_LOG(LogTemp, Warning, TEXT("WalkerCalib: %s bone location contains NaN, skipping distance calculation"),
 				*LegData.FootBone.ToString());
-		}
+	}
 
 		// Set the goal position on the animation blueprint instance via reflection
 			// The goal should be in component-local space so IK Rig can apply it correctly
 		if (FProperty* GoalProperty = AnimInstance->GetClass()->FindPropertyByName(*GoalName))
-		{
+	{
 			if (FStructProperty* StructProp = CastField<FStructProperty>(GoalProperty))
+		{
+			if (StructProp->Struct == TBaseStructure<FVector>::Get())
 			{
-				if (StructProp->Struct == TBaseStructure<FVector>::Get())
+				FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
+				if (GoalValue)
 				{
-					FVector* GoalValue = StructProp->ContainerPtrToValuePtr<FVector>(AnimInstance);
-					if (GoalValue)
-					{
 						// Use component-local space (no scale) so IK Rig positions the foot bone correctly
 						*GoalValue = FootGoalComponent;
 						UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Set %s to component space (%.1f,%.1f,%.1f)"),
@@ -1138,15 +1156,15 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 					else
 					{
 						UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: Failed to get value pointer for %s"), *GoalName);
-					}
-				}
-				else
-				{
-					UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: %s is not a FVector property"), *GoalName);
-				}
 			}
-			else
-			{
+		}
+		else
+		{
+					UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: %s is not a FVector property"), *GoalName);
+		}
+	}
+	else
+	{
 				UE_LOG(LogTemp, Warning, TEXT("SetIKRigGoalPositions: %s is not a struct property"), *GoalName);
 			}
 		}
@@ -1426,69 +1444,45 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 
 	// Helper function to determine fixed quadrant from hex coordinates
 	// Fixed quadrants are based on hex coordinates relative to body, NOT leg positions or offset
-	// Compass mapping on axial coordinates:
-	//   East  (E) = Q+1
-	//   West  (W) = Q-1
-	//   South (S) = R+1
-	//   North (N) = R-1
-	auto GetFixedQuadrantFromHex = [](const FHex& BodyHex, const FHex& TestHex) -> FString
+	// Uses world angle to determine quadrant, applying QuadrantRotationOffset
+	auto GetFixedQuadrantFromHex = [&](const FHex& BodyHex, const FHex& TestHex) -> FString
 	{
-		// Use hex coordinate differences to determine fixed quadrant
-		const int32 dq = TestHex.Q - BodyHex.Q;
-		const int32 dr = TestHex.R - BodyHex.R;
+		FVector BodyPos = OrbSimDriver->MapHexToWorld(BodyHex);
+		FVector HexPos = OrbSimDriver->MapHexToWorld(TestHex);
+		FVector Dir = (HexPos - BodyPos).GetSafeNormal2D();
 		
-		// For axis-aligned hexes:
-		if (dq > 0 && dr == 0)
+		// Calculate angle in degrees (-180 to 180)
+		// X+ (Forward) = 0, Y+ (Right) = 90
+		float AngleDeg = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
+		
+		// Apply offset (subtract to rotate boundaries)
+		AngleDeg -= QuadrantRotationOffset;
+		
+		// Normalize to -180..180
+		while (AngleDeg > 180.f) AngleDeg -= 360.f;
+		while (AngleDeg <= -180.f) AngleDeg += 360.f;
+		
+		// Assign based on angle (centered on axes)
+		// N (Forward/X+): -45 to 45
+		// E (Right/Y+): 45 to 135
+		// S (Back/X-): 135 to 180 or -180 to -135
+		// W (Left/Y-): -135 to -45
+		
+		if (AngleDeg >= -45.f && AngleDeg < 45.f)
 		{
-			return TEXT("E"); // Positive Q (Q+1)
+			return TEXT("N");
 		}
-		else if (dq == 0 && dr > 0)
+		else if (AngleDeg >= 45.f && AngleDeg < 135.f)
 		{
-			return TEXT("S"); // Positive R (R+1)
+			return TEXT("E");
 		}
-		else if (dq < 0 && dr == 0)
+		else if (AngleDeg >= -135.f && AngleDeg < -45.f)
 		{
-			return TEXT("W"); // Negative Q (Q-1)
-		}
-		else if (dq == 0 && dr < 0)
-		{
-			return TEXT("N"); // Negative R (R-1)
-		}
-		// For diagonal hexes, use the dominant direction
-		else if (FMath::Abs(dq) > FMath::Abs(dr))
-		{
-			// Q direction is dominant
-			return (dq > 0) ? TEXT("E") : TEXT("W");
-		}
-		else if (FMath::Abs(dr) > FMath::Abs(dq))
-		{
-			// R direction is dominant
-			return (dr > 0) ? TEXT("S") : TEXT("N");
+			return TEXT("W");
 		}
 		else
 		{
-			// Equal magnitude - use diagonal assignment based on signs
-			// Prioritize based on compass-style mapping
-			if (dq > 0 && dr > 0)
-			{
-				// Southeast diagonal - closer to South / East; prefer South
-				return TEXT("S");
-			}
-			else if (dq > 0 && dr < 0)
-			{
-				// Northeast diagonal - closer to North / East; prefer East
-				return TEXT("E");
-			}
-			else if (dq < 0 && dr > 0)
-			{
-				// Southwest diagonal - closer to South / West; prefer West
-				return TEXT("W");
-			}
-			else // dq < 0 && dr < 0
-			{
-				// Northwest diagonal - closer to North / West; prefer North
-				return TEXT("N");
-			}
+			return TEXT("S");
 		}
 	};
 
@@ -1913,6 +1907,7 @@ void AGameManager::LoadWalkerCalibration()
 	{
 		DesiredStandHeight = SavedWalkerCalibration.StandHeight;
 		StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
+		StartingFootOrientation = SavedWalkerCalibration.StartingFootOrientation;
 		StepHeight = SavedWalkerCalibration.StepHeight;
 		StepRaiseTicks = SavedWalkerCalibration.StepRaiseTicks;
 		StepMoveTicks = SavedWalkerCalibration.StepMoveTicks;
@@ -1930,12 +1925,13 @@ void AGameManager::LoadWalkerCalibration()
 		WQuadrantLeg = SavedWalkerCalibration.WQuadrantLeg;
 		SQuadrantLeg = SavedWalkerCalibration.SQuadrantLeg;
 		TileQuadrantOffset = SavedWalkerCalibration.TileQuadrantOffset;
+		QuadrantRotationOffset = SavedWalkerCalibration.QuadrantRotationOffset;
 		// Don't load WalkerOriginalFootPositions or WalkerSittingPose from saved config
 		// These will be gathered fresh from the mesh in GatherWalkerCalibrationData()
 		// Saved positions are only for reference, not for active calibration
 		
-		UE_LOG(LogTemp, Log, TEXT("GameManager: Loaded walker calibration settings from config - StandHeight=%.1f, StartingFootDistance=%.1f, TileQuadrantOffset=%d"), 
-			DesiredStandHeight, StartingFootDistance, TileQuadrantOffset);
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Loaded walker calibration settings from config - StandHeight=%.1f, StartingFootDistance=%.1f, Orientation=%d, TileQuadrantOffset=%d, QuadrantRotationOffset=%.1f"), 
+			DesiredStandHeight, StartingFootDistance, StartingFootOrientation, TileQuadrantOffset, QuadrantRotationOffset);
 	}
 	else
 	{
@@ -1949,6 +1945,7 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	// Save StandHeight (actual applied height) instead of DesiredStandHeight
 	SavedWalkerCalibration.StandHeight = StandHeight;
 	SavedWalkerCalibration.StartingFootDistance = StartingFootDistance;
+	SavedWalkerCalibration.StartingFootOrientation = StartingFootOrientation;
 	SavedWalkerCalibration.StepHeight = StepHeight;
 	SavedWalkerCalibration.StepRaiseTicks = StepRaiseTicks;
 	SavedWalkerCalibration.StepMoveTicks = StepMoveTicks;
@@ -1956,8 +1953,7 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	SavedWalkerCalibration.ReachDistance = ReachDistance;
 	SavedWalkerCalibration.MinimumReachDistance = MinimumReachDistance;
 	SavedWalkerCalibration.ActiveFoot = ActiveFoot;
-	SavedWalkerCalibration.OriginalFootPositions = WalkerOriginalFootPositions;
-	SavedWalkerCalibration.SittingPose = WalkerSittingPose;
+	
 	// Legacy field; keep zeroed for backwards compatibility
 	SavedWalkerCalibration.LegQuadrantOffset = 0;
 	SavedWalkerCalibration.NQuadrantLeg = NQuadrantLeg;
@@ -1965,6 +1961,7 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	SavedWalkerCalibration.WQuadrantLeg = WQuadrantLeg;
 	SavedWalkerCalibration.SQuadrantLeg = SQuadrantLeg;
 	SavedWalkerCalibration.TileQuadrantOffset = TileQuadrantOffset;
+	SavedWalkerCalibration.QuadrantRotationOffset = QuadrantRotationOffset;
 	
 	// Save to config file
 	SaveConfig();

@@ -268,6 +268,19 @@ bool USimWorldHex::TryPutItem(const FHex& H, const FItem& I)
 	{
 		return false; // already occupied
 	}
+
+	// Check for walker feet (Current or Target tiles)
+	for (const FWalkerState& W : Walkers)
+	{
+		if (W.DFoot.CurrentTile == H || W.DFoot.TargetTile == H ||
+			W.LFoot.CurrentTile == H || W.LFoot.TargetTile == H ||
+			W.RFoot.CurrentTile == H || W.RFoot.TargetTile == H ||
+			W.UFoot.CurrentTile == H || W.UFoot.TargetTile == H)
+		{
+			return false; // occupied by walker foot
+		}
+	}
+
 	FItem Copy = I;
 	// Assign an Id if caller forgot (StepGlyphs sets it, but be safe)
 	if (Copy.Id == 0)

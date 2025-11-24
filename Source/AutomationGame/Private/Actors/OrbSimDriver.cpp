@@ -508,6 +508,32 @@ void AOrbSimDriver::DrawCollisionDebugSpheres()
 			FString::Printf(TEXT("Predictive: %s"), *PredictiveInfo.Reason),
 			nullptr, FColor::Orange, 0.f, true, 1.2f);
 	}
+
+	// Draw walker foot positions (potential obstacles)
+	for (int32 i = 0; i < Sim->Walkers.Num(); ++i)
+	{
+		const FWalkerState& W = Sim->Walkers[i];
+		
+		auto DrawFoot = [&](const FHex& H, const FString& Label)
+		{
+			FVector Pos = MapHexToWorld(H);
+			DrawDebugSphere(GetWorld(), Pos, DebugSphereSize, 8, FColor::Cyan, false, DebugLifetime, 0, 1.5f);
+			DrawDebugString(GetWorld(), Pos + FVector(0, 0, DebugSphereSize + 15.f),
+				Label, nullptr, FColor::Cyan, 0.f, true, 0.8f);
+		};
+
+		DrawFoot(W.DFoot.CurrentTile, FString::Printf(TEXT("W%d-D"), i));
+		if (W.DFoot.TargetTile != W.DFoot.CurrentTile) DrawFoot(W.DFoot.TargetTile, FString::Printf(TEXT("W%d-D(T)"), i));
+		
+		DrawFoot(W.LFoot.CurrentTile, FString::Printf(TEXT("W%d-L"), i));
+		if (W.LFoot.TargetTile != W.LFoot.CurrentTile) DrawFoot(W.LFoot.TargetTile, FString::Printf(TEXT("W%d-L(T)"), i));
+		
+		DrawFoot(W.RFoot.CurrentTile, FString::Printf(TEXT("W%d-R"), i));
+		if (W.RFoot.TargetTile != W.RFoot.CurrentTile) DrawFoot(W.RFoot.TargetTile, FString::Printf(TEXT("W%d-R(T)"), i));
+		
+		DrawFoot(W.UFoot.CurrentTile, FString::Printf(TEXT("W%d-U"), i));
+		if (W.UFoot.TargetTile != W.UFoot.CurrentTile) DrawFoot(W.UFoot.TargetTile, FString::Printf(TEXT("W%d-U(T)"), i));
+	}
 }
 
 FVector AOrbSimDriver::MapHexToWorld(const FHex& H) const

@@ -192,32 +192,31 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 				SetStandHeight();
 			}
 		}
-		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance))
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootOrientation))
 		{
 			if (bWalkerCalibrationActive && CalibratingWalker.IsValid())
 			{
 				USkeletalMeshComponent* BodyComp = CalibratingWalker->GetBodyComponent();
 				if (BodyComp)
 				{
-					if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StartingFootDistance))
-					{
-						ApplyStartingFootDistance(BodyComp);
-						// Force update to make changes visible immediately
-						BodyComp->TickAnimation(0.f, false);
-						// BodyComp->RefreshBoneTransforms();
-						BodyComp->UpdateComponentToWorld();
-						SetIKRigGoalPositions(BodyComp, StandHeight);
-						UpdateWalkerDebugMeshes(BodyComp);
+					ApplyStartingFootDistance(BodyComp);
+					// Force update to make changes visible immediately
+					BodyComp->TickAnimation(0.f, false);
+					// BodyComp->RefreshBoneTransforms();
+					BodyComp->UpdateComponentToWorld();
+					SetIKRigGoalPositions(BodyComp, StandHeight);
+					UpdateWalkerDebugMeshes(BodyComp);
 
-						UE_LOG(LogTemp, Log, TEXT("GameManager: StartingFootDistance updated to %.1f"), StartingFootDistance);
-						
+					UE_LOG(LogTemp, Log, TEXT("GameManager: StartingFoot params updated - Distance=%.1f, Orientation=%d"), StartingFootDistance, StartingFootOrientation);
+					
 					// Apply to all walkers in simulation
 					ApplyCalibrationValuesToAllWalkers();
 				}
-				}
 			}
 		}
-		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants))
+		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, QuadrantRotationOffset))
 		{
 			if (bWalkerCalibrationActive)
 			{
@@ -1973,6 +1972,14 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 					BodyToFootDir = DefaultDirs[FootIdx];
 				}
 				
+				// Apply StartingFootOrientation rotation (N * 60 degrees)
+				if (SavedWalkerCalibration.StartingFootOrientation != 0)
+				{
+					float AngleDeg = SavedWalkerCalibration.StartingFootOrientation * 60.f;
+					FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(AngleDeg));
+					BodyToFootDir = Rot.RotateVector(BodyToFootDir);
+				}
+
 				// Calculate new foot position with StartingFootDistance offset
 				const FVector Offset2D = BodyToFootDir * (StartingFootDistance * TileSize);
 				const FVector NewFootWorld2D = BodyWorld2D + Offset2D;

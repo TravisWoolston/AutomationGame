@@ -47,6 +47,49 @@ bool USimWorldHex::WouldCauseHeldClusterOverlap()
 			}
 		}
 	}
+
+	// Check for collisions with Walkers
+	// Collect all walker foot tiles (Current and Target) to check against
+	TSet<FHex> WalkerTiles;
+	for (const FWalkerState& W : Walkers)
+	{
+		WalkerTiles.Add(W.DFoot.CurrentTile);
+		if (W.DFoot.TargetTile != W.DFoot.CurrentTile) WalkerTiles.Add(W.DFoot.TargetTile);
+		
+		WalkerTiles.Add(W.LFoot.CurrentTile);
+		if (W.LFoot.TargetTile != W.LFoot.CurrentTile) WalkerTiles.Add(W.LFoot.TargetTile);
+		
+		WalkerTiles.Add(W.RFoot.CurrentTile);
+		if (W.RFoot.TargetTile != W.RFoot.CurrentTile) WalkerTiles.Add(W.RFoot.TargetTile);
+		
+		WalkerTiles.Add(W.UFoot.CurrentTile);
+		if (W.UFoot.TargetTile != W.UFoot.CurrentTile) WalkerTiles.Add(W.UFoot.TargetTile);
+	}
+
+	if (WalkerTiles.Num() > 0)
+	{
+		for (int32 i = 0; i < PredictedStates.Num(); ++i)
+		{
+			if (!PredictedStates[i].bHolding) continue;
+
+			// Check if this arm's movement hits any walker tile
+			if (DoesArmSweepOverlapTiles(Arms[i], PredictedStates[i], WalkerTiles))
+			{
+				FPredictiveCollisionInfo CollisionInfo;
+				CollisionInfo.ArmIndexA = i;
+				CollisionInfo.Reason = FString::Printf(TEXT("Predictive collision between arm %d and walker"), i);
+				
+				// Use predicted position as collision hex approximation
+				TArray<FHex> PositionsA = GetHeldClusterPositions(PredictedStates[i]);
+				if (PositionsA.Num() > 0)
+				{
+					CollisionInfo.CollisionHex = PositionsA[0];
+				}
+				PredictiveCollisionDebugData.Add(CollisionInfo);
+				return true;
+			}
+		}
+	}
 	
 	return false;
 }
@@ -417,19 +460,106 @@ bool USimWorldHex::WouldRotationSweepOverlapStatic(const FArmState& RotatingArm,
 	}
 	TArray<FHex> Rot_MidRotate = BuildHeldPositions(RotatingArm.BaseHex, PredictedRotating.Facing, RotatingArm.ArmLen, RotatingArm.Held);
 
-	// Check all phases of rotating arm against static arm
-	TArray<TArray<FHex>*> Rot_Phases = { &Rot_Start, &Rot_MidTranslate, &Rot_MidRotate, &Rot_End };
+	return false;
+}
 
-	for (TArray<FHex>* Rot_Phase : Rot_Phases)
+bool USimWorldHex::DoesArmSweepOverlapTiles(const FArmState& Arm, const FPredictiveArmState& Predicted, const TSet<FHex>& Tiles)
+{
+	// Helper to compute grip hex
+	auto ComputeGripHex = [](const FHex& BaseHex, uint8 Facing, int32 ArmLen) -> FHex
 	{
-		for (const FHex& PosRot : *Rot_Phase)
+		FHex Grip = BaseHex;
+		for (int i = 0; i < ArmLen; ++i)
+			Grip = HexUtil::Neighbor(Grip, (EHexDir)Facing);
+		return Grip;
+	};
+
+	// Helper to build held cluster positions at a given facing
+	auto BuildHeldPositions = [&](const FHex& BaseHex, uint8 Facing, int32 ArmLen, const FItem& Held) -> TArray<FHex>
+	{
+		TArray<FHex> Positions;
+		if (!Held.bIsCluster)
 		{
-			for (const FHex& PosStatic : StaticPositions)
+			Positions.Add(ComputeGripHex(BaseHex, Facing, ArmLen));
+			return Positions;
+		}
+
+		const FHex Grip = ComputeGripHex(BaseHex, Facing, ArmLen);
+		const uint8 cur = Facing % 6;
+		const int8 grab = (int8)Held.GrabFacing;
+		const uint8 facingDelta = (grab >= 0)
+			? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+			: cur;
+		const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+		for (const FOrbData& Sub : Held.Orbs)
+		{
+			FHex Local(Sub.dQ, Sub.dR);
+			FHex RotLocal = Rot60CCW(Local, ccw);
+			Positions.Add(FHex(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R));
+		}
+		return Positions;
+	};
+
+	// Determine if arm is rotating, extending/retracting, or static
+	bool bRotating = (Arm.PC < Arm.Tape.Num() && 
+		(Arm.Tape[Arm.PC].Cmd == ECmd::RotateL || Arm.Tape[Arm.PC].Cmd == ECmd::RotateR) &&
+		Arm.WaitCounter == 0);
+	
+	bool bExtending = (Arm.PC < Arm.Tape.Num() && 
+		(Arm.Tape[Arm.PC].Cmd == ECmd::Extend || Arm.Tape[Arm.PC].Cmd == ECmd::Retract) &&
+		Arm.WaitCounter == 0);
+
+	TArray<TArray<FHex>> SweepPhases;
+
+	if (bRotating)
+	{
+		// Rotation sweep
+		TArray<FHex> Start = BuildHeldPositions(Arm.BaseHex, (uint8)Arm.Facing, Arm.ArmLen, Arm.Held);
+		TArray<FHex> End = BuildHeldPositions(Predicted.BaseHex, Predicted.Facing, Predicted.ArmLen, Predicted.Held);
+		
+		// Mid positions
+		FHex OldGrip = ComputeGripHex(Arm.BaseHex, (uint8)Arm.Facing, Arm.ArmLen);
+		FHex NewGrip = ComputeGripHex(Predicted.BaseHex, Predicted.Facing, Predicted.ArmLen);
+		const int32 dQ = NewGrip.Q - OldGrip.Q;
+		const int32 dR = NewGrip.R - OldGrip.R;
+		
+		TArray<FHex> MidTranslate;
+		for (const FHex& Pos : Start)
+		{
+			MidTranslate.Add(FHex(Pos.Q + dQ, Pos.R + dR));
+		}
+		TArray<FHex> MidRotate = BuildHeldPositions(Arm.BaseHex, Predicted.Facing, Arm.ArmLen, Arm.Held);
+
+		SweepPhases.Add(Start);
+		SweepPhases.Add(MidTranslate);
+		SweepPhases.Add(MidRotate);
+		SweepPhases.Add(End);
+	}
+	else if (bExtending)
+	{
+		// Extension sweep (Start and End)
+		TArray<FHex> Start = BuildHeldPositions(Arm.BaseHex, (uint8)Arm.Facing, Arm.ArmLen, Arm.Held);
+		TArray<FHex> End = BuildHeldPositions(Predicted.BaseHex, Predicted.Facing, Predicted.ArmLen, Predicted.Held);
+		SweepPhases.Add(Start);
+		SweepPhases.Add(End);
+	}
+	else
+	{
+		// Static (or other command) - check current position
+		// (Predicted position should match current for non-movement commands)
+		TArray<FHex> Pos = BuildHeldPositions(Predicted.BaseHex, Predicted.Facing, Predicted.ArmLen, Predicted.Held);
+		SweepPhases.Add(Pos);
+	}
+
+	// Check all phases against tile set
+	for (const TArray<FHex>& Phase : SweepPhases)
+	{
+		for (const FHex& Pos : Phase)
+		{
+			if (Tiles.Contains(Pos))
 			{
-				if (PosRot.Q == PosStatic.Q && PosRot.R == PosStatic.R)
-				{
-					return true; // Collision detected during sweep
-				}
+				return true;
 			}
 		}
 	}

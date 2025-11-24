@@ -688,6 +688,15 @@ void ABasicWalker::Tick(float DeltaSeconds)
 					}
 				}
 			}
+			else
+			{
+				// Log when ManualFootGoal is preventing script from setting foot goals
+				static int32 ManualGoalLogCounter = 0;
+				if ((++ManualGoalLogCounter % 300 == 0)) // Log every 5 seconds at 60fps
+				{
+					UE_LOG(LogTemp, VeryVerbose, TEXT("Walker IK: ManualFootGoal is enabled - script is NOT setting foot goals (they should be set by Animation Blueprint event graph)"));
+				}
+			}
 
 			// Set body goal position (end-of-tick target), expressed in component-local space
 			if (FProperty* BodyGoalProperty = AnimInstance->GetClass()->FindPropertyByName(TEXT("BodyGoal")))
