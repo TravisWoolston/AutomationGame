@@ -639,6 +639,31 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 			}
 		}
 
+		// Snap direction to nearest 90-degree increment relative to body orientation to ensure even spacing
+		// This fixes issues where slight asymmetries in the model result in uneven tile assignments
+		const FTransform BodyTransform = BodyComp->GetComponentTransform();
+		FVector BodyForward = BodyTransform.GetUnitAxis(EAxis::X);
+		FVector BodyRight = BodyTransform.GetUnitAxis(EAxis::Y);
+		
+		// Project to 2D
+		BodyForward = FVector(BodyForward.X, BodyForward.Y, 0.f).GetSafeNormal();
+		BodyRight = FVector(BodyRight.X, BodyRight.Y, 0.f).GetSafeNormal();
+		
+		if (!BodyForward.IsNearlyZero() && !BodyRight.IsNearlyZero())
+		{
+			float DotF = FVector::DotProduct(BodyToFootDir, BodyForward);
+			float DotR = FVector::DotProduct(BodyToFootDir, BodyRight);
+			
+			if (FMath::Abs(DotF) > FMath::Abs(DotR))
+			{
+				BodyToFootDir = (DotF > 0.f) ? BodyForward : -BodyForward;
+			}
+			else
+			{
+				BodyToFootDir = (DotR > 0.f) ? BodyRight : -BodyRight;
+			}
+		}
+
 		// Apply StartingFootOrientation rotation (N * 60 degrees)
 		if (StartingFootOrientation != 0)
 		{
@@ -801,8 +826,31 @@ void AGameManager::SetStepHeight()
 				}
 			}
 		}
+		
+		// Snap direction to nearest 90-degree increment relative to body orientation (same as ApplyStartingFootDistance)
+		const FTransform BodyTransform = BodyComp->GetComponentTransform();
+		FVector BodyForward = BodyTransform.GetUnitAxis(EAxis::X);
+		FVector BodyRight = BodyTransform.GetUnitAxis(EAxis::Y);
+		
+		// Project to 2D
+		BodyForward = FVector(BodyForward.X, BodyForward.Y, 0.f).GetSafeNormal();
+		BodyRight = FVector(BodyRight.X, BodyRight.Y, 0.f).GetSafeNormal();
+		
+		if (!BodyForward.IsNearlyZero() && !BodyRight.IsNearlyZero())
+		{
+			float DotF = FVector::DotProduct(BodyToFootDir, BodyForward);
+			float DotR = FVector::DotProduct(BodyToFootDir, BodyRight);
+			
+			if (FMath::Abs(DotF) > FMath::Abs(DotR))
+			{
+				BodyToFootDir = (DotF > 0.f) ? BodyForward : -BodyForward;
+			}
+			else
+			{
+				BodyToFootDir = (DotR > 0.f) ? BodyRight : -BodyRight;
+			}
+		}
 
-		// Apply StartingFootOrientation rotation (N * 60 degrees)
 		if (StartingFootOrientation != 0)
 		{
 			float AngleDeg = StartingFootOrientation * 60.f;

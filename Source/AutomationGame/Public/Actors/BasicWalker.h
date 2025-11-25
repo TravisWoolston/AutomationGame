@@ -196,6 +196,10 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(BlueprintReadOnly, Category = "Foot Positions")
 	FVector UFootAssignedTileWorldLocation = FVector::ZeroVector;
 
+	/** Intended world location for the body center. Foot tiles will be calculated to center the body at this position. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Body Target")
+	FVector BodyTargetWorldPosition = FVector::ZeroVector;
+
 	/** Get bone location in world space by bone name */
 	UFUNCTION(BlueprintCallable, Category = "Bone Access")
 	FVector GetBoneLocationByName(const FName& BoneName, bool bWorldSpace = true) const;

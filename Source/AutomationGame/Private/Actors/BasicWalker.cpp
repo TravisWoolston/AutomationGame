@@ -419,13 +419,40 @@ void ABasicWalker::Tick(float DeltaSeconds)
 	// Sync state from simulation
 	if (Sim && SimWalkerIndex >= 0 && SimWalkerIndex < Sim->Walkers.Num())
 	{
-		const FWalkerState& SimState = Sim->Walkers[SimWalkerIndex];
+		FWalkerState& SimState = Sim->Walkers[SimWalkerIndex];
 		CurrentHex = SimState.BaseHex;
 		TargetHex = SimState.TargetHex;
 		bMoving = SimState.bMoving;
 		MovementProgress = SimState.MovementProgress;
 		PC = SimState.PC;
 		WaitLeft = SimState.WaitCounter;
+
+		// Update body target from BodyTargetWorldPosition if set
+		if (Driver && !BodyTargetWorldPosition.IsNearlyZero())
+		{
+			FHex TargetHexFromWorld;
+			if (Driver->WorldToHex(BodyTargetWorldPosition, TargetHexFromWorld))
+			{
+				// Check if the target has changed
+				if (SimState.CurrentTargetHex != TargetHexFromWorld)
+				{
+					// Add a request to move to the new target (or update current target if processing)
+					if (SimState.bProcessingRequest)
+					{
+						// Update current target if already processing a request
+						SimState.CurrentTargetHex = TargetHexFromWorld;
+					}
+					else
+					{
+						// Add new request with high priority
+						FWalkerRequest NewRequest;
+						NewRequest.TargetHex = TargetHexFromWorld;
+						NewRequest.Priority = 1000; // High priority to ensure it's processed
+						SimState.Requests.Add(NewRequest);
+					}
+				}
+			}
+		}
 
 		// Sync foot states
 		DFootHex = SimState.DFoot.CurrentTile;

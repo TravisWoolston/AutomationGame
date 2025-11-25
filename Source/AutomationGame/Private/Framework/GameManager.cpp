@@ -1933,78 +1933,91 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 		WalkerState.MinimumReachDistance = MinimumReachDistance;
 		WalkerState.StandHeight = StandHeight;
 		
-		// Apply StartingFootDistance by recalculating foot positions
-		// StartingFootDistance is the number of tiles away from the body tile
-		if (!FMath::IsNearlyZero(StartingFootDistance))
-		{
-			const FHex& BodyHex = WalkerState.BaseHex;
-			const FVector BodyWorld2D = FVector(OrbSimDriver->MapHexToWorld(BodyHex).X, OrbSimDriver->MapHexToWorld(BodyHex).Y, 0.f);
-			
-			// Calculate base foot positions at ReachDistance
-			FHex BaseFootHexes[4] = {
-				FHex(BodyHex.Q, BodyHex.R + EffectiveReachDist),      // D -> S
-				FHex(BodyHex.Q - EffectiveReachDist, BodyHex.R),    // L -> W
-				FHex(BodyHex.Q + EffectiveReachDist, BodyHex.R),    // R -> E
-				FHex(BodyHex.Q, BodyHex.R - EffectiveReachDist)      // U -> N
-			};
-			
-			// Apply StartingFootDistance offset to each foot
-			FFootState* Feet[] = { &WalkerState.DFoot, &WalkerState.LFoot, &WalkerState.RFoot, &WalkerState.UFoot };
-			
-			for (int32 FootIdx = 0; FootIdx < 4; ++FootIdx)
+			// Apply StartingFootDistance by recalculating foot positions
+			// StartingFootDistance is the number of tiles away from the body tile
+			const int32 RingRadius = FMath::RoundToInt(StartingFootDistance);
+			if (RingRadius > 0)
 			{
-				const FHex& BaseFootHex = BaseFootHexes[FootIdx];
-				const FVector BaseFootWorld = OrbSimDriver->MapHexToWorld(BaseFootHex);
-				const FVector BaseFootWorld2D = FVector(BaseFootWorld.X, BaseFootWorld.Y, 0.f);
+				const FHex& BodyHex = WalkerState.BaseHex;
+				const FVector BodyWorld = OrbSimDriver->MapHexToWorld(BodyHex);
+				const FVector BodyWorld2D = FVector(BodyWorld.X, BodyWorld.Y, 0.f);
 				
-				// Calculate direction from body to base foot position
-				FVector BodyToFootDir = (BaseFootWorld2D - BodyWorld2D).GetSafeNormal();
-				
-				// If direction is zero, use default direction
-				if (BodyToFootDir.IsNearlyZero())
+				// Generate Ring of hex offsets (relative to center 0,0)
+				TArray<FHex> Ring;
+				FHex H = FHex(-RingRadius, RingRadius); // Start at SW corner
+				for (int SideIdx = 0; SideIdx < 6; ++SideIdx)
 				{
-					const FVector DefaultDirs[] = {
-						FVector(0.f, 1.f, 0.f),   // D (South)
-						FVector(-1.f, 0.f, 0.f),  // L (West)
-						FVector(1.f, 0.f, 0.f),   // R (East)
-						FVector(0.f, -1.f, 0.f)  // U (North)
-					};
-					BodyToFootDir = DefaultDirs[FootIdx];
-				}
-				
-				// Apply StartingFootOrientation rotation (N * 60 degrees)
-				if (SavedWalkerCalibration.StartingFootOrientation != 0)
-				{
-					float AngleDeg = SavedWalkerCalibration.StartingFootOrientation * 60.f;
-					FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(AngleDeg));
-					BodyToFootDir = Rot.RotateVector(BodyToFootDir);
+					for (int j = 0; j < RingRadius; ++j)
+					{
+						Ring.Add(H);
+						H = HexUtil::Neighbor(H, (EHexDir)SideIdx);
+					}
 				}
 
-				// Calculate new foot position with StartingFootDistance offset
-				const FVector Offset2D = BodyToFootDir * (StartingFootDistance * TileSize);
-				const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
+				// Apply to each foot
+				FFootState* Feet[] = { &WalkerState.DFoot, &WalkerState.LFoot, &WalkerState.RFoot, &WalkerState.UFoot };
 				
-				// Convert to hex
-				FHex NewFootHex;
-				if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, BaseFootWorld.Z), NewFootHex))
+				for (int32 FootIdx = 0; FootIdx < 4; ++FootIdx)
 				{
-					// Validate distance
+					// Get current foot position to determine direction
+					FHex CurrentFootHex = Feet[FootIdx]->CurrentTile;
+					FVector CurrentFootWorld = OrbSimDriver->MapHexToWorld(CurrentFootHex);
+					FVector FootWorld2D = FVector(CurrentFootWorld.X, CurrentFootWorld.Y, 0.f);
+					
+					// Ideal direction based on current position
+					// We use this to pick the best starting tile in the ring before rotation
+					// This preserves the general leg orientation (e.g. North leg stays North-ish)
+					FVector IdealDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
+					if (IdealDir.IsNearlyZero()) IdealDir = FVector(1,0,0); // Fallback
+					
+					FVector IdealPos = BodyWorld2D + IdealDir * (StartingFootDistance * TileSize);
+
+					// Find best tile in Ring
+					FHex BestOffsetHex = Ring[0];
+					float BestDistSq = FLT_MAX;
+
+					for (const FHex& OffsetH : Ring)
+					{
+						FHex AbsH(BodyHex.Q + OffsetH.Q, BodyHex.R + OffsetH.R);
+						FVector WorldPos = OrbSimDriver->MapHexToWorld(AbsH);
+						float DistSq = FVector::DistSquared2D(WorldPos, IdealPos);
+						if (DistSq < BestDistSq)
+						{
+							BestDistSq = DistSq;
+							BestOffsetHex = OffsetH;
+						}
+					}
+
+					// Apply StartingFootOrientation (shift index in ring)
+					if (StartingFootOrientation != 0)
+					{
+						int32 Index = Ring.IndexOfByKey(BestOffsetHex);
+						if (Index != INDEX_NONE)
+						{
+							int32 NewIndex = (Index + StartingFootOrientation) % Ring.Num();
+							if (NewIndex < 0) NewIndex += Ring.Num();
+							BestOffsetHex = Ring[NewIndex];
+						}
+					}
+
+					// Set new foot position
+					FHex NewFootHex(BodyHex.Q + BestOffsetHex.Q, BodyHex.R + BestOffsetHex.R);
+					
+					// Validate distance (sanity check)
 					const int32 dq = NewFootHex.Q - BodyHex.Q;
 					const int32 dr = NewFootHex.R - BodyHex.R;
 					const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
 					
+					// Note: HexDist should equal Radius, but sanity check ReachDistance
 					bool bValid = true;
 					if (ReachDistance > 0 && HexDist > ReachDistance)
 					{
 						bValid = false;
-						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance (%.1f) for foot %d resulted in hex too far (dist=%d > %d), keeping original at ReachDistance. To fix, increase ReachDistance."),
-							StartingFootDistance, FootIdx, HexDist, ReachDistance);
+						// Keep original if too far
 					}
 					else if (MinimumReachDistance > 0.f && (float)HexDist < MinimumReachDistance)
 					{
 						bValid = false;
-						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance (%.1f) for foot %d resulted in hex too close (dist=%d < %.1f), keeping original."),
-							StartingFootDistance, FootIdx, HexDist, MinimumReachDistance);
 					}
 
 					if (bValid)
@@ -2016,7 +2029,6 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 				}
 			}
 		}
-	}
 
 	// Also update BasicWalker actor instances with these values
 	if (UWorld* World = GetWorld())
@@ -2064,26 +2076,34 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 	const int32 ReachDist = WalkerState.ReachDistance;
 	const float MinReachDist = WalkerState.MinimumReachDistance;
 
-	// Helper to get quadrant from hex (same as UpdateLegTileQuadrantVisualization)
-	auto GetFixedQuadrantFromHex = [](const FHex& BodyHex, const FHex& TestHex) -> FString
+	// Helper to get quadrant from hex (updated to match UpdateLegTileQuadrantVisualization with rotation)
+	auto GetFixedQuadrantFromHex = [&](const FHex& BodyHex, const FHex& TestHex) -> FString
 	{
-		const int32 dq = TestHex.Q - BodyHex.Q;
-		const int32 dr = TestHex.R - BodyHex.R;
+		FVector BodyPos = OrbSimDriver->MapHexToWorld(BodyHex);
+		FVector HexPos = OrbSimDriver->MapHexToWorld(TestHex);
+		FVector Dir = (HexPos - BodyPos).GetSafeNormal2D();
 		
-		if (dq > 0 && dr == 0) return TEXT("E");
-		if (dq == 0 && dr > 0) return TEXT("S");
-		if (dq < 0 && dr == 0) return TEXT("W");
-		if (dq == 0 && dr < 0) return TEXT("N");
+		// Calculate angle in degrees (-180 to 180)
+		// X+ (Forward) = 0, Y+ (Right) = 90
+		float AngleDeg = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
 		
-		if (FMath::Abs(dq) > FMath::Abs(dr))
-			return (dq > 0) ? TEXT("E") : TEXT("W");
-		if (FMath::Abs(dr) > FMath::Abs(dq))
-			return (dr > 0) ? TEXT("S") : TEXT("N");
+		// Apply offset (subtract to rotate boundaries)
+		AngleDeg -= QuadrantRotationOffset;
 		
-		if (dq > 0 && dr > 0) return TEXT("S");
-		if (dq > 0 && dr < 0) return TEXT("E");
-		if (dq < 0 && dr > 0) return TEXT("W");
-		return TEXT("N");
+		// Normalize to -180..180
+		while (AngleDeg > 180.f) AngleDeg -= 360.f;
+		while (AngleDeg <= -180.f) AngleDeg += 360.f;
+		
+		// Assign based on angle (centered on axes)
+		// N (Forward/X+): -45 to 45
+		// E (Right/Y+): 45 to 135
+		// S (Back/X-): 135 to 180 or -180 to -135
+		// W (Left/Y-): -135 to -45
+		
+		if (AngleDeg >= -45.f && AngleDeg < 45.f) return TEXT("N");
+		if (AngleDeg >= 45.f && AngleDeg < 135.f) return TEXT("E");
+		if (AngleDeg >= -135.f && AngleDeg < -45.f) return TEXT("W");
+		return TEXT("S");
 	};
 
 	// Helper to apply quadrant offset
@@ -2105,47 +2125,13 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 		return QuadrantOrder[NewIndex];
 	};
 
-	// Map fixed quadrants to leg colors (using saved calibration settings)
-	// Map: FixedQuadrant -> LegColor
-	TMap<FString, FLinearColor> QuadrantToColorMap;
-	
-	// Use saved calibration settings to determine quadrant colors
-	// Map: D->S, L->W, R->E, U->N (physical leg to compass quadrant)
-	QuadrantToColorMap.Add(TEXT("S"), GetLegQuadrantColor(TEXT("D"), 0)); // D foot -> South
-	QuadrantToColorMap.Add(TEXT("W"), GetLegQuadrantColor(TEXT("L"), 1)); // L foot -> West
-	QuadrantToColorMap.Add(TEXT("E"), GetLegQuadrantColor(TEXT("R"), 2)); // R foot -> East
-	QuadrantToColorMap.Add(TEXT("N"), GetLegQuadrantColor(TEXT("U"), 3)); // U foot -> North
-
-	// Apply per-quadrant leg assignment from saved settings
-	// Map the saved quadrant leg assignments to colors
-	TMap<FString, FLinearColor> SavedQuadrantColors;
-	SavedQuadrantColors.Add(TEXT("N"), GetLegQuadrantColor(TEXT("U"), 3)); // Default: U foot -> North
-	SavedQuadrantColors.Add(TEXT("E"), GetLegQuadrantColor(TEXT("R"), 2)); // Default: R foot -> East
-	SavedQuadrantColors.Add(TEXT("S"), GetLegQuadrantColor(TEXT("D"), 0)); // Default: D foot -> South
-	SavedQuadrantColors.Add(TEXT("W"), GetLegQuadrantColor(TEXT("L"), 1)); // Default: L foot -> West
-
-	// Override with saved quadrant assignments if available
-	if (NQuadrantLeg == EWalkerFoot::DFoot) SavedQuadrantColors[TEXT("N")] = GetLegQuadrantColor(TEXT("D"), 0);
-	else if (NQuadrantLeg == EWalkerFoot::LFoot) SavedQuadrantColors[TEXT("N")] = GetLegQuadrantColor(TEXT("L"), 1);
-	else if (NQuadrantLeg == EWalkerFoot::RFoot) SavedQuadrantColors[TEXT("N")] = GetLegQuadrantColor(TEXT("R"), 2);
-	else if (NQuadrantLeg == EWalkerFoot::UFoot) SavedQuadrantColors[TEXT("N")] = GetLegQuadrantColor(TEXT("U"), 3);
-
-	if (EQuadrantLeg == EWalkerFoot::DFoot) SavedQuadrantColors[TEXT("E")] = GetLegQuadrantColor(TEXT("D"), 0);
-	else if (EQuadrantLeg == EWalkerFoot::LFoot) SavedQuadrantColors[TEXT("E")] = GetLegQuadrantColor(TEXT("L"), 1);
-	else if (EQuadrantLeg == EWalkerFoot::RFoot) SavedQuadrantColors[TEXT("E")] = GetLegQuadrantColor(TEXT("R"), 2);
-	else if (EQuadrantLeg == EWalkerFoot::UFoot) SavedQuadrantColors[TEXT("E")] = GetLegQuadrantColor(TEXT("U"), 3);
-
-	if (SQuadrantLeg == EWalkerFoot::DFoot) SavedQuadrantColors[TEXT("S")] = GetLegQuadrantColor(TEXT("D"), 0);
-	else if (SQuadrantLeg == EWalkerFoot::LFoot) SavedQuadrantColors[TEXT("S")] = GetLegQuadrantColor(TEXT("L"), 1);
-	else if (SQuadrantLeg == EWalkerFoot::RFoot) SavedQuadrantColors[TEXT("S")] = GetLegQuadrantColor(TEXT("R"), 2);
-	else if (SQuadrantLeg == EWalkerFoot::UFoot) SavedQuadrantColors[TEXT("S")] = GetLegQuadrantColor(TEXT("U"), 3);
-
-	if (WQuadrantLeg == EWalkerFoot::DFoot) SavedQuadrantColors[TEXT("W")] = GetLegQuadrantColor(TEXT("D"), 0);
-	else if (WQuadrantLeg == EWalkerFoot::LFoot) SavedQuadrantColors[TEXT("W")] = GetLegQuadrantColor(TEXT("L"), 1);
-	else if (WQuadrantLeg == EWalkerFoot::RFoot) SavedQuadrantColors[TEXT("W")] = GetLegQuadrantColor(TEXT("R"), 2);
-	else if (WQuadrantLeg == EWalkerFoot::UFoot) SavedQuadrantColors[TEXT("W")] = GetLegQuadrantColor(TEXT("U"), 3);
-
-	QuadrantToColorMap = SavedQuadrantColors;
+	// Map fixed quadrants to distinct colors
+	static const TMap<FString, FLinearColor> QuadrantToColorMap = {
+		{ TEXT("N"), FLinearColor(0.0f, 1.0f, 0.0f) },  // Green
+		{ TEXT("E"), FLinearColor(1.0f, 0.0f, 0.0f) },  // Red
+		{ TEXT("W"), FLinearColor(0.0f, 0.0f, 1.0f) },  // Blue
+		{ TEXT("S"), FLinearColor(1.0f, 1.0f, 0.0f) }   // Yellow
+	};
 
 	// Find all reachable tiles and assign them to quadrants
 	TMap<FHex, FString> HexToQuadrantMap;
