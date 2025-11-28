@@ -56,7 +56,7 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	
 	UPROPERTY()
 	int32 ReachDistance = 2;
-
+	
 	UPROPERTY()
 	float MinimumReachDistance = 0.f;
 	
@@ -65,7 +65,7 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	
 	// Removed OriginalFootPositions and SittingPose as they are not used for restoration
 	// and TMap is not supported in Config files.
-
+	
 	UPROPERTY()
 	int32 LegQuadrantOffset = 0; // Legacy: global leg quadrant offset (kept for config compatibility, no longer used directly)
 
@@ -174,7 +174,7 @@ public:
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0", ClampMax = "5", Tooltip = "Rotates the StartingFootDistance direction by N * 60 degrees around the body center"))
 	int32 StartingFootOrientation = 0;
-
+	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "0.0", Tooltip = "Height feet raise when stepping"))
 	float StepHeight = 50.f;
 	

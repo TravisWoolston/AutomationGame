@@ -1807,6 +1807,17 @@ void USimWorldHex::DrawBondDebugLines()
 			return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
 		};
 
+	// Build lookup map for board items once
+	TMap<int32, FHex> BoardItemLookup;
+	BoardItemLookup.Reserve(ItemMap.Num());
+	for (const auto& ItemKV : ItemMap)
+	{
+		if (ItemKV.Value.Id != 0)
+		{
+			BoardItemLookup.Add(ItemKV.Value.Id, ItemKV.Key);
+		}
+	}
+
 	// Draw debug lines for all active bonds
 	for (const FBond& Bond : Bonds)
 	{
@@ -1820,19 +1831,16 @@ void USimWorldHex::DrawBondDebugLines()
 		FVector PosB = FVector::ZeroVector;
 		bool bFoundA = false, bFoundB = false;
 
-		// Check if items are on the board
-		for (const auto& ItemKV : ItemMap)
+		// Check if items are on the board using lookup
+		if (const FHex* HexA = BoardItemLookup.Find(Bond.ItemA))
 		{
-			if (ItemKV.Value.Id == Bond.ItemA)
-			{
-				PosA = HexToWorld(ItemKV.Key);
-				bFoundA = true;
-			}
-			if (ItemKV.Value.Id == Bond.ItemB)
-			{
-				PosB = HexToWorld(ItemKV.Key);
-				bFoundB = true;
-			}
+			PosA = HexToWorld(*HexA);
+			bFoundA = true;
+		}
+		if (const FHex* HexB = BoardItemLookup.Find(Bond.ItemB))
+		{
+			PosB = HexToWorld(*HexB);
+			bFoundB = true;
 		}
 
 		// Check if items are held by arms (for held clusters)

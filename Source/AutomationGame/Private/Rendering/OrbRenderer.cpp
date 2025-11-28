@@ -108,6 +108,7 @@ void UOrbRenderer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	PrevPos.Empty();
 	CurrRot.Empty();
 	PrevRot.Empty();
+	OrbTypes.Empty();
 	CurrArmFacing.Empty();
 	PrevArmFacing.Empty();
 	
@@ -440,6 +441,7 @@ void UOrbRenderer::RebuildCurrPos()
 {
 	CurrPos.Reset();
 	CurrRot.Reset();
+	OrbTypes.Reset(); // Clear type cache
 	if (!Sim) return;
 
 	const AActor* Anchor = GetAnchor();
@@ -488,9 +490,21 @@ void UOrbRenderer::RebuildCurrPos()
 		// Position is just the tile center - interpolation happens in RebuildInstances() using Alpha
 		// No need for belt progress offset here!
 
+		// Determine orb type for this item (base or cluster first orb)
+		EOrbType ItemType = EOrbType::BaseA;
+		if (Item.bIsCluster && Item.Orbs.Num() > 0)
+		{
+			ItemType = (EOrbType)Item.Orbs[0].Type;
+		}
+		else if (!Item.bIsCluster)
+		{
+			ItemType = Item.Single.Type;
+		}
+
 		if (!Item.bIsCluster)
 		{
 			CurrPos.Add(ItemId, TileWorld);
+			OrbTypes.Add(ItemId, ItemType);
 			if (bSphere) CurrRot.Add(ItemId, ComputeUprightRot(TileWorld, H));
 		}
 		else
@@ -512,6 +526,8 @@ void UOrbRenderer::RebuildCurrPos()
 					SubWorld = TileWorld + FVector(OffRot.X, OffRot.Y, 0.f);
 				}
 				CurrPos.Add(SubId, SubWorld);
+				// Cache type for sub-orb
+				OrbTypes.Add(SubId, (EOrbType)Sub.Type);
 				if (bSphere) CurrRot.Add(SubId, ComputeUprightRot(SubWorld, FHex(H.Q + Sub.dQ, H.R + Sub.dR)));
 			}
 		}
@@ -724,24 +740,31 @@ void UOrbRenderer::RebuildInstances()
 		FRotator RB = RotB ? *RotB : RA;
 		FRotator R = FMath::Lerp(RA, RB, Alpha);
 
-		// Get the orb type for this item
+		// Get the orb type for this item using optimized lookup
 		EOrbType OrbType = EOrbType::BaseA; // Default
-		bool bFoundInItemMap = false;
-		for (const auto& KV : Sim->ItemMap)
+		if (const EOrbType* FoundType = OrbTypes.Find(Id))
 		{
-			if (KV.Value.Id == Id)
+			OrbType = *FoundType;
+		}
+		else
+		{
+			// Fallback to searching if not in cache (should rarely happen)
+			for (const auto& KV : Sim->ItemMap)
 			{
-				bFoundInItemMap = true;
-				if (KV.Value.bIsCluster && KV.Value.Orbs.Num() > 0)
+				if (KV.Value.Id == Id)
 				{
-					OrbType = (EOrbType)KV.Value.Orbs[0].Type;
+					if (KV.Value.bIsCluster && KV.Value.Orbs.Num() > 0)
+					{
+						OrbType = (EOrbType)KV.Value.Orbs[0].Type;
+					}
+					else if (!KV.Value.bIsCluster)
+					{
+						OrbType = KV.Value.Single.Type;
+					}
+					// Cache it for next time
+					OrbTypes.Add(Id, OrbType);
+					break;
 				}
-				else if (!KV.Value.bIsCluster)
-				{
-					OrbType = KV.Value.Single.Type;
-				}
-				
-				break;
 			}
 		}
 		

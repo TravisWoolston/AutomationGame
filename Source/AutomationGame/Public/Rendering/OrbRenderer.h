@@ -75,6 +75,7 @@ private:
 
 	TMap<int32, FVector> PrevPos, CurrPos;
 	TMap<int32, FRotator> PrevRot, CurrRot;
+	TMap<int32, EOrbType> OrbTypes; // Optimized lookup: ItemId -> OrbType
 	float PrevAlpha = 1.f;
 	float DirToYaw(uint8 Dir) const;
 
