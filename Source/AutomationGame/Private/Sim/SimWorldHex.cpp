@@ -209,24 +209,41 @@ int32 USimWorldHex::AddWalker(const FWalkerState& Walker)
 int32 USimWorldHex::FindNearestAvailableWalker(const FHex& FromHex)
 {
 	int32 NearestIndex = INDEX_NONE;
+	int32 NearestIdleIndex = INDEX_NONE;
 	float NearestDist = MAX_flt;
+	float NearestIdleDist = MAX_flt;
 	
 	for (int32 i = 0; i < Walkers.Num(); ++i)
 	{
 		const FWalkerState& W = Walkers[i];
+		const bool bIsBusy = W.bProcessingRequest || W.Requests.Num() > 0;
 		
 		// Calculate hex distance
 		const int32 dQ = W.BaseHex.Q - FromHex.Q;
 		const int32 dR = W.BaseHex.R - FromHex.R;
 		const float Dist = FMath::Max(FMath::Max(FMath::Abs(float(dQ)), FMath::Abs(float(dR))), FMath::Abs(float(dQ + dR)));
 		
+		// Track nearest ANY walker
 		if (Dist < NearestDist)
 		{
 			NearestDist = Dist;
 			NearestIndex = i;
 		}
+
+		// Track nearest IDLE walker
+		if (!bIsBusy && Dist < NearestIdleDist)
+		{
+			NearestIdleDist = Dist;
+			NearestIdleIndex = i;
+		}
 	}
 	
+	// Prefer idle walkers
+	if (NearestIdleIndex != INDEX_NONE)
+	{
+		return NearestIdleIndex;
+	}
+
 	return NearestIndex;
 }
 

@@ -365,7 +365,7 @@ void USimWorldHex::StepWalkers()
 							break; // Wait for sequence
 						}
 						
-						if (RaisedCount >= 2)
+						if (RaisedCount >= 3)
 						{
 							break; // Hard limit of 2 feet
 						}
@@ -595,7 +595,7 @@ void USimWorldHex::StepWalkers()
 										float Dist = FMath::Max(FMath::Max(FMath::Abs((float)bdq), FMath::Abs((float)bdr)), FMath::Abs((float)(bdq + bdr)));
 										if (Dist > 0.1f)
 										{
-											const float Scale = MaxDistOver / Dist;
+											const float Scale = (MaxDistOver + 0.1f) / Dist;
 											int32 MoveQ = FMath::RoundToInt((float)bdq * Scale);
 											int32 MoveR = FMath::RoundToInt((float)bdr * Scale);
 											OptimizedBodyHex.Q += MoveQ;
@@ -722,7 +722,7 @@ void USimWorldHex::StepWalkers()
 					// Debug: Log search results if no tile found
 					if (BestTile == Foot.CurrentTile && TestedTiles > 0)
 					{
-						UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: No valid tile found - Tested=%d, Occupied=%d, OtherFeet=%d, ReachDist=%d"),
+						UE_LOG(LogTemp, VeryVerbose, TEXT("Walker %d Foot %d: Staying at current tile - Tested=%d, Occupied=%d, OtherFeet=%d, ReachDist=%d"),
 							WalkerIndex, FootIndex, TestedTiles, OccupiedTiles, OtherFootTiles, W.ReachDistance);
 					}
 					

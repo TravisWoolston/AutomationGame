@@ -2191,7 +2191,7 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 	UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	UStaticMesh* TileOutlineMesh = TileMesh ? TileMesh : SphereMesh;
 	const float MarkerScale = 0.95f;
-	const float BaseZOffset = 2.f;
+	const float BaseZOffset = 20.f;
 
 	TArray<UStaticMeshComponent*> WalkerMarkers;
 	for (const auto& HexQuadPair : HexToQuadrantMap)
@@ -2261,7 +2261,7 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 					FootMarkerComp->RegisterComponent();
 					FootMarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
 					const float HighlightScaleMult = 1.35f;
-					const float HighlightZOffset = 6.f;
+					const float HighlightZOffset = 24.f;
 					FootMarkerComp->SetWorldScale3D(FVector(MarkerScale * HighlightScaleMult));
 					FootMarkerComp->SetWorldLocation(FootTileWorld + FVector(0.f, 0.f, HighlightZOffset));
 					FootMarkerComp->SetVisibility(true, true);

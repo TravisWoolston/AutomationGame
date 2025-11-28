@@ -1773,7 +1773,7 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 				MarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
 
 				// Draw a thin outline over the tile by slightly scaling down and lifting above the base tiles.
-				const float BaseZOffset = 2.f;
+				const float BaseZOffset = 20.f;
 				const float BaseScale = MarkerScale;
 
 				MarkerComp->SetWorldScale3D(FVector(BaseScale));
@@ -1883,7 +1883,7 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 						FootMarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
 
 						const float HighlightScaleMult = 1.35f;
-						const float HighlightZOffset = 6.f;
+						const float HighlightZOffset = 24.f;
 
 						FootMarkerComp->SetWorldScale3D(FVector(MarkerScale * HighlightScaleMult));
 						FootMarkerComp->SetWorldLocation(FootTileWorld + FVector(0.f, 0.f, HighlightZOffset));
