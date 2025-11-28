@@ -54,6 +54,20 @@ void USimWorldHex::StepBelts()
 		}
 	}
 
+	// Gather all walker foot tiles
+	TSet<FHex> WalkerFootTiles;
+	for (const FWalkerState& W : Walkers)
+	{
+		WalkerFootTiles.Add(W.DFoot.CurrentTile);
+		WalkerFootTiles.Add(W.DFoot.TargetTile);
+		WalkerFootTiles.Add(W.LFoot.CurrentTile);
+		WalkerFootTiles.Add(W.LFoot.TargetTile);
+		WalkerFootTiles.Add(W.RFoot.CurrentTile);
+		WalkerFootTiles.Add(W.RFoot.TargetTile);
+		WalkerFootTiles.Add(W.UFoot.CurrentTile);
+		WalkerFootTiles.Add(W.UFoot.TargetTile);
+	}
+
 	// Track items that need their bIsReady flag set to true at the end of this tick
 	TSet<int32> ItemsToSetReady;
 
@@ -560,8 +574,8 @@ void USimWorldHex::StepBelts()
 			FHex ToHex = HexUtil::Neighbor(FromHex, (EHexDir)(BeltDir % 6));
 		
 		// Check if destination is available
-		// First check static obstacles (held orbs)
-		bool bCanMove = !HeldOrbHexes.Contains(ToHex);
+		// First check static obstacles (held orbs and walker feet)
+		bool bCanMove = !HeldOrbHexes.Contains(ToHex) && !WalkerFootTiles.Contains(ToHex);
 		
 		// Then check if another item is at the destination
 		// Special handling for output tiles - use gate system instead of item presence
@@ -683,7 +697,7 @@ void USimWorldHex::StepBelts()
 			FHex ConnectedToHex(ConnectedCurrentHex.Q + ClusterMoveOffset.Q,
 				ConnectedCurrentHex.R + ClusterMoveOffset.R);
 
-			if (HeldOrbHexes.Contains(ConnectedToHex))
+			if (HeldOrbHexes.Contains(ConnectedToHex) || WalkerFootTiles.Contains(ConnectedToHex))
 			{
 				bCanMoveCluster = false;
 				break;

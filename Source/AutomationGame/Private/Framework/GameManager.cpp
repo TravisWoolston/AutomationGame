@@ -121,6 +121,9 @@ void AGameManager::BeginPlay()
 		UE_LOG(LogTemp, Log, TEXT("GameManager: Cancelled walker calibration on BeginPlay (PIE started)"));
 	}
 
+	// Load walker calibration settings from config to ensure runtime properties are up to date
+	LoadWalkerCalibration();
+
 	AutoFindRefs();
 	TryLoadInitial();
 	EnsureISM();
