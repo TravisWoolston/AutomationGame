@@ -76,33 +76,39 @@ static bool AreFeetAdjacent(int32 FootIndexA, int32 FootIndexB)
 	return (Diff == 1 || Diff == 3);
 }
 
-// Helper: map a hex around BodyHex into a compass quadrant label N/E/S/W
-static FString GetFixedQuadrantFromHex(const FHex& BodyHex, const FHex& TestHex)
+// Helper: map a hex around BodyHex into a compass quadrant label N/E/S/W using rotation offset
+static FString GetFixedQuadrantFromHex(const FHex& BodyHex, const FHex& TestHex, float RotationOffsetDeg)
 {
-	const int32 dq = TestHex.Q - BodyHex.Q;
-	const int32 dr = TestHex.R - BodyHex.R;
+	const int32 q = TestHex.Q - BodyHex.Q;
+	const int32 r = TestHex.R - BodyHex.R;
 
-	// Axis‑aligned
-	if (dq > 0 && dr == 0)  return TEXT("E"); // Q+1
-	if (dq < 0 && dr == 0)  return TEXT("W"); // Q-1
-	if (dq == 0 && dr > 0)  return TEXT("S"); // R+1
-	if (dq == 0 && dr < 0)  return TEXT("N"); // R-1
+	// Convert to Cartesian (Pointy Top, Size 1) to get angle
+	// x = sqrt(3) * q + sqrt(3)/2 * r
+	// y = 1.5 * r
+	const float x = 1.7320508f * (float)q + 0.8660254f * (float)r;
+	const float y = 1.5f * (float)r;
 
-	// Dominant axis
-	if (FMath::Abs(dq) > FMath::Abs(dr))
-	{
-		return (dq > 0) ? TEXT("E") : TEXT("W");
-	}
-	if (FMath::Abs(dr) > FMath::Abs(dq))
-	{
-		return (dr > 0) ? TEXT("S") : TEXT("N");
-	}
+	// Calculate angle in degrees (-180 to 180)
+	// 0 degrees is along +X axis (Forward/North in UE standard)
+	float AngleDeg = FMath::RadiansToDegrees(FMath::Atan2(y, x));
 
-	// Diagonals – bias to a compass direction
-	if (dq > 0 && dr > 0)   return TEXT("S"); // SE
-	if (dq > 0 && dr < 0)   return TEXT("E"); // NE
-	if (dq < 0 && dr > 0)   return TEXT("W"); // SW
-	/* dq < 0 && dr < 0 */  return TEXT("N"); // NW
+	// Apply rotation offset
+	AngleDeg -= RotationOffsetDeg;
+
+	// Normalize to -180..180
+	while (AngleDeg > 180.f) AngleDeg -= 360.f;
+	while (AngleDeg <= -180.f) AngleDeg += 360.f;
+
+	// Assign based on angle (centered on axes)
+	// N (Forward/X+): -45 to 45
+	// E (Right/Y+): 45 to 135
+	// S (Back/X-): 135 to 180 or -180 to -135
+	// W (Left/Y-): -135 to -45
+
+	if (AngleDeg >= -45.f && AngleDeg < 45.f) return TEXT("N");
+	if (AngleDeg >= 45.f && AngleDeg < 135.f) return TEXT("E");
+	if (AngleDeg >= -135.f && AngleDeg < -45.f) return TEXT("W");
+	return TEXT("S");
 }
 
 void USimWorldHex::StepWalkers()
@@ -425,7 +431,7 @@ void USimWorldHex::StepWalkers()
 							}
 
 							// Enforce per‑leg quadrant: skip tiles outside this foot's compass sector.
-							const FString FixedQuadrant = GetFixedQuadrantFromHex(W.BaseHex, TestHex);
+							const FString FixedQuadrant = GetFixedQuadrantFromHex(W.BaseHex, TestHex, W.QuadrantRotationOffset);
 							if (!FixedQuadrant.Equals(FootQuadrant, ESearchCase::CaseSensitive))
 							{
 								continue;
@@ -541,12 +547,13 @@ void USimWorldHex::StepWalkers()
 									}
 								}
 								
-								// If invalid due to MinimumReachDistance, try to optimize body position (move away from closest foot)
-								if (!bProjectedBodyValid && W.MinimumReachDistance > 0.f)
+								// If invalid due to MinimumReachDistance or ReachDistance, try to optimize body position
+								if (!bProjectedBodyValid)
 								{
-									// Find closest foot
-									float MinDist = MAX_flt;
+									float MinDistUnder = 0.f;
+									float MaxDistOver = 0.f;
 									FHex ClosestFootHex;
+									FHex FurthestFootHex;
 									
 									for (int32 OtherIdx = 0; OtherIdx < Feet.Num(); ++OtherIdx)
 									{
@@ -562,60 +569,89 @@ void USimWorldHex::StepWalkers()
 										const int32 fdq = OtherFootHex.Q - ProjectedBodyHex.Q;
 										const int32 fdr = OtherFootHex.R - ProjectedBodyHex.R;
 										const float fHexDist = (float)FMath::Max(FMath::Max(FMath::Abs(fdq), FMath::Abs(fdr)), FMath::Abs(fdq + fdr));
-										if (fHexDist < MinDist)
+										
+										if (W.MinimumReachDistance > 0.f && fHexDist < W.MinimumReachDistance)
 										{
-											MinDist = fHexDist;
-											ClosestFootHex = OtherFootHex;
+											float Under = W.MinimumReachDistance - fHexDist;
+											if (Under > MinDistUnder) { MinDistUnder = Under; ClosestFootHex = OtherFootHex; }
+										}
+										
+										if (W.ReachDistance > 0 && fHexDist > W.ReachDistance)
+										{
+											float Over = fHexDist - (float)W.ReachDistance;
+											if (Over > MaxDistOver) { MaxDistOver = Over; FurthestFootHex = OtherFootHex; }
 										}
 									}
 									
-									// Try to move body away from closest foot
-									if (MinDist < W.MinimumReachDistance)
+									// Attempt optimization
+									bool bAttemptOptimization = false;
+									FHex OptimizedBodyHex = ProjectedBodyHex;
+									
+									if (MaxDistOver > 0.f)
 									{
+										// Pull body towards furthest foot
+										const int32 bdq = FurthestFootHex.Q - ProjectedBodyHex.Q;
+										const int32 bdr = FurthestFootHex.R - ProjectedBodyHex.R;
+										float Dist = FMath::Max(FMath::Max(FMath::Abs((float)bdq), FMath::Abs((float)bdr)), FMath::Abs((float)(bdq + bdr)));
+										if (Dist > 0.1f)
+										{
+											const float Scale = MaxDistOver / Dist;
+											int32 MoveQ = FMath::RoundToInt((float)bdq * Scale);
+											int32 MoveR = FMath::RoundToInt((float)bdr * Scale);
+											OptimizedBodyHex.Q += MoveQ;
+											OptimizedBodyHex.R += MoveR;
+											bAttemptOptimization = true;
+										}
+									}
+									else if (MinDistUnder > 0.f)
+									{
+										// Push body away from closest foot
 										const int32 bdq = ProjectedBodyHex.Q - ClosestFootHex.Q;
 										const int32 bdr = ProjectedBodyHex.R - ClosestFootHex.R;
 										float Dist = FMath::Max(FMath::Max(FMath::Abs((float)bdq), FMath::Abs((float)bdr)), FMath::Abs((float)(bdq + bdr)));
-										
 										if (Dist > 0.1f)
 										{
-											const float RequiredDist = W.MinimumReachDistance + 0.1f;
-											const float Scale = RequiredDist / Dist;
-											int32 NewQ = ClosestFootHex.Q + FMath::RoundToInt((float)bdq * Scale);
-											int32 NewR = ClosestFootHex.R + FMath::RoundToInt((float)bdr * Scale);
-											FHex NewBodyHex(NewQ, NewR);
+											const float Scale = (MinDistUnder + 0.1f) / Dist;
+											int32 MoveQ = FMath::RoundToInt((float)bdq * Scale);
+											int32 MoveR = FMath::RoundToInt((float)bdr * Scale);
+											OptimizedBodyHex.Q += MoveQ;
+											OptimizedBodyHex.R += MoveR;
+											bAttemptOptimization = true;
+										}
+									}
+									
+									if (bAttemptOptimization)
+									{
+										// Re-validate
+										bool bNewValid = true;
+										for (int32 OtherIdx = 0; OtherIdx < Feet.Num(); ++OtherIdx)
+										{
+											FFootState* OtherFoot = Feet[OtherIdx];
+											FHex OtherFootHex;
+											if (OtherIdx == FootIndex) OtherFootHex = TestHex;
+											else if (OtherFoot->StepState == EFootStepState::Planted || 
+												(OtherFoot->StepState == EFootStepState::Lowering && OtherFoot->StepProgress + 1 >= W.StepLowerTicks))
+												OtherFootHex = OtherFoot->CurrentTile;
+											else continue;
 											
-											// Re-validate
-											bool bNewValid = true;
-											for (int32 OtherIdx = 0; OtherIdx < Feet.Num(); ++OtherIdx)
-											{
-												FFootState* OtherFoot = Feet[OtherIdx];
-												FHex OtherFootHex;
-												if (OtherIdx == FootIndex) OtherFootHex = TestHex;
-												else if (OtherFoot->StepState == EFootStepState::Planted || 
-													(OtherFoot->StepState == EFootStepState::Lowering && OtherFoot->StepProgress + 1 >= W.StepLowerTicks))
-													OtherFootHex = OtherFoot->CurrentTile;
-												else continue;
-												
-												const int32 fdq = OtherFootHex.Q - NewBodyHex.Q;
-												const int32 fdr = OtherFootHex.R - NewBodyHex.R;
-												const int32 fHexDist = FMath::Max(FMath::Max(FMath::Abs(fdq), FMath::Abs(fdr)), FMath::Abs(fdq + fdr));
-												
-												if ((float)fHexDist < W.MinimumReachDistance || fHexDist > W.ReachDistance)
-												{
-													bNewValid = false;
-													break;
-												}
-											}
+											const int32 fdq = OtherFootHex.Q - OptimizedBodyHex.Q;
+											const int32 fdr = OtherFootHex.R - OptimizedBodyHex.R;
+											const float fHexDist = (float)FMath::Max(FMath::Max(FMath::Abs(fdq), FMath::Abs(fdr)), FMath::Abs(fdq + fdr));
 											
-											if (bNewValid)
+											if ((W.MinimumReachDistance > 0.f && fHexDist < W.MinimumReachDistance) || 
+												(W.ReachDistance > 0 && fHexDist > W.ReachDistance))
 											{
-												ProjectedBodyHex = NewBodyHex;
-												// Update float average to match the optimized integer position
-												// so scoring reflects the actual valid body position
-												AvgBodyQ = (float)NewBodyHex.Q;
-												AvgBodyR = (float)NewBodyHex.R;
-												bProjectedBodyValid = true;
+												bNewValid = false;
+												break;
 											}
+										}
+										
+										if (bNewValid)
+										{
+											ProjectedBodyHex = OptimizedBodyHex;
+											AvgBodyQ = (float)OptimizedBodyHex.Q;
+											AvgBodyR = (float)OptimizedBodyHex.R;
+											bProjectedBodyValid = true;
 										}
 									}
 								}

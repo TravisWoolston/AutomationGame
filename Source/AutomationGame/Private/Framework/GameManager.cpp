@@ -592,6 +592,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		WalkerState.ReachDistance = ReachDistance;
 		WalkerState.MinimumReachDistance = SavedWalkerCalibration.MinimumReachDistance; // Apply saved minimum reach distance
 		WalkerState.StandHeight = SavedWalkerCalibration.StandHeight; // Apply saved stand height
+		WalkerState.QuadrantRotationOffset = SavedWalkerCalibration.QuadrantRotationOffset; // Apply saved rotation offset
 
 		// Don't set program here - let SetProgram handle it after SimWalkerIndex is assigned
 		WalkerState.Program = TArray<FWalkerInstr>(); // Empty for now
@@ -604,98 +605,104 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		
 		// Apply StartingFootDistance to walker's foot positions in the sim
 		// This applies the calibration setting to runtime walkers
-		if (WalkerIndex >= 0 && WalkerIndex < Sim->Walkers.Num() && !FMath::IsNearlyZero(SavedWalkerCalibration.StartingFootDistance))
+		const int32 RingRadius = FMath::RoundToInt(SavedWalkerCalibration.StartingFootDistance);
+		if (WalkerIndex >= 0 && WalkerIndex < Sim->Walkers.Num() && RingRadius > 0)
 		{
 			FWalkerState& SimWalkerState = Sim->Walkers[WalkerIndex];
 
 			// Get body world position
 			const FVector BodyWorldPos = OrbSimDriver->MapHexToWorld(Hex);
+			const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
 
-			// Apply StartingFootDistance to each foot
-			// Foot order: D, L, R, U (matches cross pattern initialization)
-			FHex* FeetHexes[] = { &SimWalkerState.DFoot.CurrentTile, &SimWalkerState.LFoot.CurrentTile, &SimWalkerState.RFoot.CurrentTile, &SimWalkerState.UFoot.CurrentTile };
-			FHex* FeetTargets[] = { &SimWalkerState.DFoot.TargetTile, &SimWalkerState.LFoot.TargetTile, &SimWalkerState.RFoot.TargetTile, &SimWalkerState.UFoot.TargetTile };
-
-			// Initial foot positions (axis-aligned pattern matching SimWorldHex)
-			// Quadrant mapping: D->S (R+), L->W (Q-), R->E (Q+), U->N (R-)
-			FHex InitialFeet[] = {
-				FHex(Hex.Q, Hex.R + 1),      // D -> S (South: R increases)
-				FHex(Hex.Q - 1, Hex.R),      // L -> W (West: Q decreases)
-				FHex(Hex.Q + 1, Hex.R),      // R -> E (East: Q increases)
-				FHex(Hex.Q, Hex.R - 1)       // U -> N (North: R decreases)
-			};
-
-			// StartingFootDistance is in tiles, so convert to world units
-			const float TileSize = OrbSimDriver->GetTileSize();
-			
-			for (int32 i = 0; i < 4; ++i)
+			// Generate Ring of hex offsets (relative to center 0,0)
+			TArray<FHex> Ring;
+			FHex H = FHex(-RingRadius, RingRadius); // Start at SW corner
+			for (int SideIdx = 0; SideIdx < 6; ++SideIdx)
 			{
-				const FHex& InitialFootHex = InitialFeet[i];
-				const FVector InitialFootWorld = OrbSimDriver->MapHexToWorld(InitialFootHex);
-
-				// Calculate direction from body to foot in horizontal plane
-				const FVector BodyWorld2D = FVector(BodyWorldPos.X, BodyWorldPos.Y, 0.f);
-				const FVector FootWorld2D = FVector(InitialFootWorld.X, InitialFootWorld.Y, 0.f);
-				FVector BodyToFootDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
-
-				// If direction is invalid, use a default direction based on foot index
-				if (BodyToFootDir.IsNearlyZero())
+				for (int j = 0; j < RingRadius; ++j)
 				{
-					// Default directions for each foot (approximate)
-					const FVector DefaultDirs[] = {
-						FVector(1.f, 0.f, 0.f),   // D
-						FVector(0.f, 1.f, 0.f),   // L
-						FVector(-1.f, 0.f, 0.f),  // R
-						FVector(0.f, -1.f, 0.f)   // U
-					};
-					BodyToFootDir = DefaultDirs[i];
-				}
-
-				// Calculate new position by adding offset along the direction from body to foot
-				// StartingFootDistance is in tiles, so multiply by TileSize to get world units
-				const FVector Offset2D = BodyToFootDir * (SavedWalkerCalibration.StartingFootDistance * TileSize);
-				const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
-
-				// Convert to hex
-				FHex NewFootHex;
-				if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, InitialFootWorld.Z), NewFootHex))
-				{
-					// Check if within reach distance and above minimum reach distance
-					const int32 dq = NewFootHex.Q - Hex.Q;
-					const int32 dr = NewFootHex.R - Hex.R;
-					const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-					const float MinReach = FMath::Max(0.f, SavedWalkerCalibration.MinimumReachDistance);
-
-					// Validate distance is within valid range
-					bool bValidDistance = true;
-					if (ReachDistance > 0 && HexDist > ReachDistance)
-					{
-						bValidDistance = false;
-						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too far (dist=%d > %d), keeping original"),
-							i, HexDist, ReachDistance);
-					}
-					else if (MinReach > 0.f && (float)HexDist < MinReach)
-					{
-						bValidDistance = false;
-						UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too close (dist=%d < %.1f), keeping original"),
-							i, HexDist, MinReach);
-					}
-
-					if (bValidDistance)
-					{
-						*FeetHexes[i] = NewFootHex;
-						*FeetTargets[i] = NewFootHex;
-					}
-				}
-				else
-				{
-					// Conversion failed, keep original position
-					UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d failed to convert to hex, keeping original"), i);
+					Ring.Add(H);
+					H = HexUtil::Neighbor(H, (EHexDir)SideIdx);
 				}
 			}
 
-			UE_LOG(LogTemp, Log, TEXT("GameManager: Applied StartingFootDistance=%.1f to walker %d foot positions"),
-				SavedWalkerCalibration.StartingFootDistance, WalkerIndex);
+			// Apply to each foot
+			FFootState* Feet[] = { &SimWalkerState.DFoot, &SimWalkerState.LFoot, &SimWalkerState.RFoot, &SimWalkerState.UFoot };
+			const float TileSize = OrbSimDriver->GetTileSize();
+			
+			for (int32 FootIdx = 0; FootIdx < 4; ++FootIdx)
+			{
+				// Get current foot position to determine direction
+				FHex CurrentFootHex = Feet[FootIdx]->CurrentTile;
+				FVector CurrentFootWorld = OrbSimDriver->MapHexToWorld(CurrentFootHex);
+				FVector FootWorld2D = FVector(CurrentFootWorld.X, CurrentFootWorld.Y, 0.f);
+				
+				// Ideal direction based on current position
+				FVector IdealDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
+				if (IdealDir.IsNearlyZero()) IdealDir = FVector(1,0,0);
+				
+				FVector IdealPos = BodyWorld2D + IdealDir * (SavedWalkerCalibration.StartingFootDistance * TileSize);
+
+				// Find best tile in Ring
+				FHex BestOffsetHex = Ring[0];
+				float BestDistSq = FLT_MAX;
+
+				for (const FHex& OffsetH : Ring)
+				{
+					FHex AbsH(Hex.Q + OffsetH.Q, Hex.R + OffsetH.R);
+					FVector WorldPos = OrbSimDriver->MapHexToWorld(AbsH);
+					float DistSq = FVector::DistSquared2D(WorldPos, IdealPos);
+					if (DistSq < BestDistSq)
+					{
+						BestDistSq = DistSq;
+						BestOffsetHex = OffsetH;
+					}
+				}
+
+				// Apply StartingFootOrientation (shift index in ring)
+				if (SavedWalkerCalibration.StartingFootOrientation != 0)
+				{
+					int32 Index = Ring.IndexOfByKey(BestOffsetHex);
+					if (Index != INDEX_NONE)
+					{
+						int32 NewIndex = (Index + SavedWalkerCalibration.StartingFootOrientation) % Ring.Num();
+						if (NewIndex < 0) NewIndex += Ring.Num();
+						BestOffsetHex = Ring[NewIndex];
+					}
+				}
+
+				// Set new foot position
+				FHex NewFootHex(Hex.Q + BestOffsetHex.Q, Hex.R + BestOffsetHex.R);
+				
+				// Validate distance
+				const int32 dq = NewFootHex.Q - Hex.Q;
+				const int32 dr = NewFootHex.R - Hex.R;
+				const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+				
+				bool bValid = true;
+				if (ReachDistance > 0 && HexDist > ReachDistance)
+				{
+					bValid = false;
+					UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too far (dist=%d > %d), keeping original"),
+						FootIdx, HexDist, ReachDistance);
+				}
+				else if (SavedWalkerCalibration.MinimumReachDistance > 0.f && (float)HexDist < SavedWalkerCalibration.MinimumReachDistance)
+				{
+					bValid = false;
+					UE_LOG(LogTemp, Warning, TEXT("GameManager: StartingFootDistance for foot %d resulted in hex too close (dist=%d < %.1f), keeping original"),
+						FootIdx, HexDist, SavedWalkerCalibration.MinimumReachDistance);
+				}
+
+				if (bValid)
+				{
+					Feet[FootIdx]->CurrentTile = NewFootHex;
+					Feet[FootIdx]->TargetTile = NewFootHex;
+					Feet[FootIdx]->StepState = EFootStepState::Planted;
+				}
+			}
+
+			UE_LOG(LogTemp, Log, TEXT("GameManager: Applied StartingFootDistance=%.1f (Radius=%d, Orientation=%d) to walker %d foot positions"),
+				SavedWalkerCalibration.StartingFootDistance, RingRadius, SavedWalkerCalibration.StartingFootOrientation, WalkerIndex);
 		}
 
 		// Now that SimWalkerIndex is set, we can call SetProgram
@@ -1932,6 +1939,7 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 		WalkerState.ReachDistance = ReachDistance;
 		WalkerState.MinimumReachDistance = MinimumReachDistance;
 		WalkerState.StandHeight = StandHeight;
+		WalkerState.QuadrantRotationOffset = QuadrantRotationOffset;
 		
 			// Apply StartingFootDistance by recalculating foot positions
 			// StartingFootDistance is the number of tiles away from the body tile

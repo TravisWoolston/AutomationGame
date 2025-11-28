@@ -138,6 +138,21 @@ void USimWorldHex::StepArms()
 		};
 	// ---------------------------------------------------------------
 
+	// Gather walker assigned tiles (current and target) to prevent arms from colliding with them
+	TSet<FHex> WalkerAssignedTiles;
+	for (const FWalkerState& W : Walkers)
+	{
+		// Include both current and target tiles for all feet to cover movement
+		WalkerAssignedTiles.Add(W.DFoot.CurrentTile);
+		WalkerAssignedTiles.Add(W.DFoot.TargetTile);
+		WalkerAssignedTiles.Add(W.LFoot.CurrentTile);
+		WalkerAssignedTiles.Add(W.LFoot.TargetTile);
+		WalkerAssignedTiles.Add(W.RFoot.CurrentTile);
+		WalkerAssignedTiles.Add(W.RFoot.TargetTile);
+		WalkerAssignedTiles.Add(W.UFoot.CurrentTile);
+		WalkerAssignedTiles.Add(W.UFoot.TargetTile);
+	}
+
 	for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++)
 	{
 		FArmState& S = Arms[ArmIndex];
@@ -870,14 +885,14 @@ void USimWorldHex::StepArms()
 						{
 							return false; // This position will have a bond formed, so it's not an obstruction
 						}
-						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H);
+						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H) || WalkerAssignedTiles.Contains(H);
 					};
 
 				bool bBlocked = false;
 
 				// 1) Destination hand cannot contain board orbs or other arms' held cluster sub-orbs
 				// Only check this if the arm is holding something, and don't check for other arms' hands
-				if (S.bHolding && (WorldOcc.Contains(NewHand) || OtherHeldOcc.Contains(NewHand)))
+				if (S.bHolding && (WorldOcc.Contains(NewHand) || OtherHeldOcc.Contains(NewHand) || WalkerAssignedTiles.Contains(NewHand)))
 				{
 					bBlocked = true;
 				}
@@ -1005,12 +1020,16 @@ void USimWorldHex::StepArms()
 					{
 						ObstacleHex = NewHand;
 					}
+					else if (WalkerAssignedTiles.Contains(NewHand))
+					{
+						ObstacleHex = NewHand;
+					}
 					else
 					{
 						// Check end positions of held cluster sub-orbs
 						for (const FHex& H : EndLocals)
 						{
-							if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H))
+							if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H) || WalkerAssignedTiles.Contains(H))
 							{
 								ObstacleHex = H;
 								break;
@@ -1022,7 +1041,7 @@ void USimWorldHex::StepArms()
 						{
 							for (const FHex& H : MidTranslateLocals)
 							{
-								if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H))
+								if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H) || WalkerAssignedTiles.Contains(H))
 								{
 									ObstacleHex = H;
 									break;
@@ -1034,7 +1053,7 @@ void USimWorldHex::StepArms()
 						{
 							for (const FHex& H : MidRotateLocals)
 							{
-								if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H))
+								if (WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H) || WalkerAssignedTiles.Contains(H))
 								{
 									ObstacleHex = H;
 									break;
@@ -1179,14 +1198,14 @@ void USimWorldHex::StepArms()
 							return false;
 						}
 						
-						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H);
+						return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) || OtherArmOcc.Contains(H) || WalkerAssignedTiles.Contains(H);
 					};
 
 				// Check if the new hand position would be blocked
 				if (S.bHolding)
 				{
-					// Check if new hand position overlaps with board items or other arms' held items
-					if (WorldOcc.Contains(NewHand) || OtherHeldOcc.Contains(NewHand))
+					// Check if new hand position overlaps with board items or other arms' held items or walker tiles
+					if (WorldOcc.Contains(NewHand) || OtherHeldOcc.Contains(NewHand) || WalkerAssignedTiles.Contains(NewHand))
 					{
 						bBlocked = true;
 					}
@@ -1224,6 +1243,35 @@ void USimWorldHex::StepArms()
 				{
 					// Find the actual obstacle hex
 					FHex ObstacleHex = NewHand;
+					
+					if (WorldOcc.Contains(NewHand) || OtherHeldOcc.Contains(NewHand) || WalkerAssignedTiles.Contains(NewHand))
+					{
+						ObstacleHex = NewHand;
+					}
+					else if (S.Held.bIsCluster)
+					{
+						const FHex Grip = NewHand;
+						const uint8 cur = (uint8)S.Facing % 6;
+						const int8 grab = (int8)S.Held.GrabFacing;
+						const uint8 facingDelta = (grab >= 0)
+							? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+							: cur;
+						const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+						for (const FOrbData& Sub : S.Held.Orbs)
+						{
+							if (Sub.dQ == 0 && Sub.dR == 0) continue;
+							FHex Local(Sub.dQ, Sub.dR);
+							FHex RotLocal = Rot60(Local, ccw);
+							FHex WorldPos(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R);
+							
+							if (OverlapsAny(WorldPos))
+							{
+								ObstacleHex = WorldPos;
+								break;
+							}
+						}
+					}
 					
 					// Record collision debug info
 					FCollisionDebugInfo CollisionInfo;
