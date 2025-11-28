@@ -626,22 +626,60 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 				}
 			}
 
-			// Apply to each foot
+			// Determine body orientation
+			FVector BodyForward = FVector::ForwardVector;
+			FVector BodyRight = FVector::RightVector;
+			
+			if (Walker)
+			{
+				const FTransform BodyTransform = Walker->GetBodyComponent()->GetComponentTransform();
+				BodyForward = BodyTransform.GetUnitAxis(EAxis::X);
+				BodyRight = BodyTransform.GetUnitAxis(EAxis::Y);
+				// Project to 2D
+				BodyForward = FVector(BodyForward.X, BodyForward.Y, 0.f).GetSafeNormal();
+				BodyRight = FVector(BodyRight.X, BodyRight.Y, 0.f).GetSafeNormal();
+				if (BodyForward.IsNearlyZero()) BodyForward = FVector::ForwardVector;
+				if (BodyRight.IsNearlyZero()) BodyRight = FVector::RightVector;
+			}
+			
+			// Apply QuadrantRotationOffset
+			if (SavedWalkerCalibration.QuadrantRotationOffset != 0.f)
+			{
+				FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(SavedWalkerCalibration.QuadrantRotationOffset));
+				BodyForward = Rot.RotateVector(BodyForward);
+				BodyRight = Rot.RotateVector(BodyRight);
+			}
+
+			// Quadrant Definitions matching CalibrateWalker
+			struct FQuadDef { FVector Dir; EWalkerFoot Leg; };
+			FQuadDef Quads[] = {
+				{ BodyForward, SavedWalkerCalibration.NQuadrantLeg },
+				{ BodyRight, SavedWalkerCalibration.EQuadrantLeg },
+				{ -BodyForward, SavedWalkerCalibration.SQuadrantLeg },
+				{ -BodyRight, SavedWalkerCalibration.WQuadrantLeg }
+			};
+			
+			// Helper to map foot enum to index
+			auto GetLegIndex = [](EWalkerFoot Foot) -> int32 {
+				switch (Foot) {
+					case EWalkerFoot::DFoot: return 0;
+					case EWalkerFoot::LFoot: return 1;
+					case EWalkerFoot::RFoot: return 2;
+					case EWalkerFoot::UFoot: return 3;
+					default: return -1;
+				}
+			};
+
 			FFootState* Feet[] = { &SimWalkerState.DFoot, &SimWalkerState.LFoot, &SimWalkerState.RFoot, &SimWalkerState.UFoot };
 			const float TileSize = OrbSimDriver->GetTileSize();
 			
-			for (int32 FootIdx = 0; FootIdx < 4; ++FootIdx)
+			for (const FQuadDef& Q : Quads)
 			{
-				// Get current foot position to determine direction
-				FHex CurrentFootHex = Feet[FootIdx]->CurrentTile;
-				FVector CurrentFootWorld = OrbSimDriver->MapHexToWorld(CurrentFootHex);
-				FVector FootWorld2D = FVector(CurrentFootWorld.X, CurrentFootWorld.Y, 0.f);
+				int32 FootIdx = GetLegIndex(Q.Leg);
+				if (FootIdx < 0) continue;
 				
-				// Ideal direction based on current position
-				FVector IdealDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
-				if (IdealDir.IsNearlyZero()) IdealDir = FVector(1,0,0);
-				
-				FVector IdealPos = BodyWorld2D + IdealDir * (SavedWalkerCalibration.StartingFootDistance * TileSize);
+				// Target position in world space
+				FVector IdealPos = BodyWorld2D + Q.Dir * (SavedWalkerCalibration.StartingFootDistance * TileSize);
 
 				// Find best tile in Ring
 				FHex BestOffsetHex = Ring[0];
@@ -1923,6 +1961,34 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 		return;
 	}
 
+	// Map SimIndex to Actor to get rotation
+	TMap<int32, ABasicWalker*> IndexToActor;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ABasicWalker> It(World); It; ++It)
+		{
+			ABasicWalker* Walker = *It;
+			if (Walker && Walker->SimWalkerIndex >= 0)
+			{
+				IndexToActor.Add(Walker->SimWalkerIndex, Walker);
+				
+				// Also update actor properties here to ensure they are in sync
+				if (Walker->SimWalkerIndex < Sim->Walkers.Num())
+				{
+					Walker->StepHeight = StepHeight;
+					Walker->StepRaiseTicks = StepRaiseTicks;
+					Walker->StepMoveTicks = StepMoveTicks;
+					Walker->StepLowerTicks = StepLowerTicks;
+					Walker->ReachDistance = ReachDistance;
+					Walker->MinimumReachDistance = MinimumReachDistance;
+					Walker->StandHeight = StandHeight;
+					Walker->StartingFootDistance = StartingFootDistance;
+					Walker->QuadrantRotationOffset = QuadrantRotationOffset;
+				}
+			}
+		}
+	}
+
 	const float TileSize = OrbSimDriver->GetTileSize();
 	const int32 EffectiveReachDist = FMath::Max(1, ReachDistance);
 
@@ -1941,101 +2007,135 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 		WalkerState.StandHeight = StandHeight;
 		WalkerState.QuadrantRotationOffset = QuadrantRotationOffset;
 		
-			// Apply StartingFootDistance by recalculating foot positions
-			// StartingFootDistance is the number of tiles away from the body tile
-			const int32 RingRadius = FMath::RoundToInt(StartingFootDistance);
-			if (RingRadius > 0)
+		// Apply StartingFootDistance by recalculating foot positions
+		// StartingFootDistance is the number of tiles away from the body tile
+		const int32 RingRadius = FMath::RoundToInt(StartingFootDistance);
+		if (RingRadius > 0)
+		{
+			const FHex& BodyHex = WalkerState.BaseHex;
+			const FVector BodyWorld = OrbSimDriver->MapHexToWorld(BodyHex);
+			const FVector BodyWorld2D = FVector(BodyWorld.X, BodyWorld.Y, 0.f);
+			
+			// Determine body orientation
+			FVector BodyForward = FVector::ForwardVector;
+			FVector BodyRight = FVector::RightVector;
+			
+			if (ABasicWalker** WalkerPtr = IndexToActor.Find(i))
 			{
-				const FHex& BodyHex = WalkerState.BaseHex;
-				const FVector BodyWorld = OrbSimDriver->MapHexToWorld(BodyHex);
-				const FVector BodyWorld2D = FVector(BodyWorld.X, BodyWorld.Y, 0.f);
-				
-				// Generate Ring of hex offsets (relative to center 0,0)
-				TArray<FHex> Ring;
-				FHex H = FHex(-RingRadius, RingRadius); // Start at SW corner
-				for (int SideIdx = 0; SideIdx < 6; ++SideIdx)
+				const FTransform BodyTransform = (*WalkerPtr)->GetBodyComponent()->GetComponentTransform();
+				BodyForward = BodyTransform.GetUnitAxis(EAxis::X);
+				BodyRight = BodyTransform.GetUnitAxis(EAxis::Y);
+				// Project to 2D
+				BodyForward = FVector(BodyForward.X, BodyForward.Y, 0.f).GetSafeNormal();
+				BodyRight = FVector(BodyRight.X, BodyRight.Y, 0.f).GetSafeNormal();
+				if (BodyForward.IsNearlyZero()) BodyForward = FVector::ForwardVector;
+				if (BodyRight.IsNearlyZero()) BodyRight = FVector::RightVector;
+			}
+			
+			// Apply QuadrantRotationOffset
+			if (QuadrantRotationOffset != 0.f)
+			{
+				FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(QuadrantRotationOffset));
+				BodyForward = Rot.RotateVector(BodyForward);
+				BodyRight = Rot.RotateVector(BodyRight);
+			}
+			
+			// Generate Ring of hex offsets (relative to center 0,0)
+			TArray<FHex> Ring;
+			FHex H = FHex(-RingRadius, RingRadius); // Start at SW corner
+			for (int SideIdx = 0; SideIdx < 6; ++SideIdx)
+			{
+				for (int j = 0; j < RingRadius; ++j)
 				{
-					for (int j = 0; j < RingRadius; ++j)
-					{
-						Ring.Add(H);
-						H = HexUtil::Neighbor(H, (EHexDir)SideIdx);
-					}
-				}
-
-				// Apply to each foot
-				FFootState* Feet[] = { &WalkerState.DFoot, &WalkerState.LFoot, &WalkerState.RFoot, &WalkerState.UFoot };
-				
-				for (int32 FootIdx = 0; FootIdx < 4; ++FootIdx)
-				{
-					// Get current foot position to determine direction
-					FHex CurrentFootHex = Feet[FootIdx]->CurrentTile;
-					FVector CurrentFootWorld = OrbSimDriver->MapHexToWorld(CurrentFootHex);
-					FVector FootWorld2D = FVector(CurrentFootWorld.X, CurrentFootWorld.Y, 0.f);
-					
-					// Ideal direction based on current position
-					// We use this to pick the best starting tile in the ring before rotation
-					// This preserves the general leg orientation (e.g. North leg stays North-ish)
-					FVector IdealDir = (FootWorld2D - BodyWorld2D).GetSafeNormal();
-					if (IdealDir.IsNearlyZero()) IdealDir = FVector(1,0,0); // Fallback
-					
-					FVector IdealPos = BodyWorld2D + IdealDir * (StartingFootDistance * TileSize);
-
-					// Find best tile in Ring
-					FHex BestOffsetHex = Ring[0];
-					float BestDistSq = FLT_MAX;
-
-					for (const FHex& OffsetH : Ring)
-					{
-						FHex AbsH(BodyHex.Q + OffsetH.Q, BodyHex.R + OffsetH.R);
-						FVector WorldPos = OrbSimDriver->MapHexToWorld(AbsH);
-						float DistSq = FVector::DistSquared2D(WorldPos, IdealPos);
-						if (DistSq < BestDistSq)
-						{
-							BestDistSq = DistSq;
-							BestOffsetHex = OffsetH;
-						}
-					}
-
-					// Apply StartingFootOrientation (shift index in ring)
-					if (StartingFootOrientation != 0)
-					{
-						int32 Index = Ring.IndexOfByKey(BestOffsetHex);
-						if (Index != INDEX_NONE)
-						{
-							int32 NewIndex = (Index + StartingFootOrientation) % Ring.Num();
-							if (NewIndex < 0) NewIndex += Ring.Num();
-							BestOffsetHex = Ring[NewIndex];
-						}
-					}
-
-					// Set new foot position
-					FHex NewFootHex(BodyHex.Q + BestOffsetHex.Q, BodyHex.R + BestOffsetHex.R);
-					
-					// Validate distance (sanity check)
-					const int32 dq = NewFootHex.Q - BodyHex.Q;
-					const int32 dr = NewFootHex.R - BodyHex.R;
-					const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-					
-					// Note: HexDist should equal Radius, but sanity check ReachDistance
-					bool bValid = true;
-					if (ReachDistance > 0 && HexDist > ReachDistance)
-					{
-						bValid = false;
-						// Keep original if too far
-					}
-					else if (MinimumReachDistance > 0.f && (float)HexDist < MinimumReachDistance)
-					{
-						bValid = false;
-					}
-
-					if (bValid)
-					{
-						Feet[FootIdx]->CurrentTile = NewFootHex;
-						Feet[FootIdx]->TargetTile = NewFootHex;
-						Feet[FootIdx]->StepState = EFootStepState::Planted;
-					}
+					Ring.Add(H);
+					H = HexUtil::Neighbor(H, (EHexDir)SideIdx);
 				}
 			}
+
+			// Quadrant Definitions matching CalibrateWalker
+			struct FQuadDef { FVector Dir; EWalkerFoot Leg; };
+			FQuadDef Quads[] = {
+				{ BodyForward, NQuadrantLeg },
+				{ BodyRight, EQuadrantLeg },
+				{ -BodyForward, SQuadrantLeg },
+				{ -BodyRight, WQuadrantLeg }
+			};
+			
+			// Helper to map foot enum to index
+			auto GetLegIndex = [](EWalkerFoot Foot) -> int32 {
+				switch (Foot) {
+					case EWalkerFoot::DFoot: return 0;
+					case EWalkerFoot::LFoot: return 1;
+					case EWalkerFoot::RFoot: return 2;
+					case EWalkerFoot::UFoot: return 3;
+					default: return -1;
+				}
+			};
+
+			FFootState* Feet[] = { &WalkerState.DFoot, &WalkerState.LFoot, &WalkerState.RFoot, &WalkerState.UFoot };
+			
+			for (const FQuadDef& Q : Quads)
+			{
+				int32 FootIdx = GetLegIndex(Q.Leg);
+				if (FootIdx < 0) continue;
+				
+				// Target position in world space
+				FVector IdealPos = BodyWorld2D + Q.Dir * (StartingFootDistance * TileSize);
+
+				// Find best tile in Ring
+				FHex BestOffsetHex = Ring[0];
+				float BestDistSq = FLT_MAX;
+
+				for (const FHex& OffsetH : Ring)
+				{
+					FHex AbsH(BodyHex.Q + OffsetH.Q, BodyHex.R + OffsetH.R);
+					FVector WorldPos = OrbSimDriver->MapHexToWorld(AbsH);
+					float DistSq = FVector::DistSquared2D(WorldPos, IdealPos);
+					if (DistSq < BestDistSq)
+					{
+						BestDistSq = DistSq;
+						BestOffsetHex = OffsetH;
+					}
+				}
+
+				// Apply StartingFootOrientation (shift index in ring)
+				if (StartingFootOrientation != 0)
+				{
+					int32 Index = Ring.IndexOfByKey(BestOffsetHex);
+					if (Index != INDEX_NONE)
+					{
+						int32 NewIndex = (Index + StartingFootOrientation) % Ring.Num();
+						if (NewIndex < 0) NewIndex += Ring.Num();
+						BestOffsetHex = Ring[NewIndex];
+					}
+				}
+
+				// Set new foot position
+				FHex NewFootHex(BodyHex.Q + BestOffsetHex.Q, BodyHex.R + BestOffsetHex.R);
+				
+				// Validate distance
+				const int32 dq = NewFootHex.Q - BodyHex.Q;
+				const int32 dr = NewFootHex.R - BodyHex.R;
+				const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+				
+				bool bValid = true;
+				if (ReachDistance > 0 && HexDist > ReachDistance)
+				{
+					bValid = false;
+				}
+				else if (MinimumReachDistance > 0.f && (float)HexDist < MinimumReachDistance)
+				{
+					bValid = false;
+				}
+
+				if (bValid)
+				{
+					Feet[FootIdx]->CurrentTile = NewFootHex;
+					Feet[FootIdx]->TargetTile = NewFootHex;
+					Feet[FootIdx]->StepState = EFootStepState::Planted;
+				}
+			}
+		}
 		}
 
 	// Also update BasicWalker actor instances with these values

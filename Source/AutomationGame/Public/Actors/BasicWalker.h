@@ -147,6 +147,10 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
 	float StartingFootDistance = 0.f;
 
+	/** Rotation offset for quadrant boundaries (degrees) - assigned by GameManager */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
+	float QuadrantRotationOffset = 0.f;
+
 	// --- Foot Animation States ---
 
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")

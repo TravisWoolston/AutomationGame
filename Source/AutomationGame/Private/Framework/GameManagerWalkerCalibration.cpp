@@ -582,138 +582,140 @@ void AGameManager::GatherWalkerCalibrationData(USkeletalMeshComponent* BodyComp)
 
 void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 {
-	if (!bWalkerCalibrationActive || !OrbSimDriver || WalkerLegCalibrations.Num() == 0 || WalkerOriginalFootPositions.Num() != WalkerLegCalibrations.Num())
+	if (!BodyComp || !OrbSimDriver)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ApplyStartingFootDistance: Conditions not met - Active=%d, Driver=%d, Legs=%d, Origins=%d"),
-			bWalkerCalibrationActive ? 1 : 0, OrbSimDriver ? 1 : 0, WalkerLegCalibrations.Num(), WalkerOriginalFootPositions.Num());
 		return;
 	}
 
-	// If StartingFootDistance is 0, restore original positions
-	if (FMath::IsNearlyZero(StartingFootDistance))
+	UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Applying tile offset (Radius=%.1f, Orientation=%d) to legs via Quadrants"), StartingFootDistance, StartingFootOrientation);
+
+	// 1. Determine Quadrant Directions relative to Body
+	const FTransform BodyTransform = BodyComp->GetComponentTransform();
+	FVector BodyForward = BodyTransform.GetUnitAxis(EAxis::X);
+	FVector BodyRight = BodyTransform.GetUnitAxis(EAxis::Y);
+	
+	// Project to 2D (XY plane) and normalize
+	BodyForward = FVector(BodyForward.X, BodyForward.Y, 0.f).GetSafeNormal();
+	BodyRight = FVector(BodyRight.X, BodyRight.Y, 0.f).GetSafeNormal();
+	if (BodyForward.IsNearlyZero()) BodyForward = FVector::ForwardVector;
+	if (BodyRight.IsNearlyZero()) BodyRight = FVector::RightVector;
+
+	// Apply QuadrantRotationOffset to align assignment with visual quadrants
+	if (QuadrantRotationOffset != 0.f)
 	{
-		for (int32 Index = 0; Index < WalkerLegCalibrations.Num(); ++Index)
-		{
-			WalkerLegCalibrations[Index].FootAxleWorldLocation = WalkerOriginalFootPositions[Index];
-		}
-		UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Restored original foot positions (StartingFootDistance=0)"));
-		return;
+		FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(QuadrantRotationOffset));
+		BodyForward = Rot.RotateVector(BodyForward);
+		BodyRight = Rot.RotateVector(BodyRight);
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Applying horizontal offset of %.1f tiles to %d legs"), StartingFootDistance, WalkerLegCalibrations.Num());
-
-	// Apply offset from the body-aligned tile in the horizontal plane, expressed in tile distance.
-	// StartingFootDistance is interpreted as "number of tiles away from the body tile" along the
-	// direction from body to the original foot position.
-	const float TileSize = OrbSimDriver->GetTileSize();
-
-	// Body position in XY plane (used as origin for tile-based offset)
-	const FVector BodyWorld2D = FVector(WalkerBodyBaseWorldLocation.X, WalkerBodyBaseWorldLocation.Y, 0.f);
-
-	// Apply offset from original positions
-	for (int32 Index = 0; Index < WalkerLegCalibrations.Num(); ++Index)
+	// 2. Get Body Hex (assuming walker is at (0,0) for calibration relative to itself, or use current hex)
+	// Use WalkerBodyBaseWorldLocation which is set during calibration start
+	FHex BodyHex;
+	if (!OrbSimDriver->WorldToHex(WalkerBodyBaseWorldLocation, BodyHex))
 	{
-		FWalkerLegCalibrationData& LegData = WalkerLegCalibrations[Index];
-		const FVector& OriginalPos = WalkerOriginalFootPositions[Index];
+		BodyHex = FHex(0, 0); // Fallback
+	}
 
-		// Calculate direction from body to original foot position in horizontal plane
-		const FVector OriginalFoot2D = FVector(OriginalPos.X, OriginalPos.Y, 0.f);
-		FVector BodyToFootDir = (OriginalFoot2D - BodyWorld2D).GetSafeNormal();
-
-		// If direction is invalid, use direction from body to hip
-		if (BodyToFootDir.IsNearlyZero())
+	// 3. Generate Ring of hex offsets (relative to center 0,0)
+	const int32 RingRadius = FMath::RoundToInt(StartingFootDistance);
+	TArray<FHex> Ring;
+	
+	if (RingRadius > 0)
+	{
+		// Start at SW corner (-R, R) relative to center
+		// Directions: 0=E, 1=NE, 2=NW, 3=W, 4=SW, 5=SE (Standard Pointy Top)
+		FHex H = FHex(-RingRadius, RingRadius); // (-R, +R) is SW corner
+		
+		// Starting at SW corner, we trace the ring CCW:
+		// Move E (0) -> SE corner
+		// Move NE (1) -> E corner
+		// Move NW (2) -> NE corner
+		// Move W (3) -> NW corner
+		// Move SW (4) -> W corner
+		// Move SE (5) -> SW corner (back to start)
+		
+		for (int i = 0; i < 6; ++i)
 		{
-			const FVector HipWorld2D = FVector(LegData.HipWorldLocation.X, LegData.HipWorldLocation.Y, 0.f);
-			BodyToFootDir = (HipWorld2D - BodyWorld2D).GetSafeNormal();
-			if (BodyToFootDir.IsNearlyZero())
+			for (int j = 0; j < RingRadius; ++j)
 			{
-				// Use component forward direction as fallback
-				const FTransform ComponentTransform = BodyComp->GetComponentTransform();
-				const FVector ForwardComponent = FVector(1.f, 0.f, 0.f);
-				const FVector ForwardWorld = ComponentTransform.TransformVector(ForwardComponent);
-				BodyToFootDir = FVector(ForwardWorld.X, ForwardWorld.Y, 0.f).GetSafeNormal();
-				if (BodyToFootDir.IsNearlyZero())
-				{
-					BodyToFootDir = FVector(1.f, 0.f, 0.f);
-				}
+				Ring.Add(H);
+				H = HexUtil::Neighbor(H, (EHexDir)i);
 			}
 		}
+	}
+	else
+	{
+		Ring.Add(FHex(0, 0));
+	}
 
-		// Snap direction to nearest 90-degree increment relative to body orientation to ensure even spacing
-		// This fixes issues where slight asymmetries in the model result in uneven tile assignments
-		const FTransform BodyTransform = BodyComp->GetComponentTransform();
-		FVector BodyForward = BodyTransform.GetUnitAxis(EAxis::X);
-		FVector BodyRight = BodyTransform.GetUnitAxis(EAxis::Y);
-		
-		// Project to 2D
-		BodyForward = FVector(BodyForward.X, BodyForward.Y, 0.f).GetSafeNormal();
-		BodyRight = FVector(BodyRight.X, BodyRight.Y, 0.f).GetSafeNormal();
-		
-		if (!BodyForward.IsNearlyZero() && !BodyRight.IsNearlyZero())
+	// 4. Define Quadrants and their assigned Legs
+	struct FQuadDef { FString Name; FVector Dir; EWalkerFoot Leg; };
+	FQuadDef Quads[] = {
+		{ TEXT("N"), BodyForward, NQuadrantLeg },
+		{ TEXT("E"), BodyRight, EQuadrantLeg },
+		{ TEXT("S"), -BodyForward, SQuadrantLeg },
+		{ TEXT("W"), -BodyRight, WQuadrantLeg }
+	};
+
+	// 5. For each Quadrant, find best tile and assign to leg
+	for (const FQuadDef& Q : Quads)
+	{
+		// Calculate ideal target position in world space (relative to body)
+		// We want a tile at distance 'Radius' in direction 'Q.Dir'
+		FVector TargetOffset = Q.Dir * (StartingFootDistance * OrbSimDriver->GetTileSize());
+		FVector IdealWorldPos = WalkerBodyBaseWorldLocation + TargetOffset;
+
+		// Find hex in ring that is closest to IdealWorldPos
+		FHex BestOffsetHex = Ring[0];
+		float BestDistSq = FLT_MAX;
+
+		for (const FHex& OffsetH : Ring)
 		{
-			float DotF = FVector::DotProduct(BodyToFootDir, BodyForward);
-			float DotR = FVector::DotProduct(BodyToFootDir, BodyRight);
+			// Convert offset hex to absolute world position
+			FHex AbsH(BodyHex.Q + OffsetH.Q, BodyHex.R + OffsetH.R);
+			FVector WorldPos = OrbSimDriver->MapHexToWorld(AbsH);
 			
-			if (FMath::Abs(DotF) > FMath::Abs(DotR))
+			float DistSq = FVector::DistSquared2D(WorldPos, IdealWorldPos);
+			if (DistSq < BestDistSq)
 			{
-				BodyToFootDir = (DotF > 0.f) ? BodyForward : -BodyForward;
-			}
-			else
-			{
-				BodyToFootDir = (DotR > 0.f) ? BodyRight : -BodyRight;
+				BestDistSq = DistSq;
+				BestOffsetHex = OffsetH;
 			}
 		}
 
-		// Apply StartingFootOrientation rotation (N * 60 degrees)
-		if (StartingFootOrientation != 0)
+		// Apply StartingFootOrientation (shift index in ring)
+		if (RingRadius > 0 && StartingFootOrientation != 0)
 		{
-			float AngleDeg = StartingFootOrientation * 60.f;
-			FQuat Rot = FQuat(FVector::UpVector, FMath::DegreesToRadians(AngleDeg));
-			BodyToFootDir = Rot.RotateVector(BodyToFootDir);
-		}
-
-		// Calculate new position by adding offset along the direction from body to original foot.
-		// Offset magnitude is expressed in tiles and converted to world units via TileSize.
-		const FVector Offset2D = BodyToFootDir * (StartingFootDistance * TileSize);
-		const FVector NewFootWorld2D = BodyWorld2D + Offset2D;
-
-		// Snap to nearest grid tile
-		FHex NearestHex;
-		if (OrbSimDriver->WorldToHex(FVector(NewFootWorld2D.X, NewFootWorld2D.Y, OriginalPos.Z), NearestHex))
-		{
-			const FVector SnappedWorld = OrbSimDriver->MapHexToWorld(NearestHex);
-
-			// Check if within leg reach
-			const float MaxLegLength = LegData.UpperLength + LegData.LowerLength;
-			const float VerticalDist = FMath::Abs(LegData.HipWorldLocation.Z - OriginalPos.Z);
-			const float MaxHorizontalReach = FMath::Sqrt(FMath::Max(0.f, MaxLegLength * MaxLegLength - VerticalDist * VerticalDist));
-			const float NewDistance = FVector::Dist2D(FVector(LegData.HipWorldLocation.X, LegData.HipWorldLocation.Y, 0.f), FVector(SnappedWorld.X, SnappedWorld.Y, 0.f));
-
-			if (NewDistance <= MaxHorizontalReach * 0.98f)
+			int32 Index = Ring.IndexOfByKey(BestOffsetHex);
+			if (Index != INDEX_NONE)
 			{
-				LegData.FootAxleWorldLocation = FVector(SnappedWorld.X, SnappedWorld.Y, OriginalPos.Z);
-				UE_LOG(LogTemp, Verbose, TEXT("ApplyStartingFootDistance: Leg %d snapped to hex (%d,%d)"), Index, NearestHex.Q, NearestHex.R);
-			}
-			else
-			{
-				// Too far, clamp to reachable distance
-				const FVector Hip2D = FVector(LegData.HipWorldLocation.X, LegData.HipWorldLocation.Y, 0.f);
-				const FVector HipToFootDir = (NewFootWorld2D - Hip2D).GetSafeNormal();
-				const FVector ReachablePos = Hip2D + HipToFootDir * (MaxHorizontalReach * 0.95f);
-				LegData.FootAxleWorldLocation = FVector(ReachablePos.X, ReachablePos.Y, OriginalPos.Z);
-				UE_LOG(LogTemp, Warning, TEXT("ApplyStartingFootDistance: Leg %d clamped to reachable distance (%.1f > %.1f)"),
-					Index, NewDistance, MaxHorizontalReach * 0.98f);
+				// Shift index (wrap around)
+				int32 NewIndex = (Index + StartingFootOrientation) % Ring.Num();
+				if (NewIndex < 0) NewIndex += Ring.Num();
+				BestOffsetHex = Ring[NewIndex];
 			}
 		}
-		else
+
+		// Assign to Leg
+		int32 LegIndex = (int32)Q.Leg;
+		if (LegIndex >= 0 && LegIndex < WalkerLegCalibrations.Num())
 		{
-			// Snap failed, use offset position
-			LegData.FootAxleWorldLocation = FVector(NewFootWorld2D.X, NewFootWorld2D.Y, OriginalPos.Z);
-			UE_LOG(LogTemp, Warning, TEXT("ApplyStartingFootDistance: Leg %d snap to hex failed, using offset position"), Index);
+			// Calculate final world position
+			FHex FinalAbsHex(BodyHex.Q + BestOffsetHex.Q, BodyHex.R + BestOffsetHex.R);
+			FVector FinalWorld = OrbSimDriver->MapHexToWorld(FinalAbsHex);
+			
+			// Preserve original Z from calibration capture if possible
+			// Or use grid Z? Using original Z preserves height calibration context.
+			if (LegIndex < WalkerOriginalFootPositions.Num())
+			{
+				FinalWorld.Z = WalkerOriginalFootPositions[LegIndex].Z;
+			}
+			
+			WalkerLegCalibrations[LegIndex].FootAxleWorldLocation = FinalWorld;
 		}
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Updated %d foot positions"), WalkerLegCalibrations.Num());
+	UE_LOG(LogTemp, Log, TEXT("ApplyStartingFootDistance: Updated %d foot positions using per-quadrant ring assignment"), WalkerLegCalibrations.Num());
 
 	// Update assigned tile world locations in the walker so they reflect the new foot positions
 	if (CalibratingWalker.IsValid() && CalibratingWalker->Driver)
@@ -722,8 +724,7 @@ void AGameManager::ApplyStartingFootDistance(USkeletalMeshComponent* BodyComp)
 		UE_LOG(LogTemp, VeryVerbose, TEXT("ApplyStartingFootDistance: Updated assigned tile world locations"));
 	}
 
-	// Keep quadrant/assigned-tile visualization in sync whenever starting foot distance
-	// changes the base foot positions.
+	// Keep quadrant/assigned-tile visualization in sync
 	if (bShowLegTileQuadrants && CalibratingWalker.IsValid())
 	{
 		UpdateLegTileQuadrantVisualization();
@@ -1227,10 +1228,10 @@ void AGameManager::SetIKRigGoalPositions(USkeletalMeshComponent* BodyComp, float
 	if (AnimInstance)
 	{
 		// Force animation blueprint to update with new goal values
-		AnimInstance->BlueprintThreadSafeUpdateAnimation(0.f);
+		AnimInstance->BlueprintThreadSafeUpdateAnimation(0.033f);
 
 		// Force skeletal mesh to refresh from animation
-		BodyComp->TickAnimation(0.f, false);
+		BodyComp->TickAnimation(0.033f, false);
 		BodyComp->RefreshBoneTransforms();
 		BodyComp->UpdateComponentToWorld();
 

@@ -186,8 +186,8 @@ void ABasicWalker::BeginPlay()
 					}
 
 					// Force animation update
-					AnimInstance->BlueprintThreadSafeUpdateAnimation(0.f);
-					BodyComp->TickAnimation(0.f, false);
+					AnimInstance->BlueprintThreadSafeUpdateAnimation(0.033f);
+					BodyComp->TickAnimation(0.033f, false);
 					BodyComp->RefreshBoneTransforms();
 				}
 			}

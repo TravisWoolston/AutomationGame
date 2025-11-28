@@ -405,6 +405,12 @@ void USimWorldHex::StepWalkers()
 					default: FootQuadrant = TEXT("N"); break;
 					}
 					
+					// Calculate Move Direction (for bias)
+					float MoveDQ = (float)(W.CurrentTargetHex.Q - W.BaseHex.Q);
+					float MoveDR = (float)(W.CurrentTargetHex.R - W.BaseHex.R);
+					float MoveLen = FMath::Sqrt(MoveDQ*MoveDQ + MoveDR*MoveDR + (MoveDQ+MoveDR)*(MoveDQ+MoveDR));
+					if (MoveLen > 0.001f) { MoveDQ /= MoveLen; MoveDR /= MoveLen; }
+
 					for (int32 q = -W.ReachDistance; q <= W.ReachDistance; ++q)
 					{
 						for (int32 r = -W.ReachDistance; r <= W.ReachDistance; ++r)
@@ -680,15 +686,25 @@ void USimWorldHex::StepWalkers()
 									const float BodyDistToTarget = FMath::Max(FMath::Max(FMath::Abs(BodyToTargetDQ), FMath::Abs(BodyToTargetDR)), FMath::Abs(BodyToTargetDQ + BodyToTargetDR));
 									
 									// Prefer positions that move the body closer to the target (or at least not farther)
-									// Use a combined score: body distance to target (primary) + small penalty for foot distance from current body
-									const int32 FootFromBodyDQ = TestHex.Q - W.BaseHex.Q;
-									const int32 FootFromBodyDR = TestHex.R - W.BaseHex.R;
-									const float FootFromBodyDist = FMath::Max(FMath::Max(FMath::Abs(float(FootFromBodyDQ)), FMath::Abs(float(FootFromBodyDR))), FMath::Abs(float(FootFromBodyDQ + FootFromBodyDR)));
+									// Use a combined score: body distance to target (primary) + "Ideal Stance" bias
+									// Calculate "Ideal" foot position: rest position + forward lead
+									float QuadDQ = 0.f, QuadDR = 0.f;
+									if (FootQuadrant == TEXT("S")) { QuadDQ = 0.f; QuadDR = 1.f; }
+									else if (FootQuadrant == TEXT("W")) { QuadDQ = -1.f; QuadDR = 0.f; }
+									else if (FootQuadrant == TEXT("E")) { QuadDQ = 1.f; QuadDR = 0.f; }
+									else if (FootQuadrant == TEXT("N")) { QuadDQ = 0.f; QuadDR = -1.f; }
+									
+									float IdealDist = (float)W.ReachDistance * 0.6f;
+									float LeadDist = (float)W.ReachDistance * 0.4f;
+									float IdealQ = (float)W.BaseHex.Q + QuadDQ * IdealDist + MoveDQ * LeadDist;
+									float IdealR = (float)W.BaseHex.R + QuadDR * IdealDist + MoveDR * LeadDist;
+									
+									float DistFromIdeal = FMath::Sqrt(FMath::Square(TestHex.Q - IdealQ) + FMath::Square(TestHex.R - IdealR));
 									
 									// Add stability bonus: penalize moving to a new tile unless it's significantly better
 									const float StabilityPenalty = (TestHex == Foot.CurrentTile) ? 0.0f : 0.5f;
 									
-									const float CombinedScore = BodyDistToTarget + FootFromBodyDist * 0.1f + StabilityPenalty; 
+									const float CombinedScore = BodyDistToTarget + DistFromIdeal * 0.5f + StabilityPenalty; 
 									
 									// Only consider if it improves body position (or at least doesn't make it worse)
 									if (BodyDistToTarget <= CurrentBodyDistToTarget && CombinedScore < BestScore)
