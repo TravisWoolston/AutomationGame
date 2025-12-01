@@ -263,6 +263,10 @@ public:
 		return A.Held.bIsCluster ? A.Held.GrabFacing : int8(-1);
 	}
 
+	/** Set of items that have been rejected by ClusterOutput validation */
+	UPROPERTY(Transient)
+	TSet<int32> ItemsRejectedByClusterOutput;
+
 private:
 	/** Helper function to check if an item matches an output's expected orb type */
 	bool DoesItemMatchOutputType(const FItem& Item, const FTile& OutputTile) const;

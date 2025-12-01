@@ -435,6 +435,16 @@ void AGameManager::Rebuild()
 	SyncOrbSimDriverParameters();
 }
 
+void AGameManager::ToggleGridVisibility()
+{
+	if (ISM)
+	{
+		bool bNewVisibility = !ISM->IsVisible();
+		ISM->SetVisibility(bNewVisibility, true);
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Toggled grid visibility: %s"), bNewVisibility ? TEXT("Visible") : TEXT("Hidden"));
+	}
+}
+
 // Local helper to mirror TestLevelDirector conversion so runtime-placed arms work too.
 static TArray<FOp> ConvertProgramToOps(const TArray<FArmInstr>& Program)
 {

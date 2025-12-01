@@ -287,6 +287,9 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	IC->BindAction("ContinuePlacement", IE_Released, this, &AHexTopDownPawn::ContinuePlacementActiveReleased);
 	// Blueprint library - save selection as blueprint
 	IC->BindAction("SaveSelectionAsBlueprint", IE_Pressed, this, &AHexTopDownPawn::SaveSelectionAsBlueprint);
+
+	// Grid visibility toggle
+	IC->BindAction("ToggleGridVisibility", IE_Pressed, this, &AHexTopDownPawn::ToggleGridVisibility);
 }
 
 void AHexTopDownPawn::SetInputMode1() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Input); }
@@ -2639,4 +2642,23 @@ void AHexTopDownPawn::SetBlueprintForPlacement(const TArray<FBlueprintTile>& Blu
 	}
 
 	UE_LOG(LogTemp, Log, TEXT("SetBlueprintForPlacement: Set blueprint with %d tiles for placement"), Blueprint.Num());
+}
+
+void AHexTopDownPawn::ToggleGridVisibility()
+{
+	// Find the GameManager
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager)
+			{
+				GameManager->ToggleGridVisibility();
+				return;
+			}
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("ToggleGridVisibility: Could not find GameManager"));
 }

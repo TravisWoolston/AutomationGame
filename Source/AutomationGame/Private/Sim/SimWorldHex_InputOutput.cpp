@@ -779,6 +779,12 @@ bool USimWorldHex::DoesItemMatchOutputType(const FItem& Item, const FTile& Outpu
 {
 	EOrbType ExpectedType = (EOrbType)OutputTile.Arg;
 
+	// Void type accepts any orb
+	if (ExpectedType == EOrbType::Void)
+	{
+		return true;
+	}
+
 	if (Item.bIsCluster)
 	{
 		// For clusters, check if any sub-orb matches the expected type
@@ -804,6 +810,9 @@ void USimWorldHex::ProcessOutputs()
 	
 	// Track which outputs we've already processed (for bonded outputs)
 	TSet<FHex> ProcessedOutputs;
+
+	// Clear the rejected items set at the start of processing
+	ItemsRejectedByClusterOutput.Empty();
 	
 	for (const auto& KV : TileMap)
 	{
@@ -1034,6 +1043,10 @@ void USimWorldHex::ProcessOutputs()
 		// Check if ALL tiles in the cluster have orbs of the correct type AND are bonded together
 		bool bAllTilesReady = true;
 		TArray<int32> OrbItemIds; // Store item IDs to check bonds later
+		
+		// Track items found on the chain to reject them if validation fails
+		TArray<int32> ItemsOnChain;
+		bool bAnyEmpty = false;
 
 		for (int32 i = 0; i < ClusterTiles.Num(); i++)
 		{
@@ -1044,22 +1057,30 @@ void USimWorldHex::ProcessOutputs()
 			if (!TileItem)
 			{
 				bAllTilesReady = false;
-				break;
+				bAnyEmpty = true;
+				// Don't break yet, we need to check other tiles for items to reject
+				continue;
+			}
+
+			if (TileItem->Id > 0)
+			{
+				ItemsOnChain.Add(TileItem->Id);
 			}
 
 			// ClusterOutput tiles expect single orbs, not clusters
 			if (TileItem->bIsCluster)
 			{
 				bAllTilesReady = false;
-				break;
+				if (TileItem->Id > 0) ItemsRejectedByClusterOutput.Add(TileItem->Id);
 			}
 
 			// Single orb - check type from the Single field
 			uint8 ActualType = (uint8)TileItem->Single.Type;
-			if (ActualType != ExpectedType)
+			// Allow mismatch if expected type is Void (wildcard)
+			if (ActualType != ExpectedType && ExpectedType != (uint8)EOrbType::Void)
 			{
 				bAllTilesReady = false;
-				break;
+				if (TileItem->Id > 0) ItemsRejectedByClusterOutput.Add(TileItem->Id);
 			}
 
 			// Add the item ID to the list for bond checking
@@ -1136,6 +1157,17 @@ void USimWorldHex::ProcessOutputs()
 						break;
 					}
 				}
+			}
+		}
+		
+		// If validation failed, but not because of empty tiles, reject everything on the chain
+		// Clusters on ClusterOutput tiles must match immediately or be rejected
+		// This ensures partially arrived clusters that don't match, or clusters with wrong shapes/bonds, get cleared
+		if (!bAllTilesReady)
+		{
+			for (int32 Id : ItemsOnChain)
+			{
+				ItemsRejectedByClusterOutput.Add(Id);
 			}
 		}
 		

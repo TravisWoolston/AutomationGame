@@ -98,6 +98,7 @@ void UOrbMaterialManager::InitializeDefaultCustomNames()
 	OrbTypeCustomNames.Add(EOrbType::BaseC, TEXT("Basic Element C"));
 	OrbTypeCustomNames.Add(EOrbType::MetalA, TEXT("Metal Fragment"));
 	OrbTypeCustomNames.Add(EOrbType::CatalystX, TEXT("Catalyst Crystal"));
+	OrbTypeCustomNames.Add(EOrbType::Void, TEXT("Void Essence"));
 }
 
 void UOrbMaterialManager::InitializeDefaultMaterials()
@@ -113,7 +114,8 @@ void UOrbMaterialManager::InitializeDefaultMaterials()
 			EOrbType::BaseB,
 			EOrbType::BaseC,
 			EOrbType::MetalA,
-			EOrbType::CatalystX
+			EOrbType::CatalystX,
+			EOrbType::Void
 		};
 		
 		for (EOrbType OrbType : AllOrbTypes)
@@ -135,4 +137,5 @@ void UOrbMaterialManager::InitializeDefaultUIColors()
 	OrbTypeUIColors.Add(EOrbType::BaseC, FLinearColor(1.0f, 0.8f, 0.0f, 1.0f));         // Yellow
 	OrbTypeUIColors.Add(EOrbType::MetalA, FLinearColor(0.7f, 0.7f, 0.8f, 1.0f));        // Silver
 	OrbTypeUIColors.Add(EOrbType::CatalystX, FLinearColor(1.0f, 0.0f, 1.0f, 1.0f));    // Magenta
+	OrbTypeUIColors.Add(EOrbType::Void, FLinearColor(0.1f, 0.0f, 0.2f, 1.0f));         // Dark Purple
 }

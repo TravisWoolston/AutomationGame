@@ -477,6 +477,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Grid")
 	FVector GetWorldForHex(const FHex& H) const;
 
+	UFUNCTION(BlueprintCallable, Category = "Grid")
+	void ToggleGridVisibility();
+
 	// ------------ Cluster Generation ------------
 	/** Generate a random cluster structure based on DifficultyValue. Returns the template ID that was registered. */
 	UFUNCTION(BlueprintCallable, Category = "Cluster Generation")

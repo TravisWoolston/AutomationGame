@@ -64,6 +64,9 @@ public:
 	
 	void SetBlueprintForPlacement(const TArray<FBlueprintTile>& Blueprint);
 
+	// Toggle grid visibility
+	void ToggleGridVisibility();
+
 private:
 	float AxisX = 0.f, AxisY = 0.f, AxisZoom = 0.f;
 	bool bTypeSelectionActive = false;  // For cycling orb types (Alt key)

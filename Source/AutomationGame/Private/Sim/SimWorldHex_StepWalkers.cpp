@@ -778,7 +778,7 @@ void USimWorldHex::StepWalkers()
 					{
 						Foot.StepState = EFootStepState::Moving;
 						Foot.StepProgress = 0;
-						UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Raised, now moving"), WalkerIndex, FootIndex);
+						// UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Raised, now moving"), WalkerIndex, FootIndex);
 					}
 					break;
 				}
@@ -793,8 +793,8 @@ void USimWorldHex::StepWalkers()
 						Foot.CurrentTile = Foot.TargetTile;
 						Foot.StepState = EFootStepState::Lowering;
 						Foot.StepProgress = 0;
-						UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Moved to (%d,%d), now lowering"), 
-							WalkerIndex, FootIndex, Foot.CurrentTile.Q, Foot.CurrentTile.R);
+						// UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Moved to (%d,%d), now lowering"), 
+						// 	WalkerIndex, FootIndex, Foot.CurrentTile.Q, Foot.CurrentTile.R);
 					}
 					break;
 				}
@@ -809,8 +809,8 @@ void USimWorldHex::StepWalkers()
 						Foot.StepState = EFootStepState::Planted;
 						Foot.StepProgress = 0;
 						Foot.HeightOffset = 0.f;
-						UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Planted at (%d,%d)"), 
-							WalkerIndex, FootIndex, Foot.CurrentTile.Q, Foot.CurrentTile.R);
+						// UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Planted at (%d,%d)"), 
+						// 	WalkerIndex, FootIndex, Foot.CurrentTile.Q, Foot.CurrentTile.R);
 					}
 					break;
 				}

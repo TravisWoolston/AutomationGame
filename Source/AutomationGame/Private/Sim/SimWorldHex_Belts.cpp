@@ -341,12 +341,41 @@ void USimWorldHex::StepBelts()
 			}
 
 			// Handle bond/unbond tiles with enhanced cluster logic
-			if (SourceTile->Kind == ETileKind::Bond || SourceTile->Kind == ETileKind::Unbond)
+			if (SourceTile->Kind == ETileKind::Bond || SourceTile->Kind == ETileKind::Unbond || SourceTile->Kind == ETileKind::ClusterOutput)
 			{
 				FItem* BondItem = ItemMap.Find(SourceHex);
 				if (BondItem && BondItem->Id > 0 &&
 					!RecentlyDroppedByArm.Contains(BondItem->Id))
 				{
+					// For ClusterOutput, determine if we should pull
+					if (SourceTile->Kind == ETileKind::ClusterOutput)
+					{
+						bool bShouldPull = false;
+						
+						// Pull if explicitly rejected
+						if (ItemsRejectedByClusterOutput.Contains(BondItem->Id))
+						{
+							bShouldPull = true;
+						}
+						// Pull if it's a cluster (ClusterOutput expects singles)
+						else if (BondItem->bIsCluster)
+						{
+							bShouldPull = true;
+						}
+						// Pull if type mismatches (unless wildcard)
+						else if (BondItem->Single.Type != (EOrbType)SourceTile->Arg && (EOrbType)SourceTile->Arg != EOrbType::Void)
+						{
+							bShouldPull = true;
+						}
+						
+						// If none of the above, it's a valid candidate for output, so don't pull
+						if (!bShouldPull)
+						{
+							return false;
+						}
+
+					}
+
 					if (!BondItem->bIsReady)
 					{
 						ItemsToSetReady.Add(BondItem->Id);
@@ -746,12 +775,39 @@ void USimWorldHex::StepBelts()
 			const EHexDir PullOppositeDir = (EHexDir)(((int32)BeltDir + 3) % 6);
 			const FHex PullInputHex = HexUtil::Neighbor(FromHex, PullOppositeDir);
 			
-			// Check if there's an item on a bond/unbond tile that can be pulled
+			// Check if there's an item on a bond/unbond/ClusterOutput tile that can be pulled
 			const FItem* PullableItem = ItemMap.Find(PullInputHex);
 			const FTile* InputTile = TileMap.Find(PullInputHex);
 			
-			if (PullableItem && PullableItem->Id > 0 && InputTile && 
-				(InputTile->Kind == ETileKind::Bond || InputTile->Kind == ETileKind::Unbond) &&
+			bool bCanPull = false;
+			if (PullableItem && PullableItem->Id > 0 && InputTile)
+			{
+				if (InputTile->Kind == ETileKind::Bond || InputTile->Kind == ETileKind::Unbond)
+				{
+					bCanPull = true;
+				}
+				else if (InputTile->Kind == ETileKind::ClusterOutput)
+				{
+					// Only pull from ClusterOutput if the item is explicitly rejected by the output system
+					// OR if the item doesn't match the output requirement (fallback)
+					if (ItemsRejectedByClusterOutput.Contains(PullableItem->Id))
+					{
+						bCanPull = true;
+					}
+					else if (PullableItem->bIsCluster)
+					{
+						// Always pull clusters from ClusterOutput tiles if they haven't been accepted yet
+						// This ensures that if a cluster is placed on a single-orb ClusterOutput tile, it gets pulled
+						bCanPull = true;
+					}
+					else if (PullableItem->Single.Type != (EOrbType)InputTile->Arg && (EOrbType)InputTile->Arg != EOrbType::Void)
+					{
+						bCanPull = true;
+					}
+				}
+			}
+
+			if (bCanPull &&
 				PullableItem->bIsReady && !RecentlyDroppedByArm.Contains(PullableItem->Id) &&
 				!ProcessedItems.Contains(PullableItem->Id))
 			{
@@ -832,7 +888,7 @@ void USimWorldHex::StepBelts()
 					
 					// The destination should be where the pushing item is leaving from
 					// We need to make sure the entire pull cluster can fit
-					if (ConnectedToHex != FromHex && HeldOrbHexes.Contains(ConnectedToHex))
+					if (ConnectedToHex != FromHex && (HeldOrbHexes.Contains(ConnectedToHex) || WalkerFootTiles.Contains(ConnectedToHex)))
 					{
 						bCanPullCluster = false;
 						break;
@@ -990,7 +1046,7 @@ void USimWorldHex::StepBelts()
 				FHex DestPos(CurrentPos.Q + MoveOffset.Q, CurrentPos.R + MoveOffset.R);
 				
 				// Check if destination is blocked
-				if (HeldOrbHexes.Contains(DestPos))
+				if (HeldOrbHexes.Contains(DestPos) || WalkerFootTiles.Contains(DestPos))
 				{
 					bCanMove = false;
 					break;

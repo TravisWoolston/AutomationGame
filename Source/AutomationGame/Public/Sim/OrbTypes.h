@@ -4,7 +4,7 @@
 
 UENUM(BlueprintType)
 enum class EOrbType : uint8 {
-	None = 0, BaseA, BaseB, BaseC, MetalA, CatalystX
+	None = 0, BaseA, BaseB, BaseC, MetalA, CatalystX, Void
 };
 
 UENUM(BlueprintType)
