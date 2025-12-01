@@ -94,6 +94,10 @@ AHexFactoryActor::AHexFactoryActor()
 	OutputCatalystXISM->SetupAttachment(Root);
 	OutputCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	OutputVoidISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputVoidISM"));
+	OutputVoidISM->SetupAttachment(Root);
+	OutputVoidISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
 	// Type-specific input ISM components
 	InputNoneISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputNoneISM"));
 	InputNoneISM->SetupAttachment(Root);
@@ -118,6 +122,10 @@ AHexFactoryActor::AHexFactoryActor()
 	InputCatalystXISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputCatalystXISM"));
 	InputCatalystXISM->SetupAttachment(Root);
 	InputCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	InputVoidISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputVoidISM"));
+	InputVoidISM->SetupAttachment(Root);
+	InputVoidISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	// Create collision plane for efficient line traces
 	GridCollisionPlane = CreateDefaultSubobject<UBoxComponent>(TEXT("GridCollisionPlane"));
@@ -177,6 +185,7 @@ void AHexFactoryActor::EnsureComponents()
 	EnsureISM(OutputBaseCISM, TEXT("OutputBaseCISM_Runtime"));
 	EnsureISM(OutputMetalAISM, TEXT("OutputMetalAISM_Runtime"));
 	EnsureISM(OutputCatalystXISM, TEXT("OutputCatalystXISM_Runtime"));
+	EnsureISM(OutputVoidISM, TEXT("OutputVoidISM_Runtime"));
 	
 	// Ensure type-specific input ISM components
 	EnsureISM(InputNoneISM, TEXT("InputNoneISM_Runtime"));
@@ -185,6 +194,7 @@ void AHexFactoryActor::EnsureComponents()
 	EnsureISM(InputBaseCISM, TEXT("InputBaseCISM_Runtime"));
 	EnsureISM(InputMetalAISM, TEXT("InputMetalAISM_Runtime"));
 	EnsureISM(InputCatalystXISM, TEXT("InputCatalystXISM_Runtime"));
+	EnsureISM(InputVoidISM, TEXT("InputVoidISM_Runtime"));
 	
 	// Ensure procedural mesh for merged outputs
 	if (!MergedOutputMesh)
@@ -1006,7 +1016,8 @@ void AHexFactoryActor::RebuildOutputs()
 		EOrbType::BaseB,
 		EOrbType::BaseC,
 		EOrbType::MetalA,
-		EOrbType::CatalystX
+		EOrbType::CatalystX,
+		EOrbType::Void
 	};
 	
 	for (EOrbType OrbType : AllOrbTypes)
@@ -1111,6 +1122,7 @@ UInstancedStaticMeshComponent* AHexFactoryActor::GetOutputISMForType(EOrbType Or
 	case EOrbType::BaseC: return OutputBaseCISM;
 	case EOrbType::MetalA: return OutputMetalAISM;
 	case EOrbType::CatalystX: return OutputCatalystXISM;
+	case EOrbType::Void: return OutputVoidISM;
 	default: return OutputBaseAISM; // Fallback
 	}
 }
@@ -1125,6 +1137,7 @@ UInstancedStaticMeshComponent* AHexFactoryActor::GetInputISMForType(EOrbType Orb
 	case EOrbType::BaseC: return InputBaseCISM;
 	case EOrbType::MetalA: return InputMetalAISM;
 	case EOrbType::CatalystX: return InputCatalystXISM;
+	case EOrbType::Void: return InputVoidISM;
 	default: return InputBaseAISM; // Fallback
 	}
 }
@@ -1410,7 +1423,8 @@ void AHexFactoryActor::RebuildInputTiles()
 		EOrbType::BaseB,
 		EOrbType::BaseC,
 		EOrbType::MetalA,
-		EOrbType::CatalystX
+		EOrbType::CatalystX,
+		EOrbType::Void
 	};
 	
 	for (EOrbType OrbType : AllOrbTypes)

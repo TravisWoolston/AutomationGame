@@ -93,6 +93,7 @@ protected:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputBaseCISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputMetalAISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputCatalystXISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* OutputVoidISM = nullptr;
 	
 	// Type-specific input ISM components
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputNoneISM = nullptr;
@@ -101,6 +102,7 @@ protected:
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputBaseCISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputMetalAISM = nullptr;
 	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputCatalystXISM = nullptr;
+	UPROPERTY(Transient) UInstancedStaticMeshComponent* InputVoidISM = nullptr;
 	
 	// Procedural mesh for merged cluster outputs
 	UPROPERTY(Transient) UProceduralMeshComponent* MergedOutputMesh = nullptr;

@@ -542,7 +542,8 @@ TArray<EOrbType> UHexPlacementComponent::GetValidOrbTypes() const
 					EOrbType::BaseB,
 					EOrbType::BaseC,
 					EOrbType::MetalA,
-					EOrbType::CatalystX
+					EOrbType::CatalystX,
+					EOrbType::Void
 				};
 
 				for (EOrbType OrbType : AllOrbTypes)
