@@ -219,12 +219,18 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 			}
 		}
 		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bShowLegTileQuadrants) ||
-			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, QuadrantRotationOffset))
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, QuadrantRotationOffset) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, bDynamicBodyRotation))
 		{
 			if (bWalkerCalibrationActive)
 			{
+				if (CalibratingWalker.IsValid())
+				{
+					CalibratingWalker->bDynamicBodyRotation = bDynamicBodyRotation;
+				}
 				UpdateLegTileQuadrantVisualization();
 			}
+			ApplyCalibrationValuesToAllWalkers(); // Propagate dynamic rotation setting
 		}
 		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, ReachDistance))
 		{
@@ -582,6 +588,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 	Walker->MinimumReachDistance = SavedWalkerCalibration.MinimumReachDistance;
 	Walker->StandHeight = SavedWalkerCalibration.StandHeight;
 	Walker->StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
+	Walker->bDynamicBodyRotation = SavedWalkerCalibration.bDynamicBodyRotation;
 	
 	// Don't call SetProgram yet - need SimWalkerIndex first
 
@@ -2167,6 +2174,8 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 				Walker->MinimumReachDistance = MinimumReachDistance;
 				Walker->StandHeight = StandHeight;
 				Walker->StartingFootDistance = StartingFootDistance;
+				Walker->QuadrantRotationOffset = QuadrantRotationOffset;
+				Walker->bDynamicBodyRotation = bDynamicBodyRotation;
 			}
 		}
 	}
@@ -2209,7 +2218,13 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 		float AngleDeg = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
 		
 		// Apply offset (subtract to rotate boundaries)
-		AngleDeg -= QuadrantRotationOffset;
+		// Use Walker's offset if available to support per-walker dynamic rotation
+		float EffectiveOffset = QuadrantRotationOffset;
+		if (Walker)
+		{
+			EffectiveOffset = Walker->QuadrantRotationOffset;
+		}
+		AngleDeg -= EffectiveOffset;
 		
 		// Normalize to -180..180
 		while (AngleDeg > 180.f) AngleDeg -= 360.f;

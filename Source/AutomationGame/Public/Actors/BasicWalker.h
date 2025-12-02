@@ -151,6 +151,20 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
 	float QuadrantRotationOffset = 0.f;
 
+	// --- Body Rotation Control ---
+	
+	/** Target rotation for the body (Z axis) - set in Event Graph or derived from foot positions */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Body Rotation")
+	FRotator BodyGoalRotation = FRotator(90.f, 0.f, 0.f);
+	
+	/** Calculated dynamic yaw for the body (only updated if bDynamicBodyRotation is true) */
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Body Rotation")
+	float AvgYaw = 0.f;
+	
+	/** If true, QuadrantRotationOffset will automatically update based on body Z rotation */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Body Rotation")
+	bool bDynamicBodyRotation = false;
+
 	// --- Foot Animation States ---
 
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")

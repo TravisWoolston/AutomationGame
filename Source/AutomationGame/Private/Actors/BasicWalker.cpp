@@ -774,6 +774,86 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		//SetActorLocation(BodyEndWorld);
 	}
 
+	// Update Body Rotation Goal from foot positions
+	if (bDynamicBodyRotation)
+	{
+		FVector BodyLoc = GetActorLocation();
+		if (BodyComp)
+		{
+			// Try to use the actual body bone location for more accurate angle calculations relative to the body center
+			if (BodyComp->GetBoneIndex(TEXT("Body1")) != INDEX_NONE)
+			{
+				BodyLoc = BodyComp->GetBoneLocation(TEXT("Body1"), EBoneSpaces::WorldSpace);
+			}
+			else if (BodyComp->GetBoneIndex(TEXT("pelvis")) != INDEX_NONE)
+			{
+				BodyLoc = BodyComp->GetBoneLocation(TEXT("pelvis"), EBoneSpaces::WorldSpace);
+			}
+		}
+
+		float TotalWeightedSin = 0.f;
+		float TotalWeightedCos = 0.f;
+		float TotalWeight = 0.f;
+
+		struct FFootRotInfo {
+			FVector Pos;
+			float IdealAngle; // Degrees: U=0, R=90, D=180, L=-90 (Front, Right, Back, Left)
+		};
+
+		// Ideal angles relative to body forward (0)
+		const FFootRotInfo Feet[] = {
+			{ UFootAssignedTileWorldLocation, 0.f },   // U/North/Front
+			{ RFootAssignedTileWorldLocation, 90.f },  // R/East/Right
+			{ DFootAssignedTileWorldLocation, 180.f }, // D/South/Back
+			{ LFootAssignedTileWorldLocation, -90.f }  // L/West/Left
+		};
+
+		const float CurrentBodyYaw = GetActorRotation().Yaw;
+
+		for (const FFootRotInfo& Foot : Feet)
+		{
+			if (Foot.Pos.IsNearlyZero()) continue;
+
+			FVector ToFoot = Foot.Pos - BodyLoc;
+			if (ToFoot.SizeSquared2D() < KINDA_SMALL_NUMBER) continue;
+
+			float FootWorldYaw = ToFoot.Rotation().Yaw;
+
+			// Calculate where the body "should" be to put this foot at IdealAngle
+			// FootWorldYaw - BodyYaw = IdealAngle  =>  BodyYaw = FootWorldYaw - IdealAngle
+			float DesiredBodyYaw = FRotator::NormalizeAxis(FootWorldYaw - Foot.IdealAngle);
+
+			// Weighting:
+			// "nearer a foot is to its neighboring boundary, the more influence it should have"
+			// Deviation = how far the foot IS currently from IdealAngle relative to body
+			// RelativeAngle = FootWorldYaw - CurrentBodyYaw
+			// Deviation = RelativeAngle - IdealAngle
+			float RelativeAngle = FRotator::NormalizeAxis(FootWorldYaw - CurrentBodyYaw);
+			float Deviation = FRotator::NormalizeAxis(RelativeAngle - Foot.IdealAngle);
+
+			// Quadrant is +/- 45 degrees from IdealAngle.
+			// Boundary is at 45 degrees deviation.
+			// Weight should increase as Abs(Deviation) -> 45.
+			// Let's use a curve that ramps up near 45.
+			float Weight = FMath::Abs(Deviation);
+
+			// Add to circular average
+			float Rad = FMath::DegreesToRadians(DesiredBodyYaw);
+			TotalWeightedSin += FMath::Sin(Rad) * Weight;
+			TotalWeightedCos += FMath::Cos(Rad) * Weight;
+			TotalWeight += Weight;
+		}
+
+		if (TotalWeight > KINDA_SMALL_NUMBER)
+		{
+			AvgYaw = FMath::RadiansToDegrees(FMath::Atan2(TotalWeightedSin, TotalWeightedCos));
+			BodyGoalRotation = FRotator(90.f, 0.f, AvgYaw);
+
+			// Update QuadrantRotationOffset to compensate
+			QuadrantRotationOffset = -AvgYaw;
+		}
+	}
+
 	RefreshPose(1.0f);
 }
 

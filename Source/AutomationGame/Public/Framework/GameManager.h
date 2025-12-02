@@ -89,6 +89,9 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	float QuadrantRotationOffset = 0.f;
 
 	UPROPERTY()
+	bool bDynamicBodyRotation = false;
+
+	UPROPERTY()
 	int32 StartingFootOrientation = 0;
 };
 
@@ -225,6 +228,9 @@ public:
 	/** Fine-tuned rotation offset in degrees for quadrant boundaries */
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Rotate the quadrant boundaries by this many degrees clockwise. Use this to center quadrants on your model's legs."))
 	float QuadrantRotationOffset = 0.f;
+	
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "If true, QuadrantRotationOffset will automatically update based on body Z rotation"))
+	bool bDynamicBodyRotation = false;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Debug")
 	bool bDebugWalkers = false;

@@ -136,6 +136,7 @@ void AGameManager::CalibrateWalker()
 
 	CalibratingWalker = Walker;
 	Walker->Calibrating = true;
+	Walker->bDynamicBodyRotation = bDynamicBodyRotation;
 
 	// Initialize walker on grid so it has a Driver and can access grid functions
 	// Use a default position (0,0) for calibration - the walker doesn't need to be in simulation
@@ -1505,7 +1506,12 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 		float AngleDeg = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
 		
 		// Apply offset (subtract to rotate boundaries)
-		AngleDeg -= QuadrantRotationOffset;
+		float EffectiveOffset = QuadrantRotationOffset;
+		if (Walker)
+		{
+			EffectiveOffset = Walker->QuadrantRotationOffset;
+		}
+		AngleDeg -= EffectiveOffset;
 		
 		// Normalize to -180..180
 		while (AngleDeg > 180.f) AngleDeg -= 360.f;
@@ -1975,6 +1981,7 @@ void AGameManager::LoadWalkerCalibration()
 		SQuadrantLeg = SavedWalkerCalibration.SQuadrantLeg;
 		TileQuadrantOffset = SavedWalkerCalibration.TileQuadrantOffset;
 		QuadrantRotationOffset = SavedWalkerCalibration.QuadrantRotationOffset;
+		bDynamicBodyRotation = SavedWalkerCalibration.bDynamicBodyRotation;
 		// Don't load WalkerOriginalFootPositions or WalkerSittingPose from saved config
 		// These will be gathered fresh from the mesh in GatherWalkerCalibrationData()
 		// Saved positions are only for reference, not for active calibration
@@ -2011,6 +2018,7 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	SavedWalkerCalibration.SQuadrantLeg = SQuadrantLeg;
 	SavedWalkerCalibration.TileQuadrantOffset = TileQuadrantOffset;
 	SavedWalkerCalibration.QuadrantRotationOffset = QuadrantRotationOffset;
+	SavedWalkerCalibration.bDynamicBodyRotation = bDynamicBodyRotation;
 	
 	// Save to config file
 	SaveConfig();
