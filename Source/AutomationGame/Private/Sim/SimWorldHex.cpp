@@ -1,4 +1,4 @@
-﻿#include "Sim/SimWorldHex.h"
+#include "Sim/SimWorldHex.h"
 #include "Engine/Engine.h"
 #include "Sim/HexCoord.h"
 #include "Actors/BasicArm.h"
@@ -6,6 +6,7 @@
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
 #include "AGLogChannels.h"
+#include "Algo/Reverse.h"
 
 // Constructor
 USimWorldHex::USimWorldHex()
