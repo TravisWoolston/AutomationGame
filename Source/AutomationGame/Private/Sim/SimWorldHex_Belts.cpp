@@ -58,14 +58,20 @@ void USimWorldHex::StepBelts()
 	TSet<FHex> WalkerFootTiles;
 	for (const FWalkerState& W : Walkers)
 	{
-		WalkerFootTiles.Add(W.DFoot.CurrentTile);
-		WalkerFootTiles.Add(W.DFoot.TargetTile);
-		WalkerFootTiles.Add(W.LFoot.CurrentTile);
-		WalkerFootTiles.Add(W.LFoot.TargetTile);
-		WalkerFootTiles.Add(W.RFoot.CurrentTile);
-		WalkerFootTiles.Add(W.RFoot.TargetTile);
-		WalkerFootTiles.Add(W.UFoot.CurrentTile);
-		WalkerFootTiles.Add(W.UFoot.TargetTile);
+		auto AddBlockingFoot = [&](const FFootState& F)
+		{
+			// Only Planted and Lowering feet block belts.
+			// Raising and Moving (including Hovering) feet allow items to pass underneath.
+			if (F.StepState == EFootStepState::Planted || F.StepState == EFootStepState::Lowering)
+			{
+				WalkerFootTiles.Add(F.CurrentTile);
+			}
+		};
+
+		AddBlockingFoot(W.DFoot);
+		AddBlockingFoot(W.LFoot);
+		AddBlockingFoot(W.RFoot);
+		AddBlockingFoot(W.UFoot);
 	}
 
 	// Track items that need their bIsReady flag set to true at the end of this tick
