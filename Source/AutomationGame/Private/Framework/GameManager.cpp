@@ -4,6 +4,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Engine/Engine.h"
+#include "DrawDebugHelpers.h"
 #include "Actors/BasicArm.h"
 #include "Actors/BasicWalker.h"
 #include "Actors/OrbSimDriver.h"
@@ -2397,6 +2398,16 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 				}
 			}
 		}
+	}
+
+	// Draw line to current target if processing request
+	if (WalkerState.bProcessingRequest)
+	{
+		const FVector StartPos = OrbSimDriver->MapHexToWorld(BodyHex) + FVector(0.f, 0.f, 100.f);
+		const FVector EndPos = OrbSimDriver->MapHexToWorld(WalkerState.CurrentTargetHex) + FVector(0.f, 0.f, 50.f);
+		
+		DrawDebugLine(GetWorld(), StartPos, EndPos, FColor::Cyan, false, -1.0f, 0, 5.0f);
+		DrawDebugSphere(GetWorld(), EndPos, 20.0f, 12, FColor::Cyan, false, -1.0f, 0, 2.0f);
 	}
 
 	// Store markers for this walker

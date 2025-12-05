@@ -238,7 +238,8 @@ void USimWorldHex::StepWalkers()
 		{
 			// Start processing next request
 			W.CurrentTargetHex = W.Requests[0].TargetHex;
-			W.Requests.RemoveAt(0);
+			W.Requests[0].AttemptTicks = 0; // Reset attempt counter
+			// Don't remove yet - wait until complete or failed
 			W.bProcessingRequest = true;
 			UE_LOG(LogTemp, Log, TEXT("Walker %d: Started processing request to move to (%d, %d)"), 
 				WalkerIndex, W.CurrentTargetHex.Q, W.CurrentTargetHex.R);
@@ -247,6 +248,38 @@ void USimWorldHex::StepWalkers()
 		// If processing a request, execute walking animation
 		if (W.bProcessingRequest)
 		{
+			// Increment attempt counter
+			// Since we keep the request at index 0 until complete, we can update it there
+			if (W.Requests.Num() > 0)
+			{
+				W.Requests[0].AttemptTicks++;
+				
+				// Timeout check: If attempts exceed limit (e.g. 300 ticks = 5-10 seconds depending on tick rate)
+				// Cancel request and return home
+				if (W.Requests[0].AttemptTicks > 300)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Walker %d: Request to (%d,%d) timed out after %d ticks. Returning home."), 
+						WalkerIndex, W.CurrentTargetHex.Q, W.CurrentTargetHex.R, W.Requests[0].AttemptTicks);
+					
+					W.bProcessingRequest = false;
+					W.Requests.RemoveAt(0);
+					
+					// Add return home request with high priority
+					FWalkerRequest HomeReq;
+					HomeReq.TargetHex = W.HomeHex;
+					HomeReq.Priority = 1000;
+					W.Requests.Insert(HomeReq, 0);
+					
+					continue;
+				}
+			}
+			else
+			{
+				// Should not happen if bProcessingRequest is true
+				W.bProcessingRequest = false;
+				continue;
+			}
+
 			// Check if we've reached the target AND are stable (all feet planted)
 			// This ensures the body is truly centered and settled before moving on
 			bool bAllFeetPlanted = true;
@@ -282,6 +315,10 @@ void USimWorldHex::StepWalkers()
 			{
 				// Reached target and stable, finish request
 				W.bProcessingRequest = false;
+				if (W.Requests.Num() > 0)
+				{
+					W.Requests.RemoveAt(0);
+				}
 				UE_LOG(LogTemp, Log, TEXT("Walker %d: Reached target (%d, %d) [Dist=%d, IsHome=%d] and stabilized"), 
 					WalkerIndex, W.CurrentTargetHex.Q, W.CurrentTargetHex.R, 
 					0, bIsReturningHome ? 1 : 0);
@@ -310,24 +347,89 @@ void USimWorldHex::StepWalkers()
 			TArray<int32> RaisedIndices;
 			for (int32 i = 0; i < NumFeet; ++i)
 			{
-				if (Feet[i]->StepState != EFootStepState::Planted)
+				// Update LastPlantDuration for all feet
+				if (Feet[i]->StepState == EFootStepState::Planted)
 				{
-					RaisedCount++;
+					Feet[i]->LastPlantDuration++;
+				}
+				else
+				{
+					Feet[i]->LastPlantDuration = 0;
+					
+					// Feet moving to VALID (unoccupied) tiles do NOT count towards the limit.
+					// This encourages fluid movement when the path is clear.
+					// Only feet moving to occupied tiles (hovering/stuck) or in transition count.
+					bool bTargetOccupied = IsHexOccupied(this, Feet[i]->TargetTile, HeldOrbHexes, ArmBaseHexes);
+					
+					// If target is valid (not occupied), we don't count it as a "blocking" raised foot
+					// But if we are simply raising/lowering vertically, we should probably still count it to avoid 4-foot lift
+					// Actually, user request: "Feet moving to valid tiles should not count towards the raised feet limit."
+					
+					if (bTargetOccupied)
+					{
+						RaisedCount++;
+					}
+					
 					RaisedIndices.Add(i);
 				}
 			}
 
-			// Determine processing order: feet nearer the edge of their reach (larger distance
-			// from the body) are considered first, so legs near their quadrant boundary move earlier.
+			// Determine processing order based on multiple factors:
+			// 1. Time since last move (LastPlantDuration) - PRIMARY
+			// 2. Distance from body (Reach) - SECONDARY
+			
 			TArray<int32> FootOrder;
 			for (int32 i = 0; i < NumFeet; ++i)
 			{
 				FootOrder.Add(i);
 			}
+			
 			FootOrder.Sort([&](int32 A, int32 B)
 			{
-				// Sort descending by distance from body (farther first)
-				return FootBodyDist[A] > FootBodyDist[B];
+				// Sort descending (Higher score = Process first)
+				
+				// Helper to get neighbor indices (same as AreFeetAdjacent but returning indices)
+				auto GetNeighbors = [](int32 Idx) -> TArray<int32>
+				{
+					switch (Idx)
+					{
+					case 0: return { 1, 2 }; // D -> L, R
+					case 1: return { 0, 3 }; // L -> D, U
+					case 2: return { 0, 3 }; // R -> D, U
+					case 3: return { 1, 2 }; // U -> L, R
+					default: return {};
+					}
+				};
+
+				// Factor 1: Time since last move (Favor feet that have been planted longer)
+				int32 TimeScoreA = Feet[A]->LastPlantDuration;
+				int32 TimeScoreB = Feet[B]->LastPlantDuration;
+				
+				// Factor 2: Distance from body (Favor feet at edge of reach)
+				float DistScoreA = FootBodyDist[A];
+				float DistScoreB = FootBodyDist[B];
+				
+				// Factor 3: Neighbor Favorability (Gait Pattern)
+				// We want to move feet whose neighbors are STABLE (recently moved/low duration).
+				// If neighbors have HIGH duration, it means *they* need to move soon, so I should yield.
+				// So, penalize score based on neighbor duration.
+				float NeighborPenaltyA = 0.f;
+				for (int32 N : GetNeighbors(A)) NeighborPenaltyA += (float)Feet[N]->LastPlantDuration;
+				
+				float NeighborPenaltyB = 0.f;
+				for (int32 N : GetNeighbors(B)) NeighborPenaltyB += (float)Feet[N]->LastPlantDuration;
+				
+				// Combine scores
+				// Time dominates, then Neighbor Penalty (to force alternating), then Distance
+				// Weightings:
+				// Time: 10.0
+				// Neighbor Penalty: -5.0 (Significant influence)
+				// Distance: 1.0
+				
+				float TotalScoreA = (float)TimeScoreA * 10.0f - NeighborPenaltyA * 5.0f + DistScoreA;
+				float TotalScoreB = (float)TimeScoreB * 10.0f - NeighborPenaltyB * 5.0f + DistScoreB;
+				
+				return TotalScoreA > TotalScoreB;
 			});
 			
 			// Process feet in prioritized order
@@ -386,17 +488,39 @@ void USimWorldHex::StepWalkers()
 							break; // Wait for sequence
 						}
 						
-						if (RaisedCount >= 3)
+						// Safety check: Ensure at least TWO feet remain planted
+						// PlantedCount = Total - RaisedCount.
+						// If we raise this foot, RaisedCount increases by 1.
+						// So we need (NumFeet - (RaisedCount + 1)) >= 2.
+						// => NumFeet - RaisedCount - 1 >= 2
+						// => NumFeet - RaisedCount >= 3
+						// => RaisedCount <= NumFeet - 3
+						if (RaisedCount > (NumFeet - 3))
 						{
-							break; // Hard limit of 2 feet
+							break; // Must leave at least two feet planted
 						}
 					}
 					
 					
 					// Updated constraint: Limit to 2 raised feet (so 2 are planted)
-					if (RaisedCount >= 2)
+					// UNLESS we are just checking for "valid" moves in the RaisedCount logic above?
+					// The user asked: "require atleast one foot to be actually placed on a tile"
+					// My calculation of RaisedCount excludes feet moving to valid tiles.
+					// But physically, those feet ARE raised.
+					// So I need a separate count of PHYSICALLY raised feet to ensure stability.
+					
+					int32 PhysicallyRaisedCount = 0;
+					for (int32 i = 0; i < NumFeet; ++i)
 					{
-						break; 
+						if (Feet[i]->StepState != EFootStepState::Planted)
+						{
+							PhysicallyRaisedCount++;
+						}
+					}
+					
+					if (PhysicallyRaisedCount >= (NumFeet - 2))
+					{
+						break; // Don't lift if it would leave less than 2 feet planted
 					}
 					
 					/*
@@ -444,10 +568,15 @@ void USimWorldHex::StepWalkers()
 
 					// Calculate Ideal Hex for this foot (used for scoring and fallback)
 					float QuadDQ = 0.f, QuadDR = 0.f;
-					if (FootQuadrant == TEXT("S")) { QuadDQ = 0.f; QuadDR = 1.f; }
-					else if (FootQuadrant == TEXT("W")) { QuadDQ = -1.f; QuadDR = 0.f; }
-					else if (FootQuadrant == TEXT("E")) { QuadDQ = 1.f; QuadDR = 0.f; }
-					else if (FootQuadrant == TEXT("N")) { QuadDQ = 0.f; QuadDR = -1.f; }
+					// Corrected Quadrant Vectors (aligning with Hex axes)
+					// N (X+, 0 deg) -> (1, 0)
+					// E (Y+, 60-90 deg) -> (0, 1) [60 deg]
+					// S (X-, 180 deg) -> (-1, 0)
+					// W (Y-, -120 to -60 deg) -> (0, -1) [-120 deg]
+					if (FootQuadrant == TEXT("N")) { QuadDQ = 1.f; QuadDR = 0.f; }
+					else if (FootQuadrant == TEXT("E")) { QuadDQ = 0.f; QuadDR = 1.f; }
+					else if (FootQuadrant == TEXT("S")) { QuadDQ = -1.f; QuadDR = 0.f; }
+					else if (FootQuadrant == TEXT("W")) { QuadDQ = 0.f; QuadDR = -1.f; }
 					
 					// Apply rotation to the ideal leg offset vector
 					if (W.QuadrantRotationOffset != 0.f)
@@ -929,6 +1058,9 @@ void USimWorldHex::StepWalkers()
 					// Only check every few ticks to avoid performance hit
 					if (Foot.StepProgress % 4 == 0)
 					{
+						// Panic Mode: If foot has been hovering for too long (> 60 ticks), relax constraints to avoid freezing
+						bool bPanicMode = (Foot.StepProgress > 60);
+
 						// Re-evaluate best tile using similar logic to Planted state
 						// We want to find if there's a valid (unoccupied) tile we can switch to
 						// that is better than just hovering here.
@@ -952,10 +1084,10 @@ void USimWorldHex::StepWalkers()
 
 						// Ideal Hex calculation (simplified from Planted state - reuse if possible or duplicate)
 						float QuadDQ = 0.f, QuadDR = 0.f;
-						if (FootQuadrant == TEXT("S")) { QuadDQ = 0.f; QuadDR = 1.f; }
-						else if (FootQuadrant == TEXT("W")) { QuadDQ = -1.f; QuadDR = 0.f; }
-						else if (FootQuadrant == TEXT("E")) { QuadDQ = 1.f; QuadDR = 0.f; }
-						else if (FootQuadrant == TEXT("N")) { QuadDQ = 0.f; QuadDR = -1.f; }
+						if (FootQuadrant == TEXT("N")) { QuadDQ = 1.f; QuadDR = 0.f; }
+						else if (FootQuadrant == TEXT("E")) { QuadDQ = 0.f; QuadDR = 1.f; }
+						else if (FootQuadrant == TEXT("S")) { QuadDQ = -1.f; QuadDR = 0.f; }
+						else if (FootQuadrant == TEXT("W")) { QuadDQ = 0.f; QuadDR = -1.f; }
 						
 						if (W.QuadrantRotationOffset != 0.f)
 						{
@@ -1009,7 +1141,8 @@ void USimWorldHex::StepWalkers()
 								if (HexDist == 0 || HexDist > W.ReachDistance || HexDistFloat < W.MinimumReachDistance) continue;
 								
 								const FString FixedQuadrant = GetFixedQuadrantFromHex(W.BaseHex, TestHex, W.QuadrantRotationOffset);
-								if (!FixedQuadrant.Equals(FootQuadrant, ESearchCase::CaseSensitive)) continue;
+								// In Panic Mode, allow any quadrant to find a valid tile
+								if (!bPanicMode && !FixedQuadrant.Equals(FootQuadrant, ESearchCase::CaseSensitive)) continue;
 								
 								// Must be unoccupied to switch to it
 								if (IsHexOccupied(this, TestHex, HeldOrbHexes, ArmBaseHexes)) continue;
@@ -1031,9 +1164,9 @@ void USimWorldHex::StepWalkers()
 								float DistFromIdeal = FMath::Sqrt(FMath::Square(TestHex.Q - IdealQ) + FMath::Square(TestHex.R - IdealR));
 								float Score = DistFromIdeal; // Simplified: just want closest to ideal that is valid
 								
-								// If current target is occupied, ANY valid tile is better.
+								// If current target is occupied or we are in panic mode, ANY valid tile is better/acceptable.
 								// If current target is valid, new tile must be significantly better to justify switching mid-move.
-								float Threshold = bCurrentTargetOccupied ? MAX_flt : BestSwitchScore - 0.5f;
+								float Threshold = (bCurrentTargetOccupied || bPanicMode) ? MAX_flt : BestSwitchScore - 0.5f;
 								
 								if (Score < Threshold)
 								{
@@ -1055,11 +1188,10 @@ void USimWorldHex::StepWalkers()
 								BestSwitchTile.Q, BestSwitchTile.R);
 								
 							Foot.TargetTile = BestSwitchTile;
-							// Reset step progress? Or continue?
-							// If we switch, we should probably continue moving but maybe reset progress partially 
-							// if the new target is far away?
-							// For simplicity, keep progress but ensure we don't finish immediately if it's far.
-							// Actually, let's just change target and let the lerp handle it in visualization.
+							// Do NOT reset step progress here.
+							// Resetting it causes the foot to stay in the air indefinitely if switches happen frequently.
+							// Let it continue its arc to the new target.
+							// Foot.StepProgress = 0; 
 						}
 					}
 					
@@ -1077,7 +1209,7 @@ void USimWorldHex::StepWalkers()
 							// Update CurrentTile to the target so we are logically "at" the new location (minimizing distance when it clears)
 							// But stay in Moving state (don't lower/plant)
 							Foot.CurrentTile = Foot.TargetTile;
-							Foot.StepProgress = W.StepMoveTicks; // Clamp progress
+							// Foot.StepProgress = W.StepMoveTicks; // REMOVED CLAMP to allow periodic re-evaluation
 							
 							// UE_LOG(LogTemp, Verbose, TEXT("Walker %d Foot %d: Hovering at (%d,%d) due to occupancy"), WalkerIndex, FootIndex, Foot.TargetTile.Q, Foot.TargetTile.R);
 						}

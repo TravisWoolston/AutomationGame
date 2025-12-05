@@ -35,6 +35,10 @@ struct AUTOMATIONGAME_API FWalkerRequest
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int32 Priority = 0; // Higher priority requests processed first
 
+	// Add attempt counter to requests to track timeouts
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 AttemptTicks = 0; 
+
 	bool operator==(const FWalkerRequest& Other) const
 	{
 		return TargetHex == Other.TargetHex && Priority == Other.Priority;
@@ -65,6 +69,9 @@ struct AUTOMATIONGAME_API FFootState
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float HeightOffset = 0.f; // Visual height offset for raised foot
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	int32 LastPlantDuration = 0; // How long the foot has been planted/static (or time since last move)
 };
 
 // Legacy instruction system (kept for backward compatibility with scenario saving)

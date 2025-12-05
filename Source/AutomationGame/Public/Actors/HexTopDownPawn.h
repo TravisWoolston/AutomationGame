@@ -67,6 +67,18 @@ public:
 	// Toggle grid visibility
 	void ToggleGridVisibility();
 
+	// Highlight components
+	UPROPERTY()
+	UStaticMeshComponent* TileHighlightMesh;
+	
+	UPROPERTY()
+	AActor* LastHighlightedActor;
+
+	UPROPERTY()
+	class AHexFactoryActor* CachedHexFactory;
+
+	void UpdateHoverHighlight();
+
 private:
 	float AxisX = 0.f, AxisY = 0.f, AxisZoom = 0.f;
 	bool bTypeSelectionActive = false;  // For cycling orb types (Alt key)

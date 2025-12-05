@@ -1,4 +1,5 @@
 #include "Actors/HexTopDownPawn.h"
+#include "Actors/HexFactoryActor.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/HexPlacementComponent.h"
@@ -42,6 +43,13 @@ AHexTopDownPawn::AHexTopDownPawn()
 
 	Placer = CreateDefaultSubobject<UHexPlacementComponent>("HexPlacer");
 	Placer->bUseInputPolling = false; // we drive it via input events
+
+	TileHighlightMesh = CreateDefaultSubobject<UStaticMeshComponent>("TileHighlightMesh");
+	TileHighlightMesh->SetupAttachment(RootComponent);
+	TileHighlightMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	TileHighlightMesh->SetRenderCustomDepth(true);
+	TileHighlightMesh->SetRenderInMainPass(false);
+	TileHighlightMesh->SetVisibility(false);
 }
 
 void AHexTopDownPawn::ToggleEditorUI()
@@ -214,6 +222,209 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 	else
 	{
 		ClearBlueprintPreviewComponents();
+	}
+
+	UpdateHoverHighlight();
+}
+
+void AHexTopDownPawn::UpdateHoverHighlight()
+{
+	if (!Placer || !GetWorld()) return;
+
+	// Reset previous actor highlight if any
+	if (IsValid(LastHighlightedActor))
+	{
+		TArray<UPrimitiveComponent*> Comps;
+		LastHighlightedActor->GetComponents(Comps);
+		for (UPrimitiveComponent* C : Comps)
+		{
+			C->SetRenderCustomDepth(false);
+		}
+	}
+	LastHighlightedActor = nullptr;
+
+	// Reset tile highlight
+	if (TileHighlightMesh)
+	{
+		TileHighlightMesh->SetVisibility(false);
+	}
+
+	// If dragging selection/blueprint, usually we don't highlight single tiles, 
+	// but for now let's allow it if the cursor is valid.
+	if (!Placer->IsHoverValid()) return;
+
+	FHex HoverHex = Placer->GetHoverHex();
+
+	// 1. Check for Arms (Actors)
+	if (ABasicArm* Arm = FindArmAtHex(HoverHex))
+	{
+		TArray<UPrimitiveComponent*> Comps;
+		Arm->GetComponents(Comps);
+		for (UPrimitiveComponent* C : Comps)
+		{
+			// Highlight mesh components
+			if (C->IsA<UMeshComponent>())
+			{
+				C->SetRenderCustomDepth(true);
+			}
+		}
+		LastHighlightedActor = Arm;
+		return;
+	}
+
+	// 2. Check for Walkers (Actors)
+	// Iterate walkers to find one at this hex
+	for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It)
+	{
+		ABasicWalker* Walker = *It;
+		if (Walker && Walker->Q == HoverHex.Q && Walker->R == HoverHex.R)
+		{
+			TArray<UPrimitiveComponent*> Comps;
+			Walker->GetComponents(Comps);
+			for (UPrimitiveComponent* C : Comps)
+			{
+				if (C->IsA<UMeshComponent>())
+				{
+					C->SetRenderCustomDepth(true);
+				}
+			}
+			LastHighlightedActor = Walker;
+			return;
+		}
+	}
+
+	// 3. Check for Tiles (via Sim)
+	if (!TileHighlightMesh) return;
+
+	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	if (!Driver) return;
+	USimWorldHex* Sim = Driver->GetSim();
+	if (!Sim) return;
+
+	// Cache the factory actor if we haven't already
+	if (!CachedHexFactory)
+	{
+		for (TActorIterator<AHexFactoryActor> It(GetWorld()); It; ++It)
+		{
+			CachedHexFactory = *It;
+			break;
+		}
+	}
+
+	FTile* Tile = Sim->TileMap.Find(HoverHex);
+	if (!Tile) return;
+
+	UStaticMesh* MeshToUse = nullptr;
+	float RotationYaw = 0.f;
+	FVector Scale = FVector(1.f);
+
+	// Helper to compute yaw to a specific neighbor direction (matches placement logic)
+	auto GetYawToNeighbor = [&](const FHex& Start, uint8 Dir) -> float
+	{
+		FHex Neighbor = HexUtil::Neighbor(Start, (EHexDir)(Dir % 6));
+		FVector PosA = Driver->MapHexToWorld(Start);
+		FVector PosB = Driver->MapHexToWorld(Neighbor);
+		FVector DirVec = (PosB - PosA).GetSafeNormal();
+		return DirVec.IsNearlyZero() ? 0.f : FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+	};
+
+	// Determine mesh based on tile type
+	switch (Tile->Kind)
+	{
+	case ETileKind::Belt:
+		MeshToUse = Placer->GetActualBeltMesh();
+		// Calculate rotation for belt
+		{
+			uint8 Dir = (uint8)Tile->Arg; // Belt direction stored in Arg
+			RotationYaw = GetYawToNeighbor(HoverHex, Dir);
+			if (CachedHexFactory)
+			{
+				Scale = CachedHexFactory->BeltScale;
+			}
+		}
+		break;
+	case ETileKind::Input:
+	case ETileKind::ClusterInput:
+		MeshToUse = Placer->GetActualOrbMesh(); 
+		// Input tiles align with grid (neighbor 0)
+		RotationYaw = GetYawToNeighbor(HoverHex, 0);
+		if (Driver->GetGridOrientation() == EHexOrientation::FlatTop) RotationYaw += 30.f;
+		break;
+	case ETileKind::Output:
+	case ETileKind::ClusterOutput:
+		MeshToUse = Placer->GetActualOutputOrbMesh();
+		// Output tiles align with grid (neighbor 0)
+		RotationYaw = GetYawToNeighbor(HoverHex, 0);
+		if (Driver->GetGridOrientation() == EHexOrientation::FlatTop) RotationYaw += 30.f;
+		
+		if (Tile->Kind == ETileKind::ClusterOutput) 
+		{
+			// Try to find GM for scale
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<AGameManager> It(World); It; ++It)
+				{
+					Scale = FVector((*It)->ClusterOutputScale);
+					break;
+				}
+			}
+		}
+		break;
+	case ETileKind::Bond:
+		MeshToUse = Placer->BondPreviewMesh; 
+		{
+			uint8 Dir = (uint8)Tile->Arg;
+			FVector CenterA = Driver->MapHexToWorld(HoverHex);
+			FVector CenterB = Driver->MapHexToWorld(HexUtil::Neighbor(HoverHex, (EHexDir)(Dir % 6)));
+			FVector Mid = (CenterA + CenterB) * 0.5f;
+			
+			// Re-calc yaw
+			FVector DirVec = (CenterB - CenterA).GetSafeNormal();
+			RotationYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+			
+			// Override location logic below?
+			TileHighlightMesh->SetWorldLocation(Mid);
+			if (CachedHexFactory)
+			{
+				Scale = CachedHexFactory->BondScale;
+			}
+		}
+		break;
+	case ETileKind::Unbond:
+		MeshToUse = Placer->UnbondPreviewMesh ? Placer->UnbondPreviewMesh : Placer->BondPreviewMesh;
+		{
+			uint8 Dir = (uint8)Tile->Arg;
+			FVector CenterA = Driver->MapHexToWorld(HoverHex);
+			FVector CenterB = Driver->MapHexToWorld(HexUtil::Neighbor(HoverHex, (EHexDir)(Dir % 6)));
+			FVector Mid = (CenterA + CenterB) * 0.5f;
+			FVector DirVec = (CenterB - CenterA).GetSafeNormal();
+			RotationYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+			TileHighlightMesh->SetWorldLocation(Mid);
+			if (CachedHexFactory)
+			{
+				Scale = CachedHexFactory->UnbondScale;
+			}
+		}
+		break;
+	default:
+		// Don't highlight empty/unknown
+		break;
+	}
+
+	if (MeshToUse)
+	{
+		TileHighlightMesh->SetStaticMesh(MeshToUse);
+		
+		// If not Bond/Unbond (which set their own location above), set location to hex center
+		if (Tile->Kind != ETileKind::Bond && Tile->Kind != ETileKind::Unbond)
+		{
+			FVector HexCenter = Driver->MapHexToWorld(HoverHex);
+			TileHighlightMesh->SetWorldLocation(HexCenter);
+		}
+		
+		TileHighlightMesh->SetWorldRotation(FRotator(0.f, RotationYaw, 0.f));
+		TileHighlightMesh->SetWorldScale3D(Scale);
+		TileHighlightMesh->SetVisibility(true);
 	}
 }
 
