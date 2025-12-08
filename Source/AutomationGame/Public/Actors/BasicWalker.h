@@ -195,6 +195,25 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
 	bool bUFootLowering = false;
 
+	// Held item states for visual representation
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
+	bool bDFootHoldingItem = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
+	bool bLFootHoldingItem = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
+	bool bRFootHoldingItem = false;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
+	bool bUFootHoldingItem = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
+	FItem DFootHeldItem;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
+	FItem LFootHeldItem;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
+	FItem RFootHeldItem;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
+	FItem UFootHeldItem;
+
 	USkeletalMeshComponent* GetBodyComponent() const { return BodyComp; }
 
 	/** Get the animation blueprint instance from the body component */
@@ -305,6 +324,11 @@ private:
 	EFootStepState RFootStepState = EFootStepState::Planted;
 	EFootStepState UFootStepState = EFootStepState::Planted;
 	
+	// Held item visual components (one per foot)
+	UPROPERTY(Transient) UStaticMeshComponent* DFootHeldOrbComp = nullptr;
+	UPROPERTY(Transient) UStaticMeshComponent* LFootHeldOrbComp = nullptr;
+	UPROPERTY(Transient) UStaticMeshComponent* RFootHeldOrbComp = nullptr;
+	UPROPERTY(Transient) UStaticMeshComponent* UFootHeldOrbComp = nullptr;
 
 	// Helpers
 	void EnsureComps();
@@ -315,5 +339,9 @@ private:
 
 	void    StepProgram();                           // advance one instruction (or wait)
 	void    ExpandResetAtPC();                       // turn Reset into MoveTo home location
+	
+	// Held item visualization
+	void UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool bIsHolding, const FItem& HeldItem, const FName& FootSocketName);
+	void ClearHeldItemVisuals(UStaticMeshComponent*& HeldComp);
 };
 

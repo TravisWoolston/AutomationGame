@@ -7,6 +7,7 @@
 #include "DrawDebugHelpers.h"
 #include "Actors/BasicArm.h"
 #include "Actors/BasicWalker.h"
+#include "Actors/RequestBeacon.h"
 #include "Actors/OrbSimDriver.h"
 #include "Sim/HexCoord.h"
 #include "Sim/SimWorldHex.h"          // <-- ADDED for USimWorldHex / FArmState
@@ -83,7 +84,11 @@ AGameManager::AGameManager()
 	// Initialize timeline system defaults
 	bShowArmTimelines = false;
 	TimelineWidgetScale = 1.0f;
-	TimelineWidgetOffset = FVector(0.0f, 0.0f, 100.0f);
+	TimelineGlobalHeight = 250.0f;
+	TimelineSeparation = 250.0f;
+	TimelineRepulsionStrength = 2.0f;
+	// Keep legacy offset zeroed effectively as we use GlobalHeight
+	TimelineWidgetOffset = FVector(0.0f, 0.0f, 0.0f); 
 }
 
 AGameManager::~AGameManager()
@@ -129,6 +134,9 @@ void AGameManager::BeginPlay()
 	TryLoadInitial();
 	EnsureISM();
 	Rebuild();
+
+	// Apply loaded calibration values to any walkers in the world/simulation
+	ApplyCalibrationValuesToAllWalkers();
 
 	const FVector AnchorLoc = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
 	LastGridCenter = AnchorLoc;
@@ -449,6 +457,19 @@ void AGameManager::ToggleGridVisibility()
 		bool bNewVisibility = !ISM->IsVisible();
 		ISM->SetVisibility(bNewVisibility, true);
 		UE_LOG(LogTemp, Log, TEXT("GameManager: Toggled grid visibility: %s"), bNewVisibility ? TEXT("Visible") : TEXT("Hidden"));
+		
+		// Update all RequestBeacon actors
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+			{
+				ARequestBeacon* Beacon = *It;
+				if (Beacon && IsValid(Beacon))
+				{
+					Beacon->SetIsGridVisible(bNewVisibility);
+				}
+			}
+		}
 	}
 }
 
@@ -929,6 +950,8 @@ void AGameManager::UpdateAllArmTimelineWidgets()
 					TimelineWidget->SetTimelineWidgetVisible(bShowArmTimelines);
 					TimelineWidget->SetMaxCommandIcons(MaxTimelineIcons);
 					TimelineWidget->LerpSpeed = TimelineLerpSpeed;
+					// Push separation distance to individual widgets so they can use it if needed locally
+					TimelineWidget->MinSeparationDistance = TimelineSeparation;
 				}
 			}
 		}
@@ -952,65 +975,79 @@ FVector AGameManager::AdjustTimelinePositionForOverlap(UArmTimelineWidget* Timel
 		return DesiredPosition;
 	}
 
-	FVector AdjustedPosition = DesiredPosition;
-	float MinSeparation = Timeline->MinSeparationDistance;
+	// Start with the desired 2D position but enforce global height
+	FVector CurrentPos = DesiredPosition;
+	CurrentPos.Z = ArmLocation.Z + TimelineGlobalHeight;
 
-	// Check all other visible timeline widgets for overlaps
-	TArray<UArmTimelineWidget*> OtherTimelines;
+	// Collect other timelines once
+	TArray<FVector> Others;
 	for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It)
 	{
 		ABasicArm* Arm = *It;
 		if (Arm && Arm->TimelineWidget && Arm->TimelineWidget != Timeline && Arm->TimelineWidget->bTimelineVisible)
 		{
-			OtherTimelines.Add(Arm->TimelineWidget);
+			// Use target location to avoid jittering based on current interpolated position
+			Others.Add(Arm->TimelineWidget->GetTargetWorldLocation());
 		}
 	}
 
-	// Adjust position to avoid overlaps
-	int32 MaxIterations = 10;
-	for (int32 Iteration = 0; Iteration < MaxIterations; ++Iteration)
+	// Iterative relaxation (Boids-like separation)
+	const int32 Iterations = 15;
+	const float MinSepSq = FMath::Square(TimelineSeparation);
+	
+	for (int32 i = 0; i < Iterations; ++i)
 	{
-		bool bHasOverlap = false;
-		FVector TotalOffset = FVector::ZeroVector;
+		FVector SeparationForce = FVector::ZeroVector;
+		int32 NeighborCount = 0;
 
-		for (UArmTimelineWidget* OtherTimeline : OtherTimelines)
+		for (const FVector& OtherPos : Others)
 		{
-			FVector OtherPosition = OtherTimeline->GetTargetWorldLocation();
-			float Distance = FVector::Dist(AdjustedPosition, OtherPosition);
-
-			if (Distance < MinSeparation && Distance > KINDA_SMALL_NUMBER)
+			// Calculate 2D distance (ignore Z as we enforce plane)
+			float DistSq = FVector::DistSquaredXY(CurrentPos, OtherPos);
+			if (DistSq < MinSepSq && DistSq > KINDA_SMALL_NUMBER)
 			{
-				bHasOverlap = true;
-				// Push away from overlapping timeline
-				FVector Direction = (AdjustedPosition - OtherPosition).GetSafeNormal();
-				if (Direction.IsNearlyZero())
-				{
-					// If positions are identical, use a random direction
-					Direction = FVector(FMath::RandRange(-1.0f, 1.0f), FMath::RandRange(-1.0f, 1.0f), 0.0f).GetSafeNormal();
-				}
-				float PushDistance = (MinSeparation - Distance) * 0.5f;
-				TotalOffset += Direction * PushDistance;
+				float Dist = FMath::Sqrt(DistSq);
+				// Normalized vector pointing away from neighbor
+				FVector PushDir = (CurrentPos - OtherPos).GetSafeNormal2D();
+				
+				// Force increases as distance decreases
+				float PushFactor = (TimelineSeparation - Dist) / TimelineSeparation;
+				SeparationForce += PushDir * PushFactor * TimelineRepulsionStrength * 10.0f;
+				NeighborCount++;
 			}
 		}
 
-		if (!bHasOverlap)
+		// Apply separation
+		if (NeighborCount > 0)
 		{
-			break;
+			CurrentPos += SeparationForce; // Move away from neighbors
 		}
 
-		AdjustedPosition += TotalOffset;
-
-		// Keep timeline within reasonable distance from arm
-		float DistanceFromArm = FVector::Dist(AdjustedPosition, ArmLocation);
-		float MaxDistance = 500.0f;
-		if (DistanceFromArm > MaxDistance)
-		{
-			FVector DirectionToArm = (ArmLocation - AdjustedPosition).GetSafeNormal();
-			AdjustedPosition = ArmLocation - DirectionToArm * MaxDistance;
-		}
+		// Apply attraction to Arm (tether) to prevent drifting too far
+		// Calculate desired "ideal" slot relative to arm (e.g. where it started)
+		// For now, just attract back to ArmLocation (projected to Z plane) but respect min distance
+		FVector ArmPosPlane = ArmLocation;
+		ArmPosPlane.Z = CurrentPos.Z;
+		
+		FVector ToArm = ArmPosPlane - CurrentPos;
+		float DistToArm = ToArm.Size2D();
+		
+		// Soft tether: if too far, pull back. If too close, push out.
+		// We want to be roughly 'TimelineSeparation' away from the arm itself too, to avoid covering it?
+		// Actually, CalculateOptimalTimelinePosition likely gave us a good starting spot (offset).
+		// Let's attract back to the original DesiredPosition (projected)
+		FVector OriginalTarget = DesiredPosition;
+		OriginalTarget.Z = CurrentPos.Z;
+		
+		FVector ToTarget = OriginalTarget - CurrentPos;
+		// Weak spring to original target
+		CurrentPos += ToTarget * 0.1f;
 	}
 
-	return AdjustedPosition;
+	// Final Z enforcement (just in case)
+	CurrentPos.Z = ArmLocation.Z + TimelineGlobalHeight;
+
+	return CurrentPos;
 }
 
 ABasicArm* AGameManager::GetActiveArm() const

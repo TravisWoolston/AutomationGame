@@ -4,9 +4,11 @@
 #include "Camera/CameraComponent.h"
 #include "Components/HexPlacementComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Actors/OrbSimDriver.h"
 #include "Actors/BasicArm.h"
+#include "Actors/RequestBeacon.h"
 #include "Sim/SimWorldHex.h"
 #include "Sim/HexCoord.h"
 #include "Sim/HexTypes.h"
@@ -61,6 +63,17 @@ void AHexTopDownPawn::ToggleEditorUI()
 void AHexTopDownPawn::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Cache common actors
+	if (UWorld* World = GetWorld())
+	{
+		CachedOrbSimDriver = AOrbSimDriver::Find(World);
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			CachedGameManager = *It;
+			break;
+		}
+	}
 
 	// Ensure placement preview is enabled by default
 	if (Placer)
@@ -129,12 +142,13 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 		}
 	}
 
-	AGameManager* GM = nullptr;
-	if (UWorld* W = GetWorld())
+	AGameManager* GM = CachedGameManager;
+	if (!GM && GetWorld())
 	{
-		for (TActorIterator<AGameManager> It(W); It; ++It)
+		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
 		{
-			GM = *It;
+			CachedGameManager = *It;
+			GM = CachedGameManager;
 			break;
 		}
 	}
@@ -217,17 +231,17 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 	// Update blueprint preview meshes if in placement mode
 	if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0 && GetWorld())
 	{
-		UpdateBlueprintPreviewMeshes();
+		UpdateBlueprintPreviewMeshes(DeltaSeconds);
 	}
 	else
 	{
 		ClearBlueprintPreviewComponents();
 	}
 
-	UpdateHoverHighlight();
+	UpdateHoverHighlight(DeltaSeconds);
 }
 
-void AHexTopDownPawn::UpdateHoverHighlight()
+void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds)
 {
 	if (!Placer || !GetWorld()) return;
 
@@ -251,7 +265,11 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 
 	// If dragging selection/blueprint, usually we don't highlight single tiles, 
 	// but for now let's allow it if the cursor is valid.
-	if (!Placer->IsHoverValid()) return;
+	if (!Placer->IsHoverValid()) 
+	{
+		bHighlightSmoothingInitialized = false;
+		return;
+	}
 
 	FHex HoverHex = Placer->GetHoverHex();
 
@@ -269,6 +287,7 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 			}
 		}
 		LastHighlightedActor = Arm;
+		bHighlightSmoothingInitialized = false;
 		return;
 	}
 
@@ -289,6 +308,7 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 				}
 			}
 			LastHighlightedActor = Walker;
+			bHighlightSmoothingInitialized = false;
 			return;
 		}
 	}
@@ -296,7 +316,12 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 	// 3. Check for Tiles (via Sim)
 	if (!TileHighlightMesh) return;
 
-	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver)
+	{
+		Driver = AOrbSimDriver::Find(GetWorld());
+		CachedOrbSimDriver = Driver;
+	}
 	if (!Driver) return;
 	USimWorldHex* Sim = Driver->GetSim();
 	if (!Sim) return;
@@ -312,11 +337,18 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 	}
 
 	FTile* Tile = Sim->TileMap.Find(HoverHex);
-	if (!Tile) return;
+	if (!Tile) 
+	{
+		bHighlightSmoothingInitialized = false;
+		return;
+	}
 
 	UStaticMesh* MeshToUse = nullptr;
 	float RotationYaw = 0.f;
 	FVector Scale = FVector(1.f);
+	
+	FVector TargetLocation = FVector::ZeroVector;
+	bool bTargetLocationSet = false;
 
 	// Helper to compute yaw to a specific neighbor direction (matches placement logic)
 	auto GetYawToNeighbor = [&](const FHex& Start, uint8 Dir) -> float
@@ -360,11 +392,16 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 		if (Tile->Kind == ETileKind::ClusterOutput) 
 		{
 			// Try to find GM for scale
-			if (UWorld* World = GetWorld())
+			if (CachedGameManager)
+			{
+				Scale = FVector(CachedGameManager->ClusterOutputScale);
+			}
+			else if (UWorld* World = GetWorld())
 			{
 				for (TActorIterator<AGameManager> It(World); It; ++It)
 				{
 					Scale = FVector((*It)->ClusterOutputScale);
+					CachedGameManager = *It;
 					break;
 				}
 			}
@@ -376,14 +413,13 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 			uint8 Dir = (uint8)Tile->Arg;
 			FVector CenterA = Driver->MapHexToWorld(HoverHex);
 			FVector CenterB = Driver->MapHexToWorld(HexUtil::Neighbor(HoverHex, (EHexDir)(Dir % 6)));
-			FVector Mid = (CenterA + CenterB) * 0.5f;
+			TargetLocation = (CenterA + CenterB) * 0.5f;
+			bTargetLocationSet = true;
 			
 			// Re-calc yaw
 			FVector DirVec = (CenterB - CenterA).GetSafeNormal();
 			RotationYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
 			
-			// Override location logic below?
-			TileHighlightMesh->SetWorldLocation(Mid);
 			if (CachedHexFactory)
 			{
 				Scale = CachedHexFactory->BondScale;
@@ -396,10 +432,12 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 			uint8 Dir = (uint8)Tile->Arg;
 			FVector CenterA = Driver->MapHexToWorld(HoverHex);
 			FVector CenterB = Driver->MapHexToWorld(HexUtil::Neighbor(HoverHex, (EHexDir)(Dir % 6)));
-			FVector Mid = (CenterA + CenterB) * 0.5f;
+			TargetLocation = (CenterA + CenterB) * 0.5f;
+			bTargetLocationSet = true;
+			
 			FVector DirVec = (CenterB - CenterA).GetSafeNormal();
 			RotationYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
-			TileHighlightMesh->SetWorldLocation(Mid);
+
 			if (CachedHexFactory)
 			{
 				Scale = CachedHexFactory->UnbondScale;
@@ -415,16 +453,33 @@ void AHexTopDownPawn::UpdateHoverHighlight()
 	{
 		TileHighlightMesh->SetStaticMesh(MeshToUse);
 		
-		// If not Bond/Unbond (which set their own location above), set location to hex center
-		if (Tile->Kind != ETileKind::Bond && Tile->Kind != ETileKind::Unbond)
+		if (!bTargetLocationSet)
 		{
-			FVector HexCenter = Driver->MapHexToWorld(HoverHex);
-			TileHighlightMesh->SetWorldLocation(HexCenter);
+			TargetLocation = Driver->MapHexToWorld(HoverHex);
 		}
 		
-		TileHighlightMesh->SetWorldRotation(FRotator(0.f, RotationYaw, 0.f));
+		FRotator TargetRotation = FRotator(0.f, RotationYaw, 0.f);
+
+		if (!bHighlightSmoothingInitialized)
+		{
+			HighlightSmoothedLocation = TargetLocation;
+			HighlightSmoothedRotation = TargetRotation;
+			bHighlightSmoothingInitialized = true;
+		}
+		else
+		{
+			HighlightSmoothedLocation = FMath::VInterpTo(HighlightSmoothedLocation, TargetLocation, DeltaSeconds, HighlightSmoothingSpeed);
+			HighlightSmoothedRotation = FMath::RInterpTo(HighlightSmoothedRotation, TargetRotation, DeltaSeconds, HighlightSmoothingSpeed);
+		}
+		
+		TileHighlightMesh->SetWorldLocation(HighlightSmoothedLocation);
+		TileHighlightMesh->SetWorldRotation(HighlightSmoothedRotation);
 		TileHighlightMesh->SetWorldScale3D(Scale);
 		TileHighlightMesh->SetVisibility(true);
+	}
+	else
+	{
+		bHighlightSmoothingInitialized = false;
 	}
 }
 
@@ -524,7 +579,7 @@ void AHexTopDownPawn::SetInputMode4()
 void AHexTopDownPawn::SetInputMode5() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Bond); }
 void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Unbond); }
 void AHexTopDownPawn::SetInputMode7() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterOutput); }
-void AHexTopDownPawn::SetInputMode9() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterInput); }
+void AHexTopDownPawn::SetInputMode9() { if (Placer) Placer->SetPlaceKind(EPlaceKind::RequestBeacon); }
 void AHexTopDownPawn::RequestMoveToTile()
 {
 	if (!Placer || !Placer->IsHoverValid())
@@ -541,11 +596,15 @@ void AHexTopDownPawn::RequestMoveToTile()
 		return;
 	}
 	
-	AOrbSimDriver* Driver = nullptr;
-	for (TActorIterator<AOrbSimDriver> It(W); It; ++It)
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver)
 	{
-		Driver = *It;
-		break;
+		for (TActorIterator<AOrbSimDriver> It(W); It; ++It)
+		{
+			Driver = *It;
+			CachedOrbSimDriver = Driver;
+			break;
+		}
 	}
 	
 	if (!Driver || !Driver->GetSim())
@@ -578,12 +637,13 @@ void AHexTopDownPawn::RequestMoveToTile()
 void AHexTopDownPawn::SetInputMode8()
 {
 	// Find GameManager to get DifficultyValue
-	AGameManager* GameManager = nullptr;
-	if (UWorld* World = GetWorld())
+	AGameManager* GameManager = CachedGameManager;
+	if (!GameManager && GetWorld())
 	{
-		for (TActorIterator<AGameManager> It(World); It; ++It)
+		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
 		{
 			GameManager = *It;
+			CachedGameManager = GameManager;
 			break;
 		}
 	}
@@ -599,7 +659,12 @@ void AHexTopDownPawn::SetInputMode8()
 	}
 
 	// Get the simulation to access templates
-	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver)
+	{
+		Driver = AOrbSimDriver::Find(GetWorld());
+		CachedOrbSimDriver = Driver;
+	}
 	if (!Driver)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("SetInputMode8: No OrbSimDriver found"));
@@ -817,12 +882,13 @@ void AHexTopDownPawn::HandleNextTickStop(float StepSeconds)
 void AHexTopDownPawn::ToggleArmTimelines()
 {
 	// Find the GameManager
-	AGameManager* GameManager = nullptr;
-	if (UWorld* World = GetWorld())
+	AGameManager* GameManager = CachedGameManager;
+	if (!GameManager && GetWorld())
 	{
-		for (TActorIterator<AGameManager> It(World); It; ++It)
+		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
 		{
 			GameManager = *It;
+			CachedGameManager = GameManager;
 			break;
 		}
 	}
@@ -843,12 +909,13 @@ void AHexTopDownPawn::ToggleArmTimelines()
 void AHexTopDownPawn::NextCommand()
 {
 	// Find the GameManager and get the active timeline
-	AGameManager* GameManager = nullptr;
-	if (UWorld* World = GetWorld())
+	AGameManager* GameManager = CachedGameManager;
+	if (!GameManager && GetWorld())
 	{
-		for (TActorIterator<AGameManager> It(World); It; ++It)
+		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
 		{
 			GameManager = *It;
+			CachedGameManager = GameManager;
 			break;
 		}
 	}
@@ -875,12 +942,13 @@ void AHexTopDownPawn::NextCommand()
 void AHexTopDownPawn::PrevCommand()
 {
 	// Find the GameManager and get the active timeline
-	AGameManager* GameManager = nullptr;
-	if (UWorld* World = GetWorld())
+	AGameManager* GameManager = CachedGameManager;
+	if (!GameManager && GetWorld())
 	{
-		for (TActorIterator<AGameManager> It(World); It; ++It)
+		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
 		{
 			GameManager = *It;
+			CachedGameManager = GameManager;
 			break;
 		}
 	}
@@ -986,12 +1054,13 @@ void AHexTopDownPawn::SetActiveTimelineForEditing(ABasicArm* Arm)
 	}
 
 	// Find the GameManager and set the active timeline
-	AGameManager* GameManager = nullptr;
-	if (UWorld* World = GetWorld())
+	AGameManager* GameManager = CachedGameManager;
+	if (!GameManager && GetWorld())
 	{
-		for (TActorIterator<AGameManager> It(World); It; ++It)
+		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
 		{
 			GameManager = *It;
+			CachedGameManager = GameManager;
 			break;
 		}
 	}
@@ -1136,7 +1205,12 @@ void AHexTopDownPawn::UpdateSelection()
 		SelectedTiles.Empty();
 
 		// Get tile size and grid info from driver
-		AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+		AOrbSimDriver* Driver = CachedOrbSimDriver;
+		if (!Driver)
+		{
+			Driver = AOrbSimDriver::Find(GetWorld());
+			CachedOrbSimDriver = Driver;
+		}
 		float TileSize = Driver ? Driver->GetTileSize() : 100.f;
 		EHexOrientation Orientation = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 		float GridPlaneZ = Driver ? Driver->GetGridPlaneZ(this) : 0.f;
@@ -1245,7 +1319,12 @@ void AHexTopDownPawn::CreateBlueprint()
 	BlueprintTiles.Empty();
 
 	// Find the simulation world
-	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver)
+	{
+		Driver = AOrbSimDriver::Find(GetWorld());
+		CachedOrbSimDriver = Driver;
+	}
 	if (!Driver) return;
 
 	USimWorldHex* Sim = Driver->GetSim();
@@ -1362,12 +1441,15 @@ void AHexTopDownPawn::CreateBlueprint()
 		BlueprintRotation = 0;
 		BlueprintPlacementOffset = FHex(0, 0);
 
-		// Disable HexPlacementComponent preview when in blueprint mode
-		if (Placer)
-		{
-			Placer->SetBlueprintMode(true);
-		}
+	// Disable HexPlacementComponent preview when in blueprint mode
+	if (Placer)
+	{
+		Placer->SetBlueprintMode(true);
 	}
+
+	// Reset smoothing
+	bBlueprintSmoothingInitialized = false;
+}
 }
 
 void AHexTopDownPawn::ClearSelection()
@@ -1413,7 +1495,12 @@ void AHexTopDownPawn::PlaceBlueprint()
 	if (BlueprintTiles.Num() == 0) return;
 
 	// Find the simulation world
-	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver)
+	{
+		Driver = AOrbSimDriver::Find(GetWorld());
+		CachedOrbSimDriver = Driver;
+	}
 	if (!Driver) return;
 
 	USimWorldHex* Sim = Driver->GetSim();
@@ -1795,13 +1882,65 @@ void AHexTopDownPawn::DeletionModeReleased()
 void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 {
 	// Find the simulation world
-	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver)
+	{
+		Driver = AOrbSimDriver::Find(GetWorld());
+		CachedOrbSimDriver = Driver;
+	}
 	if (!Driver) return;
 
 	USimWorldHex* Sim = Driver->GetSim();
 	if (!Sim) return;
 
-	UE_LOG(LogTemp, Log, TEXT("Deleting tile and orbs at (%d,%d)"), Hex.Q, Hex.R);
+	// Check grid visibility
+	bool bGridVisible = true;
+	if (CachedGameManager)
+	{
+		if (UInstancedStaticMeshComponent* ISM = CachedGameManager->FindComponentByClass<UInstancedStaticMeshComponent>())
+		{
+			bGridVisible = ISM->IsVisible();
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Deleting at (%d,%d) - GridVisible: %d"), Hex.Q, Hex.R, bGridVisible);
+
+	if (!bGridVisible)
+	{
+		// Hidden Grid: Only delete RequestBeacons
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+			{
+				ARequestBeacon* Beacon = *It;
+				if (Beacon && Beacon->Q == Hex.Q && Beacon->R == Hex.R)
+				{
+					UE_LOG(LogTemp, Log, TEXT("Destroying RequestBeacon at (%d,%d)"), Hex.Q, Hex.R);
+					
+					// Scenario capture for beacon removal
+					for (TActorIterator<ATestLevelDirector> TLDIt(World); TLDIt; ++TLDIt)
+					{
+						ATestLevelDirector* TLD = *TLDIt;
+						if (TLD)
+						{
+							TLD->RemoveBeaconSpec(Hex.Q, Hex.R);
+							break;
+						}
+					}
+					
+					Beacon->Destroy();
+					// Don't break, maybe multiple beacons? (Though unlikely on same tile)
+				}
+			}
+		}
+		return; // Stop here
+	}
+
+	// Grid Visible: Ignore RequestBeacons (don't delete them), proceed with normal deletion
+
+	// Scenario capture for beacon removal (if deletion should capture it)
+	// Note: Currently beacons are not deleted when grid is visible, so this isn't needed
+	// But keeping it here for consistency with other deletion logic
 
 	// 1. Remove any orbs/items at this hex
 	FItem RemovedItem;
@@ -2060,7 +2199,12 @@ void AHexTopDownPawn::UpdateDeletionSelection()
 		SelectedTiles.Empty();
 
 		// Get tile size and grid info from driver
-		AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+		AOrbSimDriver* Driver = CachedOrbSimDriver;
+		if (!Driver)
+		{
+			Driver = AOrbSimDriver::Find(GetWorld());
+			CachedOrbSimDriver = Driver;
+		}
 		float TileSize = Driver ? Driver->GetTileSize() : 100.f;
 		EHexOrientation Orientation = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 		float GridPlaneZ = Driver ? Driver->GetGridPlaneZ(this) : 0.f;
@@ -2105,7 +2249,12 @@ void AHexTopDownPawn::GetHexesInSelectionArea(const FHex& HexStart, const FHex& 
 	OutHexes.Empty();
 
 	// Get the driver to access tile size and orientation
-	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver)
+	{
+		Driver = AOrbSimDriver::Find(GetWorld());
+		CachedOrbSimDriver = Driver;
+	}
 	if (!Driver) return;
 
 	float TileSize = Driver->GetTileSize();
@@ -2191,7 +2340,7 @@ void AHexTopDownPawn::EnsureBlueprintPreviewComponents()
 	}
 }
 
-void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
+void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds)
 {
 	if (!bBlueprintPlacementMode || BlueprintTiles.Num() == 0 || !GetWorld())
 	{
@@ -2202,7 +2351,12 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 	EnsureBlueprintPreviewComponents();
 
 	// Get tile size and grid info from driver
-	AOrbSimDriver* Driver = AOrbSimDriver::Find(GetWorld());
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver)
+	{
+		Driver = AOrbSimDriver::Find(GetWorld());
+		CachedOrbSimDriver = Driver;
+	}
 	if (!Driver) return;
 
 	float TileSize = Driver->GetTileSize();
@@ -2536,7 +2690,52 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 		if (PreviewMesh)
 		{
 			PreviewComp->SetStaticMesh(PreviewMesh);
-			PreviewComp->SetWorldLocationAndRotation(PreviewWorldPos, FRotator(0.f, PreviewYaw, 0.f));
+			
+			// Calculate target transform
+			FVector TargetLoc = PreviewWorldPos;
+			FRotator TargetRot = FRotator(0.f, PreviewYaw, 0.f);
+			
+			// If not Bond/Unbond (which set their own location above), set location to hex center
+			if (BlueprintTile.TileType == ETileKind::Bond || BlueprintTile.TileType == ETileKind::Unbond)
+			{
+				const uint8 EffectiveDir = (BlueprintTile.TileDirection + BlueprintRotation) % 6;
+				const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)EffectiveDir);
+				
+				FVector CenterA = PreviewWorldPos;
+				FVector CenterB;
+				if (Driver->IsSphereEnabled())
+				{
+					CenterB = Driver->MapHexToWorld(NeighborHex);
+				}
+				else
+				{
+					FVector2D CenterB2D = HexCoord::AxialToXY(FHexAxial(NeighborHex.Q, NeighborHex.R), TileSize, Orientation);
+					CenterB = FVector(CenterB2D.X, CenterB2D.Y, GridPlaneZ);
+				}
+				
+				TargetLoc = (CenterA + CenterB) * 0.5f;
+			}
+
+			// Get current transform for smoothing
+			FVector CurrentLoc = PreviewComp->GetComponentLocation();
+			FRotator CurrentRot = PreviewComp->GetComponentRotation();
+			bool bWasVisible = PreviewComp->IsVisible();
+
+			// Apply smoothing
+			if (!bBlueprintSmoothingInitialized || !bWasVisible)
+			{
+				// Snap to target if not initialized or just became visible
+				CurrentLoc = TargetLoc;
+				CurrentRot = TargetRot;
+			}
+			else
+			{
+				// Interpolate towards target
+				CurrentLoc = FMath::VInterpTo(CurrentLoc, TargetLoc, DeltaSeconds, BlueprintSmoothingSpeed);
+				CurrentRot = FMath::RInterpTo(CurrentRot, TargetRot, DeltaSeconds, BlueprintSmoothingSpeed);
+			}
+
+			PreviewComp->SetWorldLocationAndRotation(CurrentLoc, CurrentRot);
 			PreviewComp->SetVisibility(true);
 
 			// Apply preview material based on tile type
@@ -2667,6 +2866,12 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes()
 		{
 			PreviewComp->SetVisibility(false);
 		}
+	}
+	
+	// Flag initialization complete after first update pass
+	if (!bBlueprintSmoothingInitialized)
+	{
+		bBlueprintSmoothingInitialized = true;
 	}
 }
 
@@ -2851,6 +3056,9 @@ void AHexTopDownPawn::SetBlueprintForPlacement(const TArray<FBlueprintTile>& Blu
 	{
 		Placer->SetBlueprintMode(true);
 	}
+
+	// Reset smoothing
+	bBlueprintSmoothingInitialized = false;
 
 	UE_LOG(LogTemp, Log, TEXT("SetBlueprintForPlacement: Set blueprint with %d tiles for placement"), Blueprint.Num());
 }

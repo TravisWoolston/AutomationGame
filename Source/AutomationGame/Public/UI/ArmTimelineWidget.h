@@ -200,6 +200,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	FLinearColor IconBackgroundColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
 
+	/** Offset for the line connection point relative to the widget component location */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	FVector LineConnectionOffset = FVector::ZeroVector;
+
+	/** Whether to pulse the current command icon */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	bool bPulseCurrentCommand = true;
+
+	/** Border color for the command list */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	FLinearColor ListBorderColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+
+	/** Border thickness for the command list */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float ListBorderThickness = 2.0f;
+
+	/** Get the world location for the line connection */
+	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+	FVector GetConnectionLocation() const;
+
 private:
 	/** The arm program being displayed */
 	TArray<FArmInstr> ArmProgram;

@@ -13,6 +13,8 @@
 #include "CollisionQueryParams.h"
 #include "Engine/Engine.h"
 #include "UObject/EnumProperty.h"
+#include "Rendering/OrbRenderer.h"
+#include "Data/OrbMaterialManager.h"
 
 ABasicWalker::ABasicWalker()
 {
@@ -490,6 +492,38 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		bUFootRaising = (UFootStepState == EFootStepState::Raising);
 		bUFootMoving = (UFootStepState == EFootStepState::Moving);
 		bUFootLowering = (UFootStepState == EFootStepState::Lowering);
+
+		// Sync held item states
+		bool bPrevDHolding = bDFootHoldingItem;
+		bool bPrevLHolding = bLFootHoldingItem;
+		bool bPrevRHolding = bRFootHoldingItem;
+		bool bPrevUHolding = bUFootHoldingItem;
+		
+		bDFootHoldingItem = SimState.DFoot.bHoldingItem;
+		bLFootHoldingItem = SimState.LFoot.bHoldingItem;
+		bRFootHoldingItem = SimState.RFoot.bHoldingItem;
+		bUFootHoldingItem = SimState.UFoot.bHoldingItem;
+
+		DFootHeldItem = SimState.DFoot.HeldItem;
+		LFootHeldItem = SimState.LFoot.HeldItem;
+		RFootHeldItem = SimState.RFoot.HeldItem;
+		UFootHeldItem = SimState.UFoot.HeldItem;
+
+		// Log state changes
+		if (bDFootHoldingItem != bPrevDHolding)
+			UE_LOG(LogTemp, Log, TEXT("Walker '%s': DFoot holding changed to %d"), *GetName(), bDFootHoldingItem ? 1 : 0);
+		if (bLFootHoldingItem != bPrevLHolding)
+			UE_LOG(LogTemp, Log, TEXT("Walker '%s': LFoot holding changed to %d"), *GetName(), bLFootHoldingItem ? 1 : 0);
+		if (bRFootHoldingItem != bPrevRHolding)
+			UE_LOG(LogTemp, Log, TEXT("Walker '%s': RFoot holding changed to %d"), *GetName(), bRFootHoldingItem ? 1 : 0);
+		if (bUFootHoldingItem != bPrevUHolding)
+			UE_LOG(LogTemp, Log, TEXT("Walker '%s': UFoot holding changed to %d"), *GetName(), bUFootHoldingItem ? 1 : 0);
+
+		// Update held item visuals
+		UpdateHeldItemVisuals(DFootHeldOrbComp, bDFootHoldingItem, DFootHeldItem, FName(TEXT("DFoot_Socket")));
+		UpdateHeldItemVisuals(LFootHeldOrbComp, bLFootHoldingItem, LFootHeldItem, FName(TEXT("LFoot_Socket")));
+		UpdateHeldItemVisuals(RFootHeldOrbComp, bRFootHoldingItem, RFootHeldItem, FName(TEXT("RFoot_Socket")));
+		UpdateHeldItemVisuals(UFootHeldOrbComp, bUFootHoldingItem, UFootHeldItem, FName(TEXT("UFoot_Socket")));
 
 		// Helper function to calculate end-of-tick foot position based on step state and progress
 		auto CalculateEndOfTickFootPosition = [&](const FFootState& FootState, const FHex& CurrentHex, const FHex& TargetHex) -> FVector
@@ -1530,6 +1564,194 @@ bool ABasicWalker::LineTraceToGridDebug(const FVector& StartLocation, FVector& O
 	
 	OutHitLocation = EndLocation;
 	return false;
+}
+
+void ABasicWalker::UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool bIsHolding, const FItem& HeldItem, const FName& FootSocketName)
+{
+	if (!bIsHolding)
+	{
+		// Clear visuals if not holding
+		ClearHeldItemVisuals(HeldComp);
+		return;
+	}
+	
+	// Handle both single orbs and clusters
+	if (!HeldItem.bIsCluster && HeldItem.Single.Type == EOrbType::None)
+	{
+		// Invalid single orb
+		ClearHeldItemVisuals(HeldComp);
+		return;
+	}
+	
+	if (HeldItem.bIsCluster && HeldItem.Orbs.Num() == 0)
+	{
+		// Empty cluster
+		ClearHeldItemVisuals(HeldComp);
+		return;
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("Walker '%s': Updating held item visuals for socket '%s' - %s with %d orbs"),
+		*GetName(), *FootSocketName.ToString(), 
+		HeldItem.bIsCluster ? TEXT("Cluster") : TEXT("Single"),
+		HeldItem.bIsCluster ? HeldItem.Orbs.Num() : 1);
+
+	// Get orb mesh and materials from OrbMaterialManager
+	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
+	if (!MaterialManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Walker '%s': Cannot find OrbMaterialManager"), *GetName());
+		ClearHeldItemVisuals(HeldComp);
+		return;
+	}
+	
+	UStaticMesh* OrbMesh = MaterialManager->GetOrbMesh();
+	if (!OrbMesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Walker '%s': OrbMesh is null"), *GetName());
+		ClearHeldItemVisuals(HeldComp);
+		return;
+	}
+	
+	// Get scale from OrbRenderer
+	float OrbScale = 0.30f; // Default
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
+			{
+				OrbScale = Renderer->OrbScale;
+				break;
+			}
+		}
+	}
+
+	// Ensure BodyComp exists
+	if (!BodyComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Walker '%s': Cannot attach held item - BodyComp is null!"), *GetName());
+		return;
+	}
+
+	// Create component if it doesn't exist
+	if (!HeldComp)
+	{
+		HeldComp = NewObject<UStaticMeshComponent>(this, FName(TEXT("HeldOrbComp")));
+		
+		// Check if socket exists
+		if (BodyComp->DoesSocketExist(FootSocketName))
+		{
+			HeldComp->SetupAttachment(BodyComp, FootSocketName);
+			UE_LOG(LogTemp, Log, TEXT("Walker '%s': Created HeldComp attached to socket '%s'"), *GetName(), *FootSocketName.ToString());
+		}
+		else
+		{
+			// Socket doesn't exist, attach to root of skeletal mesh
+			HeldComp->SetupAttachment(BodyComp);
+			UE_LOG(LogTemp, Warning, TEXT("Walker '%s': Socket '%s' not found, attaching to BodyComp root"), 
+				*GetName(), *FootSocketName.ToString());
+		}
+		
+		HeldComp->RegisterComponent();
+		HeldComp->SetMobility(EComponentMobility::Movable);
+		HeldComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		HeldComp->SetCastShadow(false); // Optional - prevent shadow conflicts
+		
+		UE_LOG(LogTemp, Log, TEXT("Walker '%s': HeldComp created and registered"), *GetName());
+	}
+
+	// Clear existing child meshes
+	TArray<USceneComponent*> ChildComps;
+	HeldComp->GetChildrenComponents(false, ChildComps);
+	for (USceneComponent* Child : ChildComps)
+	{
+		if (Child)
+		{
+			Child->DestroyComponent();
+		}
+	}
+
+	// Set visibility
+	HeldComp->SetVisibility(true, true);
+	HeldComp->SetStaticMesh(nullptr); // Container doesn't need a mesh
+
+	// Handle single orbs
+	if (!HeldItem.bIsCluster)
+	{
+		UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
+		SubMesh->SetStaticMesh(OrbMesh);
+		SubMesh->SetMobility(EComponentMobility::Movable);
+		SubMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		SubMesh->RegisterComponent();
+		SubMesh->AttachToComponent(HeldComp, FAttachmentTransformRules::KeepRelativeTransform);
+		SubMesh->SetRelativeLocation(FVector::ZeroVector);
+		SubMesh->SetRelativeScale3D(FVector(OrbScale));
+		
+		// Get material for this orb type
+		UMaterialInterface* OrbMat = MaterialManager->GetMaterialForOrbType(HeldItem.Single.Type);
+		if (OrbMat)
+		{
+			SubMesh->SetMaterial(0, OrbMat);
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("Walker '%s': Spawned single orb visual (Type: %d)"), *GetName(), (int32)HeldItem.Single.Type);
+		return;
+	}
+
+	// Spawn orb meshes for each orb in cluster
+	UE_LOG(LogTemp, Log, TEXT("Walker '%s': Spawning %d orb meshes for held cluster"), *GetName(), HeldItem.Orbs.Num());
+	
+	for (int32 i = 0; i < HeldItem.Orbs.Num(); ++i)
+	{
+		const FOrbData& OrbData = HeldItem.Orbs[i];
+
+		UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
+		SubMesh->SetStaticMesh(OrbMesh); // Use actual orb mesh, not bonded mesh
+		SubMesh->SetMobility(EComponentMobility::Movable);
+		SubMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		SubMesh->RegisterComponent();
+		SubMesh->AttachToComponent(HeldComp, FAttachmentTransformRules::KeepRelativeTransform);
+
+		// Position based on dQ, dR (hex coordinates within cluster)
+		// Convert hex offset to world offset (match grid scale)
+		const float HexSize = 100.f; // Match grid hex size
+		const float X = HexSize * 1.7320508f * (float)OrbData.dQ + HexSize * 0.8660254f * (float)OrbData.dR;
+		const float Y = HexSize * 1.5f * (float)OrbData.dR;
+		SubMesh->SetRelativeLocation(FVector(X, Y, 0.f));
+
+		// Set orb scale
+		SubMesh->SetRelativeScale3D(FVector(OrbScale));
+		
+		// Get material for this orb type
+		EOrbType OrbType = (EOrbType)OrbData.Type;
+		UMaterialInterface* OrbMat = MaterialManager->GetMaterialForOrbType(OrbType);
+		if (OrbMat)
+		{
+			SubMesh->SetMaterial(0, OrbMat);
+		}
+		
+		UE_LOG(LogTemp, Verbose, TEXT("  Orb %d: Type=%d, dQ=%d, dR=%d, Pos=(%.1f, %.1f, 0), Scale=%.2f"), 
+			i, OrbData.Type, OrbData.dQ, OrbData.dR, X, Y, OrbScale);
+	}
+}
+
+void ABasicWalker::ClearHeldItemVisuals(UStaticMeshComponent*& HeldComp)
+{
+	if (HeldComp)
+	{
+		HeldComp->SetVisibility(false, true);
+		
+		// Clear child meshes
+		TArray<USceneComponent*> ChildComps;
+		HeldComp->GetChildrenComponents(false, ChildComps);
+		for (USceneComponent* Child : ChildComps)
+		{
+			if (Child)
+			{
+				Child->DestroyComponent();
+			}
+		}
+	}
 }
 
 #if WITH_EDITOR

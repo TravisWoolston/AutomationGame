@@ -62,6 +62,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetIconBackgroundColor(const FLinearColor& IconBackgroundColor);
 
+	/** Set the border color for the command list */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetListBorderColor(const FLinearColor& BorderColor);
+
+	/** Set the border thickness for the command list */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetListBorderThickness(float Thickness);
+
+	/** Set whether to pulse the current command */
+	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+	void SetPulseCurrentCommand(bool bPulse);
+
 	/** Set the normal command color */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
 	void SetNormalCommandColor(const FLinearColor& NormalColor);
@@ -154,6 +166,18 @@ public:
 	/** Background color for command icons */
 	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
 	FLinearColor IconBackgroundColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+
+	/** Border color for the command list */
+	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
+	FLinearColor ListBorderColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+
+	/** Border thickness for the command list */
+	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
+	float ListBorderThickness = 2.0f;
+
+	/** Whether to pulse the current command icon */
+	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
+	bool bPulseCurrentCommand = true;
 
 	/** Cached left padding used for the command list visual */
 	UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")

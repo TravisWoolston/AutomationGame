@@ -7,6 +7,7 @@
 #include "Actors/BasicArm.h"
 #include "Actors/BasicWalker.h"
 #include "Sim/WalkerTypes.h"
+#include "Actors/RequestBeacon.h"
 #include "TestLevelDirector.generated.h"
 
 class AGameTickManager;
@@ -64,6 +65,19 @@ struct FWalkerSpawnSpec
 };
 
 USTRUCT(BlueprintType)
+struct FRequestBeaconSpec
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Q = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 R = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) EBeaconType BeaconType = EBeaconType::Relocate;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) EBeaconRole BeaconRole = EBeaconRole::None;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Rotation = 0.f; // Yaw rotation for DropOff beacons
+	UPROPERTY(Transient) ARequestBeacon* Spawned = nullptr;
+};
+
+USTRUCT(BlueprintType)
 struct FScenarioSpec
 {
 	GENERATED_BODY()
@@ -75,6 +89,7 @@ struct FScenarioSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FPlacedTileSpec> Tiles;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FArmSpawnSpec> Arms;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerSpawnSpec> Walkers;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FRequestBeaconSpec> Beacons;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bAutoPlay = true;
 };
 
@@ -94,6 +109,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<AOrbSimDriver>   DriverClass;
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<ABasicArm> ArmClass;
 	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<ABasicWalker> WalkerClass;
+	UPROPERTY(EditAnywhere, Category = "Refs") TSubclassOf<ARequestBeacon> BeaconClass;
 
 	UPROPERTY(EditAnywhere, Category = "Scenarios") TArray<FScenarioSpec> Scenarios;
 	UPROPERTY(EditAnywhere, Category = "Scenarios", meta = (ClampMin = 0)) int32 ActiveScenarioIndex = 0;
@@ -141,6 +157,10 @@ public:
 	void UpsertWalkerSpec(int32 Q, int32 R, const FHex& StartingLocation, const TArray<FWalkerInstr>& Program, bool bLoop);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	bool RemoveWalkerSpec(int32 Q, int32 R);
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	void UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconType, EBeaconRole BeaconRole, float Rotation);
+	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+	bool RemoveBeaconSpec(int32 Q, int32 R);
 
 	// Control what runtime edits get written back into scenario specs.
 	UPROPERTY(EditAnywhere, Category = "Scenarios|Runtime Capture")

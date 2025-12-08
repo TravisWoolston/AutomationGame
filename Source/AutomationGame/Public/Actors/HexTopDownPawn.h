@@ -77,7 +77,13 @@ public:
 	UPROPERTY()
 	class AHexFactoryActor* CachedHexFactory;
 
-	void UpdateHoverHighlight();
+	UPROPERTY()
+	class AGameManager* CachedGameManager;
+
+	UPROPERTY()
+	class AOrbSimDriver* CachedOrbSimDriver;
+
+	void UpdateHoverHighlight(float DeltaSeconds);
 
 private:
 	float AxisX = 0.f, AxisY = 0.f, AxisZoom = 0.f;
@@ -166,9 +172,9 @@ private:
 	
 	// Blueprint preview mesh management
 	void EnsureBlueprintPreviewComponents();
-	void UpdateBlueprintPreviewMeshes();
+	void UpdateBlueprintPreviewMeshes(float DeltaSeconds);
 	void ClearBlueprintPreviewComponents();
-	
+
 	// Helper function to convert simulation ops to arm instructions
 	TArray<FArmInstr> ConvertOpsToProgram(const TArray<FOp>& Ops);
 	
@@ -275,4 +281,17 @@ private:
 	
 	// Save game slot name for blueprints
 	static const FString BlueprintLibrarySaveSlotName;
+
+	// Moved here to preserve memory layout for SavedBlueprints (Live Coding safety)
+	// Blueprint smoothing
+	bool bBlueprintSmoothingInitialized = false;
+	UPROPERTY(EditAnywhere, Category = "Blueprint Preview")
+	float BlueprintSmoothingSpeed = 25.0f;
+
+	// Smoothing for tile highlight
+	FVector HighlightSmoothedLocation;
+	FRotator HighlightSmoothedRotation;
+	bool bHighlightSmoothingInitialized = false;
+	UPROPERTY(EditAnywhere, Category = "Camera")
+	float HighlightSmoothingSpeed = 25.0f;
 };

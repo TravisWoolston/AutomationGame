@@ -3,6 +3,7 @@
 #include "Framework/GameManager.h"
 #include "Actors/OrbSimDriver.h"
 #include "Actors/HexFactoryActor.h"
+#include "Actors/RequestBeacon.h"
 #include "Sim/SimWorldHex.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -210,6 +211,22 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 					DestroyActorNow(Walker);
 				}
 			}
+			
+			// Also destroy any residual beacons
+			TArray<ARequestBeacon*> BeaconsToDestroy;
+			for (TActorIterator<ARequestBeacon> It(W); It; ++It)
+			{
+				BeaconsToDestroy.Add(*It);
+			}
+			for (ARequestBeacon* Beacon : BeaconsToDestroy)
+			{
+				if (Beacon)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying beacon at (%d,%d) during scenario reset"),
+						Beacon->Q, Beacon->R);
+					DestroyActorNow(Beacon);
+				}
+			}
 		}
 	}
 
@@ -245,6 +262,12 @@ void ATestLevelDirector::ClearArms()
 			{
 				DestroyActorNow(W.Spawned);
 				W.Spawned = nullptr;
+			}
+		for (FRequestBeaconSpec& B : Sc.Beacons)
+			if (B.Spawned)
+			{
+				DestroyActorNow(B.Spawned);
+				B.Spawned = nullptr;
 			}
 	}
 }
@@ -375,6 +398,44 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 				WalkerState.HomeHex = WalkerSpec.StartingLocation;
 				WalkerSpec.Spawned->HomeHex = WalkerSpec.StartingLocation;
 			}
+		}
+	}
+
+	// Spawn beacons from scenario
+	if (!BeaconClass)
+	{
+		// Try to get from GameManager
+		if (GM && GM->RequestBeaconClass)
+		{
+			BeaconClass = GM->RequestBeaconClass;
+		}
+	}
+
+	for (FRequestBeaconSpec& BeaconSpec : const_cast<TArray<FRequestBeaconSpec>&>(S.Beacons))
+	{
+		if (!BeaconClass) continue;
+		
+		// Skip if already spawned
+		if (BeaconSpec.Spawned && IsValid(BeaconSpec.Spawned))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: Beacon at (%d,%d) already spawned, skipping"), BeaconSpec.Q, BeaconSpec.R);
+			continue;
+		}
+
+		FHex BeaconHex(BeaconSpec.Q, BeaconSpec.R);
+		FVector Location = Driver->MapHexToWorld(BeaconHex);
+		FRotator Rotation(0.f, BeaconSpec.Rotation, 0.f);
+		
+		BeaconSpec.Spawned = W->SpawnActor<ARequestBeacon>(BeaconClass, Location, Rotation);
+		if (BeaconSpec.Spawned)
+		{
+			BeaconSpec.Spawned->Q = BeaconSpec.Q;
+			BeaconSpec.Spawned->R = BeaconSpec.R;
+			BeaconSpec.Spawned->BeaconType = BeaconSpec.BeaconType;
+			BeaconSpec.Spawned->BeaconRole = BeaconSpec.BeaconRole;
+			BeaconSpec.Spawned->SetState(EBeaconState::NotReady);
+			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Spawned beacon at (%d,%d) Role=%d"),
+				BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole);
 		}
 	}
 
@@ -833,6 +894,107 @@ bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R)
 	return false;
 }
 
+void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconType, EBeaconRole BeaconRole, float Rotation)
+{
+	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
+	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+
+	auto FindRuntimeBeaconAt = [&](int32 InQ, int32 InR) -> ARequestBeacon*
+		{
+			if (!GetWorld()) return nullptr;
+			for (TActorIterator<ARequestBeacon> It(GetWorld()); It; ++It)
+			{
+				if (It->Q == InQ && It->R == InR)
+				{
+					return *It;
+				}
+			}
+			return nullptr;
+		};
+
+	for (FRequestBeaconSpec& B : Sc.Beacons)
+	{
+		if (B.Q == Q && B.R == R)
+		{
+			B.BeaconType = BeaconType;
+			B.BeaconRole = BeaconRole;
+			B.Rotation = Rotation;
+			if (!B.Spawned) B.Spawned = FindRuntimeBeaconAt(Q, R);
+			MarkActiveScenarioDirty();
+#if WITH_EDITOR
+			MirrorScenarioEditsToEditor();
+#endif
+			return;
+		}
+	}
+
+	FRequestBeaconSpec NewB;
+	NewB.Q = Q;
+	NewB.R = R;
+	NewB.BeaconType = BeaconType;
+	NewB.BeaconRole = BeaconRole;
+	NewB.Rotation = Rotation;
+	NewB.Spawned = FindRuntimeBeaconAt(Q, R);
+	Sc.Beacons.Add(NewB);
+	MarkActiveScenarioDirty();
+#if WITH_EDITOR
+	MirrorScenarioEditsToEditor();
+#endif
+}
+
+bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
+{
+	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
+	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+
+	for (int32 i = 0; i < Sc.Beacons.Num(); ++i)
+	{
+		if (Sc.Beacons[i].Q == Q && Sc.Beacons[i].R == R)
+		{
+			if (Sc.Beacons[i].Spawned)
+			{
+				DestroyActorNow(Sc.Beacons[i].Spawned);
+				Sc.Beacons[i].Spawned = nullptr;
+			}
+			else if (UWorld* W = GetWorld())
+			{
+				for (TActorIterator<ARequestBeacon> It(W); It; ++It)
+				{
+					if (It->Q == Q && It->R == R)
+					{
+						DestroyActorNow(*It);
+						break;
+					}
+				}
+			}
+
+			Sc.Beacons.RemoveAt(i);
+			MarkActiveScenarioDirty();
+#if WITH_EDITOR
+			MirrorScenarioEditsToEditor();
+#endif
+			return true;
+		}
+	}
+
+	if (UWorld* W = GetWorld())
+	{
+		for (TActorIterator<ARequestBeacon> It(W); It; ++It)
+		{
+			if (It->Q == Q && It->R == R)
+			{
+				DestroyActorNow(*It);
+				MarkActiveScenarioDirty();
+#if WITH_EDITOR
+				MirrorScenarioEditsToEditor();
+#endif
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 /* ---------------- PIE Sync (Editor Only) ---------------- */
 #if WITH_EDITOR
 void ATestLevelDirector::HandlePreBeginPIE(bool /*bIsSimulating*/)
@@ -1098,6 +1260,21 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			Scenario.Walkers.Add(NewWalkerSpec);
 		}
 
+		// Capture request beacons
+		Scenario.Beacons.Empty();
+		for (TActorIterator<ARequestBeacon> It(W); It; ++It)
+		{
+			ARequestBeacon* Beacon = *It;
+			if (!Beacon) continue;
 
+			FRequestBeaconSpec NewBeaconSpec;
+			NewBeaconSpec.Q = Beacon->Q;
+			NewBeaconSpec.R = Beacon->R;
+			NewBeaconSpec.BeaconType = Beacon->BeaconType;
+			NewBeaconSpec.BeaconRole = Beacon->BeaconRole;
+			NewBeaconSpec.Rotation = Beacon->GetActorRotation().Yaw;
+			NewBeaconSpec.Spawned = Beacon;
+			Scenario.Beacons.Add(NewBeaconSpec);
+		}
 	}
 }

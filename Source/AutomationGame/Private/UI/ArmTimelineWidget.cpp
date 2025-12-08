@@ -52,6 +52,14 @@ void UArmTimelineWidget::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 		CurrentWorldLocation = FMath::Lerp(CurrentWorldLocation, TargetWorldLocation, LerpAlpha);
 		SetWorldLocation(CurrentWorldLocation);
 	}
+	else
+	{
+		// Even if reached, ensure world location is set (handles case where parent moves but target hasn't updated yet,
+		// or if we just snapped in UpdateWidgetPosition)
+		// Actually, if Current == Target, we want to stay there. If we don't set it, we move with parent (Relative).
+		// Since Target is World Space, we MUST set World Location to stay pinned to Target.
+		SetWorldLocation(CurrentWorldLocation);
+	}
 	
 	// Reduced frequency tick - only update every 30th frame for performance
 	static int32 TickCounter = 0;
@@ -178,6 +186,9 @@ void UArmTimelineWidget::InitializeWidget()
 			UMGWidget->SetDefaultCommandTexture(DefaultCommandTexture);
 			UMGWidget->SetIconSize(IconSize);
 			UMGWidget->SetIconBackgroundColor(IconBackgroundColor);
+			UMGWidget->SetListBorderColor(ListBorderColor);
+			UMGWidget->SetListBorderThickness(ListBorderThickness);
+			UMGWidget->SetPulseCurrentCommand(bPulseCurrentCommand);
 		}
 		else
 		{
@@ -263,6 +274,13 @@ FString UArmTimelineWidget::GetCommandDisplayName(EArmCmd Command) const
 	}
 }
 
+FVector UArmTimelineWidget::GetConnectionLocation() const
+{
+	// Return the world location of the connection point
+	// Apply the offset in the component's local space
+	return GetComponentLocation() + GetComponentRotation().RotateVector(LineConnectionOffset);
+}
+
 void UArmTimelineWidget::SetTimelineWidgetClass(TSubclassOf<UUserWidget> NewWidgetClass)
 {
 	TimelineWidgetClass = NewWidgetClass;
@@ -310,7 +328,14 @@ void UArmTimelineWidget::UpdateWidgetPosition(const FVector& ArmLocation, const 
 			AGameManager* GameManager = *It;
 			if (GameManager && GameManager->bAvoidTimelineOverlap)
 			{
+				// GameManager now handles height enforcement and separation
 				WidgetLocation = GameManager->AdjustTimelinePositionForOverlap(this, WidgetLocation, ArmLocation);
+				
+				// Force rotation to top-down if managed
+				if (GameManager->bRotateWidgetsForTopDown)
+				{
+					SetWorldRotation(FRotator(90.0f, 180.0f, 0.0f));
+				}
 				break;
 			}
 		}
@@ -323,6 +348,7 @@ void UArmTimelineWidget::UpdateWidgetPosition(const FVector& ArmLocation, const 
 	if (CurrentWorldLocation.IsNearlyZero())
 	{
 		CurrentWorldLocation = TargetWorldLocation;
+		SetWorldLocation(CurrentWorldLocation);
 	}
 	
 	// Check if we should rotate for top-down view

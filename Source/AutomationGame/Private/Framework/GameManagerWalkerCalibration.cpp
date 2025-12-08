@@ -1961,6 +1961,7 @@ void AGameManager::LoadWalkerCalibration()
 	if (SavedWalkerCalibration.StandHeight != 0.f || SavedWalkerCalibration.StartingFootDistance != 0.f)
 	{
 		DesiredStandHeight = SavedWalkerCalibration.StandHeight;
+		StandHeight = SavedWalkerCalibration.StandHeight;
 		StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
 		StartingFootOrientation = SavedWalkerCalibration.StartingFootOrientation;
 		StepHeight = SavedWalkerCalibration.StepHeight;

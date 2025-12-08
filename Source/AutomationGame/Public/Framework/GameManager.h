@@ -139,6 +139,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Factory|Walkers")
 	ABasicWalker* SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWalkerInstr>& Program, bool bLoop = true);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Factory|Beacons")
+	TSubclassOf<class ARequestBeacon> RequestBeaconClass;
+
 	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
 	void CalibrateWalker();
 	
@@ -366,8 +369,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
 	float TimelineWidgetScale = 1.0f;
 
-	/** Offset for timeline widgets from arm position */
+	/** Global height offset for timelines relative to arm base */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineGlobalHeight = 250.0f;
+
+	/** Minimum separation distance between timelines */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineSeparation = 250.0f;
+
+	/** Strength of the repulsion force between timelines */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+	float TimelineRepulsionStrength = 2.0f;
+
+	/** Offset for timeline widgets from arm position (Legacy/Advanced) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline", meta=(AdvancedDisplay))
 	FVector TimelineWidgetOffset = FVector(0.0f, 0.0f, 150.0f);
 
 	/** Whether to rotate widgets for top-down view */

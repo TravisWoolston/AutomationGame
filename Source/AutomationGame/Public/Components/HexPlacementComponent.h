@@ -7,6 +7,7 @@
 #include "HexPlacementComponent.generated.h"
 
 class USimWorldHex; class APlayerController; class AActor; class AOrbSimDriver; class ATestLevelDirector;
+class ARequestBeacon;
 
 UENUM(BlueprintType)
 enum class EPlaceKind : uint8
@@ -19,7 +20,8 @@ enum class EPlaceKind : uint8
 	Bond,          // place a Bond glyph (uses BeltDir for its direction)
 	Unbond,        // place an Unbond glyph (uses BeltDir for its direction)
 	ClusterOutput, // place a ClusterOutput tile (cycles through registered templates)
-	ClusterInput   // place a ClusterInput tile (spawns clusters from storage)
+	ClusterInput,  // place a ClusterInput tile (spawns clusters from storage)
+	RequestBeacon  // place a RequestBeacon (e.g. Relocate)
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of truth). */
@@ -102,6 +104,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	float PreviewZOffset = 4.f;
 
+	/** Smoothing speed for preview mesh movement. */
+	UPROPERTY(EditAnywhere, Category = "Placement Preview")
+	float SmoothingSpeed = 25.0f;
+
 	/** Additional yaw applied to belt preview meshes to compensate for authoring forward (+X expected). */
 	UPROPERTY(EditAnywhere, Category = "Placement Preview")
 	float BeltVisualYawOffsetDeg = -90.f;
@@ -119,6 +125,13 @@ public:
 	// Add a preview fix angle so the arm placement mesh can be rotated without changing sim logic.
 	UPROPERTY(EditAnywhere, Category="Placement Preview")
 	float ArmPreviewFacingFixDeg = 180.f;
+
+	// Request Beacon materials
+	UPROPERTY(EditAnywhere, Category = "Placement Preview|Beacon")
+	UMaterialInterface* PreviewBeaconPickupMaterial = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Placement Preview|Beacon")
+	UMaterialInterface* PreviewBeaconDropOffMaterial = nullptr;
 
 	// Input API
 	UFUNCTION(BlueprintCallable, Category = "Place") void HandlePlace(bool bPressed);
@@ -173,6 +186,11 @@ private:
 	bool bHoverValid = false;
 	FVector LastHoverWorld = FVector::ZeroVector;
 
+	// Smoothing state
+	FVector SmoothedLocation;
+	FRotator SmoothedRotation;
+	bool bSmoothingInitialized = false;
+
 	// Input orb type management
 	UPROPERTY(EditAnywhere, Category = "Input", meta = (ClampMin = "0", ClampMax = "5"))
 	int32 CurrentInputOrbTypeIndex = 0;
@@ -194,7 +212,7 @@ private:
 	void EnsurePreviewComponent();
 	void EnsureSkeletalPreviewComponent();
 	void UpdateHoverHex();          // derive HoverHex from cursor each tick
-	void UpdatePreviewVisual();     // position + mesh + color
+	void UpdatePreviewVisual(float DeltaTime);     // position + mesh + color
 	void UpdateArmPreviewBoneRotations(float Yaw);
 	bool CanPlaceAt(const FHex& Hex) const;
 	UStaticMesh* SelectPreviewMesh() const;
@@ -221,4 +239,11 @@ public:
 	
 	// Blueprint mode flag to disable preview
 	bool bDisablePreview = false;
+
+	// RequestBeacon placement state
+	UPROPERTY(Transient)
+	int32 BeaconPlacementStep = 0; // 0 = Pickup, 1 = DropOff
+
+	UPROPERTY(Transient)
+	ARequestBeacon* PendingPickupBeacon = nullptr;
 };

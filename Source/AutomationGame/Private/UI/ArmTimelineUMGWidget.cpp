@@ -28,6 +28,9 @@ UArmTimelineUMGWidget::UArmTimelineUMGWidget(const FObjectInitializer& ObjectIni
 	CurrentCommandColor = FLinearColor::Yellow;
 	NormalCommandColor = FLinearColor::White;
 	CompletedCommandColor = FLinearColor::Green;
+	ListBorderColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+	ListBorderThickness = 2.0f;
+	bPulseCurrentCommand = true;
 }
 
 void UArmTimelineUMGWidget::NativeConstruct()
@@ -179,6 +182,24 @@ void UArmTimelineUMGWidget::SetIconSpacing(float InIconSpacing)
     UpdateWidgetContent();
 }
 
+void UArmTimelineUMGWidget::SetListBorderColor(const FLinearColor& BorderColor)
+{
+	ListBorderColor = BorderColor;
+	UpdateWidgetContent();
+}
+
+void UArmTimelineUMGWidget::SetListBorderThickness(float Thickness)
+{
+	ListBorderThickness = Thickness;
+	UpdateWidgetContent();
+}
+
+void UArmTimelineUMGWidget::SetPulseCurrentCommand(bool bPulse)
+{
+	bPulseCurrentCommand = bPulse;
+	UpdateWidgetContent();
+}
+
 void UArmTimelineUMGWidget::SetIconBackgroundColor(const FLinearColor& NewIconBackgroundColor)
 {
 	IconBackgroundColor = NewIconBackgroundColor;
@@ -318,9 +339,8 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 	if (CommandListBorder)
 	{
 		// Set border properties for the command list
-		FLinearColor BorderColor(0.2f, 0.2f, 0.2f, 0.8f); // Dark gray border
-		CommandListBorder->SetBrushColor(BorderColor);
-		CommandListBorder->SetPadding(FMargin(8.0f)); // Border thickness
+		CommandListBorder->SetBrushColor(ListBorderColor);
+		CommandListBorder->SetPadding(FMargin(ListBorderThickness)); // Border thickness
 		
 		// Create a horizontal box inside the border to arrange icons
 		UHorizontalBox* InnerHorizontalBox = NewObject<UHorizontalBox>(this);
@@ -524,10 +544,19 @@ void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Comma
 			}
 			else
 			{
-				// Current command uses configurable size with slight scaling
-				float SizeMultiplier = 1.0f + Progress * 0.2f;
-				float FinalSize = IconSize * SizeMultiplier;
-				ImageWidget->SetDesiredSizeOverride(FVector2D(FinalSize, FinalSize));
+			// Current command uses configurable size with slight scaling
+			float SizeMultiplier = 1.0f + Progress * 0.2f;
+
+			// Apply pulse effect if enabled
+			if (bPulseCurrentCommand)
+			{
+				float PulseTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+				float PulseFactor = (FMath::Sin(PulseTime * 10.0f) + 1.0f) * 0.5f; // 0 to 1 sine wave
+				SizeMultiplier += PulseFactor * 0.1f; // Add up to 10% extra scale
+			}
+
+			float FinalSize = IconSize * SizeMultiplier;
+			ImageWidget->SetDesiredSizeOverride(FVector2D(FinalSize, FinalSize));
 			}
 		}
 		
@@ -579,6 +608,15 @@ void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Comma
 		{
 			// Current command uses configurable size with slight scaling
 			float SizeMultiplier = 1.0f + Progress * 0.2f;
+			
+			// Apply pulse effect if enabled
+			if (bPulseCurrentCommand)
+			{
+				float PulseTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+				float PulseFactor = (FMath::Sin(PulseTime * 10.0f) + 1.0f) * 0.5f; // 0 to 1 sine wave
+				SizeMultiplier += PulseFactor * 0.1f; // Add up to 10% extra scale
+			}
+
 			float FinalSize = IconSize * SizeMultiplier;
 			ImageWidget->SetDesiredSizeOverride(FVector2D(FinalSize, FinalSize));
 		}

@@ -11,6 +11,7 @@
 #include "Framework/GameManager.h"
 #include "Actors/BasicArm.h"
 #include "Actors/BasicWalker.h"
+#include "Actors/RequestBeacon.h"
 #include "Sim/WalkerTypes.h"
 #include "DrawDebugHelpers.h"
 #include "Components/StaticMeshComponent.h"
@@ -74,7 +75,7 @@ void UHexPlacementComponent::TickComponent(float DeltaTime, enum ELevelTick, FAc
 	if (PC)
 	{
 		UpdateHoverHex();
-		UpdatePreviewVisual();
+		UpdatePreviewVisual(DeltaTime);
 	}
 
 	if (!bUseInputPolling) return;
@@ -209,6 +210,142 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		else
 		{
 			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn Walker (no GameManager)."));
+		}
+		return;
+	}
+	case EPlaceKind::RequestBeacon:
+	{
+		// Find GameManager
+		AGameManager* GM = nullptr;
+		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
+		{
+			GM = *It;
+			break;
+		}
+
+		if (!GM)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn Beacon (no GameManager)."));
+			return;
+		}
+
+		// Check if we can place here (no arms)
+		// We can reuse the same check as for other tiles, but explicitly checking for arms
+		// Note: RequestBeacons can be placed on existing tiles (except arms)
+		// Check for arms at this location
+		bool bHasArm = false;
+		if (Sim)
+		{
+			for (const FArmState& ArmState : Sim->Arms)
+			{
+				if (ArmState.BaseHex.Q == A.Q && ArmState.BaseHex.R == A.R)
+				{
+					bHasArm = true;
+					break;
+				}
+			}
+		}
+		if (bHasArm)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place beacon - arm present."));
+			return;
+		}
+
+		// Calculate rotation for Pickup to match grid orientation
+		FRotator PickupRotation = FRotator::ZeroRotator;
+		if (Driver)
+		{
+			PickupRotation.Yaw = Driver->GetGridYaw();
+			if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
+			{
+				PickupRotation.Yaw += 30.f;
+			}
+		}
+
+		if (BeaconPlacementStep == 0) // Pickup Beacon
+		{
+			// Spawn Pickup Beacon
+			UClass* BeaconClass = GM->RequestBeaconClass ? GM->RequestBeaconClass.Get() : ARequestBeacon::StaticClass();
+			FVector CenteredLocation = HexToWorld(Root);
+			ARequestBeacon* Beacon = GetWorld()->SpawnActor<ARequestBeacon>(BeaconClass, CenteredLocation, PickupRotation);
+			if (Beacon)
+			{
+				Beacon->Q = A.Q;
+				Beacon->R = A.R;
+				Beacon->BeaconType = EBeaconType::Relocate;
+				Beacon->BeaconRole = EBeaconRole::PickUp;
+				Beacon->SetState(EBeaconState::NotReady); // Not ready until pair is complete
+
+				// Scenario capture
+				if (bAutoScenarioCapture)
+				{
+					if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
+					if (CachedTLD)
+					{
+						CachedTLD->UpsertBeaconSpec(A.Q, A.R, EBeaconType::Relocate, EBeaconRole::PickUp, PickupRotation.Yaw);
+					}
+				}
+
+				PendingPickupBeacon = Beacon;
+				BeaconPlacementStep = 1; // Move to DropOff step
+				UE_LOG(LogTemp, Log, TEXT("Placed Pickup Beacon at (%d,%d). Place DropOff Beacon next."), A.Q, A.R);
+			}
+		}
+		else if (BeaconPlacementStep == 1) // DropOff Beacon
+		{
+			// Spawn DropOff Beacon
+			// Apply rotation based on BeltDir (reusing it for beacon rotation)
+			FRotator Rotation(0.f, (BeltDir % 6) * 60.f, 0.f);
+			// Add base grid rotation
+			if (Driver)
+			{
+				Rotation.Yaw += Driver->GetGridYaw();
+				if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
+				{
+					Rotation.Yaw += 30.f;
+				}
+			}
+
+			UClass* BeaconClass = GM->RequestBeaconClass ? GM->RequestBeaconClass.Get() : ARequestBeacon::StaticClass();
+			FVector CenteredLocation = HexToWorld(Root);
+			ARequestBeacon* Beacon = GetWorld()->SpawnActor<ARequestBeacon>(BeaconClass, CenteredLocation, Rotation);
+			if (Beacon)
+			{
+				Beacon->Q = A.Q;
+				Beacon->R = A.R;
+				Beacon->BeaconType = EBeaconType::Relocate;
+				Beacon->BeaconRole = EBeaconRole::DropOff;
+				Beacon->SetState(EBeaconState::Ready); // Ready now
+
+				// Link beacons
+				if (PendingPickupBeacon && IsValid(PendingPickupBeacon))
+				{
+					Beacon->PairedBeacon = PendingPickupBeacon;
+					PendingPickupBeacon->PairedBeacon = Beacon;
+					// Removed: PendingPickupBeacon->SetState(EBeaconState::Ready); 
+					// Let CheckReadiness() handle state based on occupancy
+					PendingPickupBeacon->UpdateVisuals(); // Force visual update
+				}
+				else
+				{
+					// If pickup beacon is gone, just destroy this one and reset
+					Beacon->Destroy();
+				}
+
+				// Scenario capture
+				if (bAutoScenarioCapture)
+				{
+					if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
+					if (CachedTLD)
+					{
+						CachedTLD->UpsertBeaconSpec(A.Q, A.R, EBeaconType::Relocate, EBeaconRole::DropOff, Rotation.Yaw);
+					}
+				}
+
+				PendingPickupBeacon = nullptr;
+				BeaconPlacementStep = 0; // Reset
+				UE_LOG(LogTemp, Log, TEXT("Placed DropOff Beacon at (%d,%d). Pair complete."), A.Q, A.R);
+			}
 		}
 		return;
 	}
@@ -456,7 +593,20 @@ void UHexPlacementComponent::RotateCCW()
 	BeltDir = (BeltDir + 1) % 6;
 }
 
-void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) { PlaceKind = NewKind; }
+void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) 
+{ 
+	if (PlaceKind == EPlaceKind::RequestBeacon && NewKind != EPlaceKind::RequestBeacon)
+	{
+		// Switching away from beacon mode, cancel pending
+		if (PendingPickupBeacon && IsValid(PendingPickupBeacon))
+		{
+			PendingPickupBeacon->Destroy();
+			PendingPickupBeacon = nullptr;
+		}
+		BeaconPlacementStep = 0;
+	}
+	PlaceKind = NewKind; 
+}
 
 void UHexPlacementComponent::CycleNextType()
 {
@@ -800,6 +950,28 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 	case EPlaceKind::Unbond:
 		return UnbondPreviewMesh ? UnbondPreviewMesh : BondPreviewMesh;
 
+	case EPlaceKind::RequestBeacon:
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				AGameManager* GameManager = *It;
+				if (GameManager && GameManager->RequestBeaconClass)
+				{
+					ARequestBeacon* DefaultBeacon = GameManager->RequestBeaconClass->GetDefaultObject<ARequestBeacon>();
+					if (DefaultBeacon && DefaultBeacon->MeshComp && DefaultBeacon->MeshComp->GetStaticMesh())
+					{
+						return DefaultBeacon->MeshComp->GetStaticMesh();
+					}
+				}
+				break;
+			}
+		}
+		// Fallback to generic
+		return GenericTilePreviewMesh;
+	}
+
 	default:
 		return GenericTilePreviewMesh;
 	}
@@ -1038,6 +1210,7 @@ void UHexPlacementComponent::UpdateHoverHex()
 	if (!HitPlane(World))
 	{
 		bHoverValid = false;
+		bSmoothingInitialized = false;
 		return;
 	}
 
@@ -1047,6 +1220,7 @@ void UHexPlacementComponent::UpdateHoverHex()
 	{
 		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: UpdateHoverHex - No Driver or Sim available"));
 		bHoverValid = false;
+		bSmoothingInitialized = false;
 		return;
 	}
 
@@ -1078,7 +1252,7 @@ void UHexPlacementComponent::UpdateHoverHex()
 	bHoverValid = true;
 }
 
-void UHexPlacementComponent::UpdatePreviewVisual()
+void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 {
 	// Disable preview if in blueprint mode
 	if (bDisablePreview)
@@ -1121,8 +1295,24 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			{
 				SkeletalPreviewComp->SetVisibility(true);
 				SkeletalPreviewComp->SetSkinnedAssetAndUpdate(WalkerMesh);
-				SkeletalPreviewComp->SetWorldLocation(CenterA);
-				SkeletalPreviewComp->SetWorldRotation(FRotator(0.f, Driver ? Driver->GetGridYaw() : 0.f, 0.f));
+
+				// Smoothing
+				FVector TargetLoc = CenterA;
+				FRotator TargetRot = FRotator(0.f, Driver ? Driver->GetGridYaw() : 0.f, 0.f);
+				if (!bSmoothingInitialized)
+				{
+					SmoothedLocation = TargetLoc;
+					SmoothedRotation = TargetRot;
+					bSmoothingInitialized = true;
+				}
+				else
+				{
+					SmoothedLocation = FMath::VInterpTo(SmoothedLocation, TargetLoc, DeltaTime, SmoothingSpeed);
+					SmoothedRotation = FMath::RInterpTo(SmoothedRotation, TargetRot, DeltaTime, SmoothingSpeed);
+				}
+
+				SkeletalPreviewComp->SetWorldLocation(SmoothedLocation);
+				SkeletalPreviewComp->SetWorldRotation(SmoothedRotation);
 				SkeletalPreviewComp->SetWorldScale3D(FVector(1.f));
 			}
 			return;
@@ -1149,8 +1339,8 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 		DrawDebugCircle(GetWorld(), CenterB, Tile * 0.95f, 6, Col, false, 0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
 	}
 
-	// Direction arrow only for Belt/Arm
-	if (PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm)
+	// Direction arrow only for Belt/Arm or RequestBeacon (DropOff step)
+	if (PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || (PlaceKind == EPlaceKind::RequestBeacon && BeaconPlacementStep == 1))
 	{
 		const FHex NeighborHex = HexUtil::Neighbor(HoverHex, (EHexDir)(BeltDir % 6));
 		const FVector CenterB = HexToWorld(NeighborHex) + FVector(0, 0, PreviewZOffset);
@@ -1168,7 +1358,7 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 	}
 
 	// Mesh preview (for all placeable tiles)
-	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Walker || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Walker || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond || PlaceKind == EPlaceKind::RequestBeacon)
 	{
 
 		// For now, use static mesh preview for arms (ArmBasePreviewMesh)
@@ -1206,7 +1396,22 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 			FVector UseLoc = CenterA;
 			FVector UseScale(PreviewScale);
 
-			PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw, 0.f));
+			// Smoothing
+			FVector TargetLoc = UseLoc;
+			FRotator TargetRot = FRotator(0.f, FixedYaw, 0.f);
+			if (!bSmoothingInitialized)
+			{
+				SmoothedLocation = TargetLoc;
+				SmoothedRotation = TargetRot;
+				bSmoothingInitialized = true;
+			}
+			else
+			{
+				SmoothedLocation = FMath::VInterpTo(SmoothedLocation, TargetLoc, DeltaTime, SmoothingSpeed);
+				SmoothedRotation = FMath::RInterpTo(SmoothedRotation, TargetRot, DeltaTime, SmoothingSpeed);
+			}
+
+			PreviewComp->SetWorldLocationAndRotation(SmoothedLocation, SmoothedRotation);
 			PreviewComp->SetWorldScale3D(UseScale);
 			PreviewComp->SetVisibility(true);
 
@@ -1292,6 +1497,35 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 				UseScale *= ClusterScale;
 			}
 
+			else if (PlaceKind == EPlaceKind::RequestBeacon && BeaconPlacementStep == 1)
+			{
+				// DropOff beacon rotates
+				// EffectiveDir already declared above
+				FixedYaw = ComputeDirYawFromNeighbor(this, HoverHex, EffectiveDir);
+			}
+			else if (PlaceKind == EPlaceKind::RequestBeacon && BeaconPlacementStep == 0)
+			{
+				// Pickup beacon static (grid aligned)
+				FixedYaw = 0.f;
+				// ComputeDirYawFromNeighbor already handles GridYaw/etc relative to world
+				// If we want default yaw (Direction 0), call with Dir 0
+				// But ComputeDirYawFromNeighbor is based on neighbor position relative to center
+				// For Pickup, we just want to align with grid
+				// ComputeDirYawFromNeighbor(0) returns angle to neighbor 0, which is grid axis 0
+				FixedYaw = ComputeDirYawFromNeighbor(this, HoverHex, 0);
+			}
+
+			// Scale preview
+			if (PlaceKind == EPlaceKind::RequestBeacon)
+			{
+				// If using the generic mesh, scale it up to look taller
+				if (Mesh == GenericTilePreviewMesh)
+				{
+					UseScale = FVector(PreviewScale * 1.0f, PreviewScale * 1.0f, PreviewScale * 1.5f);
+				}
+				// If using a custom mesh (from BP), keep scale 1.0 (or PreviewScale)
+			}
+
 			if (PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond)
 			{
 				// Midpoint between the two hex centers
@@ -1302,7 +1536,22 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 				UseScale = FVector(PreviewScale);
 			}
 
-			PreviewComp->SetWorldLocationAndRotation(UseLoc, FRotator(0.f, FixedYaw, 0.f));
+			// Smoothing
+			FVector TargetLoc = UseLoc;
+			FRotator TargetRot = FRotator(0.f, FixedYaw, 0.f);
+			if (!bSmoothingInitialized)
+			{
+				SmoothedLocation = TargetLoc;
+				SmoothedRotation = TargetRot;
+				bSmoothingInitialized = true;
+			}
+			else
+			{
+				SmoothedLocation = FMath::VInterpTo(SmoothedLocation, TargetLoc, DeltaTime, SmoothingSpeed);
+				SmoothedRotation = FMath::RInterpTo(SmoothedRotation, TargetRot, DeltaTime, SmoothingSpeed);
+			}
+
+			PreviewComp->SetWorldLocationAndRotation(SmoothedLocation, SmoothedRotation);
 			PreviewComp->SetWorldScale3D(UseScale);
 			PreviewComp->SetVisibility(true);
 
@@ -1338,6 +1587,23 @@ void UHexPlacementComponent::UpdatePreviewVisual()
 					{
 						PreviewComp->SetMaterial(0, OrbMaterial);
 					}
+				}
+			}
+			else if (PlaceKind == EPlaceKind::RequestBeacon)
+			{
+				// Material (Both use PreviewBeaconPickupMaterial for base, decals differentiate)
+				UMaterialInterface* Mat = PreviewBeaconPickupMaterial;
+				if (Mat)
+				{
+					PreviewComp->SetMaterial(0, Mat);
+				}
+				else if (PreviewMID)
+				{
+					// Fallback color: Green for Pickup, Blue for DropOff (if no material set)
+					const FLinearColor Col = (BeaconPlacementStep == 0) 
+						? FLinearColor(0.f, 1.f, 0.f, 0.5f) 
+						: FLinearColor(0.f, 0.5f, 1.f, 0.5f);
+					PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
 				}
 			}
 			else if (PreviewMID)

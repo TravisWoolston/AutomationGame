@@ -117,7 +117,8 @@ void AAutomationGameHUD::DrawTimelineToArmLines()
 		UArmTimelineWidget* TimelineWidget = Arm->TimelineWidget;
 
 		// Get arm position in screen space
-		FVector ArmWorldPos = Arm->GetArmWorldPosition();
+		// Add offset to connect to the "body" of the arm rather than the base
+		FVector ArmWorldPos = Arm->GetArmWorldPosition() + FVector(0.0f, 0.0f, 100.0f);
 		FVector2D ArmScreenPos;
 		if (!PC->ProjectWorldLocationToScreen(ArmWorldPos, ArmScreenPos))
 		{
@@ -125,7 +126,7 @@ void AAutomationGameHUD::DrawTimelineToArmLines()
 		}
 
 		// Get timeline position in screen space
-		FVector TimelineWorldPos = TimelineWidget->GetComponentLocation();
+		FVector TimelineWorldPos = TimelineWidget->GetConnectionLocation();
 		FVector2D TimelineScreenPos;
 		if (!PC->ProjectWorldLocationToScreen(TimelineWorldPos, TimelineScreenPos))
 		{

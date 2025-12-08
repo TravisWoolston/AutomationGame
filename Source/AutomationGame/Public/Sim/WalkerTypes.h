@@ -1,6 +1,7 @@
 #pragma once
 #include "AutomationGameMinimal.h"
 #include "Sim/HexTypes.h"
+#include "Sim/OrbTypes.h"
 #include "WalkerTypes.generated.h"
 
 /** Walker stance state for sitting/standing transitions */
@@ -72,6 +73,13 @@ struct AUTOMATIONGAME_API FFootState
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int32 LastPlantDuration = 0; // How long the foot has been planted/static (or time since last move)
+
+	// NEW: Held item state
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool bHoldingItem = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FItem HeldItem;
 };
 
 // Legacy instruction system (kept for backward compatibility with scenario saving)
@@ -145,6 +153,7 @@ struct AUTOMATIONGAME_API FWalkerState
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float MinimumReachDistance = 0.f; // Minimum tile distance from body for foot placement
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float StandHeight = 0.f; // Body height offset when standing
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float QuadrantRotationOffset = 0.f; // Rotation offset for quadrant boundaries (degrees)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float StartingFootDistance = 0.f; // Starting foot distance in tiles from body
 	
 	// --- Legacy program support (kept for scenario compatibility) ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerInstr> Program;
