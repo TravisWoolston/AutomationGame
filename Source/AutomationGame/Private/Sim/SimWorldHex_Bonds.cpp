@@ -33,20 +33,34 @@ void USimWorldHex::StepBonds()
 		}
 	}
 	
-	// Add walker held items to preserve their bonds
+	// Add walker held items to preserve their bonds AND positions
 	for (const FWalkerState& W : Walkers)
 	{
 		auto AddFootHeldIds = [&](const FFootState& Foot)
 		{
 			if (!Foot.bHoldingItem) return;
+			
+			// Use the foot's target tile as the anchor implies where it is (or going to be)
+			// This matches pickup logic where offsets are relative to TargetTile
+			const FHex Anchor = Foot.TargetTile;
+
 			if (Foot.HeldItem.bIsCluster)
 			{
 				for (const FOrbData& Sub : Foot.HeldItem.Orbs)
-					if (Sub.ItemId > 0) HeldIds.Add(Sub.ItemId);
+				{
+					if (Sub.ItemId > 0)
+					{
+						HeldIds.Add(Sub.ItemId);
+						// Reconstruct world position for bond validation
+						FHex WorldPos(Anchor.Q + Sub.dQ, Anchor.R + Sub.dR);
+						HeldItemLastHex.Add(Sub.ItemId, WorldPos);
+					}
+				}
 			}
 			else if (Foot.HeldItem.Id > 0)
 			{
 				HeldIds.Add(Foot.HeldItem.Id);
+				HeldItemLastHex.Add(Foot.HeldItem.Id, Anchor);
 			}
 		};
 		

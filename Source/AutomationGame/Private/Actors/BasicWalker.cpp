@@ -848,9 +848,12 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			auto CalculateFootWorldPos = [this, &SimState](const FFootState& FootState) -> FVector
 			{
 				// If foot is moving, interpolate between current and target
-				if (FootState.StepState == EFootStepState::Moving && FootState.StepProgress > 0 && Sim->StepMoveTicks > 0)
+				// Note: StepMoveTicks is not exposed by Sim, using constant 10.0f as approximation for smoothing
+				const float ApproxStepTicks = 10.0f;
+				if (FootState.StepState == EFootStepState::Moving && FootState.StepProgress > 0)
 				{
-					float Alpha = (float)FootState.StepProgress / (float)Sim->StepMoveTicks;
+					float Alpha = (float)FootState.StepProgress / ApproxStepTicks;
+					Alpha = FMath::Clamp(Alpha, 0.f, 1.f);
 					FVector Start = Driver->MapHexToWorld(FootState.CurrentTile);
 					FVector End = Driver->MapHexToWorld(FootState.TargetTile);
 					return FMath::Lerp(Start, End, Alpha);
@@ -936,8 +939,25 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			AvgYaw = FMath::RadiansToDegrees(FMath::Atan2(TotalWeightedSin, TotalWeightedCos));
 			BodyGoalRotation = FRotator(90.f, 0.f, AvgYaw);
 
-			// Update QuadrantRotationOffset to compensate
+	// Update QuadrantRotationOffset to compensate
 			QuadrantRotationOffset = AvgYaw;
+		}
+	}
+
+	// Update Held Item Comp Rotation (if exists and is absolute)
+	// We need to check all 4 feet since HeldComp is not a single member
+	UStaticMeshComponent* HandComps[] = { DFootHeldOrbComp, LFootHeldOrbComp, RFootHeldOrbComp, UFootHeldOrbComp };
+	
+	FRotator TargetRot = GetActorRotation();
+	// Offset logic consistent with previous fix (0 offset)
+	float ClusterRotationDeg = 0.f; 
+	TargetRot.Yaw += ClusterRotationDeg;
+	
+	for (UStaticMeshComponent* Comp : HandComps)
+	{
+		if (Comp && Comp->IsUsingAbsoluteRotation())
+		{
+			Comp->SetWorldRotation(TargetRot);
 		}
 	}
 
