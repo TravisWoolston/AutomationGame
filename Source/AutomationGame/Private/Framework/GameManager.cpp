@@ -2307,6 +2307,28 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 		{ TEXT("S"), FLinearColor(1.0f, 1.0f, 0.0f) }   // Yellow
 	};
 
+	// Helper to check if a quadrant corresponds to a holding foot
+	auto IsQuadrantHolding = [&](const FString& Q) -> bool
+	{
+		// Map Quadrant to Foot using calibration settings
+		EWalkerFoot TargetLeg = EWalkerFoot::DFoot; // default
+		
+		if (Q == TEXT("N")) TargetLeg = NQuadrantLeg;
+		else if (Q == TEXT("E")) TargetLeg = EQuadrantLeg;
+		else if (Q == TEXT("S")) TargetLeg = SQuadrantLeg;
+		else if (Q == TEXT("W")) TargetLeg = WQuadrantLeg;
+		else return false;
+
+		switch (TargetLeg)
+		{
+			case EWalkerFoot::DFoot: return WalkerState.DFoot.bHoldingItem;
+			case EWalkerFoot::LFoot: return WalkerState.LFoot.bHoldingItem;
+			case EWalkerFoot::RFoot: return WalkerState.RFoot.bHoldingItem;
+			case EWalkerFoot::UFoot: return WalkerState.UFoot.bHoldingItem;
+			default: return false;
+		}
+	};
+
 	// Find all reachable tiles and assign them to quadrants
 	TMap<FHex, FString> HexToQuadrantMap;
 	for (int32 q = -ReachDist; q <= ReachDist; ++q)
@@ -2343,11 +2365,18 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 			UMaterialInstanceDynamic* QuadrantMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, this);
 			if (QuadrantMaterial)
 			{
-				const FLinearColor& QuadrantColor = QuadrantColorPair.Value;
-				QuadrantMaterial->SetVectorParameterValue(TEXT("Color"), QuadrantColor);
-				QuadrantMaterial->SetVectorParameterValue(TEXT("BaseColor"), QuadrantColor);
-				QuadrantMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), QuadrantColor);
-				QuadrantMaterial->SetVectorParameterValue(TEXT("DiffuseColor"), QuadrantColor);
+				FLinearColor QuadColor = QuadrantColorPair.Value;
+				
+				// Override with Pink if holding
+				if (IsQuadrantHolding(QuadrantColorPair.Key))
+				{
+					QuadColor = FLinearColor(1.0f, 0.05f, 0.8f); // Hot Pink
+				}
+				
+				QuadrantMaterial->SetVectorParameterValue(TEXT("Color"), QuadColor);
+				QuadrantMaterial->SetVectorParameterValue(TEXT("BaseColor"), QuadColor);
+				QuadrantMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), QuadColor);
+				QuadrantMaterial->SetVectorParameterValue(TEXT("DiffuseColor"), QuadColor);
 				QuadrantMaterials.Add(QuadrantColorPair.Key, QuadrantMaterial);
 			}
 		}

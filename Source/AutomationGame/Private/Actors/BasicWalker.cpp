@@ -832,21 +832,74 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		struct FFootRotInfo {
 			FVector Pos;
 			float IdealAngle; // Degrees: U=0, R=90, D=180, L=-90 (Front, Right, Back, Left)
+			bool bIsValid;
 		};
 
+		// Calculate actual foot positions from the current simulation state
+		// This includes feet that are raised, moving, or planted
+		FVector ActualFootPositions[4] = { FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector };
+		
+		if (Sim && SimWalkerIndex >= 0 && SimWalkerIndex < Sim->Walkers.Num())
+		{
+			const FWalkerState& SimState = Sim->Walkers[SimWalkerIndex];
+			
+			// For each foot, calculate its actual world position based on its current state
+			// This blends between CurrentTile and TargetTile based on step progress
+			auto CalculateFootWorldPos = [this, &SimState](const FFootState& FootState) -> FVector
+			{
+				// If foot is moving, interpolate between current and target
+				if (FootState.StepState == EFootStepState::Moving && FootState.StepProgress > 0 && Sim->StepMoveTicks > 0)
+				{
+					float Alpha = (float)FootState.StepProgress / (float)Sim->StepMoveTicks;
+					FVector Start = Driver->MapHexToWorld(FootState.CurrentTile);
+					FVector End = Driver->MapHexToWorld(FootState.TargetTile);
+					return FMath::Lerp(Start, End, Alpha);
+				}
+				else if (FootState.StepState == EFootStepState::Raising || FootState.StepState == EFootStepState::Lowering)
+				{
+					// For raising/lowering, use the tile it's on/going to
+					// Usually TargetTile is the one it's planted on or moving towards
+					// But if Raising, CurrentTile is where it was. TargetTile might be same?
+					// Let's stick to previous logic of using TargetTile for stability, or check state
+					return Driver->MapHexToWorld(FootState.TargetTile);
+				}
+				
+				// Planted or other
+				if (Driver)
+				{
+					return Driver->MapHexToWorld(FootState.CurrentTile);
+				}
+				return FVector::ZeroVector;
+			};
+			
+			ActualFootPositions[0] = CalculateFootWorldPos(SimState.DFoot); // D/South/Back
+			ActualFootPositions[1] = CalculateFootWorldPos(SimState.LFoot); // L/West/Left
+			ActualFootPositions[2] = CalculateFootWorldPos(SimState.RFoot); // R/East/Right
+			ActualFootPositions[3] = CalculateFootWorldPos(SimState.UFoot); // U/North/Front
+		}
+		else
+		{
+			// Fall back to assigned tile locations if no simulation data
+			ActualFootPositions[0] = DFootAssignedTileWorldLocation;
+			ActualFootPositions[1] = LFootAssignedTileWorldLocation;
+			ActualFootPositions[2] = RFootAssignedTileWorldLocation;
+			ActualFootPositions[3] = UFootAssignedTileWorldLocation;
+		}
+
 		// Ideal angles relative to body forward (0)
+		// Using actual foot positions regardless of their state
 		const FFootRotInfo Feet[] = {
-			{ UFootAssignedTileWorldLocation, 0.f },   // U/North/Front
-			{ RFootAssignedTileWorldLocation, 90.f },  // R/East/Right
-			{ DFootAssignedTileWorldLocation, 180.f }, // D/South/Back
-			{ LFootAssignedTileWorldLocation, -90.f }  // L/West/Left
+			{ ActualFootPositions[3], 0.f, !ActualFootPositions[3].IsNearlyZero() },   // U/North/Front
+			{ ActualFootPositions[2], 90.f, !ActualFootPositions[2].IsNearlyZero() },  // R/East/Right
+			{ ActualFootPositions[0], 180.f, !ActualFootPositions[0].IsNearlyZero() }, // D/South/Back
+			{ ActualFootPositions[1], -90.f, !ActualFootPositions[1].IsNearlyZero() }  // L/West/Left
 		};
 
 		const float CurrentBodyYaw = GetActorRotation().Yaw;
 
 		for (const FFootRotInfo& Foot : Feet)
 		{
-			if (Foot.Pos.IsNearlyZero()) continue;
+			if (!Foot.bIsValid) continue;
 
 			FVector ToFoot = Foot.Pos - BodyLoc;
 			if (ToFoot.SizeSquared2D() < KINDA_SMALL_NUMBER) continue;
@@ -884,7 +937,7 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			BodyGoalRotation = FRotator(90.f, 0.f, AvgYaw);
 
 			// Update QuadrantRotationOffset to compensate
-			QuadrantRotationOffset = -AvgYaw;
+			QuadrantRotationOffset = AvgYaw;
 		}
 	}
 
@@ -1589,11 +1642,6 @@ void ABasicWalker::UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool b
 		ClearHeldItemVisuals(HeldComp);
 		return;
 	}
-	
-	UE_LOG(LogTemp, Log, TEXT("Walker '%s': Updating held item visuals for socket '%s' - %s with %d orbs"),
-		*GetName(), *FootSocketName.ToString(), 
-		HeldItem.bIsCluster ? TEXT("Cluster") : TEXT("Single"),
-		HeldItem.bIsCluster ? HeldItem.Orbs.Num() : 1);
 
 	// Get orb mesh and materials from OrbMaterialManager
 	UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
@@ -1613,7 +1661,7 @@ void ABasicWalker::UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool b
 	}
 	
 	// Get scale from OrbRenderer
-	float OrbScale = 0.30f; // Default
+	float OrbScale = 1.6f; // Default
 	if (UWorld* World = GetWorld())
 	{
 		for (TActorIterator<AActor> It(World); It; ++It)
@@ -1636,13 +1684,12 @@ void ABasicWalker::UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool b
 	// Create component if it doesn't exist
 	if (!HeldComp)
 	{
-		HeldComp = NewObject<UStaticMeshComponent>(this, FName(TEXT("HeldOrbComp")));
+		HeldComp = NewObject<UStaticMeshComponent>(this, FName(*FString::Printf(TEXT("HeldOrbComp_%s"), *FootSocketName.ToString())));
 		
 		// Check if socket exists
 		if (BodyComp->DoesSocketExist(FootSocketName))
 		{
 			HeldComp->SetupAttachment(BodyComp, FootSocketName);
-			UE_LOG(LogTemp, Log, TEXT("Walker '%s': Created HeldComp attached to socket '%s'"), *GetName(), *FootSocketName.ToString());
 		}
 		else
 		{
@@ -1655,83 +1702,75 @@ void ABasicWalker::UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool b
 		HeldComp->RegisterComponent();
 		HeldComp->SetMobility(EComponentMobility::Movable);
 		HeldComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		HeldComp->SetCastShadow(false); // Optional - prevent shadow conflicts
-		
-		UE_LOG(LogTemp, Log, TEXT("Walker '%s': HeldComp created and registered"), *GetName());
+		HeldComp->SetCastShadow(false);
 	}
-
-	// Clear existing child meshes
+	
+	// Set visibility
+	HeldComp->SetVisibility(true, true);
+	
+	// Clear existing child meshes (renamed to avoid shadowing AActor::Children)
 	TArray<USceneComponent*> ChildComps;
 	HeldComp->GetChildrenComponents(false, ChildComps);
 	for (USceneComponent* Child : ChildComps)
 	{
-		if (Child)
-		{
-			Child->DestroyComponent();
-		}
+		if (Child) Child->DestroyComponent();
 	}
 
-	// Set visibility
-	HeldComp->SetVisibility(true, true);
-	HeldComp->SetStaticMesh(nullptr); // Container doesn't need a mesh
+	// Calculate Rotation - FIXED per user request: Always 30 degrees for walked clusters
+	float ClusterRotationDeg = 30.f;
+	
+	// Use absolute rotation to maintain world orientation regardless of foot rotation
+	HeldComp->SetUsingAbsoluteRotation(true);
+	HeldComp->SetWorldRotation(FRotator(0.f, ClusterRotationDeg, 0.f));
 
-	// Handle single orbs
+	// If single orb
 	if (!HeldItem.bIsCluster)
 	{
-		UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
-		SubMesh->SetStaticMesh(OrbMesh);
-		SubMesh->SetMobility(EComponentMobility::Movable);
-		SubMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(HeldComp);
 		SubMesh->RegisterComponent();
 		SubMesh->AttachToComponent(HeldComp, FAttachmentTransformRules::KeepRelativeTransform);
 		SubMesh->SetRelativeLocation(FVector::ZeroVector);
+		SubMesh->SetStaticMesh(OrbMesh);
 		SubMesh->SetRelativeScale3D(FVector(OrbScale));
 		
-		// Get material for this orb type
-		UMaterialInterface* OrbMat = MaterialManager->GetMaterialForOrbType(HeldItem.Single.Type);
-		if (OrbMat)
+		UMaterialInterface* OrbMaterial = MaterialManager->GetMaterialForOrbType(HeldItem.Single.Type);
+		if (OrbMaterial)
 		{
-			SubMesh->SetMaterial(0, OrbMat);
+			SubMesh->SetMaterial(0, OrbMaterial);
 		}
-		
-		UE_LOG(LogTemp, Log, TEXT("Walker '%s': Spawned single orb visual (Type: %d)"), *GetName(), (int32)HeldItem.Single.Type);
-		return;
 	}
-
-	// Spawn orb meshes for each orb in cluster
-	UE_LOG(LogTemp, Log, TEXT("Walker '%s': Spawning %d orb meshes for held cluster"), *GetName(), HeldItem.Orbs.Num());
-	
-	for (int32 i = 0; i < HeldItem.Orbs.Num(); ++i)
+	else
 	{
-		const FOrbData& OrbData = HeldItem.Orbs[i];
-
-		UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(this);
-		SubMesh->SetStaticMesh(OrbMesh); // Use actual orb mesh, not bonded mesh
-		SubMesh->SetMobility(EComponentMobility::Movable);
-		SubMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		SubMesh->RegisterComponent();
-		SubMesh->AttachToComponent(HeldComp, FAttachmentTransformRules::KeepRelativeTransform);
-
-		// Position based on dQ, dR (hex coordinates within cluster)
-		// Convert hex offset to world offset (match grid scale)
-		const float HexSize = 100.f; // Match grid hex size
-		const float X = HexSize * 1.7320508f * (float)OrbData.dQ + HexSize * 0.8660254f * (float)OrbData.dR;
-		const float Y = HexSize * 1.5f * (float)OrbData.dR;
-		SubMesh->SetRelativeLocation(FVector(X, Y, 0.f));
-
-		// Set orb scale
-		SubMesh->SetRelativeScale3D(FVector(OrbScale));
+		// Cluster
+		HeldComp->SetStaticMesh(nullptr); // Container mesh
+		HeldComp->SetRelativeScale3D(FVector(1.f)); // Container scale
 		
-		// Get material for this orb type
-		EOrbType OrbType = (EOrbType)OrbData.Type;
-		UMaterialInterface* OrbMat = MaterialManager->GetMaterialForOrbType(OrbType);
-		if (OrbMat)
+		const float TileSize = (Driver ? Driver->GetTileSize() : 100.f);
+		const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
+		
+		// Visualize sub-orbs
+		for (const FOrbData& Sub : HeldItem.Orbs)
 		{
-			SubMesh->SetMaterial(0, OrbMat);
+			UStaticMeshComponent* SubMesh = NewObject<UStaticMeshComponent>(HeldComp);
+			SubMesh->RegisterComponent();
+			SubMesh->AttachToComponent(HeldComp, FAttachmentTransformRules::KeepRelativeTransform);
+			
+			// Calculate offset
+			const FVector2D XY = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), TileSize, GridOrientation);
+			SubMesh->SetRelativeLocation(FVector(XY.X, XY.Y, 0.f));
+			
+			SubMesh->SetStaticMesh(OrbMesh);
+			SubMesh->SetRelativeScale3D(FVector(OrbScale));
+			
+			UMaterialInterface* OrbMaterial = MaterialManager->GetMaterialForOrbType((EOrbType)Sub.Type);
+			if (OrbMaterial)
+			{
+				SubMesh->SetMaterial(0, OrbMaterial);
+			}
 		}
 		
-		UE_LOG(LogTemp, Verbose, TEXT("  Orb %d: Type=%d, dQ=%d, dR=%d, Pos=(%.1f, %.1f, 0), Scale=%.2f"), 
-			i, OrbData.Type, OrbData.dQ, OrbData.dR, X, Y, OrbScale);
+		// Generate bonds
+		GenerateBondedOrbMeshes(HeldComp, HeldItem);
 	}
 }
 
@@ -1739,19 +1778,140 @@ void ABasicWalker::ClearHeldItemVisuals(UStaticMeshComponent*& HeldComp)
 {
 	if (HeldComp)
 	{
-		HeldComp->SetVisibility(false, true);
-		
-		// Clear child meshes
+		// Destroy children
 		TArray<USceneComponent*> ChildComps;
 		HeldComp->GetChildrenComponents(false, ChildComps);
 		for (USceneComponent* Child : ChildComps)
 		{
-			if (Child)
+			if (Child) Child->DestroyComponent();
+		}
+		
+		HeldComp->SetStaticMesh(nullptr);
+		HeldComp->SetVisibility(false, true);
+	}
+}
+
+void ABasicWalker::GenerateBondedOrbMeshes(UStaticMeshComponent* HeldComp, const FItem& HeldItem)
+{
+	UStaticMesh* BondedOrbMesh = GetBondedOrbMesh();
+	if (!HeldItem.bIsCluster || !BondedOrbMesh || !Sim || !HeldComp)
+	{
+		return;
+	}
+
+	// Get tile size from driver
+	const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
+	const EHexOrientation GridOrientation = (Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop);
+
+	// Get the bonds from Sim
+	const TArray<USimWorldHex::FBond>& Bonds = Sim->GetBonds();
+	
+	// Get scale specifically for bonds
+	float BondThickness = 1.0f;
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
 			{
-				Child->DestroyComponent();
+				BondThickness = Renderer->BondedOrbScale;
+				break;
 			}
 		}
 	}
+
+	// Find bonds that involve sub-orbs in this held cluster
+	for (const auto& Bond : Bonds)
+	{
+		if (!Bond.bActive) continue;
+
+		// Check if both items are in this held cluster
+		bool bItemAInCluster = false;
+		bool bItemBInCluster = false;
+		FVector PosA = FVector::ZeroVector;
+		FVector PosB = FVector::ZeroVector;
+
+		for (const FOrbData& Sub : HeldItem.Orbs)
+		{
+			if (Sub.ItemId == Bond.ItemA)
+			{
+				bItemAInCluster = true;
+				FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
+				PosA = FVector(HexOffset.X, HexOffset.Y, 0.f);
+			}
+			if (Sub.ItemId == Bond.ItemB)
+			{
+				bItemBInCluster = true;
+				FVector2D HexOffset = HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, GridOrientation);
+				PosB = FVector(HexOffset.X, HexOffset.Y, 0.f);
+			}
+		}
+
+		// If both items are in this cluster, create a bonded orb mesh
+		if (bItemAInCluster && bItemBInCluster)
+		{
+			UStaticMeshComponent* BondMesh = NewObject<UStaticMeshComponent>(HeldComp, *FString::Printf(TEXT("Bond_%d_%d"), Bond.ItemA, Bond.ItemB));
+			BondMesh->RegisterComponent();
+			BondMesh->AttachToComponent(HeldComp, FAttachmentTransformRules::KeepRelativeTransform);
+			BondMesh->SetStaticMesh(BondedOrbMesh);
+
+			UMaterialInterface* BondedOrbMaterial = GetBondedOrbMaterial();
+			if (BondedOrbMaterial)
+			{
+				BondMesh->SetMaterial(0, BondedOrbMaterial);
+			}
+
+			// Calculate midpoint and direction
+			FVector Midpoint = (PosA + PosB) * 0.5f;
+			FVector Direction = (PosB - PosA).GetSafeNormal();
+			
+			// Align cylinder with bond direction
+			FVector Up = Direction;
+			FVector Right = FVector::CrossProduct(Up, FVector::UpVector).GetSafeNormal();
+			if (Right.IsNearlyZero())
+			{
+				Right = FVector::RightVector;
+			}
+			FVector Forward = FVector::CrossProduct(Right, Up).GetSafeNormal();
+
+			FMatrix RotationMatrix = FMatrix(Forward, Right, Up, FVector::ZeroVector);
+			FRotator Rotation = FQuat(RotationMatrix).Rotator();
+
+			BondMesh->SetRelativeLocation(Midpoint);
+			BondMesh->SetRelativeRotation(Rotation);
+			BondMesh->SetRelativeScale3D(FVector(BondThickness, BondThickness, 1.f));
+		}
+	}
+}
+
+UStaticMesh* ABasicWalker::GetBondedOrbMesh() const
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
+			{
+				return Renderer->BondedOrbMesh;
+			}
+		}
+	}
+	return nullptr;
+}
+
+UMaterialInterface* ABasicWalker::GetBondedOrbMaterial() const
+{
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
+			{
+				return Renderer->BondedOrbMaterial;
+			}
+		}
+	}
+	return nullptr;
 }
 
 #if WITH_EDITOR

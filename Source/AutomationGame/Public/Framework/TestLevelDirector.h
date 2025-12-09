@@ -74,6 +74,9 @@ struct FRequestBeaconSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EBeaconType BeaconType = EBeaconType::Relocate;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EBeaconRole BeaconRole = EBeaconRole::None;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Rotation = 0.f; // Yaw rotation for DropOff beacons
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 PairedBeaconQ = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 PairedBeaconR = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) EBeaconRole PairedBeaconRole = EBeaconRole::None;
 	UPROPERTY(Transient) ARequestBeacon* Spawned = nullptr;
 };
 

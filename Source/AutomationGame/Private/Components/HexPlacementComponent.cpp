@@ -339,6 +339,13 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 					if (CachedTLD)
 					{
 						CachedTLD->UpsertBeaconSpec(A.Q, A.R, EBeaconType::Relocate, EBeaconRole::DropOff, Rotation.Yaw);
+						
+						// Update Pickup beacon spec to save its pair relationship
+						if (PendingPickupBeacon && IsValid(PendingPickupBeacon))
+						{
+							CachedTLD->UpsertBeaconSpec(PendingPickupBeacon->Q, PendingPickupBeacon->R, 
+								EBeaconType::Relocate, EBeaconRole::PickUp, PickupRotation.Yaw);
+						}
 					}
 				}
 

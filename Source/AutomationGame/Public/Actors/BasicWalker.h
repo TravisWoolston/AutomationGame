@@ -343,5 +343,10 @@ private:
 	// Held item visualization
 	void UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool bIsHolding, const FItem& HeldItem, const FName& FootSocketName);
 	void ClearHeldItemVisuals(UStaticMeshComponent*& HeldComp);
+	
+	// Bond visualization helpers
+	void GenerateBondedOrbMeshes(UStaticMeshComponent* HeldComp, const FItem& HeldItem);
+	UStaticMesh* GetBondedOrbMesh() const;
+	UMaterialInterface* GetBondedOrbMaterial() const;
 };
 

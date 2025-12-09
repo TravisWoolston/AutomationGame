@@ -1,4 +1,4 @@
-﻿#include "Sim/SimWorldHex.h"
+#include "Sim/SimWorldHex.h"
 #include "Actors/BasicArm.h"
 #include "AGLogChannels.h"
 #include "EngineUtils.h"
@@ -32,7 +32,30 @@ void USimWorldHex::StepBonds()
 			HeldIds.Add(A.Held.Id);
 		}
 	}
-
+	
+	// Add walker held items to preserve their bonds
+	for (const FWalkerState& W : Walkers)
+	{
+		auto AddFootHeldIds = [&](const FFootState& Foot)
+		{
+			if (!Foot.bHoldingItem) return;
+			if (Foot.HeldItem.bIsCluster)
+			{
+				for (const FOrbData& Sub : Foot.HeldItem.Orbs)
+					if (Sub.ItemId > 0) HeldIds.Add(Sub.ItemId);
+			}
+			else if (Foot.HeldItem.Id > 0)
+			{
+				HeldIds.Add(Foot.HeldItem.Id);
+			}
+		};
+		
+		AddFootHeldIds(W.DFoot);
+		AddFootHeldIds(W.LFoot);
+		AddFootHeldIds(W.RFoot);
+		AddFootHeldIds(W.UFoot);
+	}
+	
 	CleanupBrokenBonds(HeldIds);
 
 	// Mapping kept outside the loop so unbond phase can reuse it

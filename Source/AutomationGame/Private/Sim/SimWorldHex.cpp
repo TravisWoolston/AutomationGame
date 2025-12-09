@@ -288,15 +288,17 @@ bool USimWorldHex::TryPutItem(const FHex& H, const FItem& I)
 	}
 
 	// Check for walker feet (Current or Target tiles)
+	// EXCLUDE feet that are holding items (they're raised and not obstacles)
 	for (const FWalkerState& W : Walkers)
 	{
-		if (W.DFoot.CurrentTile == H || W.DFoot.TargetTile == H ||
-			W.LFoot.CurrentTile == H || W.LFoot.TargetTile == H ||
-			W.RFoot.CurrentTile == H || W.RFoot.TargetTile == H ||
-			W.UFoot.CurrentTile == H || W.UFoot.TargetTile == H)
-		{
+		if (!W.DFoot.bHoldingItem && (W.DFoot.CurrentTile == H || W.DFoot.TargetTile == H))
 			return false; // occupied by walker foot
-		}
+		if (!W.LFoot.bHoldingItem && (W.LFoot.CurrentTile == H || W.LFoot.TargetTile == H))
+			return false;
+		if (!W.RFoot.bHoldingItem && (W.RFoot.CurrentTile == H || W.RFoot.TargetTile == H))
+			return false;
+		if (!W.UFoot.bHoldingItem && (W.UFoot.CurrentTile == H || W.UFoot.TargetTile == H))
+			return false;
 	}
 
 	FItem Copy = I;

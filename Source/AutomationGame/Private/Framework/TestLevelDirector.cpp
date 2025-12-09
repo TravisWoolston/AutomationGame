@@ -433,9 +433,39 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			BeaconSpec.Spawned->R = BeaconSpec.R;
 			BeaconSpec.Spawned->BeaconType = BeaconSpec.BeaconType;
 			BeaconSpec.Spawned->BeaconRole = BeaconSpec.BeaconRole;
-			BeaconSpec.Spawned->SetState(EBeaconState::NotReady);
-			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Spawned beacon at (%d,%d) Role=%d"),
-				BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole);
+			
+			// DropOff beacons start as Ready, Pickup beacons start as NotReady (CheckReadiness will update)
+			EBeaconState InitialState = (BeaconSpec.BeaconRole == EBeaconRole::DropOff) ? EBeaconState::Ready : EBeaconState::NotReady;
+			BeaconSpec.Spawned->SetState(InitialState);
+			
+			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Spawned beacon at (%d,%d) Role=%d State=%d"),
+				BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole, (int32)InitialState);
+		}
+	}
+
+	// Re-link beacon pairs after all beacons are spawned
+	for (FRequestBeaconSpec& BeaconSpec : const_cast<TArray<FRequestBeaconSpec>&>(S.Beacons))
+	{
+		if (!BeaconSpec.Spawned) continue;
+		if (BeaconSpec.PairedBeaconRole == EBeaconRole::None) continue; // No pair
+
+		// Find paired beacon
+		for (FRequestBeaconSpec& OtherSpec : const_cast<TArray<FRequestBeaconSpec>&>(S.Beacons))
+		{
+			if (!OtherSpec.Spawned) continue;
+			if (OtherSpec.Q == BeaconSpec.PairedBeaconQ && 
+				OtherSpec.R == BeaconSpec.PairedBeaconR && 
+				OtherSpec.BeaconRole == BeaconSpec.PairedBeaconRole)
+			{
+				// Set bidirectional pairing
+				BeaconSpec.Spawned->PairedBeacon = OtherSpec.Spawned;
+				OtherSpec.Spawned->PairedBeacon = BeaconSpec.Spawned;
+				
+				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Linked beacon at (%d,%d) Role=%d to paired beacon at (%d,%d) Role=%d"),
+					BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole,
+					OtherSpec.Q, OtherSpec.R, (int32)OtherSpec.BeaconRole);
+				break;
+			}
 		}
 	}
 
@@ -899,12 +929,12 @@ void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconTy
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
 
-	auto FindRuntimeBeaconAt = [&](int32 InQ, int32 InR) -> ARequestBeacon*
+	auto FindRuntimeBeaconAt = [&](int32 InQ, int32 InR, EBeaconRole InRole) -> ARequestBeacon*
 		{
 			if (!GetWorld()) return nullptr;
 			for (TActorIterator<ARequestBeacon> It(GetWorld()); It; ++It)
 			{
-				if (It->Q == InQ && It->R == InR)
+				if (It->Q == InQ && It->R == InR && It->BeaconRole == InRole)
 				{
 					return *It;
 				}
@@ -914,12 +944,20 @@ void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconTy
 
 	for (FRequestBeaconSpec& B : Sc.Beacons)
 	{
-		if (B.Q == Q && B.R == R)
+		if (B.Q == Q && B.R == R && B.BeaconRole == BeaconRole)
 		{
 			B.BeaconType = BeaconType;
-			B.BeaconRole = BeaconRole;
 			B.Rotation = Rotation;
-			if (!B.Spawned) B.Spawned = FindRuntimeBeaconAt(Q, R);
+			if (!B.Spawned) B.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole);
+			
+			// Update paired beacon info from runtime
+			if (B.Spawned && B.Spawned->PairedBeacon && IsValid(B.Spawned->PairedBeacon))
+			{
+				B.PairedBeaconQ = B.Spawned->PairedBeacon->Q;
+				B.PairedBeaconR = B.Spawned->PairedBeacon->R;
+				B.PairedBeaconRole = B.Spawned->PairedBeacon->BeaconRole;
+			}
+			
 			MarkActiveScenarioDirty();
 #if WITH_EDITOR
 			MirrorScenarioEditsToEditor();
@@ -934,7 +972,16 @@ void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconTy
 	NewB.BeaconType = BeaconType;
 	NewB.BeaconRole = BeaconRole;
 	NewB.Rotation = Rotation;
-	NewB.Spawned = FindRuntimeBeaconAt(Q, R);
+	NewB.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole);
+	
+	// Save paired beacon info from runtime
+	if (NewB.Spawned && NewB.Spawned->PairedBeacon && IsValid(NewB.Spawned->PairedBeacon))
+	{
+		NewB.PairedBeaconQ = NewB.Spawned->PairedBeacon->Q;
+		NewB.PairedBeaconR = NewB.Spawned->PairedBeacon->R;
+		NewB.PairedBeaconRole = NewB.Spawned->PairedBeacon->BeaconRole;
+	}
+	
 	Sc.Beacons.Add(NewB);
 	MarkActiveScenarioDirty();
 #if WITH_EDITOR
@@ -947,7 +994,10 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
 
-	for (int32 i = 0; i < Sc.Beacons.Num(); ++i)
+	bool bRemovedAny = false;
+	
+	// Remove all beacons at this hex (both Pickup and DropOff if at same location)
+	for (int32 i = Sc.Beacons.Num() - 1; i >= 0; --i)
 	{
 		if (Sc.Beacons[i].Q == Q && Sc.Beacons[i].R == R)
 		{
@@ -960,7 +1010,7 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 			{
 				for (TActorIterator<ARequestBeacon> It(W); It; ++It)
 				{
-					if (It->Q == Q && It->R == R)
+					if (It->Q == Q && It->R == R && It->BeaconRole == Sc.Beacons[i].BeaconRole)
 					{
 						DestroyActorNow(*It);
 						break;
@@ -969,14 +1019,20 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 			}
 
 			Sc.Beacons.RemoveAt(i);
-			MarkActiveScenarioDirty();
-#if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
-#endif
-			return true;
+			bRemovedAny = true;
 		}
 	}
 
+	if (bRemovedAny)
+	{
+		MarkActiveScenarioDirty();
+#if WITH_EDITOR
+		MirrorScenarioEditsToEditor();
+#endif
+		return true;
+	}
+
+	// Fallback: remove any runtime beacons not in specs
 	if (UWorld* W = GetWorld())
 	{
 		for (TActorIterator<ARequestBeacon> It(W); It; ++It)
@@ -984,15 +1040,20 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 			if (It->Q == Q && It->R == R)
 			{
 				DestroyActorNow(*It);
-				MarkActiveScenarioDirty();
-#if WITH_EDITOR
-				MirrorScenarioEditsToEditor();
-#endif
-				return true;
+				bRemovedAny = true;
 			}
 		}
 	}
-	return false;
+	
+	if (bRemovedAny)
+	{
+		MarkActiveScenarioDirty();
+#if WITH_EDITOR
+		MirrorScenarioEditsToEditor();
+#endif
+	}
+	
+	return bRemovedAny;
 }
 
 /* ---------------- PIE Sync (Editor Only) ---------------- */
@@ -1274,6 +1335,19 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			NewBeaconSpec.BeaconRole = Beacon->BeaconRole;
 			NewBeaconSpec.Rotation = Beacon->GetActorRotation().Yaw;
 			NewBeaconSpec.Spawned = Beacon;
+			
+			// Save paired beacon info
+			if (Beacon->PairedBeacon && IsValid(Beacon->PairedBeacon))
+			{
+				NewBeaconSpec.PairedBeaconQ = Beacon->PairedBeacon->Q;
+				NewBeaconSpec.PairedBeaconR = Beacon->PairedBeacon->R;
+				NewBeaconSpec.PairedBeaconRole = Beacon->PairedBeacon->BeaconRole;
+			}
+			else
+			{
+				NewBeaconSpec.PairedBeaconRole = EBeaconRole::None;
+			}
+			
 			Scenario.Beacons.Add(NewBeaconSpec);
 		}
 	}
