@@ -37,6 +37,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float FixedStepSec = 0.20f; // 5 Hz
 
 	void StepBonds(); // Made public for BondResolver
+	
+	// Mark arm base cache as needing rebuild (call when arms are added/removed)
+	void MarkArmBaseCacheDirty() { bArmBaseCacheDirty = true; }
 	// Debug toggles
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugLogs = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug") bool bDebugSpheres = false;
@@ -358,6 +361,21 @@ private:
 	// Cache for ClusterInput chains (invalidated when tiles change)
 	mutable TMap<FHex, TArray<FHex>> ClusterInputChainCache;
 	mutable int32 LastTileRevisionForChainCache = -1;
+	
+	// ============================================================
+	// OCCUPANCY CACHE - computed once per tick, shared across steps
+	// ============================================================
+	// Hexes occupied by held orbs (arms holding items)
+	TSet<FHex> CachedHeldOrbHexes;
+	// Hexes occupied by arm bases (static until user adds/removes arms)
+	TSet<FHex> CachedArmBaseHexes;
+	// Flag to indicate if arm base cache needs rebuild (set true when arms added/removed)
+	bool bArmBaseCacheDirty = true;
+	
+	// Rebuild occupancy cache for held orbs (call once per tick after StepArms)
+	void UpdateHeldOrbCache();
+	// Rebuild arm base cache (only when arms added/removed)
+	void UpdateArmBaseCache();
 	
 	// Helper function to find all connected ClusterInput tiles in a chain
 	TArray<FHex> FindClusterInputChain(const FHex& StartHex, const TSet<FHex>& ExcludeHexes = TSet<FHex>()) const;

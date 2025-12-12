@@ -1961,6 +1961,22 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 				Hex.Q, Hex.R, ArmIndex, Sim->Arms.Num());
 			RemovedArmIndex = ArmIndex;
 			Sim->Arms.RemoveAt(ArmIndex);
+			
+			// Update SimArmIndex for all arms with higher indices
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<ABasicArm> It(World); It; ++It)
+				{
+					if (It->SimArmIndex > ArmIndex)
+					{
+						It->SimArmIndex--;
+					}
+				}
+			}
+			
+			// Mark arm base cache as dirty since we removed an arm
+			Sim->MarkArmBaseCacheDirty();
+			
 			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - After removal, total arms: %d"), Sim->Arms.Num());
 			break;
 		}

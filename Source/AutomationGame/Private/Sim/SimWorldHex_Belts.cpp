@@ -9,50 +9,8 @@ void USimWorldHex::StepBelts()
 	const float Speed = FMath::Max(0.f, 1.f);
 	const float BlockClamp = BeltBlockedClamp;
 
-	// Gather all hexes occupied by held orbs
-	TSet<FHex> HeldOrbHexes;
-	for (const FArmState& A : Arms)
-	{
-		if (!A.bHolding) continue;
-
-		FHex GripHex = A.BaseHex;
-		for (int i = 0; i < A.ArmLen; ++i)
-			GripHex = HexUtil::Neighbor(GripHex, A.Facing);
-
-		if (!A.Held.bIsCluster)
-		{
-			HeldOrbHexes.Add(GripHex);
-		}
-		else
-		{
-			const uint8 cur = (uint8)A.Facing % 6;
-			const int8 grab = (int8)A.Held.GrabFacing;
-			const uint8 facingDelta = (grab >= 0)
-				? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
-				: cur;
-			const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-
-			auto Rot60 = [](FHex D, uint8 StepsCCW)
-				{
-					for (uint8 i = 0; i < (StepsCCW % 6); ++i)
-					{
-						int32 q = D.Q;
-						int32 r = D.R;
-						D.Q = -r;
-						D.R = q + r;
-					}
-					return D;
-				};
-
-			for (const FOrbData& Sub : A.Held.Orbs)
-			{
-				FHex Local(Sub.dQ, Sub.dR);
-				FHex Rot = Rot60(Local, ccw);
-				FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
-				HeldOrbHexes.Add(WorldPos);
-			}
-		}
-	}
+	// Use cached held orb positions (computed once per tick in StepSim after StepArms)
+	const TSet<FHex>& HeldOrbHexes = CachedHeldOrbHexes;
 
 	// Gather all walker foot tiles
 	TSet<FHex> WalkerFootTiles;
@@ -62,6 +20,11 @@ void USimWorldHex::StepBelts()
 		{
 			// Only Planted and Lowering feet block belts.
 			// Raising and Moving (including Hovering) feet allow items to pass underneath.
+			// ALSO: Holding feet are raised and don't block belts (even if state is Planted)
+			if (F.bHoldingItem)
+			{
+				return; // Holding feet are raised, don't block
+			}
 			if (F.StepState == EFootStepState::Planted || F.StepState == EFootStepState::Lowering)
 			{
 				WalkerFootTiles.Add(F.CurrentTile);
@@ -649,10 +612,11 @@ void USimWorldHex::StepBelts()
 		}
 		
 		// Special case for bond/unbond tiles - can move there if empty
+		// Note: Still respect walker feet and held orb obstacles (don't overwrite bCanMove)
 		DestTile = TileMap.Find(ToHex);
 		if (DestTile && (DestTile->Kind == ETileKind::Bond || DestTile->Kind == ETileKind::Unbond))
 		{
-			bCanMove = !ItemMap.Contains(ToHex);
+			bCanMove = bCanMove && !ItemMap.Contains(ToHex);
 		}
 		
 		if (!bCanMove) continue; // Blocked, skip this item

@@ -148,6 +148,9 @@ int32 USimWorldHex::AddArm(const FArmState& Arm)
 	UE_LOG(LogTemp, Warning, TEXT("SimWorldHex::AddArm - Added arm at (%d,%d) facing=%d assigned SimIndex=%d (total arms: %d)"),
 		Arm.BaseHex.Q, Arm.BaseHex.R, (int32)Arm.Facing, NewIndex, Arms.Num());
 
+	// Mark arm base cache as dirty so it gets rebuilt
+	bArmBaseCacheDirty = true;
+	
 	return NewIndex;
 }
 
@@ -1435,6 +1438,76 @@ void USimWorldHex::MoveBondedItemRecursive(int32 ItemId, const FHex& FromHex, in
 	return;
 }
 
+// ============================================================
+// OCCUPANCY CACHE - computed once per tick, shared across steps
+// ============================================================
+void USimWorldHex::UpdateArmBaseCache()
+{
+	CachedArmBaseHexes.Reset();
+	for (const FArmState& A : Arms)
+	{
+		CachedArmBaseHexes.Add(A.BaseHex);
+	}
+	bArmBaseCacheDirty = false;
+}
+
+void USimWorldHex::UpdateHeldOrbCache()
+{
+	CachedHeldOrbHexes.Reset();
+	
+	// Also update arm base cache if dirty
+	if (bArmBaseCacheDirty)
+	{
+		UpdateArmBaseCache();
+	}
+	
+	// Helper lambda for rotation
+	auto Rot60 = [](FHex D, uint8 StepsCCW) -> FHex
+	{
+		for (uint8 i = 0; i < (StepsCCW % 6); ++i)
+		{
+			int32 q = D.Q;
+			int32 r = D.R;
+			D.Q = -r;
+			D.R = q + r;
+		}
+		return D;
+	};
+	
+	for (const FArmState& A : Arms)
+	{
+		if (!A.bHolding) continue;
+
+		// Calculate grip hex
+		FHex GripHex = A.BaseHex;
+		for (int i = 0; i < A.ArmLen; ++i)
+			GripHex = HexUtil::Neighbor(GripHex, A.Facing);
+
+		if (!A.Held.bIsCluster)
+		{
+			CachedHeldOrbHexes.Add(GripHex);
+		}
+		else
+		{
+			// Add all orbs in held cluster
+			const uint8 cur = (uint8)A.Facing % 6;
+			const int8 grab = (int8)A.Held.GrabFacing;
+			const uint8 facingDelta = (grab >= 0)
+				? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+				: cur;
+			const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+			for (const FOrbData& Sub : A.Held.Orbs)
+			{
+				FHex Local(Sub.dQ, Sub.dR);
+				FHex Rot = Rot60(Local, ccw);
+				FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+				CachedHeldOrbHexes.Add(WorldPos);
+			}
+		}
+	}
+}
+
 void USimWorldHex::StepSim()
 {
 	PrevItemHex.Empty();
@@ -1460,6 +1533,11 @@ void USimWorldHex::StepSim()
 
 	// SpawnInputs();          // pass 1 (empty at start)
 	StepArms();
+	
+	// Update occupancy cache after StepArms - HeldOrbHexes and ArmBaseHexes are 
+	// now valid for use by StepWalkers and StepBelts
+	UpdateHeldOrbCache();
+	
 	StepWalkers();
 	StepBelts();
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)

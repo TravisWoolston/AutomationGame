@@ -12,6 +12,7 @@ class AOrbSimDriver;
 class AGameTickManager;
 class UStaticMeshComponent;
 class USimWorldHex;
+class UOrbRenderer;
 
 /** Event that fires when assigned tile world locations are updated */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAssignedTilesUpdated);
@@ -294,6 +295,9 @@ private:
 
 	// Sim ref
 	UPROPERTY(Transient) USimWorldHex* Sim = nullptr;
+	
+	// Cached renderer for performance (avoids TActorIterator scans)
+	UPROPERTY(Transient) UOrbRenderer* CachedOrbRenderer = nullptr;
 
 	// State
 	bool  bRunning = true;
@@ -329,6 +333,12 @@ private:
 	UPROPERTY(Transient) UStaticMeshComponent* LFootHeldOrbComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* RFootHeldOrbComp = nullptr;
 	UPROPERTY(Transient) UStaticMeshComponent* UFootHeldOrbComp = nullptr;
+	
+	// Cached held item IDs to detect changes and avoid recreating visuals every tick
+	int32 CachedDFootHeldItemId = 0;
+	int32 CachedLFootHeldItemId = 0;
+	int32 CachedRFootHeldItemId = 0;
+	int32 CachedUFootHeldItemId = 0;
 
 	// Helpers
 	void EnsureComps();
@@ -340,13 +350,16 @@ private:
 	void    StepProgram();                           // advance one instruction (or wait)
 	void    ExpandResetAtPC();                       // turn Reset into MoveTo home location
 	
-	// Held item visualization
-	void UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool bIsHolding, const FItem& HeldItem, const FName& FootSocketName);
+	// Held item visualization (takes cached ID ref to avoid recreating visuals every tick)
+	void UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool bIsHolding, const FItem& HeldItem, const FName& FootSocketName, int32& CachedItemId);
 	void ClearHeldItemVisuals(UStaticMeshComponent*& HeldComp);
 	
 	// Bond visualization helpers
 	void GenerateBondedOrbMeshes(UStaticMeshComponent* HeldComp, const FItem& HeldItem);
 	UStaticMesh* GetBondedOrbMesh() const;
 	UMaterialInterface* GetBondedOrbMaterial() const;
+	
+	// Performance: cache OrbRenderer lookup
+	UOrbRenderer* GetCachedOrbRenderer();
 };
 

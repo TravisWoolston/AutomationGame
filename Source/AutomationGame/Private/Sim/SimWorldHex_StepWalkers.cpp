@@ -122,59 +122,52 @@ static FString GetFixedQuadrantFromHex(const FHex& BodyHex, const FHex& TestHex,
 	return TEXT("S");
 }
 
+// Helper: Get the center hex of a quadrant for a given foot
+static FHex GetQuadrantCenterHex(const FHex& BodyHex, int32 FootIndex, int32 ReachDistance, float RotationOffsetDeg, const USimWorldHex* Sim)
+{
+	if (!Sim) return BodyHex;
+	
+	// Determine quadrant direction based on FootIndex
+	// D=0 (South), L=1 (West), R=2 (East), U=3 (North)
+	float QuadDQ = 0.f, QuadDR = 0.f;
+	switch (FootIndex)
+	{
+	case 0: QuadDQ = -1.f; QuadDR = 0.f; break; // D/South (Q-)
+	case 1: QuadDQ = 0.f; QuadDR = -1.f; break; // L/West (R-)
+	case 2: QuadDQ = 0.f; QuadDR = 1.f; break;  // R/East (R+)
+	case 3: QuadDQ = 1.f; QuadDR = 0.f; break;  // U/North (Q+)
+	}
+	
+	// Apply rotation offset if any
+	if (RotationOffsetDeg != 0.f)
+	{
+		float Rad = FMath::DegreesToRadians(RotationOffsetDeg);
+		float C = FMath::Cos(Rad);
+		float S = FMath::Sin(Rad);
+		// Hex to Cartesian for the vector
+		float vX = 1.7320508f * QuadDQ + 0.8660254f * QuadDR;
+		float vY = 1.5f * QuadDR;
+		// Rotate
+		float rotX = vX * C - vY * S;
+		float rotY = vX * S + vY * C;
+		// Cartesian back to Hex
+		QuadDQ = (rotX * 0.5773503f - rotY * 0.3333333f);
+		QuadDR = rotY * 0.6666667f;
+	}
+	
+	// Position at center of quadrant: use 60% of ReachDistance for a balanced position
+	float CenterDistance = (float)ReachDistance * 0.6f;
+	float IdealQ = (float)BodyHex.Q + QuadDQ * CenterDistance;
+	float IdealR = (float)BodyHex.R + QuadDR * CenterDistance;
+	
+	return FHex(FMath::RoundToInt(IdealQ), FMath::RoundToInt(IdealR));
+}
+
 void USimWorldHex::StepWalkers()
 {
-	// Build occupancy sets for obstacle detection
-	TSet<FHex> HeldOrbHexes;
-	TSet<FHex> ArmBaseHexes;
-	
-	for (const FArmState& A : Arms)
-	{
-		// Add arm base hex
-		ArmBaseHexes.Add(A.BaseHex);
-		
-		if (!A.bHolding) continue;
-
-		// Calculate grip hex
-		FHex GripHex = A.BaseHex;
-		for (int i = 0; i < A.ArmLen; ++i)
-			GripHex = HexUtil::Neighbor(GripHex, A.Facing);
-
-		if (!A.Held.bIsCluster)
-		{
-			HeldOrbHexes.Add(GripHex);
-		}
-		else
-		{
-			// Add all orbs in held cluster
-			const uint8 cur = (uint8)A.Facing % 6;
-			const int8 grab = (int8)A.Held.GrabFacing;
-			const uint8 facingDelta = (grab >= 0)
-				? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
-				: cur;
-			const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-
-			auto Rot60 = [](FHex D, uint8 StepsCCW)
-				{
-					for (uint8 i = 0; i < (StepsCCW % 6); ++i)
-					{
-						int32 q = D.Q;
-						int32 r = D.R;
-						D.Q = -r;
-						D.R = q + r;
-					}
-					return D;
-				};
-
-			for (const FOrbData& Sub : A.Held.Orbs)
-			{
-				FHex Local(Sub.dQ, Sub.dR);
-				FHex Rot = Rot60(Local, ccw);
-				FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
-			HeldOrbHexes.Add(WorldPos);
-		}
-	}
-}
+	// Use cached occupancy sets (computed once per tick in StepSim after StepArms)
+	const TSet<FHex>& HeldOrbHexes = CachedHeldOrbHexes;
+	const TSet<FHex>& ArmBaseHexes = CachedArmBaseHexes;
 	
 	// Build set of hexes occupied by feet holding items (these should NOT be obstacles)
 	TSet<FHex> HoldingFootHexes;
@@ -186,73 +179,75 @@ void USimWorldHex::StepWalkers()
 		if (W.UFoot.bHoldingItem) HoldingFootHexes.Add(W.UFoot.CurrentTile);
 	}
 	
-	// Check for Ready PickUp beacons and assign to idle walkers
+	// PERFORMANCE: Cache all beacons at start of StepWalkers to avoid O(N²) TActorIterator calls in inner loops
+	TMap<FHex, ARequestBeacon*> BeaconCache;
+	TArray<ARequestBeacon*> AllBeacons;
 	if (UWorld* World = GetWorld())
 	{
 		for (TActorIterator<ARequestBeacon> It(World); It; ++It)
 		{
 			ARequestBeacon* Beacon = *It;
-			if (Beacon && Beacon->BeaconRole == EBeaconRole::PickUp && Beacon->BeaconState == EBeaconState::Ready)
+			if (Beacon)
 			{
-				// Find nearest idle walker (no requests, standing or sitting, not holding item)
-				FHex BeaconHex(Beacon->Q, Beacon->R);
-				int32 BestWalkerIdx = -1;
-				int32 BestDistance = MAX_int32;
+				BeaconCache.Add(FHex(Beacon->Q, Beacon->R), Beacon);
+				AllBeacons.Add(Beacon);
+			}
+		}
+	}
+	
+	// Check for Ready PickUp beacons and assign to idle walkers (using cached beacons)
+	for (ARequestBeacon* Beacon : AllBeacons)
+	{
+		if (Beacon->BeaconRole == EBeaconRole::PickUp && Beacon->BeaconState == EBeaconState::Ready)
+		{
+			// Find nearest idle walker (no requests, standing or sitting, not holding item)
+			FHex BeaconHex(Beacon->Q, Beacon->R);
+			int32 BestWalkerIdx = -1;
+			int32 BestDistance = MAX_int32;
+			
+			for (int32 WIdx = 0; WIdx < Walkers.Num(); ++WIdx)
+			{
+				FWalkerState& W = Walkers[WIdx];
 				
-				for (int32 WIdx = 0; WIdx < Walkers.Num(); ++WIdx)
-				{
-					FWalkerState& W = Walkers[WIdx];
-					
-					// Skip if walker has requests or processing a request
-					if (W.Requests.Num() > 0 || W.bProcessingRequest)
-						continue;
-					
-					// Allow Sitting or Standing walkers (Sitting will stand up when they get a request)
-					if (W.Stance != EWalkerStance::Standing && W.Stance != EWalkerStance::Sitting)
-						continue;
-					
-					// Check if any foot is holding an item
-					bool bAnyFootHolding = W.DFoot.bHoldingItem || W.LFoot.bHoldingItem || 
-										   W.RFoot.bHoldingItem || W.UFoot.bHoldingItem;
-					if (bAnyFootHolding)
-						continue;
-					
-					// Calculate distance to beacon
-					int32 dq = BeaconHex.Q - W.BaseHex.Q;
-					int32 dr = BeaconHex.R - W.BaseHex.R;
-					int32 dist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-					
-					if (dist < BestDistance)
-					{
-						BestDistance = dist;
-						BestWalkerIdx = WIdx;
-					}
-				}
+				// Skip if walker has requests or processing a request
+				if (W.Requests.Num() > 0 || W.bProcessingRequest)
+					continue;
 				
-				// Assign pickup request to best walker
-				if (BestWalkerIdx >= 0)
+				// Allow Sitting or Standing walkers (Sitting will stand up when they get a request)
+				if (W.Stance != EWalkerStance::Standing && W.Stance != EWalkerStance::Sitting)
+					continue;
+				
+				// Check if any foot is holding an item
+				bool bAnyFootHolding = W.DFoot.bHoldingItem || W.LFoot.bHoldingItem || 
+									   W.RFoot.bHoldingItem || W.UFoot.bHoldingItem;
+				if (bAnyFootHolding)
+					continue;
+				
+				// Calculate distance to beacon
+				int32 dq = BeaconHex.Q - W.BaseHex.Q;
+				int32 dr = BeaconHex.R - W.BaseHex.R;
+				int32 dist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+				
+				if (dist < BestDistance)
 				{
-					FWalkerRequest PickUpReq;
-					PickUpReq.TargetHex = BeaconHex;
-					PickUpReq.Priority = 1000; // High priority
-					Walkers[BestWalkerIdx].Requests.Add(PickUpReq);
-					
-					// Update beacon state to InProgress to prevent re-assignment
-					Beacon->SetState(EBeaconState::InProgress);
-					
-					UE_LOG(LogTemp, Log, TEXT("Assigned PickUp beacon at (%d,%d) to Walker %d (distance: %d, stance: %d)"),
-						BeaconHex.Q, BeaconHex.R, BestWalkerIdx, BestDistance, (int32)Walkers[BestWalkerIdx].Stance);
+					BestDistance = dist;
+					BestWalkerIdx = WIdx;
 				}
-				else
-				{
-					// Debug: Log why no walker was found
-					static int32 NoWalkerCounter = 0;
-					if (++NoWalkerCounter % 60 == 0) // Log every 60 ticks to avoid spam
-					{
-						UE_LOG(LogTemp, Warning, TEXT("PickUp beacon at (%d,%d) is Ready but no idle walker available (Total walkers: %d)"),
-							BeaconHex.Q, BeaconHex.R, Walkers.Num());
-					}
-				}
+			}
+			
+			// Assign pickup request to best walker
+			if (BestWalkerIdx >= 0)
+			{
+				FWalkerRequest PickUpReq;
+				PickUpReq.TargetHex = BeaconHex;
+				PickUpReq.Priority = 1000; // High priority
+				Walkers[BestWalkerIdx].Requests.Add(PickUpReq);
+				
+				// Update beacon state to InProgress to prevent re-assignment
+				Beacon->SetState(EBeaconState::InProgress);
+				
+				UE_LOG(LogTemp, Log, TEXT("Assigned PickUp beacon at (%d,%d) to Walker %d (distance: %d, stance: %d)"),
+					BeaconHex.Q, BeaconHex.R, BestWalkerIdx, BestDistance, (int32)Walkers[BestWalkerIdx].Stance);
 			}
 		}
 	}
@@ -341,6 +336,9 @@ void USimWorldHex::StepWalkers()
 				WalkerIndex, W.CurrentTargetHex.Q, W.CurrentTargetHex.R);
 		}
 		
+		// Flag to indicate we're in pivot mode - skip normal foot movement
+		bool bIsPivoting = false;
+		
 		// If processing a request, execute walking animation
 		if (W.bProcessingRequest)
 		{
@@ -360,30 +358,29 @@ void USimWorldHex::StepWalkers()
 				}
 			}
 			
-			// If we have a holding foot, check if the target is a drop-off beacon
+			// If we have a holding foot, find the actual DropOff beacon (not the offset target)
 			if (bHasHoldingFoot && HoldingFoot)
 			{
-				bool bIsDropOffTarget = false;
-				ARequestBeacon* DropOffBeacon = nullptr;
-				if (UWorld* World = GetWorld())
+				// Find the actual DropOff beacon by looking for one with a paired PickUp that's InProgress
+				FHex ActualDropOffHex;
+				bool bFoundDropOff = false;
+				for (ARequestBeacon* Beacon : AllBeacons)
 				{
-					for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+					if (Beacon->BeaconRole == EBeaconRole::DropOff && 
+						Beacon->PairedBeacon && 
+						Beacon->PairedBeacon->BeaconState == EBeaconState::InProgress)
 					{
-						if (It->Q == W.CurrentTargetHex.Q && It->R == W.CurrentTargetHex.R && 
-							It->BeaconRole == EBeaconRole::DropOff)
-						{
-							bIsDropOffTarget = true;
-							DropOffBeacon = *It;
-							break;
-						}
+						ActualDropOffHex = FHex(Beacon->Q, Beacon->R);
+						bFoundDropOff = true;
+						break;
 					}
 				}
 				
-				if (bIsDropOffTarget)
+				if (bFoundDropOff)
 				{
 					// Calculate if the drop-off tile is within reach of the walker
-					const int32 BodyToDropOffDQ = W.CurrentTargetHex.Q - W.BaseHex.Q;
-					const int32 BodyToDropOffDR = W.CurrentTargetHex.R - W.BaseHex.R;
+					const int32 BodyToDropOffDQ = ActualDropOffHex.Q - W.BaseHex.Q;
+					const int32 BodyToDropOffDR = ActualDropOffHex.R - W.BaseHex.R;
 					const int32 BodyToDropOffDist = FMath::Max(FMath::Max(FMath::Abs(BodyToDropOffDQ), FMath::Abs(BodyToDropOffDR)), 
 						FMath::Abs(BodyToDropOffDQ + BodyToDropOffDR));
 					
@@ -391,7 +388,7 @@ void USimWorldHex::StepWalkers()
 					if (BodyToDropOffDist <= W.ReachDistance)
 					{
 						// Determine which quadrant the drop-off is in
-						const FString DropOffQuadrant = GetFixedQuadrantFromHex(W.BaseHex, W.CurrentTargetHex, W.QuadrantRotationOffset);
+						const FString DropOffQuadrant = GetFixedQuadrantFromHex(W.BaseHex, ActualDropOffHex, W.QuadrantRotationOffset);
 						
 						// Determine which quadrant the holding foot is assigned to
 						FString HoldingFootQuadrant;
@@ -407,8 +404,84 @@ void USimWorldHex::StepWalkers()
 						// If quadrants don't match, we need to shuffle feet to get the holding foot to the drop-off quadrant
 						if (!DropOffQuadrant.Equals(HoldingFootQuadrant, ESearchCase::CaseSensitive))
 						{
-							UE_LOG(LogTemp, Log, TEXT("Walker %d: Holding foot %d is in %s quadrant, but drop-off is in %s quadrant. Shuffling feet..."),
+							// Set pivot flag to prevent normal walking from interfering
+							bIsPivoting = true;
+							
+							UE_LOG(LogTemp, Log, TEXT("Walker %d: PIVOT NEEDED - Holding foot %d (%s) can't reach drop-off in %s quadrant. Shuffling non-holding feet..."),
 								WalkerIndex, HoldingFootIndex, *HoldingFootQuadrant, *DropOffQuadrant);
+							
+							// Update holding foot's position to stay centered in its quadrant
+							// Calculate actual body rotation from planted feet (same as BasicWalker.cpp does visually)
+							{
+								// Calculate body rotation from planted non-holding feet
+								float TotalWeightedSin = 0.f;
+								float TotalWeightedCos = 0.f;
+								float TotalWeight = 0.f;
+								
+								for (int32 idx = 0; idx < AllFeet.Num(); ++idx)
+								{
+									if (idx == HoldingFootIndex) continue; // Skip holding foot
+									FFootState* Foot = AllFeet[idx];
+									if (Foot->StepState != EFootStepState::Planted) continue;
+									
+									// Calculate angle from body to this foot
+									float DQ = (float)(Foot->CurrentTile.Q - W.BaseHex.Q);
+									float DR = (float)(Foot->CurrentTile.R - W.BaseHex.R);
+									float X = 1.7320508f * DQ + 0.8660254f * DR;
+									float Y = 1.5f * DR;
+									float Angle = FMath::Atan2(Y, X);
+									
+									float Weight = 1.0f;
+									TotalWeightedSin += FMath::Sin(Angle) * Weight;
+									TotalWeightedCos += FMath::Cos(Angle) * Weight;
+									TotalWeight += Weight;
+								}
+								
+								float ActualBodyRotation = 0.f;
+								if (TotalWeight > KINDA_SMALL_NUMBER)
+								{
+									ActualBodyRotation = FMath::RadiansToDegrees(FMath::Atan2(TotalWeightedSin, TotalWeightedCos));
+								}
+								
+								// Update sim's stored rotation offset to match actual body rotation
+								W.QuadrantRotationOffset = ActualBodyRotation;
+								
+								// Now calculate holding foot's ideal position based on actual body rotation
+								float QuadDQ = 0.f, QuadDR = 0.f;
+								if (HoldingFootQuadrant == TEXT("N")) { QuadDQ = 1.f; QuadDR = 0.f; }
+								else if (HoldingFootQuadrant == TEXT("E")) { QuadDQ = 0.f; QuadDR = 1.f; }
+								else if (HoldingFootQuadrant == TEXT("S")) { QuadDQ = -1.f; QuadDR = 0.f; }
+								else if (HoldingFootQuadrant == TEXT("W")) { QuadDQ = 0.f; QuadDR = -1.f; }
+								
+								// Apply body rotation
+								if (ActualBodyRotation != 0.f)
+								{
+									float Rad = FMath::DegreesToRadians(ActualBodyRotation);
+									float C = FMath::Cos(Rad);
+									float S = FMath::Sin(Rad);
+									float vX = 1.7320508f * QuadDQ + 0.8660254f * QuadDR;
+									float vY = 1.5f * QuadDR;
+									float rotX = vX * C - vY * S;
+									float rotY = vX * S + vY * C;
+									QuadDQ = (rotX * 0.5773503f - rotY * 0.3333333f);
+									QuadDR = rotY * 0.6666667f;
+								}
+								
+								// Calculate ideal position at comfortable distance (60% of reach)
+								float IdealDist = (float)W.ReachDistance * 0.6f;
+								float IdealQ = (float)W.BaseHex.Q + QuadDQ * IdealDist;
+								float IdealR = (float)W.BaseHex.R + QuadDR * IdealDist;
+								FHex IdealHex(FMath::RoundToInt(IdealQ), FMath::RoundToInt(IdealR));
+								
+								// Verify the ideal position is in the holding foot's quadrant
+								const FString IdealQuad = GetFixedQuadrantFromHex(W.BaseHex, IdealHex, ActualBodyRotation);
+								if (IdealQuad.Equals(HoldingFootQuadrant, ESearchCase::CaseSensitive) && IdealHex != HoldingFoot->CurrentTile)
+								{
+									// Update holding foot's logical position to quadrant center
+									HoldingFoot->CurrentTile = IdealHex;
+									HoldingFoot->TargetTile = IdealHex;
+								}
+							}
 							
 							// The approach: Move other feet to positions that would allow the walker body to rotate
 							// such that the holding foot's quadrant aligns with the drop-off tile
@@ -438,75 +511,288 @@ void USimWorldHex::StepWalkers()
 							// we encourage other feet to move within their quadrants to positions that would
 							// naturally cause the body to rotate toward the desired orientation
 							
-							// For each non-holding foot, calculate a target position that encourages the desired rotation
-							for (int32 i = 0; i < AllFeet.Num(); ++i)
+							// PIVOT STRATEGY: Move feet to BOUNDARY tiles of their quadrant
+							// Boundary tiles = tiles with a neighbor in the NEXT quadrant (in rotation direction)
+							// These have maximum rotational influence
+							
+							// Quadrant angles: N=0°, E=90°, S=180°, W=270°
+							// In math convention, increasing angles = CCW
+							// So N→E→S→W (0→90→180→270) is actually CCW in angle terms
+							// 
+							// To rotate body so holding foot reaches drop-off:
+							// - DesiredRotation > 0 means we need to add angle to body (CCW in math)
+							// - DesiredRotation < 0 means we need to subtract angle (CW in math)
+							//
+							// For CCW body rotation (positive), holding foot's quadrant label moves "forward" in N→E→S→W order
+							// So non-holding feet should step toward the NEXT quadrant in that order to pull the body
+							
+							auto GetNextQuadrantPositive = [](const FString& Quad) -> FString {
+								// Next in N→E→S→W order (positive angle direction)
+								if (Quad == TEXT("N")) return TEXT("E");
+								if (Quad == TEXT("E")) return TEXT("S");
+								if (Quad == TEXT("S")) return TEXT("W");
+								if (Quad == TEXT("W")) return TEXT("N");
+								return Quad;
+							};
+							
+							auto GetNextQuadrantNegative = [](const FString& Quad) -> FString {
+								// Previous in N→E→S→W order (negative angle direction)
+								if (Quad == TEXT("N")) return TEXT("W");
+								if (Quad == TEXT("W")) return TEXT("S");
+								if (Quad == TEXT("S")) return TEXT("E");
+								if (Quad == TEXT("E")) return TEXT("N");
+								return Quad;
+							};
+							
+							// Only move one foot per tick to allow rotation to accumulate
+							int32 CurrentRaisedCount = 0;
+							for (FFootState* CheckFoot : AllFeet)
 							{
-								if (i == HoldingFootIndex) continue; // Skip the holding foot
+								if (CheckFoot->StepState != EFootStepState::Planted)
+									CurrentRaisedCount++;
+							}
+							
+							// Only shuffle if all feet are planted (one at a time)
+							// BUT: holding foot should be considered "raised" for movement purposes even if technically planted
+							// So we only count non-holding feet as needing to be planted
+							int32 NonHoldingRaisedCount = 0;
+							for (int32 idx = 0; idx < AllFeet.Num(); ++idx)
+							{
+								if (idx == HoldingFootIndex) continue; // Skip holding foot
+								if (AllFeet[idx]->StepState != EFootStepState::Planted)
+									NonHoldingRaisedCount++;
+							}
+							
+							if (NonHoldingRaisedCount == 0)
+							{
+								// Positive DesiredRotation = need CCW body rotation = feet go to positive direction boundary
+								// Negative DesiredRotation = need CW body rotation = feet go to negative direction boundary
+								bool bPositiveRotation = (DesiredRotation > 0);
 								
-								FFootState* Foot = AllFeet[i];
+								// Find the best foot to shuffle
+								int32 BestFootIndex = -1;
+								FHex BestTarget;
+								int32 BestBoundaryNeighbors = -1; // More boundary neighbors = better position
 								
-								// Get this foot's assigned quadrant
-								FString FootQuadrant;
-								switch (i)
+								for (int32 i = 0; i < AllFeet.Num(); ++i)
 								{
-								case 0: FootQuadrant = TEXT("S"); break;
-								case 1: FootQuadrant = TEXT("W"); break;
-								case 2: FootQuadrant = TEXT("E"); break;
-								case 3: FootQuadrant = TEXT("N"); break;
-								}
-								
-								// Calculate the base direction for this foot's quadrant
-								float QuadDQ = 0.f, QuadDR = 0.f;
-								if (FootQuadrant == TEXT("N")) { QuadDQ = 1.f; QuadDR = 0.f; }
-								else if (FootQuadrant == TEXT("E")) { QuadDQ = 0.f; QuadDR = 1.f; }
-								else if (FootQuadrant == TEXT("S")) { QuadDQ = -1.f; QuadDR = 0.f; }
-								else if (FootQuadrant == TEXT("W")) { QuadDQ = 0.f; QuadDR = -1.f; }
-								
-								// Apply the CURRENT rotation offset (not the desired one)
-								if (W.QuadrantRotationOffset != 0.f)
-								{
-									float Rad = FMath::DegreesToRadians(W.QuadrantRotationOffset);
-									float C = FMath::Cos(Rad);
-									float S = FMath::Sin(Rad);
-									float vX = 1.7320508f * QuadDQ + 0.8660254f * QuadDR;
-									float vY = 1.5f * QuadDR;
-									float rotX = vX * C - vY * S;
-									float rotY = vX * S + vY * C;
-									QuadDQ = (rotX * 0.5773503f - rotY * 0.3333333f);
-									QuadDR = rotY * 0.6666667f;
-								}
-								
-								// To encourage rotation toward DesiredRotation, we want feet to move
-								// in a direction that would pull the body in that rotational direction
-								// This means moving feet tangentially relative to the body center
-								
-								// Add a small rotational bias to encourage the desired body rotation
-								float RotationalBias = FMath::Sign(DesiredRotation) * 0.3f;
-								
-								// Calculate target position with bias
-								float IdealDist = (float)W.ReachDistance * 0.6f;
-								float BiasAngle = FMath::DegreesToRadians(RotationalBias * 30.f); // 30 degree bias max
-								
-								// Apply tangential bias
-								float BiasDQ = -QuadDR * FMath::Sin(BiasAngle);
-								float BiasDR = QuadDQ * FMath::Sin(BiasAngle);
-								
-								float IdealQ = (float)W.BaseHex.Q + (QuadDQ + BiasDQ) * IdealDist;
-								float IdealR = (float)W.BaseHex.R + (QuadDR + BiasDR) * IdealDist;
-								FHex IdealTarget(FMath::RoundToInt(IdealQ), FMath::RoundToInt(IdealR));
-								
-								// Verify the target is still in the correct quadrant
-								const FString TargetQuadrant = GetFixedQuadrantFromHex(W.BaseHex, IdealTarget, W.QuadrantRotationOffset);
-								if (TargetQuadrant.Equals(FootQuadrant, ESearchCase::CaseSensitive))
-								{
-									// Only update if different from current position and foot is planted
-									if (IdealTarget != Foot->CurrentTile && Foot->StepState == EFootStepState::Planted)
+									if (i == HoldingFootIndex) continue; // Skip the holding foot
+									
+									FFootState* Foot = AllFeet[i];
+									if (Foot->StepState != EFootStepState::Planted) continue;
+									
+									// Get this foot's assigned quadrant
+									FString FootQuadrant;
+									switch (i)
 									{
-										Foot->TargetTile = IdealTarget;
-										UE_LOG(LogTemp, Verbose, TEXT("Walker %d: Shuffling foot %d from (%d,%d) to (%d,%d) to enable rotation"),
-											WalkerIndex, i, Foot->CurrentTile.Q, Foot->CurrentTile.R, IdealTarget.Q, IdealTarget.R);
+									case 0: FootQuadrant = TEXT("S"); break;
+									case 1: FootQuadrant = TEXT("W"); break;
+									case 2: FootQuadrant = TEXT("E"); break;
+									case 3: FootQuadrant = TEXT("N"); break;
+									}
+									
+									// What quadrant are we trying to be adjacent to?
+									FString TargetBoundaryQuad = bPositiveRotation ? GetNextQuadrantPositive(FootQuadrant) : GetNextQuadrantNegative(FootQuadrant);
+									
+									// Search all tiles in this foot's quadrant
+									// Find tiles that border the target quadrant (have neighbors in it)
+									FHex FootBestTarget = Foot->CurrentTile;
+									int32 FootBestBoundaryCount = 0;
+									
+									// First check if current position is already optimal
+									int32 CurrentBoundaryCount = 0;
+									for (uint8 dir = 0; dir < 6; ++dir)
+									{
+										FHex Neighbor = HexUtil::Neighbor(Foot->CurrentTile, static_cast<EHexDir>(dir));
+										FString NeighborQuad = GetFixedQuadrantFromHex(W.BaseHex, Neighbor, W.QuadrantRotationOffset);
+										if (NeighborQuad.Equals(TargetBoundaryQuad, ESearchCase::CaseSensitive))
+										{
+											CurrentBoundaryCount++;
+										}
+									}
+									
+									for (int32 dq = -W.ReachDistance; dq <= W.ReachDistance; ++dq)
+									{
+										for (int32 dr = -W.ReachDistance; dr <= W.ReachDistance; ++dr)
+										{
+											if (dq == 0 && dr == 0) continue;
+											
+											FHex Candidate(W.BaseHex.Q + dq, W.BaseHex.R + dr);
+											
+											// Check hex distance is within reach
+											int32 Dist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)),
+												FMath::Abs(dq + dr));
+											if (Dist < W.MinimumReachDistance || Dist > W.ReachDistance) continue;
+											
+											// Check it's in the correct quadrant
+											const FString CandidateQuad = GetFixedQuadrantFromHex(W.BaseHex, Candidate, W.QuadrantRotationOffset);
+											if (!CandidateQuad.Equals(FootQuadrant, ESearchCase::CaseSensitive)) continue;
+											
+											// Check if tile is occupied - skip occupied tiles
+											if (IsHexOccupied(this, Candidate, CachedHeldOrbHexes, CachedArmBaseHexes, HoldingFootHexes)) continue;
+											
+											// Check if another foot is at this tile
+											bool bOtherFootHere = false;
+											for (int32 OtherIdx = 0; OtherIdx < AllFeet.Num(); ++OtherIdx)
+											{
+												if (OtherIdx == i) continue;
+												if (AllFeet[OtherIdx]->CurrentTile == Candidate || AllFeet[OtherIdx]->TargetTile == Candidate)
+												{
+													bOtherFootHere = true;
+													break;
+												}
+											}
+											if (bOtherFootHere) continue;
+											
+											// Count how many neighbors are in the target boundary quadrant
+											int32 BoundaryCount = 0;
+											for (uint8 dir = 0; dir < 6; ++dir)
+											{
+												FHex Neighbor = HexUtil::Neighbor(Candidate, static_cast<EHexDir>(dir));
+												FString NeighborQuad = GetFixedQuadrantFromHex(W.BaseHex, Neighbor, W.QuadrantRotationOffset);
+												if (NeighborQuad.Equals(TargetBoundaryQuad, ESearchCase::CaseSensitive))
+												{
+													BoundaryCount++;
+												}
+											}
+											
+											// Prefer tiles with more boundary neighbors
+											if (BoundaryCount > FootBestBoundaryCount)
+											{
+												FootBestBoundaryCount = BoundaryCount;
+												FootBestTarget = Candidate;
+											}
+										}
+									}
+									
+								// Only move if we can improve our boundary position
+								if (FootBestTarget != Foot->CurrentTile && FootBestBoundaryCount > CurrentBoundaryCount)
+								{
+									// This foot can improve - check if it's the best option
+									if (FootBestBoundaryCount > BestBoundaryNeighbors)
+									{
+										BestBoundaryNeighbors = FootBestBoundaryCount;
+										BestFootIndex = i;
+										BestTarget = FootBestTarget;
 									}
 								}
+								}
+								
+								// Move the best foot
+								if (BestFootIndex >= 0)
+								{
+									FFootState* Foot = AllFeet[BestFootIndex];
+									FString FootQuad;
+									switch (BestFootIndex)
+									{
+									case 0: FootQuad = TEXT("S"); break;
+									case 1: FootQuad = TEXT("W"); break;
+									case 2: FootQuad = TEXT("E"); break;
+									case 3: FootQuad = TEXT("N"); break;
+									}
+									FString TargetBoundary = bPositiveRotation ? GetNextQuadrantPositive(FootQuad) : GetNextQuadrantNegative(FootQuad);
+									
+									Foot->TargetTile = BestTarget;
+									Foot->StepState = EFootStepState::Raising;
+									Foot->StepProgress = 0;
+									UE_LOG(LogTemp, Log, TEXT("Walker %d: PIVOT STEP - Foot %d (%s) from (%d,%d) to (%d,%d), %d neighbors in %s"),
+										WalkerIndex, BestFootIndex, *FootQuad,
+										Foot->CurrentTile.Q, Foot->CurrentTile.R,
+										BestTarget.Q, BestTarget.R,
+										BestBoundaryNeighbors, *TargetBoundary);
+								}
+								else
+								{
+									// No foot can improve boundary position - all are at optimal spots
+									// The body rotation should have updated; if drop-off still not in
+									// holding foot's quadrant, we may need to wait for next tick
+									UE_LOG(LogTemp, Log, TEXT("Walker %d: PIVOT - All feet at boundary, waiting for rotation update (DesiredRot=%.1f)"),
+										WalkerIndex, DesiredRotation);
+								}
+							}
+							else
+							{
+								// Some non-holding feet are not planted yet
+								// Check if any are stuck in Moving for too long (> 30 ticks)
+								for (int32 idx = 0; idx < AllFeet.Num(); ++idx)
+								{
+									if (idx == HoldingFootIndex) continue;
+									FFootState* StuckFoot = AllFeet[idx];
+									
+									if (StuckFoot->StepState == EFootStepState::Moving && StuckFoot->StepProgress > 30)
+									{
+										// Foot is stuck hovering - find an alternative tile in its quadrant
+										FString StuckQuadrant;
+										switch (idx)
+										{
+										case 0: StuckQuadrant = TEXT("S"); break;
+										case 1: StuckQuadrant = TEXT("W"); break;
+										case 2: StuckQuadrant = TEXT("E"); break;
+										case 3: StuckQuadrant = TEXT("N"); break;
+										}
+										
+										// Find nearest unoccupied tile in quadrant
+										FHex BestAlt = StuckFoot->TargetTile;
+										float BestAltDist = MAX_flt;
+										
+										for (int32 dq = -W.ReachDistance; dq <= W.ReachDistance; ++dq)
+										{
+											for (int32 dr = -W.ReachDistance; dr <= W.ReachDistance; ++dr)
+											{
+												if (dq == 0 && dr == 0) continue;
+												FHex TestHex(W.BaseHex.Q + dq, W.BaseHex.R + dr);
+												
+												int32 Dist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+												if (Dist < W.MinimumReachDistance || Dist > W.ReachDistance) continue;
+												
+												const FString TestQuad = GetFixedQuadrantFromHex(W.BaseHex, TestHex, W.QuadrantRotationOffset);
+												if (!TestQuad.Equals(StuckQuadrant, ESearchCase::CaseSensitive)) continue;
+												
+												if (IsHexOccupied(this, TestHex, CachedHeldOrbHexes, CachedArmBaseHexes, HoldingFootHexes)) continue;
+												
+												// Check other feet
+												bool bOtherFootHere = false;
+												for (int32 OtherIdx = 0; OtherIdx < AllFeet.Num(); ++OtherIdx)
+												{
+													if (OtherIdx == idx) continue;
+													if (AllFeet[OtherIdx]->CurrentTile == TestHex || AllFeet[OtherIdx]->TargetTile == TestHex)
+													{
+														bOtherFootHere = true;
+														break;
+													}
+												}
+												if (bOtherFootHere) continue;
+												
+												// Distance from current target (prefer nearby tiles)
+												float AltDist = FMath::Abs(TestHex.Q - StuckFoot->TargetTile.Q) + FMath::Abs(TestHex.R - StuckFoot->TargetTile.R);
+												if (AltDist < BestAltDist)
+												{
+													BestAltDist = AltDist;
+													BestAlt = TestHex;
+												}
+											}
+										}
+										
+										if (BestAlt != StuckFoot->TargetTile)
+										{
+											UE_LOG(LogTemp, Log, TEXT("Walker %d: PIVOT - Unsticking Foot %d from (%d,%d) to (%d,%d)"),
+												WalkerIndex, idx, StuckFoot->TargetTile.Q, StuckFoot->TargetTile.R, BestAlt.Q, BestAlt.R);
+											StuckFoot->TargetTile = BestAlt;
+											StuckFoot->StepProgress = 0; // Reset progress to give it time to reach new target
+										}
+									}
+								}
+							}
+						}
+						else
+						{
+							// Quadrants match! Holding foot can reach the drop-off
+							// Tell the holding foot to target the drop-off hex
+							if (HoldingFoot->TargetTile != ActualDropOffHex)
+							{
+								HoldingFoot->TargetTile = ActualDropOffHex;
+								UE_LOG(LogTemp, Log, TEXT("Walker %d: Quadrants aligned! Holding foot %d targeting drop-off at (%d,%d)"),
+									WalkerIndex, HoldingFootIndex, ActualDropOffHex.Q, ActualDropOffHex.R);
 							}
 						}
 					}
@@ -573,22 +859,16 @@ void USimWorldHex::StepWalkers()
 			if (W.Requests.Num() > 0)
 			{
 				FHex RequestHex = W.Requests[0].TargetHex;
-				if (UWorld* World = GetWorld())
+				if (ARequestBeacon** FoundBeacon = BeaconCache.Find(RequestHex))
 				{
-					for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+					ARequestBeacon* Beacon = *FoundBeacon;
+					if (Beacon->BeaconRole == EBeaconRole::PickUp && Beacon->BeaconState == EBeaconState::InProgress)
 					{
-						if (It->Q == RequestHex.Q && It->R == RequestHex.R)
-						{
-							if (It->BeaconRole == EBeaconRole::PickUp && It->BeaconState == EBeaconState::InProgress)
-							{
-								bIsPickUpTarget = true;
-							}
-							else if (It->BeaconRole == EBeaconRole::DropOff)
-							{
-								bIsDropOffTarget = true;
-							}
-							break;
-						}
+						bIsPickUpTarget = true;
+					}
+					else if (Beacon->BeaconRole == EBeaconRole::DropOff)
+					{
+						bIsDropOffTarget = true;
 					}
 				}
 			}
@@ -596,21 +876,16 @@ void USimWorldHex::StepWalkers()
 			// If not found via request, check CurrentTargetHex
 			if (!bIsPickUpTarget && !bIsDropOffTarget)
 			{
-				if (UWorld* World = GetWorld())
+				if (ARequestBeacon** FoundBeacon = BeaconCache.Find(W.CurrentTargetHex))
 				{
-					for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+					ARequestBeacon* Beacon = *FoundBeacon;
+					if (Beacon->BeaconRole == EBeaconRole::PickUp && Beacon->BeaconState == EBeaconState::InProgress)
 					{
-						if (It->Q == W.CurrentTargetHex.Q && It->R == W.CurrentTargetHex.R)
-						{
-							if (It->BeaconRole == EBeaconRole::PickUp && It->BeaconState == EBeaconState::InProgress)
-							{
-								bIsPickUpTarget = true;
-							}
-							else if (It->BeaconRole == EBeaconRole::DropOff)
-							{
-								bIsDropOffTarget = true;
-							}
-						}
+						bIsPickUpTarget = true;
+					}
+					else if (Beacon->BeaconRole == EBeaconRole::DropOff)
+					{
+						bIsDropOffTarget = true;
 					}
 				}
 			}
@@ -619,25 +894,23 @@ void USimWorldHex::StepWalkers()
 			// near a DropOff beacon as a DropOff target.
 			if (!bIsDropOffTarget && (W.DFoot.bHoldingItem || W.LFoot.bHoldingItem || W.RFoot.bHoldingItem || W.UFoot.bHoldingItem))
 			{
-				if (UWorld* World = GetWorld())
+				// Iterate over all cached beacons instead of TActorIterator
+				for (ARequestBeacon* Beacon : AllBeacons)
 				{
-					for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+					if (Beacon->BeaconRole == EBeaconRole::DropOff)
 					{
-						if (It->BeaconRole == EBeaconRole::DropOff)
+						// Check distance from current target (offset) to beacon
+						const int32 dq = Beacon->Q - W.CurrentTargetHex.Q;
+						const int32 dr = Beacon->R - W.CurrentTargetHex.R;
+						const int32 dist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+						
+						// If target is within reach distance of a DropOff beacon, treat it as a DropOff mission
+						if (dist <= W.ReachDistance + 2)
 						{
-							// Check distance from current target (offset) to beacon
-							const int32 dq = It->Q - W.CurrentTargetHex.Q;
-							const int32 dr = It->R - W.CurrentTargetHex.R;
-							const int32 dist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-							
-							// If target is within reach distance of a DropOff beacon, treat it as a DropOff mission
-							if (dist <= W.ReachDistance + 2)
-							{
-								bIsDropOffTarget = true;
-								UE_LOG(LogTemp, Verbose, TEXT("Walker %d: Implicitly detected DropOff target near (%d,%d) due to holding item"), 
-									WalkerIndex, W.CurrentTargetHex.Q, W.CurrentTargetHex.R);
-								break;
-							}
+							bIsDropOffTarget = true;
+							UE_LOG(LogTemp, Verbose, TEXT("Walker %d: Implicitly detected DropOff target near (%d,%d) due to holding item"), 
+								WalkerIndex, W.CurrentTargetHex.Q, W.CurrentTargetHex.R);
+							break;
 						}
 					}
 				}
@@ -683,14 +956,13 @@ void USimWorldHex::StepWalkers()
 						// Find the actual drop-off beacon location
 						FHex ActualDropOffHex;
 						bool bFoundDropOff = false;
-						if (UWorld* World = GetWorld())
+						// Iterate over all cached beacons instead of TActorIterator
+						for (ARequestBeacon* Beacon : AllBeacons)
 						{
-							for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+							if (Beacon->BeaconRole == EBeaconRole::DropOff)
 							{
-								if (It->BeaconRole == EBeaconRole::DropOff)
-								{
-									// Check if this is the drop-off we're targeting
-									FHex BeaconHex(It->Q, It->R);
+								// Check if this is the drop-off we're targeting
+								FHex BeaconHex(Beacon->Q, Beacon->R);
 									const int32 dq = BeaconHex.Q - W.CurrentTargetHex.Q;
 									const int32 dr = BeaconHex.R - W.CurrentTargetHex.R;
 									const int32 dist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
@@ -702,9 +974,8 @@ void USimWorldHex::StepWalkers()
 										bFoundDropOff = true;
 										break;
 									}
-								}
-							}
 						}
+					}
 						
 						if (bFoundDropOff)
 						{
@@ -793,113 +1064,20 @@ void USimWorldHex::StepWalkers()
 				continue;
 			}
 			
-			// --- Gradual Pivot Turn Logic ---
-			// If holding an item, try to rotate body so the holding foot's quadrant aligns with the DropOff
-			int32 HoldingFootIdx = -1;
-			TArray<FFootState*> PivotFeet = GetAllFeet(W);
-			for (int32 i = 0; i < PivotFeet.Num(); ++i)
-			{
-				if (PivotFeet[i]->bHoldingItem)
-				{
-					HoldingFootIdx = i;
-					break;
-				}
-			}
+			// NOTE: Body rotation is now derived from foot positions in BasicWalker.cpp
+			// The sim does NOT directly set QuadrantRotationOffset - it's calculated from where feet step
+			// To pivot the body, the foot scoring logic should encourage stepping to positions
+			// that would naturally cause the body to rotate toward the drop-off alignment
 
-			if (HoldingFootIdx != -1)
-			{
-				// Find DropOff
-				FHex DropOffHex;
-				bool bFoundDropOff = false;
-				if (UWorld* World = GetWorld())
-				{
-					for (TActorIterator<ARequestBeacon> It(World); It; ++It)
-					{
-						if (It->BeaconRole == EBeaconRole::DropOff && It->PairedBeacon && It->PairedBeacon->BeaconState == EBeaconState::InProgress)
-						{
-							DropOffHex = FHex(It->Q, It->R);
-							bFoundDropOff = true;
-							break;
-						}
-					}
-				}
-
-				if (bFoundDropOff)
-				{
-					// Calculate angle to DropOff
-					FHex DeltaHex(DropOffHex.Q - W.BaseHex.Q, DropOffHex.R - W.BaseHex.R);
-					float x = 1.7320508f * (float)DeltaHex.Q + 0.8660254f * (float)DeltaHex.R;
-					float y = 1.5f * (float)DeltaHex.R;
-					float TargetAngle = FMath::RadiansToDegrees(FMath::Atan2(y, x));
-					
-					// Adjust TargetAngle based on which foot is holding
-					// We want the FOOT's quadrant to face the target.
-					// N(3): 0 deg, E(2): 90 deg, S(0): 180 deg, W(1): -90 deg
-					// So if N holds, BodyAngle = TargetAngle - 0
-					// If E holds, BodyAngle = TargetAngle - 90
-					// etc.
-					float FootBias = 0.f;
-					switch (HoldingFootIdx)
-					{
-					case 3: FootBias = 0.f; break;   // N
-					case 2: FootBias = 90.f; break;  // E
-					case 0: FootBias = 180.f; break; // S
-					case 1: FootBias = -90.f; break; // W
-					}
-					
-					float DesiredBodyAngle = TargetAngle - FootBias;
-					// Normalize
-					while (DesiredBodyAngle > 180.f) DesiredBodyAngle -= 360.f;
-					while (DesiredBodyAngle <= -180.f) DesiredBodyAngle += 360.f;
-
-					// Smoothly interpolate towards DesiredBodyAngle
-					float CurrentAngle = W.QuadrantRotationOffset;
-					float Diff = DesiredBodyAngle - CurrentAngle;
-					while (Diff > 180.f) Diff -= 360.f;
-					while (Diff <= -180.f) Diff += 360.f;
-
-					if (FMath::Abs(Diff) > 1.0f)
-					{
-						float Step = FMath::Sign(Diff) * 1.5f; // rotate 1.5 deg per tick
-						float TestAngle = CurrentAngle + Step;
-
-						// Validate rotation with currently PLANTED feet
-						bool bRotationValid = true;
-						for (int32 i = 0; i < PivotFeet.Num(); ++i)
-						{
-							FFootState* PFoot = PivotFeet[i];
-							if (PFoot->StepState != EFootStepState::Planted) continue;
-							
-							// Check if this foot would still be in its assigned quadrant
-							FString PFootQuadrant;
-							switch (i) {
-								case 0: PFootQuadrant = TEXT("S"); break;
-								case 1: PFootQuadrant = TEXT("W"); break;
-								case 2: PFootQuadrant = TEXT("E"); break;
-								case 3: PFootQuadrant = TEXT("N"); break;
-							}
-							
-							const FString NewQuadrant = GetFixedQuadrantFromHex(W.BaseHex, PFoot->CurrentTile, TestAngle);
-							if (!NewQuadrant.Equals(PFootQuadrant, ESearchCase::CaseSensitive))
-							{
-								bRotationValid = false;
-								break;
-							}
-						}
-
-						if (bRotationValid)
-						{
-							W.QuadrantRotationOffset = TestAngle;
-							// Normalize
-							while (W.QuadrantRotationOffset > 180.f) W.QuadrantRotationOffset -= 360.f;
-							while (W.QuadrantRotationOffset <= -180.f) W.QuadrantRotationOffset += 360.f;
-						}
-					}
-				}
-			}
+			// NOTE: We still need to process foot state machine even when pivoting
+			// The bIsPivoting flag will be used to skip TARGET CALCULATION, not state processing
 
 			// Get all feet
 			TArray<FFootState*> Feet = GetAllFeet(W);
+
+			// PERFORMANCE: Check once per walker instead of per-tile whether any foot is holding
+			bool bAnyFootHoldingInWalker = W.DFoot.bHoldingItem || W.LFoot.bHoldingItem || 
+										   W.RFoot.bHoldingItem || W.UFoot.bHoldingItem;
 
 			// Precompute distance of each foot from the body center (hex distance), used to
 			// prioritize feet that are closer to the edge of their allowed reach.
@@ -1027,24 +1205,22 @@ void USimWorldHex::StepWalkers()
 						FHex DropOffHex = Foot.CurrentTile; // Default to current if not found
 						bool bFoundDropOff = false;
 						
-						if (UWorld* World = GetWorld())
+						// Iterate over all cached beacons instead of TActorIterator
+						for (ARequestBeacon* Beacon : AllBeacons)
 						{
-							for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+							if (Beacon->BeaconRole == EBeaconRole::DropOff && Beacon->PairedBeacon)
 							{
-								if (It->BeaconRole == EBeaconRole::DropOff && It->PairedBeacon)
+								// Check if this is the paired DropOff (by checking if PickUp is InProgress)
+								if (Beacon->PairedBeacon->BeaconState == EBeaconState::InProgress)
 								{
-									// Check if this is the paired DropOff (by checking if PickUp is InProgress)
-									if (It->PairedBeacon->BeaconState == EBeaconState::InProgress)
-									{
-										DropOffHex = FHex(It->Q, It->R);
-										bFoundDropOff = true;
-										break;
-									}
+									DropOffHex = FHex(Beacon->Q, Beacon->R);
+									bFoundDropOff = true;
+									break;
 								}
 							}
 						}
 						
-						// Check if walker is in range of DropOff
+						// Check if walker is in range of DropOff (Phase 1: Move Body)
 						bool bInRangeOfDropOff = false;
 						if (bFoundDropOff)
 						{
@@ -1054,18 +1230,55 @@ void USimWorldHex::StepWalkers()
 							bInRangeOfDropOff = (dist <= W.ReachDistance);
 						}
 						
-						// If in range of DropOff, specifically target the DropOff tile
-						if (bInRangeOfDropOff)
+						// Check if we are in the correct quadrant (Phase 2: Pivot)
+						bool bInCorrectQuadrant = false;
+						if (bFoundDropOff)
 						{
-							// Force target to DropOffHex if in range.
-							// We trust the body positioning logic has aligned us well enough.
-							// Strict quadrant checks can fail due to rotation/integer math, preventing the drop.
+							const FString DropOffQuadrant = GetFixedQuadrantFromHex(W.BaseHex, DropOffHex, W.QuadrantRotationOffset);
+							FString HoldingFootQuadrant;
+							// BUG FIX: Use FootIndex (current foot) not HoldingFootIdx (outer scope variable)
+							switch (FootIndex)
+							{
+							case 0: HoldingFootQuadrant = TEXT("S"); break; // D
+							case 1: HoldingFootQuadrant = TEXT("W"); break; // L
+							case 2: HoldingFootQuadrant = TEXT("E"); break; // R
+							case 3: HoldingFootQuadrant = TEXT("N"); break; // U
+							}
+							bInCorrectQuadrant = DropOffQuadrant.Equals(HoldingFootQuadrant, ESearchCase::CaseSensitive);
+						}
+
+						// Logic:
+						// 1. If not in range -> Moving (handled by body logic elsewhere, but foot should center)
+						// 2. If in range but wrong quadrant -> Pivot (handled by body logic elsewhere, foot should center)
+						// 3. If in range AND correct quadrant -> Foot moves to DropOffHex (Ready to place)
+						
+						bool bReadyToPlace = (bInRangeOfDropOff && bInCorrectQuadrant);
+						
+						if (bReadyToPlace)
+						{
+							// Force target to DropOffHex
 							if (Foot.TargetTile != DropOffHex)
 							{
 								Foot.TargetTile = DropOffHex;
-								UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: In range of DropOff at (%d,%d), forcing target to DropOff"),
+								UE_LOG(LogTemp, Verbose, TEXT("Walker %d Foot %d: Ready to place at DropOff (%d,%d), forcing target"),
 									WalkerIndex, FootIndex, DropOffHex.Q, DropOffHex.R);
 							}
+						}
+						else
+						{
+							// Not ready to place (either moving to range or pivoting)
+							// Force foot to maintain position at quadrant center
+							FHex QuadrantCenter = GetQuadrantCenterHex(W.BaseHex, FootIndex, W.ReachDistance, W.QuadrantRotationOffset, this);
+							
+							// Only update if significantly different to allow some natural sway, 
+							// but user request implies strict adherence. Let's enforce strictness.
+							if (Foot.TargetTile != QuadrantCenter)
+							{
+								Foot.TargetTile = QuadrantCenter;
+								UE_LOG(LogTemp, Verbose, TEXT("Walker %d Foot %d: Holding item, maintaining quadrant center at (%d,%d)"),
+									WalkerIndex, FootIndex, QuadrantCenter.Q, QuadrantCenter.R);
+							}
+						}
 							
 							// If already at DropOff tile, attempt drop immediately
 							if (Foot.CurrentTile == DropOffHex)
@@ -1077,16 +1290,14 @@ void USimWorldHex::StepWalkers()
 								if (bFoundDropOff)
 								{
 									// Get beacon rotation
+									// Get beacon rotation using cached lookup
 									ARequestBeacon* DropOffBeacon = nullptr;
-									if (UWorld* World = GetWorld())
+									if (ARequestBeacon** FoundBeacon = BeaconCache.Find(DropOffHex))
 									{
-										for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+										ARequestBeacon* Beacon = *FoundBeacon;
+										if (Beacon->BeaconRole == EBeaconRole::DropOff)
 										{
-											if (It->Q == DropOffHex.Q && It->R == DropOffHex.R && It->BeaconRole == EBeaconRole::DropOff)
-											{
-												DropOffBeacon = *It;
-												break;
-											}
+											DropOffBeacon = Beacon;
 										}
 									}
 									
@@ -1330,70 +1541,7 @@ void USimWorldHex::StepWalkers()
 								}
 									break; // Exit Planted case even if drop failed
 								}
-							} // End of: if DropOff is in this foot's quadrant
-						// Removed extra brace that was closing scope prematurely
 
-						else if (bFoundDropOff)
-						{
-							// approach DropOff logic
-							UE_LOG(LogTemp, Verbose, TEXT("Walker %d Foot %d: Holding, approaching DropOff at (%d,%d)"),
-								WalkerIndex, FootIndex, DropOffHex.Q, DropOffHex.R);
-
-							FString FootQuadrant;
-							switch (FootIndex)
-							{
-							case 0: FootQuadrant = TEXT("S"); break;
-							case 1: FootQuadrant = TEXT("W"); break;
-							case 2: FootQuadrant = TEXT("E"); break;
-							case 3: FootQuadrant = TEXT("N"); break;
-							default: FootQuadrant = TEXT("N"); break;
-							}
-							
-							// Find valid tile in quadrant closest to DropOff
-							FHex BestApproachTile = Foot.CurrentTile;
-							float MinDistToDropOff = MAX_flt;
-							bool bFoundCandidate = false;
-
-							for (int32 q = -W.ReachDistance; q <= W.ReachDistance; ++q)
-							{
-								for (int32 r = -W.ReachDistance; r <= W.ReachDistance; ++r)
-								{
-									FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r);
-									
-									// 1. Check Reach
-									const int32 dq = TestHex.Q - W.BaseHex.Q;
-									const int32 dr = TestHex.R - W.BaseHex.R;
-									const int32 HexDist = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
-									if (HexDist == 0 || HexDist > W.ReachDistance || (float)HexDist < W.MinimumReachDistance) continue;
-									
-									// 2. Check Quadrant
-									const FString QStr = GetFixedQuadrantFromHex(W.BaseHex, TestHex, W.QuadrantRotationOffset);
-									if (!QStr.Equals(FootQuadrant, ESearchCase::CaseSensitive)) continue;
-									
-									// 3. Check Occupied (allow self)
-									if (TestHex != Foot.CurrentTile && IsHexOccupied(this, TestHex, HeldOrbHexes, ArmBaseHexes, HoldingFootHexes)) continue;
-									
-									// Score: Distance to DropOff
-									float Dist = FMath::Sqrt(FMath::Square((float)(TestHex.Q - DropOffHex.Q)) + FMath::Square((float)(TestHex.R - DropOffHex.R)));
-									
-									if (Dist < MinDistToDropOff)
-									{
-										MinDistToDropOff = Dist;
-										BestApproachTile = TestHex;
-										bFoundCandidate = true;
-									}
-								}
-							}
-							
-							if (bFoundCandidate && BestApproachTile != Foot.CurrentTile)
-							{
-								Foot.TargetTile = BestApproachTile;
-							}
-							else
-							{
-								break;
-							}
-						}
 						
 						// Continue to stepping logic below (don't break here unless already at target)
 					}
@@ -1505,7 +1653,7 @@ void USimWorldHex::StepWalkers()
 						BestTile = Foot.TargetTile;
 						BestScore = 0.f; // Best score for holding items (already has target)
 						
-						UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Holding item, using pre-set target (%d,%d) from (%d,%d)"),
+						UE_LOG(LogTemp, Verbose, TEXT("Walker %d Foot %d: Holding item, using pre-set target (%d,%d) from (%d,%d)"),
 							WalkerIndex, FootIndex, BestTile.Q, BestTile.R, Foot.CurrentTile.Q, Foot.CurrentTile.R);
 						// Skip to stepping logic
 					}
@@ -1618,46 +1766,31 @@ void USimWorldHex::StepWalkers()
 							bool bIsPickUpBeacon = false;
 							// Check if this is a DropOff beacon tile (special handling for holding feet)
 							bool bIsDropOffBeacon = false;
-							if (UWorld* World = GetWorld())
+							// PERFORMANCE: Use cached beacon lookup instead of TActorIterator
+							if (ARequestBeacon** FoundBeacon = BeaconCache.Find(TestHex))
 							{
-								// Check if any foot is already holding an item
-								bool bAnyFootHolding = false;
-								TArray<FFootState*> TempFeet = GetAllFeet(W);
-								for (FFootState* TF : TempFeet)
+								ARequestBeacon* Beacon = *FoundBeacon;
+								
+								// Check if this walker has a request for this beacon
+								bool bHasRequestForThisBeacon = false;
+								for (const FWalkerRequest& Req : W.Requests)
 								{
-									if (TF->bHoldingItem)
+									if (Req.TargetHex == TestHex)
 									{
-										bAnyFootHolding = true;
+										bHasRequestForThisBeacon = true;
 										break;
 									}
 								}
 								
-								for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+								// Only treat as PickUp beacon if this walker is assigned to it
+								if (Beacon->BeaconRole == EBeaconRole::PickUp && Beacon->BeaconState == EBeaconState::InProgress && 
+									!bAnyFootHoldingInWalker && bHasRequestForThisBeacon)
 								{
-									if (It->Q == TestHex.Q && It->R == TestHex.R)
-									{
-										// Check if this walker has a request for this beacon
-										bool bHasRequestForThisBeacon = false;
-										for (const FWalkerRequest& Req : W.Requests)
-										{
-											if (Req.TargetHex.Q == TestHex.Q && Req.TargetHex.R == TestHex.R)
-											{
-												bHasRequestForThisBeacon = true;
-												break;
-											}
-										}
-										
-										// Only treat as PickUp beacon if this walker is assigned to it
-										if (It->BeaconRole == EBeaconRole::PickUp && It->BeaconState == EBeaconState::InProgress && 
-											!bAnyFootHolding && bHasRequestForThisBeacon)
-										{
-											bIsPickUpBeacon = true;
-										}
-										else if (It->BeaconRole == EBeaconRole::DropOff)
-										{
-											bIsDropOffBeacon = true;
-										}
-									}
+									bIsPickUpBeacon = true;
+								}
+								else if (Beacon->BeaconRole == EBeaconRole::DropOff)
+								{
+									bIsDropOffBeacon = true;
 								}
 							}
 							
@@ -2045,7 +2178,8 @@ void USimWorldHex::StepWalkers()
 					} // End of normal foot placement logic (else block for !bHoldingItem)
 					
 					// If we found a better tile, start stepping
-					if (BestTile != Foot.CurrentTile)
+					// BUT: Skip if we're in pivot mode - pivot logic controls foot movement
+					if (BestTile != Foot.CurrentTile && !bIsPivoting)
 					{
 						Foot.TargetTile = BestTile;
 						Foot.StepState = EFootStepState::Raising;
@@ -2053,7 +2187,7 @@ void USimWorldHex::StepWalkers()
 						Foot.HeightOffset = Foot.bHoldingItem ? W.StepHeight : 0.f; // Keep raised if holding
 						RaisedCount++; // Update raised count
 						RaisedIndices.Add(FootIndex);
-						UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Starting to step from (%d,%d) to (%d,%d) - Score: %.1f, Holding: %d"),
+						UE_LOG(LogTemp, Verbose, TEXT("Walker %d Foot %d: Starting to step from (%d,%d) to (%d,%d) - Score: %.1f, Holding: %d"),
 							WalkerIndex, FootIndex, Foot.CurrentTile.Q, Foot.CurrentTile.R, 
 							BestTile.Q, BestTile.R, BestScore, Foot.bHoldingItem ? 1 : 0);
 					}
@@ -2104,8 +2238,9 @@ void USimWorldHex::StepWalkers()
 					// check if a better valid tile has become available.
 					// This handles the case where a foot is waiting for a tile to clear, or moving to an occupied tile.
 					
+					// SKIP target re-evaluation if we're pivoting - pivot logic controls targets
 					// Only check every few ticks to avoid performance hit
-					if (Foot.StepProgress % 4 == 0)
+					if (Foot.StepProgress % 4 == 0 && !bIsPivoting)
 					{
 						// Panic Mode: If foot has been hovering for too long (> 60 ticks), relax constraints to avoid freezing
 						bool bPanicMode = (Foot.StepProgress > 60);
@@ -2162,18 +2297,14 @@ void USimWorldHex::StepWalkers()
 						float BestSwitchScore = MAX_flt;
 						bool bFoundBetter = false;
 						
-						// Check if current target is a PickUp beacon
+						// PERFORMANCE: Check if current target is a PickUp beacon using cached lookup
 						bool bCurrentTargetIsPickUp = false;
-						if (UWorld* World = GetWorld())
+						if (ARequestBeacon** FoundBeacon = BeaconCache.Find(Foot.TargetTile))
 						{
-							for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+							ARequestBeacon* Beacon = *FoundBeacon;
+							if (Beacon->BeaconRole == EBeaconRole::PickUp && Beacon->BeaconState == EBeaconState::InProgress)
 							{
-								if (It->Q == Foot.TargetTile.Q && It->R == Foot.TargetTile.R && 
-									It->BeaconRole == EBeaconRole::PickUp && It->BeaconState == EBeaconState::InProgress)
-								{
-									bCurrentTargetIsPickUp = true;
-									break;
-								}
+								bCurrentTargetIsPickUp = true;
 							}
 						}
 						
@@ -2214,18 +2345,14 @@ void USimWorldHex::StepWalkers()
 								// In Panic Mode, allow any quadrant to find a valid tile
 								if (!bPanicMode && !FixedQuadrant.Equals(FootQuadrant, ESearchCase::CaseSensitive)) continue;
 								
-								// Check if this is a PickUp beacon
+								// PERFORMANCE: Check if this is a PickUp beacon using cached lookup
 								bool bTestIsPickUp = false;
-								if (UWorld* World = GetWorld())
+								if (ARequestBeacon** FoundBeacon = BeaconCache.Find(TestHex))
 								{
-									for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+									ARequestBeacon* Beacon = *FoundBeacon;
+									if (Beacon->BeaconRole == EBeaconRole::PickUp && Beacon->BeaconState == EBeaconState::InProgress)
 									{
-										if (It->Q == TestHex.Q && It->R == TestHex.R && 
-											It->BeaconRole == EBeaconRole::PickUp && It->BeaconState == EBeaconState::InProgress)
-										{
-											bTestIsPickUp = true;
-											break;
-										}
+										bTestIsPickUp = true;
 									}
 								}
 								
@@ -2266,7 +2393,7 @@ void USimWorldHex::StepWalkers()
 						if (bFoundBetter)
 						{
 							// Switch target!
-							UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Switching target from (%d,%d)[%s] to (%d,%d)[Free]"), 
+								UE_LOG(LogTemp, Verbose, TEXT("Walker %d Foot %d: Switching target from (%d,%d)[%s] to (%d,%d)[Free]"), 
 								WalkerIndex, FootIndex, 
 								Foot.TargetTile.Q, Foot.TargetTile.R, 
 								bCurrentTargetOccupied ? TEXT("Occ") : TEXT("Free"),
@@ -2294,15 +2421,13 @@ void USimWorldHex::StepWalkers()
 							if (ItemMap.Contains(Foot.TargetTile))
 							{
 								ARequestBeacon* PickUpBeacon = nullptr;
-								if (UWorld* World = GetWorld())
+								// Check for PickUp beacon at TargetTile using cached lookup
+								if (ARequestBeacon** FoundBeacon = BeaconCache.Find(Foot.TargetTile))
 								{
-									for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+									ARequestBeacon* Beacon = *FoundBeacon;
+									if (Beacon->BeaconRole == EBeaconRole::PickUp)
 									{
-										if (It->Q == Foot.TargetTile.Q && It->R == Foot.TargetTile.R && It->BeaconRole == EBeaconRole::PickUp)
-										{
-											PickUpBeacon = *It;
-											break;
-										}
+										PickUpBeacon = Beacon;
 									}
 								}
 								
@@ -2541,17 +2666,15 @@ void USimWorldHex::StepWalkers()
 							
 							// Check for DropOff beacon at TargetTile
 							ARequestBeacon* DropOffBeacon = nullptr;
-							if (UWorld* World = GetWorld())
+							// Check for DropOff beacon at target using cached lookup
+							if (ARequestBeacon** FoundBeacon = BeaconCache.Find(Foot.TargetTile))
 							{
-								for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+								ARequestBeacon* Beacon = *FoundBeacon;
+								if (Beacon->BeaconRole == EBeaconRole::DropOff)
 								{
-									if (It->Q == Foot.TargetTile.Q && It->R == Foot.TargetTile.R && It->BeaconRole == EBeaconRole::DropOff)
-									{
-										DropOffBeacon = *It;
-										UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Found DropOff beacon at target"),
-											WalkerIndex, FootIndex);
-										break;
-									}
+									DropOffBeacon = Beacon;
+									UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Found DropOff beacon at target"),
+										WalkerIndex, FootIndex);
 								}
 							}
 							

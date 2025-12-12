@@ -519,11 +519,11 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		if (bUFootHoldingItem != bPrevUHolding)
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': UFoot holding changed to %d"), *GetName(), bUFootHoldingItem ? 1 : 0);
 
-		// Update held item visuals
-		UpdateHeldItemVisuals(DFootHeldOrbComp, bDFootHoldingItem, DFootHeldItem, FName(TEXT("DFoot_Socket")));
-		UpdateHeldItemVisuals(LFootHeldOrbComp, bLFootHoldingItem, LFootHeldItem, FName(TEXT("LFoot_Socket")));
-		UpdateHeldItemVisuals(RFootHeldOrbComp, bRFootHoldingItem, RFootHeldItem, FName(TEXT("RFoot_Socket")));
-		UpdateHeldItemVisuals(UFootHeldOrbComp, bUFootHoldingItem, UFootHeldItem, FName(TEXT("UFoot_Socket")));
+		// Update held item visuals (pass cached IDs to avoid recreation every tick)
+		UpdateHeldItemVisuals(DFootHeldOrbComp, bDFootHoldingItem, DFootHeldItem, FName(TEXT("DFoot_Socket")), CachedDFootHeldItemId);
+		UpdateHeldItemVisuals(LFootHeldOrbComp, bLFootHoldingItem, LFootHeldItem, FName(TEXT("LFoot_Socket")), CachedLFootHeldItemId);
+		UpdateHeldItemVisuals(RFootHeldOrbComp, bRFootHoldingItem, RFootHeldItem, FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);
+		UpdateHeldItemVisuals(UFootHeldOrbComp, bUFootHoldingItem, UFootHeldItem, FName(TEXT("UFoot_Socket")), CachedUFootHeldItemId);
 
 		// Helper function to calculate end-of-tick foot position based on step state and progress
 		auto CalculateEndOfTickFootPosition = [&](const FFootState& FootState, const FHex& CurrentHex, const FHex& TargetHex) -> FVector
@@ -936,10 +936,24 @@ void ABasicWalker::Tick(float DeltaSeconds)
 
 		if (TotalWeight > KINDA_SMALL_NUMBER)
 		{
-			AvgYaw = FMath::RadiansToDegrees(FMath::Atan2(TotalWeightedSin, TotalWeightedCos));
+			float NewAvgYaw = FMath::RadiansToDegrees(FMath::Atan2(TotalWeightedSin, TotalWeightedCos));
+			
+			// PERFORMANCE FIX: Smooth the body rotation to avoid twitching between states
+			// Use circular interpolation to avoid discontinuities at -180/180 boundary
+			float DeltaYaw = FRotator::NormalizeAxis(NewAvgYaw - AvgYaw);
+			
+			// Only update if there's meaningful change (reduces jitter from floating point)
+			if (FMath::Abs(DeltaYaw) > 0.01f)
+			{
+				// Smooth lerp - adjust factor for desired responsiveness
+				// 0.1 = very smooth/slow, 0.5 = responsive, 1.0 = instant
+				const float SmoothFactor = 0.15f;
+				AvgYaw = FRotator::NormalizeAxis(AvgYaw + DeltaYaw * SmoothFactor);
+			}
+			
 			BodyGoalRotation = FRotator(90.f, 0.f, AvgYaw);
 
-	// Update QuadrantRotationOffset to compensate
+			// Update QuadrantRotationOffset to match body rotation
 			QuadrantRotationOffset = AvgYaw;
 		}
 	}
@@ -1639,8 +1653,25 @@ bool ABasicWalker::LineTraceToGridDebug(const FVector& StartLocation, FVector& O
 	return false;
 }
 
-void ABasicWalker::UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool bIsHolding, const FItem& HeldItem, const FName& FootSocketName)
+void ABasicWalker::UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool bIsHolding, const FItem& HeldItem, const FName& FootSocketName, int32& CachedItemId)
 {
+	// Determine current item ID (0 if not holding or invalid)
+	int32 CurrentItemId = 0;
+	if (bIsHolding)
+	{
+		CurrentItemId = HeldItem.Id;
+	}
+	
+	// PERFORMANCE: Only update visuals if the held item actually changed
+	if (CurrentItemId == CachedItemId && HeldComp != nullptr)
+	{
+		// Same item (or still not holding) - no need to recreate visuals
+		return;
+	}
+	
+	// Update cache
+	CachedItemId = CurrentItemId;
+	
 	if (!bIsHolding)
 	{
 		// Clear visuals if not holding
@@ -1680,18 +1711,11 @@ void ABasicWalker::UpdateHeldItemVisuals(UStaticMeshComponent*& HeldComp, bool b
 		return;
 	}
 	
-	// Get scale from OrbRenderer
+	// PERFORMANCE: Use cached OrbRenderer instead of scanning all actors
 	float OrbScale = 1.6f; // Default
-	if (UWorld* World = GetWorld())
+	if (UOrbRenderer* Renderer = GetCachedOrbRenderer())
 	{
-		for (TActorIterator<AActor> It(World); It; ++It)
-		{
-			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
-			{
-				OrbScale = Renderer->OrbScale;
-				break;
-			}
-		}
+		OrbScale = Renderer->OrbScale;
 	}
 
 	// Ensure BodyComp exists
@@ -1826,18 +1850,11 @@ void ABasicWalker::GenerateBondedOrbMeshes(UStaticMeshComponent* HeldComp, const
 	// Get the bonds from Sim
 	const TArray<USimWorldHex::FBond>& Bonds = Sim->GetBonds();
 	
-	// Get scale specifically for bonds
+	// Get scale specifically for bonds (use cached renderer)
 	float BondThickness = 1.0f;
-	if (UWorld* World = GetWorld())
+	if (UOrbRenderer* Renderer = const_cast<ABasicWalker*>(this)->GetCachedOrbRenderer())
 	{
-		for (TActorIterator<AActor> It(World); It; ++It)
-		{
-			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
-			{
-				BondThickness = Renderer->BondedOrbScale;
-				break;
-			}
-		}
+		BondThickness = Renderer->BondedOrbScale;
 	}
 
 	// Find bonds that involve sub-orbs in this held cluster
@@ -1870,6 +1887,33 @@ void ABasicWalker::GenerateBondedOrbMeshes(UStaticMeshComponent* HeldComp, const
 		// If both items are in this cluster, create a bonded orb mesh
 		if (bItemAInCluster && bItemBInCluster)
 		{
+			// Validate positions
+			if (PosA.ContainsNaN() || PosB.ContainsNaN())
+			{
+				UE_LOG(LogTemp, Error, TEXT("Walker %s: Bond %d-%d has NaN positions! PosA=%s, PosB=%s. TileSize=%.2f"), 
+					*GetName(), Bond.ItemA, Bond.ItemB, *PosA.ToString(), *PosB.ToString(), Tile);
+				continue;
+			}
+
+			// Calculate midpoint and direction
+			const FVector Midpoint = (PosA + PosB) * 0.5f;
+			if (Midpoint.ContainsNaN())
+			{
+				UE_LOG(LogTemp, Error, TEXT("Walker %s: Bond %d-%d Midpoint is NaN! PosA=%s, PosB=%s"), 
+					*GetName(), Bond.ItemA, Bond.ItemB, *PosA.ToString(), *PosB.ToString());
+				continue;
+			}
+
+			// Direction
+			FVector Direction = (PosB - PosA).GetSafeNormal();
+			if (Direction.IsNearlyZero())
+			{
+				// This implies PosA == PosB, which shouldn't happen for distinct bonded items
+				UE_LOG(LogTemp, Warning, TEXT("Walker %s: Bond %d-%d has zero length! PosA=%s, PosB=%s"), 
+					*GetName(), Bond.ItemA, Bond.ItemB, *PosA.ToString(), *PosB.ToString());
+				Direction = FVector::UpVector; // Fallback
+			}
+
 			UStaticMeshComponent* BondMesh = NewObject<UStaticMeshComponent>(HeldComp, *FString::Printf(TEXT("Bond_%d_%d"), Bond.ItemA, Bond.ItemB));
 			BondMesh->RegisterComponent();
 			BondMesh->AttachToComponent(HeldComp, FAttachmentTransformRules::KeepRelativeTransform);
@@ -1880,22 +1924,26 @@ void ABasicWalker::GenerateBondedOrbMeshes(UStaticMeshComponent* HeldComp, const
 			{
 				BondMesh->SetMaterial(0, BondedOrbMaterial);
 			}
-
-			// Calculate midpoint and direction
-			FVector Midpoint = (PosA + PosB) * 0.5f;
-			FVector Direction = (PosB - PosA).GetSafeNormal();
 			
 			// Align cylinder with bond direction
 			FVector Up = Direction;
 			FVector Right = FVector::CrossProduct(Up, FVector::UpVector).GetSafeNormal();
 			if (Right.IsNearlyZero())
 			{
+				// Bond is vertical (unlikely in 2D hex grid, but possible if dQ/dR logic fails)
 				Right = FVector::RightVector;
 			}
 			FVector Forward = FVector::CrossProduct(Right, Up).GetSafeNormal();
 
 			FMatrix RotationMatrix = FMatrix(Forward, Right, Up, FVector::ZeroVector);
 			FRotator Rotation = FQuat(RotationMatrix).Rotator();
+			
+			if (Rotation.ContainsNaN())
+			{
+				UE_LOG(LogTemp, Error, TEXT("Walker %s: Bond %d-%d Rotation is NaN! Direction=%s"), 
+					*GetName(), Bond.ItemA, Bond.ItemB, *Direction.ToString());
+				Rotation = FRotator::ZeroRotator;
+			}
 
 			BondMesh->SetRelativeLocation(Midpoint);
 			BondMesh->SetRelativeRotation(Rotation);
@@ -1904,32 +1952,39 @@ void ABasicWalker::GenerateBondedOrbMeshes(UStaticMeshComponent* HeldComp, const
 	}
 }
 
-UStaticMesh* ABasicWalker::GetBondedOrbMesh() const
+UOrbRenderer* ABasicWalker::GetCachedOrbRenderer()
 {
-	if (UWorld* World = GetWorld())
+	if (!CachedOrbRenderer)
 	{
-		for (TActorIterator<AActor> It(World); It; ++It)
+		if (UWorld* World = GetWorld())
 		{
-			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
+			for (TActorIterator<AActor> It(World); It; ++It)
 			{
-				return Renderer->BondedOrbMesh;
+				if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
+				{
+					CachedOrbRenderer = Renderer;
+					break;
+				}
 			}
 		}
+	}
+	return CachedOrbRenderer;
+}
+
+UStaticMesh* ABasicWalker::GetBondedOrbMesh() const
+{
+	if (UOrbRenderer* Renderer = const_cast<ABasicWalker*>(this)->GetCachedOrbRenderer())
+	{
+		return Renderer->BondedOrbMesh;
 	}
 	return nullptr;
 }
 
 UMaterialInterface* ABasicWalker::GetBondedOrbMaterial() const
 {
-	if (UWorld* World = GetWorld())
+	if (UOrbRenderer* Renderer = const_cast<ABasicWalker*>(this)->GetCachedOrbRenderer())
 	{
-		for (TActorIterator<AActor> It(World); It; ++It)
-		{
-			if (UOrbRenderer* Renderer = (*It)->FindComponentByClass<UOrbRenderer>())
-			{
-				return Renderer->BondedOrbMaterial;
-			}
-		}
+		return Renderer->BondedOrbMaterial;
 	}
 	return nullptr;
 }
