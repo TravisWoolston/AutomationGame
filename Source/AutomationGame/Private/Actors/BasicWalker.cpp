@@ -471,6 +471,27 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		RFootHeightOffset = SimState.RFoot.HeightOffset;
 		UFootHeightOffset = SimState.UFoot.HeightOffset;
 
+		// Smoothly interpolate height offsets toward sim values
+		// This prevents visual snapping when sim states change faster than visual frames
+		// Calculate HeightInterpSpeed based on GTM tick rate to stay in sync with Progress updates
+		float HeightInterpSpeed = 15.0f; // Default fallback
+		if (AGameTickManager* GTM = AGameTickManager::Get(this))
+		{
+			// Reach ~98% of target in one GTM tick
+			// InterpSpeed = 4.0 / TickInterval = 4.0 * TicksPerSecond
+			HeightInterpSpeed = 4.0f * FMath::Max(0.01f, GTM->TicksPerSecond);
+		}
+		DFootSmoothedHeightOffset = FMath::FInterpTo(DFootSmoothedHeightOffset, DFootHeightOffset, DeltaSeconds, HeightInterpSpeed);
+		LFootSmoothedHeightOffset = FMath::FInterpTo(LFootSmoothedHeightOffset, LFootHeightOffset, DeltaSeconds, HeightInterpSpeed);
+		RFootSmoothedHeightOffset = FMath::FInterpTo(RFootSmoothedHeightOffset, RFootHeightOffset, DeltaSeconds, HeightInterpSpeed);
+		UFootSmoothedHeightOffset = FMath::FInterpTo(UFootSmoothedHeightOffset, UFootHeightOffset, DeltaSeconds, HeightInterpSpeed);
+		
+		// Copy to public properties for AnimBP access
+		DFootSmoothedHeight = DFootSmoothedHeightOffset;
+		LFootSmoothedHeight = LFootSmoothedHeightOffset;
+		RFootSmoothedHeight = RFootSmoothedHeightOffset;
+		UFootSmoothedHeight = UFootSmoothedHeightOffset;
+
 		// Sync foot step states and progress
 		DFootStepState = SimState.DFoot.StepState;
 		LFootStepState = SimState.LFoot.StepState;
@@ -520,11 +541,14 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		if (bUFootHoldingItem != bPrevUHolding)
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': UFoot holding changed to %d"), *GetName(), bUFootHoldingItem ? 1 : 0);
 
-		// Update held item visuals (pass cached IDs to avoid recreation every tick)
-		UpdateHeldItemVisuals(DFootHeldOrbComp, bDFootHoldingItem, DFootHeldItem, FName(TEXT("DFoot_Socket")), CachedDFootHeldItemId);
-		UpdateHeldItemVisuals(LFootHeldOrbComp, bLFootHoldingItem, LFootHeldItem, FName(TEXT("LFoot_Socket")), CachedLFootHeldItemId);
-		UpdateHeldItemVisuals(RFootHeldOrbComp, bRFootHoldingItem, RFootHeldItem, FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);
-		UpdateHeldItemVisuals(UFootHeldOrbComp, bUFootHoldingItem, UFootHeldItem, FName(TEXT("UFoot_Socket")), CachedUFootHeldItemId);
+		// Reset held visual ready flags when dropping (bHoldingItem transitions to false)
+		if (!bDFootHoldingItem && bPrevDHolding) bDFootHeldVisualReady = false;
+		if (!bLFootHoldingItem && bPrevLHolding) bLFootHeldVisualReady = false;
+		if (!bRFootHoldingItem && bPrevRHolding) bRFootHeldVisualReady = false;
+		if (!bUFootHoldingItem && bPrevUHolding) bUFootHeldVisualReady = false;
+		
+		// NOTE: UpdateHeldItemVisuals is now called AFTER smoothed positions are calculated,
+		// to delay showing held items until feet have visually arrived at pickup/dropoff tiles.
 
 		// --- Foot Visual Update Events ---
 		// Calculate progress and call UpdateFoot*Visual for feet that are animating (progress < 1)
@@ -726,6 +750,67 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			
 			UFootPrevStepState = SimState.UFoot.StepState;
 			UFootPrevStepProgress = SimState.UFoot.StepProgress;
+		}
+
+		// Calculate smoothed foot world positions
+		// Skip if ManualFootGoal is enabled (positions are determined by Event Graph)
+		// SmoothedHeight values are still calculated regardless
+		{
+			// Check if ManualFootGoal is enabled
+			bool bManualFootGoal = false;
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<AGameManager> It(World); It; ++It)
+				{
+					AGameManager* GM = *It;
+					if (GM && GM->bManualFootGoal)
+					{
+						bManualFootGoal = true;
+						break;
+					}
+				}
+			}
+			
+			if (!bManualFootGoal)
+			{
+				// Use same GTM-synced interp speed as height
+				float PosInterpSpeed = 12.0f; // Default fallback
+				if (AGameTickManager* GTM = AGameTickManager::Get(this))
+				{
+					PosInterpSpeed = 2.0f * FMath::Max(0.01f, GTM->TicksPerSecond);
+				}
+				
+				// Calculate target positions based on current progress
+				auto CalcProgressedPos = [](const FVector& Previous, const FVector& Target, float Progress, float SmoothedHeight) -> FVector
+				{
+					FVector Pos = FMath::Lerp(Previous, Target, FMath::Clamp(Progress, 0.f, 1.f));
+					Pos.Z += SmoothedHeight; // Add smoothed height offset
+					return Pos;
+				};
+				
+				FVector DTarget = CalcProgressedPos(DFootPreviousWorldPosition, DFootTargetWorldPosition, DFootProgress, DFootSmoothedHeightOffset);
+				FVector LTarget = CalcProgressedPos(LFootPreviousWorldPosition, LFootTargetWorldPosition, LFootProgress, LFootSmoothedHeightOffset);
+				FVector RTarget = CalcProgressedPos(RFootPreviousWorldPosition, RFootTargetWorldPosition, RFootProgress, RFootSmoothedHeightOffset);
+				FVector UTarget = CalcProgressedPos(UFootPreviousWorldPosition, UFootTargetWorldPosition, UFootProgress, UFootSmoothedHeightOffset);
+				
+				if (!bSmoothedPositionsInitialized)
+				{
+					// First frame: snap to target positions
+					DFootSmoothedWorldPosition = DTarget;
+					LFootSmoothedWorldPosition = LTarget;
+					RFootSmoothedWorldPosition = RTarget;
+					UFootSmoothedWorldPosition = UTarget;
+					bSmoothedPositionsInitialized = true;
+				}
+				else
+				{
+					// Smoothly interpolate toward target positions
+					DFootSmoothedWorldPosition = FMath::VInterpTo(DFootSmoothedWorldPosition, DTarget, DeltaSeconds, PosInterpSpeed);
+					LFootSmoothedWorldPosition = FMath::VInterpTo(LFootSmoothedWorldPosition, LTarget, DeltaSeconds, PosInterpSpeed);
+					RFootSmoothedWorldPosition = FMath::VInterpTo(RFootSmoothedWorldPosition, RTarget, DeltaSeconds, PosInterpSpeed);
+					UFootSmoothedWorldPosition = FMath::VInterpTo(UFootSmoothedWorldPosition, UTarget, DeltaSeconds, PosInterpSpeed);
+				}
+			}
 		}
 
 		// Helper function to calculate end-of-tick foot position based on step state and progress
@@ -1012,153 +1097,79 @@ void ABasicWalker::Tick(float DeltaSeconds)
 	}
 
 	// Update Body Rotation Goal from foot positions
+	// When bDynamicBodyRotation is true, automatically update each tick
+	// Otherwise, call UpdateBodyRotationFromFeet() manually from Event Graph for optimization
 	if (bDynamicBodyRotation)
 	{
-		FVector BodyLoc = GetActorLocation();
-		if (BodyComp)
-		{
-			// Try to use the actual body bone location for more accurate angle calculations relative to the body center
-			if (BodyComp->GetBoneIndex(TEXT("Body1")) != INDEX_NONE)
-			{
-				BodyLoc = BodyComp->GetBoneLocation(TEXT("Body1"), EBoneSpaces::WorldSpace);
-			}
-			else if (BodyComp->GetBoneIndex(TEXT("pelvis")) != INDEX_NONE)
-			{
-				BodyLoc = BodyComp->GetBoneLocation(TEXT("pelvis"), EBoneSpaces::WorldSpace);
-			}
-		}
+		UpdateBodyRotationFromFeet();
+	}
 
-		float TotalWeightedSin = 0.f;
-		float TotalWeightedCos = 0.f;
-		float TotalWeight = 0.f;
-
-		struct FFootRotInfo {
-			FVector Pos;
-			float IdealAngle; // Degrees: U=0, R=90, D=180, L=-90 (Front, Right, Back, Left)
-			bool bIsValid;
-		};
-
-		// Calculate actual foot positions from the current simulation state
-		// This includes feet that are raised, moving, or planted
-		FVector ActualFootPositions[4] = { FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector };
+	// --- Deferred Held Item Visuals ---
+	// Only show held item visual once foot has visually arrived at target tile
+	// This prevents items from appearing before the foot animation completes
+	if (Sim && SimWalkerIndex >= 0 && SimWalkerIndex < Sim->Walkers.Num() && Driver && BodyComp)
+	{
+		const FWalkerState& SimState = Sim->Walkers[SimWalkerIndex];
 		
-		if (Sim && SimWalkerIndex >= 0 && SimWalkerIndex < Sim->Walkers.Num())
+		// Use actual tile size for threshold - foot should be within ~25% of tile radius
+		const float TileSize = Driver->GetTileSize();
+		const float ArrivalThresholdSq = (TileSize * 0.25f) * (TileSize * 0.25f);
+		
+		// Get actual foot bone world positions (works correctly with ManualFootGoals)
+		const FVector DFootBonePos = BodyComp->GetBoneLocation(DFootBoneName, EBoneSpaces::WorldSpace);
+		const FVector LFootBonePos = BodyComp->GetBoneLocation(LFootBoneName, EBoneSpaces::WorldSpace);
+		const FVector RFootBonePos = BodyComp->GetBoneLocation(RFootBoneName, EBoneSpaces::WorldSpace);
+		const FVector UFootBonePos = BodyComp->GetBoneLocation(UFootBoneName, EBoneSpaces::WorldSpace);
+		
+		// Check each foot: if holding but visual not ready, check if actual bone position is close to target
+		auto CheckFootArrival = [&](bool bSimHolding, bool& bVisualReady, const FVector& BonePos, const FHex& TargetHex) -> bool
 		{
-			const FWalkerState& SimState = Sim->Walkers[SimWalkerIndex];
-			
-			// For each foot, calculate its actual world position based on its current state
-			// This blends between CurrentTile and TargetTile based on step progress
-			auto CalculateFootWorldPos = [this, &SimState](const FFootState& FootState) -> FVector
+			if (!bSimHolding)
 			{
-				// If foot is moving, interpolate between current and target
-				// Note: StepMoveTicks is not exposed by Sim, using constant 10.0f as approximation for smoothing
-				const float ApproxStepTicks = 10.0f;
-				if (FootState.StepState == EFootStepState::Moving && FootState.StepProgress > 0)
-				{
-					float Alpha = (float)FootState.StepProgress / ApproxStepTicks;
-					Alpha = FMath::Clamp(Alpha, 0.f, 1.f);
-					FVector Start = Driver->MapHexToWorld(FootState.CurrentTile);
-					FVector End = Driver->MapHexToWorld(FootState.TargetTile);
-					return FMath::Lerp(Start, End, Alpha);
-				}
-				else if (FootState.StepState == EFootStepState::Raising || FootState.StepState == EFootStepState::Lowering)
-				{
-					// For raising/lowering, use the tile it's on/going to
-					// Usually TargetTile is the one it's planted on or moving towards
-					// But if Raising, CurrentTile is where it was. TargetTile might be same?
-					// Let's stick to previous logic of using TargetTile for stability, or check state
-					return Driver->MapHexToWorld(FootState.TargetTile);
-				}
-				
-				// Planted or other
-				if (Driver)
-				{
-					return Driver->MapHexToWorld(FootState.CurrentTile);
-				}
-				return FVector::ZeroVector;
-			};
-			
-			ActualFootPositions[0] = CalculateFootWorldPos(SimState.DFoot); // D/South/Back
-			ActualFootPositions[1] = CalculateFootWorldPos(SimState.LFoot); // L/West/Left
-			ActualFootPositions[2] = CalculateFootWorldPos(SimState.RFoot); // R/East/Right
-			ActualFootPositions[3] = CalculateFootWorldPos(SimState.UFoot); // U/North/Front
-		}
-		else
-		{
-			// Fall back to assigned tile locations if no simulation data
-			ActualFootPositions[0] = DFootAssignedTileWorldLocation;
-			ActualFootPositions[1] = LFootAssignedTileWorldLocation;
-			ActualFootPositions[2] = RFootAssignedTileWorldLocation;
-			ActualFootPositions[3] = UFootAssignedTileWorldLocation;
-		}
-
-		// Ideal angles relative to body forward (0)
-		// Using actual foot positions regardless of their state
-		const FFootRotInfo Feet[] = {
-			{ ActualFootPositions[3], 0.f, !ActualFootPositions[3].IsNearlyZero() },   // U/North/Front
-			{ ActualFootPositions[2], 90.f, !ActualFootPositions[2].IsNearlyZero() },  // R/East/Right
-			{ ActualFootPositions[0], 180.f, !ActualFootPositions[0].IsNearlyZero() }, // D/South/Back
-			{ ActualFootPositions[1], -90.f, !ActualFootPositions[1].IsNearlyZero() }  // L/West/Left
-		};
-
-		const float CurrentBodyYaw = GetActorRotation().Yaw;
-
-		for (const FFootRotInfo& Foot : Feet)
-		{
-			if (!Foot.bIsValid) continue;
-
-			FVector ToFoot = Foot.Pos - BodyLoc;
-			if (ToFoot.SizeSquared2D() < KINDA_SMALL_NUMBER) continue;
-
-			float FootWorldYaw = ToFoot.Rotation().Yaw;
-
-			// Calculate where the body "should" be to put this foot at IdealAngle
-			// FootWorldYaw - BodyYaw = IdealAngle  =>  BodyYaw = FootWorldYaw - IdealAngle
-			float DesiredBodyYaw = FRotator::NormalizeAxis(FootWorldYaw - Foot.IdealAngle);
-
-			// Weighting:
-			// "nearer a foot is to its neighboring boundary, the more influence it should have"
-			// Deviation = how far the foot IS currently from IdealAngle relative to body
-			// RelativeAngle = FootWorldYaw - CurrentBodyYaw
-			// Deviation = RelativeAngle - IdealAngle
-			float RelativeAngle = FRotator::NormalizeAxis(FootWorldYaw - CurrentBodyYaw);
-			float Deviation = FRotator::NormalizeAxis(RelativeAngle - Foot.IdealAngle);
-
-			// Quadrant is +/- 45 degrees from IdealAngle.
-			// Boundary is at 45 degrees deviation.
-			// Weight should increase as Abs(Deviation) -> 45.
-			// Let's use a curve that ramps up near 45.
-			float Weight = FMath::Abs(Deviation);
-
-			// Add to circular average
-			float Rad = FMath::DegreesToRadians(DesiredBodyYaw);
-			TotalWeightedSin += FMath::Sin(Rad) * Weight;
-			TotalWeightedCos += FMath::Cos(Rad) * Weight;
-			TotalWeight += Weight;
-		}
-
-		if (TotalWeight > KINDA_SMALL_NUMBER)
-		{
-			float NewAvgYaw = FMath::RadiansToDegrees(FMath::Atan2(TotalWeightedSin, TotalWeightedCos));
-			
-			// PERFORMANCE FIX: Smooth the body rotation to avoid twitching between states
-			// Use circular interpolation to avoid discontinuities at -180/180 boundary
-			float DeltaYaw = FRotator::NormalizeAxis(NewAvgYaw - AvgYaw);
-			
-			// Only update if there's meaningful change (reduces jitter from floating point)
-			if (FMath::Abs(DeltaYaw) > 0.01f)
-			{
-				// Smooth lerp - adjust factor for desired responsiveness
-				// 0.1 = very smooth/slow, 0.5 = responsive, 1.0 = instant
-				const float SmoothFactor = 0.15f;
-				AvgYaw = FRotator::NormalizeAxis(AvgYaw + DeltaYaw * SmoothFactor);
+				// Not holding, reset visual ready and don't show
+				bVisualReady = false;
+				return false;
 			}
 			
-			BodyGoalRotation = FRotator(90.f, 0.f, AvgYaw);
-
-			// Update QuadrantRotationOffset to match body rotation
-			QuadrantRotationOffset = AvgYaw;
-		}
+			if (bVisualReady)
+			{
+				// Already visually ready, keep showing
+				return true;
+			}
+			
+			// Check if actual bone position is close to target tile
+			const FVector TargetWorld = Driver->MapHexToWorld(TargetHex);
+			const float DistSq = FVector::DistSquared2D(BonePos, TargetWorld);
+			
+			if (DistSq < ArrivalThresholdSq)
+			{
+				// Foot has visually arrived, mark as ready
+				bVisualReady = true;
+				return true;
+			}
+			
+			// Still en route, don't show item yet
+			return false;
+		};
+		
+		const bool bShowDHeld = CheckFootArrival(bDFootHoldingItem, bDFootHeldVisualReady, DFootBonePos, SimState.DFoot.CurrentTile);
+		const bool bShowLHeld = CheckFootArrival(bLFootHoldingItem, bLFootHeldVisualReady, LFootBonePos, SimState.LFoot.CurrentTile);
+		const bool bShowRHeld = CheckFootArrival(bRFootHoldingItem, bRFootHeldVisualReady, RFootBonePos, SimState.RFoot.CurrentTile);
+		const bool bShowUHeld = CheckFootArrival(bUFootHoldingItem, bUFootHeldVisualReady, UFootBonePos, SimState.UFoot.CurrentTile);
+		
+		// Update held item visuals based on visual arrival state
+		UpdateHeldItemVisuals(DFootHeldOrbComp, bShowDHeld, DFootHeldItem, FName(TEXT("DFoot_Socket")), CachedDFootHeldItemId);
+		UpdateHeldItemVisuals(LFootHeldOrbComp, bShowLHeld, LFootHeldItem, FName(TEXT("LFoot_Socket")), CachedLFootHeldItemId);
+		UpdateHeldItemVisuals(RFootHeldOrbComp, bShowRHeld, RFootHeldItem, FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);
+		UpdateHeldItemVisuals(UFootHeldOrbComp, bShowUHeld, UFootHeldItem, FName(TEXT("UFoot_Socket")), CachedUFootHeldItemId);
+	}
+	else
+	{
+		// Fallback when no simulation or body comp - use immediate holding state
+		UpdateHeldItemVisuals(DFootHeldOrbComp, bDFootHoldingItem, DFootHeldItem, FName(TEXT("DFoot_Socket")), CachedDFootHeldItemId);
+		UpdateHeldItemVisuals(LFootHeldOrbComp, bLFootHoldingItem, LFootHeldItem, FName(TEXT("LFoot_Socket")), CachedLFootHeldItemId);
+		UpdateHeldItemVisuals(RFootHeldOrbComp, bRFootHoldingItem, RFootHeldItem, FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);
+		UpdateHeldItemVisuals(UFootHeldOrbComp, bUFootHoldingItem, UFootHeldItem, FName(TEXT("UFoot_Socket")), CachedUFootHeldItemId);
 	}
 
 	// Update Held Item Comp Rotation (if exists and is absolute)
@@ -1482,8 +1493,7 @@ void ABasicWalker::UpdateAssignedTileWorldLocations()
 			// Fallback: Calculate from body position if calibration data didn't work
 			if (!bHasSimTiles)
 			{
-				// Get body bone location
-				const FName BodyBoneName = TEXT("Body1");
+				// Get body bone location (using class member BodyBoneName)
 				const FVector BodyWorldLocation = BodyComp->GetBoneLocation(BodyBoneName, EBoneSpaces::WorldSpace);
 				FHex BodyHex;
 				
@@ -1571,6 +1581,93 @@ void ABasicWalker::UpdateAssignedTileWorldLocations()
 	
 	// Broadcast event so Event Graph can respond to assigned tile updates
 	OnAssignedTilesUpdated.Broadcast();
+}
+
+void ABasicWalker::UpdateBodyRotationFromFeet()
+{
+	if (!BodyComp)
+	{
+		return;
+	}
+	
+	// Get body center location using configurable bone names
+	FVector BodyLoc = GetActorLocation();
+	if (BodyComp->GetBoneIndex(BodyBoneName) != INDEX_NONE)
+	{
+		BodyLoc = BodyComp->GetBoneLocation(BodyBoneName, EBoneSpaces::WorldSpace);
+	}
+	else if (BodyComp->GetBoneIndex(BodyBoneNameFallback) != INDEX_NONE)
+	{
+		BodyLoc = BodyComp->GetBoneLocation(BodyBoneNameFallback, EBoneSpaces::WorldSpace);
+	}
+
+	float TotalWeightedSin = 0.f;
+	float TotalWeightedCos = 0.f;
+	float TotalWeight = 0.f;
+
+	struct FFootRotInfo {
+		FVector Pos;
+		float IdealAngle; // Degrees: U=0, R=90, D=180, L=-90 (Front, Right, Back, Left)
+		bool bIsValid;
+	};
+
+	// Get actual foot bone world positions from the skeletal mesh using configurable bone names
+	FVector ActualFootPositions[4] = { FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector, FVector::ZeroVector };
+	ActualFootPositions[0] = BodyComp->GetBoneLocation(DFootBoneName, EBoneSpaces::WorldSpace);  // D/South/Back
+	ActualFootPositions[1] = BodyComp->GetBoneLocation(LFootBoneName, EBoneSpaces::WorldSpace);  // L/West/Left
+	ActualFootPositions[2] = BodyComp->GetBoneLocation(RFootBoneName, EBoneSpaces::WorldSpace);  // R/East/Right
+	ActualFootPositions[3] = BodyComp->GetBoneLocation(UFootBoneName, EBoneSpaces::WorldSpace);  // U/North/Front
+
+	// Ideal angles relative to body forward (0)
+	const FFootRotInfo Feet[] = {
+		{ ActualFootPositions[3], 0.f, !ActualFootPositions[3].IsNearlyZero() },   // U/North/Front
+		{ ActualFootPositions[2], 90.f, !ActualFootPositions[2].IsNearlyZero() },  // R/East/Right
+		{ ActualFootPositions[0], 180.f, !ActualFootPositions[0].IsNearlyZero() }, // D/South/Back
+		{ ActualFootPositions[1], -90.f, !ActualFootPositions[1].IsNearlyZero() }  // L/West/Left
+	};
+
+	const float CurrentBodyYaw = GetActorRotation().Yaw;
+
+	for (const FFootRotInfo& Foot : Feet)
+	{
+		if (!Foot.bIsValid) continue;
+
+		FVector ToFoot = Foot.Pos - BodyLoc;
+		if (ToFoot.SizeSquared2D() < KINDA_SMALL_NUMBER) continue;
+
+		float FootWorldYaw = ToFoot.Rotation().Yaw;
+
+		// Calculate where the body "should" be to put this foot at IdealAngle
+		float DesiredBodyYaw = FRotator::NormalizeAxis(FootWorldYaw - Foot.IdealAngle);
+
+		// Weighting: feet nearer to quadrant boundaries have more influence
+		float RelativeAngle = FRotator::NormalizeAxis(FootWorldYaw - CurrentBodyYaw);
+		float Deviation = FRotator::NormalizeAxis(RelativeAngle - Foot.IdealAngle);
+		float Weight = FMath::Abs(Deviation);
+
+		// Add to circular average
+		float Rad = FMath::DegreesToRadians(DesiredBodyYaw);
+		TotalWeightedSin += FMath::Sin(Rad) * Weight;
+		TotalWeightedCos += FMath::Cos(Rad) * Weight;
+		TotalWeight += Weight;
+	}
+
+	if (TotalWeight > KINDA_SMALL_NUMBER)
+	{
+		float NewAvgYaw = FMath::RadiansToDegrees(FMath::Atan2(TotalWeightedSin, TotalWeightedCos));
+		
+		// Smooth the body rotation to avoid twitching
+		float DeltaYaw = FRotator::NormalizeAxis(NewAvgYaw - AvgYaw);
+		
+		if (FMath::Abs(DeltaYaw) > 0.01f)
+		{
+			const float SmoothFactor = 0.15f;
+			AvgYaw = FRotator::NormalizeAxis(AvgYaw + DeltaYaw * SmoothFactor);
+		}
+		
+		BodyGoalRotation = FRotator(90.f, 0.f, AvgYaw);
+		QuadrantRotationOffset = AvgYaw;
+	}
 }
 
 FVector ABasicWalker::GetBoneLocationByName(const FName& BoneName, bool bWorldSpace) const

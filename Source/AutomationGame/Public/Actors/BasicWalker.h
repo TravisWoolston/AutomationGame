@@ -177,6 +177,32 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Body Rotation")
 	bool bDynamicBodyRotation = false;
 
+	// --- Bone Names (configurable for different skeletons) ---
+	
+	/** Primary body bone name for center-of-mass calculations */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Bone Names")
+	FName BodyBoneName = TEXT("Body1");
+	
+	/** Fallback body bone name if primary is not found */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Bone Names")
+	FName BodyBoneNameFallback = TEXT("pelvis");
+	
+	/** D (South/Back) foot bone name */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Bone Names")
+	FName DFootBoneName = TEXT("DFoot49");
+	
+	/** L (West/Left) foot bone name */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Bone Names")
+	FName LFootBoneName = TEXT("LFoot25");
+	
+	/** R (East/Right) foot bone name */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Bone Names")
+	FName RFootBoneName = TEXT("RFoot13");
+	
+	/** U (North/Front) foot bone name */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Bone Names")
+	FName UFootBoneName = TEXT("UFoot37");
+
 	// --- Foot Animation States ---
 
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
@@ -248,6 +274,28 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	FVector RFootPreviousWorldPosition = FVector::ZeroVector;
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
 	FVector UFootPreviousWorldPosition = FVector::ZeroVector;
+	
+	// Smoothed foot world positions (interpolated for visual smoothness)
+	// These smoothly interpolate to the target position over time
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector DFootSmoothedWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector LFootSmoothedWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector RFootSmoothedWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector UFootSmoothedWorldPosition = FVector::ZeroVector;
+	
+	// Smoothed foot height offsets (interpolated for visual smoothness)
+	// Use these for foot Z positioning in AnimBP for smooth lowering/raising
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	float DFootSmoothedHeight = 0.f;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	float LFootSmoothedHeight = 0.f;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	float RFootSmoothedHeight = 0.f;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	float UFootSmoothedHeight = 0.f;
 
 	// Held item states for visual representation
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
@@ -325,6 +373,15 @@ public:
 	/** Update public world location properties from foot hex positions (public for GameManager calibration) */
 	UFUNCTION(BlueprintCallable, Category = "Walker")
 	void UpdateAssignedTileWorldLocations();
+	
+	/** 
+	 * Recalculate body rotation (AvgYaw) based on actual foot bone positions.
+	 * Call this from Event Graph when you want to update body rotation.
+	 * Uses foot bone locations from the skeletal mesh, so works with ManualFootGoals.
+	 * Updates: AvgYaw, BodyGoalRotation, QuadrantRotationOffset
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Walker|Body Rotation")
+	void UpdateBodyRotationFromFeet();
 
 	/** Event that fires when assigned tile world locations are updated (use in Event Graph to trigger foot goal updates) */
 	UPROPERTY(BlueprintAssignable, Category = "Walker|Events")
@@ -387,11 +444,20 @@ private:
 	FHex RFootHex;
 	FHex UFootHex;
 	
-	// Foot height offsets for visual sync
+	// Foot height offsets from sim (raw values)
 	float DFootHeightOffset = 0.f;
 	float LFootHeightOffset = 0.f;
 	float RFootHeightOffset = 0.f;
 	float UFootHeightOffset = 0.f;
+	
+	// Smoothed foot height offsets (interpolated for visual smoothness) - stored here, exposed publicly
+	float DFootSmoothedHeightOffset = 0.f;
+	float LFootSmoothedHeightOffset = 0.f;
+	float RFootSmoothedHeightOffset = 0.f;
+	float UFootSmoothedHeightOffset = 0.f;
+	
+	// Flag to detect first-time smoothed position initialization
+	bool bSmoothedPositionsInitialized = false;
 	
 	// Foot step states (to determine which feet are planted)
 	EFootStepState DFootStepState = EFootStepState::Planted;
@@ -429,6 +495,13 @@ private:
 	int32 CachedLFootHeldItemId = 0;
 	int32 CachedRFootHeldItemId = 0;
 	int32 CachedUFootHeldItemId = 0;
+	
+	// Track whether held item visual should be shown (delayed until foot visually arrives)
+	// When sim sets bHoldingItem=true, we defer showing the visual until smoothed position is close to target
+	bool bDFootHeldVisualReady = false;
+	bool bLFootHeldVisualReady = false;
+	bool bRFootHeldVisualReady = false;
+	bool bUFootHeldVisualReady = false;
 
 	// Helpers
 	void EnsureComps();

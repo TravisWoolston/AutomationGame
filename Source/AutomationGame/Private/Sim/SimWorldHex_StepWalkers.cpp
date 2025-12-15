@@ -3079,49 +3079,54 @@ void USimWorldHex::StepWalkers()
 							}
 						}
 
-						// Check if the target tile is occupied before lowering
-						// If foot is holding an item, transition to Planted instead of Lowering (stay raised)
-						if (Foot.bHoldingItem && Foot.StepProgress >= W.StepMoveTicks)
+						// Only transition to Lowering/Planted when move is complete
+						if (Foot.StepProgress >= W.StepMoveTicks)
 						{
-							// Holding item - transition to Planted but keep height
-							Foot.CurrentTile = Foot.TargetTile;
-							Foot.StepState = EFootStepState::Planted;
-							Foot.StepProgress = 0;
-							Foot.HeightOffset = W.StepHeight; // Keep raised
-							// UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Reached position while holding item, staying raised"), WalkerIndex, FootIndex);
-						}
-						else
-						{
-							// Not holding item - check occupancy
-							bool bTargetOccupied = IsHexOccupied(this, Foot.TargetTile, HeldOrbHexes, ArmBaseHexes, HoldingFootHexes);
-							
-							if (bTargetOccupied)
+							// Check if the target tile is occupied before lowering
+							// If foot is holding an item, transition to Planted instead of Lowering (stay raised)
+							if (Foot.bHoldingItem)
 							{
-								// Hovering behavior:
-								// Update CurrentTile to the target so we are logically "at" the new location (minimizing distance when it clears)
-								// But stay in Moving state (don't lower/plant)
+								// Holding item - transition to Planted but keep height
+								if (FootIndex == 0)
+								{
+									UE_LOG(LogTemp, Log, TEXT("SIM DFoot Moving->Planted (holding), StepProgress=%d, WalkerIdx=%d"),
+										Foot.StepProgress, WalkerIndex);
+								}
 								Foot.CurrentTile = Foot.TargetTile;
-								// Foot.StepProgress = W.StepMoveTicks; // REMOVED CLAMP to allow periodic re-evaluation
-								
-								// UE_LOG(LogTemp, Verbose, TEXT("Walker %d Foot %d: Hovering at (%d,%d) due to occupancy"), WalkerIndex, FootIndex, Foot.TargetTile.Q, Foot.TargetTile.R);
+								Foot.StepState = EFootStepState::Planted;
+								Foot.StepProgress = 0;
+								Foot.HeightOffset = W.StepHeight; // Keep raised
 							}
 							else
 							{
-								if (FootIndex == 0)
-							{
-								UE_LOG(LogTemp, Log, TEXT("SIM DFoot Moving->Lowering at StepProgress=%d"), Foot.StepProgress);
-							}
-							if(Foot.StepProgress >= W.StepMoveTicks)
-							{
-							Foot.CurrentTile = Foot.TargetTile;
-							Foot.StepState = EFootStepState::Lowering;
-							Foot.StepProgress = 0;
-							// UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Moved to (%d,%d), now lowering"), 
-							// 	WalkerIndex, FootIndex, Foot.CurrentTile.Q, Foot.CurrentTile.R);
-							}
+								// Not holding item - check occupancy
+								bool bTargetOccupied = IsHexOccupied(this, Foot.TargetTile, HeldOrbHexes, ArmBaseHexes, HoldingFootHexes);
+								
+								if (bTargetOccupied)
+								{
+									// Hovering behavior: stay in Moving state but update position
+									Foot.CurrentTile = Foot.TargetTile;
+									if (FootIndex == 0)
+									{
+										UE_LOG(LogTemp, Log, TEXT("SIM DFoot Moving HOVER (occupied), StepProgress=%d, WalkerIdx=%d"),
+											Foot.StepProgress, WalkerIndex);
+									}
+								}
+								else
+								{
+									// Transition to Lowering
+									if (FootIndex == 0)
+									{
+										UE_LOG(LogTemp, Log, TEXT("SIM DFoot Moving->Lowering, StepProgress=%d, WalkerIdx=%d"),
+											Foot.StepProgress, WalkerIndex);
+									}
+									Foot.CurrentTile = Foot.TargetTile;
+									Foot.StepState = EFootStepState::Lowering;
+									Foot.StepProgress = 0;
+								}
 							}
 						}
-						
+						// If StepProgress < StepMoveTicks, do nothing - foot continues moving
 				
 					break;
 				}
@@ -3129,15 +3134,23 @@ void USimWorldHex::StepWalkers()
 				case EFootStepState::Lowering:
 				{
 					Foot.StepProgress++;
+					if (FootIndex == 0)
+					{
+						UE_LOG(LogTemp, Log, TEXT("SIM DFoot Lowering: Progress=%d/%d, WalkerIdx=%d"),
+							Foot.StepProgress, W.StepLowerTicks, WalkerIndex);
+					}
 					Foot.HeightOffset = W.StepHeight * (1.f - (float)Foot.StepProgress / (float)W.StepLowerTicks);
 					
 					if (Foot.StepProgress >= W.StepLowerTicks)
 					{
+						if (FootIndex == 0)
+						{
+							UE_LOG(LogTemp, Log, TEXT("SIM DFoot Lowering->Planted, WalkerIdx=%d"),
+								WalkerIndex);
+						}
 						Foot.StepState = EFootStepState::Planted;
 						Foot.StepProgress = 0;
 						Foot.HeightOffset = 0.f;
-						// UE_LOG(LogTemp, Log, TEXT("Walker %d Foot %d: Planted at (%d,%d)"), 
-						// 	WalkerIndex, FootIndex, Foot.CurrentTile.Q, Foot.CurrentTile.R);
 					}
 					break;
 				}
