@@ -17,6 +17,17 @@ class UOrbRenderer;
 /** Event that fires when assigned tile world locations are updated */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAssignedTilesUpdated);
 
+/** Visual foot state for event graph updates (includes Holding which EFootStepState lacks) */
+UENUM(BlueprintType)
+enum class EFootVisualState : uint8
+{
+	Planted  UMETA(DisplayName = "Planted"),
+	Raising  UMETA(DisplayName = "Raising"),
+	Moving   UMETA(DisplayName = "Moving"),
+	Lowering UMETA(DisplayName = "Lowering"),
+	Holding  UMETA(DisplayName = "Holding")
+};
+
 UCLASS()
 class AUTOMATIONGAME_API ABasicWalker : public AActor
 {
@@ -196,6 +207,48 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Animation")
 	bool bUFootLowering = false;
 
+	// --- Foot Visual Progress (for Animation Blueprint access) ---
+	// Progress values 0-1 for current animation phase (updated each tick when animating)
+	
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	float DFootProgress = 1.0f;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	float LFootProgress = 1.0f;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	float RFootProgress = 1.0f;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	float UFootProgress = 1.0f;
+	
+	// Visual state for each foot (Planted, Raising, Moving, Lowering, Holding)
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	EFootVisualState DFootVisualState = EFootVisualState::Planted;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	EFootVisualState LFootVisualState = EFootVisualState::Planted;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	EFootVisualState RFootVisualState = EFootVisualState::Planted;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	EFootVisualState UFootVisualState = EFootVisualState::Planted;
+	
+	// Target tile world positions (where foot is moving TO)
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector DFootTargetWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector LFootTargetWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector RFootTargetWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector UFootTargetWorldPosition = FVector::ZeroVector;
+	
+	// Previous tile world positions (where foot is moving FROM)
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector DFootPreviousWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector LFootPreviousWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector RFootPreviousWorldPosition = FVector::ZeroVector;
+	UPROPERTY(BlueprintReadOnly, Category = "Walker|Foot Animation")
+	FVector UFootPreviousWorldPosition = FVector::ZeroVector;
+
 	// Held item states for visual representation
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Held Items")
 	bool bDFootHoldingItem = false;
@@ -277,6 +330,24 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Walker|Events")
 	FOnAssignedTilesUpdated OnAssignedTilesUpdated;
 
+	// --- Foot Visual Update Events (called when foot state changes, ProgressValue 0-1) ---
+	
+	/** Called each tick while D foot is animating (ProgressValue < 1). Implement in Event Graph for visual updates. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Walker|Foot Events")
+	void UpdateFootDVisual(float ProgressValue, EFootVisualState FootState, FVector CurrentAssignedTileWorldPosition, FVector PreviousAssignedTileWorldPosition);
+	
+	/** Called each tick while L foot is animating (ProgressValue < 1). Implement in Event Graph for visual updates. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Walker|Foot Events")
+	void UpdateFootLVisual(float ProgressValue, EFootVisualState FootState, FVector CurrentAssignedTileWorldPosition, FVector PreviousAssignedTileWorldPosition);
+	
+	/** Called each tick while R foot is animating (ProgressValue < 1). Implement in Event Graph for visual updates. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Walker|Foot Events")
+	void UpdateFootRVisual(float ProgressValue, EFootVisualState FootState, FVector CurrentAssignedTileWorldPosition, FVector PreviousAssignedTileWorldPosition);
+	
+	/** Called each tick while U foot is animating (ProgressValue < 1). Implement in Event Graph for visual updates. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Walker|Foot Events")
+	void UpdateFootUVisual(float ProgressValue, EFootVisualState FootState, FVector CurrentAssignedTileWorldPosition, FVector PreviousAssignedTileWorldPosition);
+
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
 #endif
@@ -327,6 +398,25 @@ private:
 	EFootStepState LFootStepState = EFootStepState::Planted;
 	EFootStepState RFootStepState = EFootStepState::Planted;
 	EFootStepState UFootStepState = EFootStepState::Planted;
+	
+	// Previous step states (to detect phase transitions)
+	EFootStepState DFootPrevStepState = EFootStepState::Planted;
+	EFootStepState LFootPrevStepState = EFootStepState::Planted;
+	EFootStepState RFootPrevStepState = EFootStepState::Planted;
+	EFootStepState UFootPrevStepState = EFootStepState::Planted;
+	
+	// Previous step progress (to detect when sim has actually updated)
+	int32 DFootPrevStepProgress = 0;
+	int32 LFootPrevStepProgress = 0;
+	int32 RFootPrevStepProgress = 0;
+	int32 UFootPrevStepProgress = 0;
+	
+	// Visual start positions (captured when a new Moving phase begins)
+	// These are the positions the foot is moving FROM during the Moving phase
+	FVector DFootVisualStartPos = FVector::ZeroVector;
+	FVector LFootVisualStartPos = FVector::ZeroVector;
+	FVector RFootVisualStartPos = FVector::ZeroVector;
+	FVector UFootVisualStartPos = FVector::ZeroVector;
 	
 	// Held item visual components (one per foot)
 	UPROPERTY(Transient) UStaticMeshComponent* DFootHeldOrbComp = nullptr;

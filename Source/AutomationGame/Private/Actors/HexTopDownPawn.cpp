@@ -556,6 +556,9 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 
 	// Grid visibility toggle
 	IC->BindAction("ToggleGridVisibility", IE_Pressed, this, &AHexTopDownPawn::ToggleGridVisibility);
+	
+	// Walker debug visualization toggle
+	IC->BindAction("ToggleDebugWalkers", IE_Pressed, this, &AHexTopDownPawn::ToggleDebugWalkers);
 }
 
 void AHexTopDownPawn::SetInputMode1() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Input); }
@@ -3096,4 +3099,25 @@ void AHexTopDownPawn::ToggleGridVisibility()
 	}
 	
 	UE_LOG(LogTemp, Warning, TEXT("ToggleGridVisibility: Could not find GameManager"));
+}
+
+void AHexTopDownPawn::ToggleDebugWalkers()
+{
+	// Find the GameManager and toggle bDebugWalkers
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GameManager = *It;
+			if (GameManager)
+			{
+				GameManager->bDebugWalkers = !GameManager->bDebugWalkers;
+				UE_LOG(LogTemp, Log, TEXT("ToggleDebugWalkers: bDebugWalkers = %s"), 
+					GameManager->bDebugWalkers ? TEXT("true") : TEXT("false"));
+				return;
+			}
+		}
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("ToggleDebugWalkers: Could not find GameManager"));
 }

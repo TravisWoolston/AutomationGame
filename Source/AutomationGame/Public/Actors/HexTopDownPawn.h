@@ -66,6 +66,9 @@ public:
 
 	// Toggle grid visibility
 	void ToggleGridVisibility();
+	
+	// Toggle walker debug visualization
+	void ToggleDebugWalkers();
 
 	// Highlight components
 	UPROPERTY()

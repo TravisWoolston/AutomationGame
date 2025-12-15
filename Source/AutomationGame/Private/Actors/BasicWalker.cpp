@@ -1,4 +1,5 @@
 #include "Actors/BasicWalker.h"
+#include "Actors/WalkerAnimInstance.h"
 #include "Actors/OrbSimDriver.h"
 #include "Framework/GameTickManager.h"
 #include "Framework/GameManager.h"
@@ -524,6 +525,208 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		UpdateHeldItemVisuals(LFootHeldOrbComp, bLFootHoldingItem, LFootHeldItem, FName(TEXT("LFoot_Socket")), CachedLFootHeldItemId);
 		UpdateHeldItemVisuals(RFootHeldOrbComp, bRFootHoldingItem, RFootHeldItem, FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);
 		UpdateHeldItemVisuals(UFootHeldOrbComp, bUFootHoldingItem, UFootHeldItem, FName(TEXT("UFoot_Socket")), CachedUFootHeldItemId);
+
+		// --- Foot Visual Update Events ---
+		// Calculate progress and call UpdateFoot*Visual for feet that are animating (progress < 1)
+		// Helper lambda to calculate progress and visual state
+		auto CalcFootVisualProgress = [&](const FFootState& FootState, bool bIsHolding) -> TPair<float, EFootVisualState>
+		{
+			// If holding, use Holding state (always active while holding)
+			if (bIsHolding)
+			{
+				return TPair<float, EFootVisualState>(0.5f, EFootVisualState::Holding);
+			}
+			
+			// Calculate progress based on current step state
+			float Progress = 1.0f; // Default to 1 (complete/planted)
+			EFootVisualState VisState = EFootVisualState::Planted;
+			
+			switch (FootState.StepState)
+			{
+			case EFootStepState::Raising:
+				Progress = SimState.StepRaiseTicks > 0 ? (float)FootState.StepProgress / (float)SimState.StepRaiseTicks : 1.0f;
+				VisState = EFootVisualState::Raising;
+				break;
+			case EFootStepState::Moving:
+				Progress = SimState.StepMoveTicks > 0 ? (float)FootState.StepProgress / (float)SimState.StepMoveTicks : 1.0f;
+				VisState = EFootVisualState::Moving;
+				break;
+			case EFootStepState::Lowering:
+				Progress = SimState.StepLowerTicks > 0 ? (float)FootState.StepProgress / (float)SimState.StepLowerTicks : 1.0f;
+				VisState = EFootVisualState::Lowering;
+				break;
+			case EFootStepState::Planted:
+			default:
+				Progress = 1.0f;
+				VisState = EFootVisualState::Planted;
+				break;
+			}
+			
+			return TPair<float, EFootVisualState>(Progress, VisState);
+		};
+		
+		// Helper to convert EFootVisualState to EFootAnimState for AnimInstance
+		auto ToAnimState = [](EFootVisualState S) -> EFootAnimState {
+			switch (S) {
+				case EFootVisualState::Planted:  return EFootAnimState::Planted;
+				case EFootVisualState::Raising:  return EFootAnimState::Raising;
+				case EFootVisualState::Moving:   return EFootAnimState::Moving;
+				case EFootVisualState::Lowering: return EFootAnimState::Lowering;
+				case EFootVisualState::Holding:  return EFootAnimState::Holding;
+				default: return EFootAnimState::Planted;
+			}
+		};
+		
+		// Get WalkerAnimInstance (only if we have a body component with animation)
+		UWalkerAnimInstance* WalkerAnim = nullptr;
+		if (BodyComp)
+		{
+			WalkerAnim = Cast<UWalkerAnimInstance>(BodyComp->GetAnimInstance());
+		}
+		
+		// Helper to get correct previous/current positions based on phase
+		// - Raising: foot rises in place (Previous = Current = CurrentTile)
+		// - Moving: foot moves horizontally (Previous = start position, Current = TargetTile)
+		// - Lowering: foot lowers in place (Previous = Current = CurrentTile)
+		// - Planted: foot is stationary (Previous = Current = CurrentTile)
+		auto GetFootPositions = [&](const FFootState& FootState, const FHex& FootHex, 
+			EFootStepState PrevState, EFootStepState CurrState, FVector& VisualStartPos) 
+			-> TPair<FVector, FVector>
+		{
+			FVector CurrentPos = HexToWorld(FootState.TargetTile);
+			FVector PreviousPos;
+			
+			// Detect phase transition to Moving - capture start position
+			if (CurrState == EFootStepState::Moving && PrevState != EFootStepState::Moving)
+			{
+				// Just started Moving phase - capture the starting position
+				VisualStartPos = HexToWorld(FootHex);
+				UE_LOG(LogTemp, Log, TEXT("Captured VisualStartPos: (%.0f,%.0f,%.0f) from FootHex (%d,%d)"),
+					VisualStartPos.X, VisualStartPos.Y, VisualStartPos.Z, FootHex.Q, FootHex.R);
+			}
+			
+			// Determine Previous based on current state
+			if (CurrState == EFootStepState::Moving)
+			{
+				// During Moving: Previous is where we started, Current is target
+				PreviousPos = VisualStartPos;
+				CurrentPos = HexToWorld(FootState.TargetTile);
+			}
+			else
+			{
+				// Raising/Lowering/Planted: Previous and Current are both the current tile
+				PreviousPos = HexToWorld(FootHex);
+				CurrentPos = HexToWorld(FootHex);
+			}
+			
+			return TPair<FVector, FVector>(PreviousPos, CurrentPos);
+		};
+		
+		// Calculate and update for each foot
+		// Only call AnimInstance events when sim has actually updated (StepProgress changed)
+		{
+			auto [DProgress, DVisState] = CalcFootVisualProgress(SimState.DFoot, bDFootHoldingItem);
+			auto [PreviousPos, CurrentPos] = GetFootPositions(SimState.DFoot, DFootHex, 
+				DFootPrevStepState, SimState.DFoot.StepState, DFootVisualStartPos);
+			
+			// Update public properties for direct access (always, for interpolation in AnimBP)
+			DFootProgress = DProgress;
+			DFootVisualState = DVisState;
+			DFootTargetWorldPosition = CurrentPos;
+			DFootPreviousWorldPosition = PreviousPos;
+			
+			// Only call events when sim has actually updated (state or progress changed)
+			bool bSimUpdated = (SimState.DFoot.StepState != DFootPrevStepState) || 
+				(SimState.DFoot.StepProgress != DFootPrevStepProgress);
+			
+			if (bSimUpdated && DProgress < 1.0f)
+			{
+				if (WalkerAnim)
+				{
+					WalkerAnim->UpdateFootDVisual(DProgress, ToAnimState(DVisState), CurrentPos, PreviousPos);
+				}
+				UpdateFootDVisual(DProgress, DVisState, CurrentPos, PreviousPos);
+			}
+			
+			// Update previous state for next tick
+			DFootPrevStepState = SimState.DFoot.StepState;
+			DFootPrevStepProgress = SimState.DFoot.StepProgress;
+		}
+		{
+			auto [LProgress, LVisState] = CalcFootVisualProgress(SimState.LFoot, bLFootHoldingItem);
+			auto [PreviousPos, CurrentPos] = GetFootPositions(SimState.LFoot, LFootHex,
+				LFootPrevStepState, SimState.LFoot.StepState, LFootVisualStartPos);
+			
+			LFootProgress = LProgress;
+			LFootVisualState = LVisState;
+			LFootTargetWorldPosition = CurrentPos;
+			LFootPreviousWorldPosition = PreviousPos;
+			
+			bool bSimUpdated = (SimState.LFoot.StepState != LFootPrevStepState) || 
+				(SimState.LFoot.StepProgress != LFootPrevStepProgress);
+			
+			if (bSimUpdated && LProgress < 1.0f)
+			{
+				if (WalkerAnim)
+				{
+					WalkerAnim->UpdateFootLVisual(LProgress, ToAnimState(LVisState), CurrentPos, PreviousPos);
+				}
+				UpdateFootLVisual(LProgress, LVisState, CurrentPos, PreviousPos);
+			}
+			
+			LFootPrevStepState = SimState.LFoot.StepState;
+			LFootPrevStepProgress = SimState.LFoot.StepProgress;
+		}
+		{
+			auto [RProgress, RVisState] = CalcFootVisualProgress(SimState.RFoot, bRFootHoldingItem);
+			auto [PreviousPos, CurrentPos] = GetFootPositions(SimState.RFoot, RFootHex,
+				RFootPrevStepState, SimState.RFoot.StepState, RFootVisualStartPos);
+			
+			RFootProgress = RProgress;
+			RFootVisualState = RVisState;
+			RFootTargetWorldPosition = CurrentPos;
+			RFootPreviousWorldPosition = PreviousPos;
+			
+			bool bSimUpdated = (SimState.RFoot.StepState != RFootPrevStepState) || 
+				(SimState.RFoot.StepProgress != RFootPrevStepProgress);
+			
+			if (bSimUpdated && RProgress < 1.0f)
+			{
+				if (WalkerAnim)
+				{
+					WalkerAnim->UpdateFootRVisual(RProgress, ToAnimState(RVisState), CurrentPos, PreviousPos);
+				}
+				UpdateFootRVisual(RProgress, RVisState, CurrentPos, PreviousPos);
+			}
+			
+			RFootPrevStepState = SimState.RFoot.StepState;
+			RFootPrevStepProgress = SimState.RFoot.StepProgress;
+		}
+		{
+			auto [UProgress, UVisState] = CalcFootVisualProgress(SimState.UFoot, bUFootHoldingItem);
+			auto [PreviousPos, CurrentPos] = GetFootPositions(SimState.UFoot, UFootHex,
+				UFootPrevStepState, SimState.UFoot.StepState, UFootVisualStartPos);
+			
+			UFootProgress = UProgress;
+			UFootVisualState = UVisState;
+			UFootTargetWorldPosition = CurrentPos;
+			UFootPreviousWorldPosition = PreviousPos;
+			
+			bool bSimUpdated = (SimState.UFoot.StepState != UFootPrevStepState) || 
+				(SimState.UFoot.StepProgress != UFootPrevStepProgress);
+			
+			if (bSimUpdated && UProgress < 1.0f)
+			{
+				if (WalkerAnim)
+				{
+					WalkerAnim->UpdateFootUVisual(UProgress, ToAnimState(UVisState), CurrentPos, PreviousPos);
+				}
+				UpdateFootUVisual(UProgress, UVisState, CurrentPos, PreviousPos);
+			}
+			
+			UFootPrevStepState = SimState.UFoot.StepState;
+			UFootPrevStepProgress = SimState.UFoot.StepProgress;
+		}
 
 		// Helper function to calculate end-of-tick foot position based on step state and progress
 		auto CalculateEndOfTickFootPosition = [&](const FFootState& FootState, const FHex& CurrentHex, const FHex& TargetHex) -> FVector
