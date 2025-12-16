@@ -25,107 +25,132 @@ AHexFactoryActor::AHexFactoryActor()
 	TileISM->SetupAttachment(Root);
 	TileISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	TileISM->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+	TileISM->SetCanEverAffectNavigation(false);
 
 	InputTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputTileISM"));
 	InputTileISM->SetupAttachment(Root);
 	InputTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InputTileISM->SetCanEverAffectNavigation(false);
 
 	OutputTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputTileISM"));
 	OutputTileISM->SetupAttachment(Root);
 	OutputTileISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	OutputTileISM->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+	OutputTileISM->SetCanEverAffectNavigation(false);
 
 	BeltTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltTileISM"));
 	BeltTileISM->SetupAttachment(Root);
 	BeltTileISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	BeltTileISM->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+	BeltTileISM->SetCanEverAffectNavigation(false);
 
 	BondTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BondTileISM"));
 	BondTileISM->SetupAttachment(Root);
 	BondTileISM->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	BondTileISM->SetCollisionResponseToAllChannels(ECollisionResponse::ECR_Block);
+	BondTileISM->SetCanEverAffectNavigation(false);
 
 	UnbondTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("UnbondTileISM"));
 	UnbondTileISM->SetupAttachment(Root);
 	UnbondTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	UnbondTileISM->SetCanEverAffectNavigation(false);
 
 	BeltISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltISM"));
 	BeltISM->SetupAttachment(Root);
 	BeltISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BeltISM->SetCanEverAffectNavigation(false);
 
 	BeltReadyISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltReadyISM"));
 	BeltReadyISM->SetupAttachment(Root);
 	BeltReadyISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BeltReadyISM->SetCanEverAffectNavigation(false);
 
 	BeltWaitingISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BeltWaitingISM"));
 	BeltWaitingISM->SetupAttachment(Root);
 	BeltWaitingISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BeltWaitingISM->SetCanEverAffectNavigation(false);
 
 	BondISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("BondISM"));
 	BondISM->SetupAttachment(Root);
 	BondISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BondISM->SetCanEverAffectNavigation(false);
 
 	UnbondISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("UnbondISM"));
 	UnbondISM->SetupAttachment(Root);
 	UnbondISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	UnbondISM->SetCanEverAffectNavigation(false);
 
 	// Create type-specific output ISM components
 	OutputNoneISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputNoneISM"));
 	OutputNoneISM->SetupAttachment(Root);
 	OutputNoneISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	OutputNoneISM->SetCanEverAffectNavigation(false);
 
 	OutputBaseAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputBaseAISM"));
 	OutputBaseAISM->SetupAttachment(Root);
 	OutputBaseAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	OutputBaseAISM->SetCanEverAffectNavigation(false);
 
 	OutputBaseBISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputBaseBISM"));
 	OutputBaseBISM->SetupAttachment(Root);
 	OutputBaseBISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	OutputBaseBISM->SetCanEverAffectNavigation(false);
 
 	OutputBaseCISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputBaseCISM"));
 	OutputBaseCISM->SetupAttachment(Root);
 	OutputBaseCISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	OutputBaseCISM->SetCanEverAffectNavigation(false);
 
 	OutputMetalAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputMetalAISM"));
 	OutputMetalAISM->SetupAttachment(Root);
 	OutputMetalAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	OutputMetalAISM->SetCanEverAffectNavigation(false);
 
 	OutputCatalystXISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputCatalystXISM"));
 	OutputCatalystXISM->SetupAttachment(Root);
 	OutputCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	OutputCatalystXISM->SetCanEverAffectNavigation(false);
 
 	OutputVoidISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("OutputVoidISM"));
 	OutputVoidISM->SetupAttachment(Root);
 	OutputVoidISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	OutputVoidISM->SetCanEverAffectNavigation(false);
 
 	// Type-specific input ISM components
 	InputNoneISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputNoneISM"));
 	InputNoneISM->SetupAttachment(Root);
 	InputNoneISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InputNoneISM->SetCanEverAffectNavigation(false);
 
 	InputBaseAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputBaseAISM"));
 	InputBaseAISM->SetupAttachment(Root);
 	InputBaseAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InputBaseAISM->SetCanEverAffectNavigation(false);
 
 	InputBaseBISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputBaseBISM"));
 	InputBaseBISM->SetupAttachment(Root);
 	InputBaseBISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InputBaseBISM->SetCanEverAffectNavigation(false);
 
 	InputBaseCISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputBaseCISM"));
 	InputBaseCISM->SetupAttachment(Root);
 	InputBaseCISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InputBaseCISM->SetCanEverAffectNavigation(false);
 
 	InputMetalAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputMetalAISM"));
 	InputMetalAISM->SetupAttachment(Root);
 	InputMetalAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InputMetalAISM->SetCanEverAffectNavigation(false);
 
 	InputCatalystXISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputCatalystXISM"));
 	InputCatalystXISM->SetupAttachment(Root);
 	InputCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InputCatalystXISM->SetCanEverAffectNavigation(false);
 
 	InputVoidISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("InputVoidISM"));
 	InputVoidISM->SetupAttachment(Root);
 	InputVoidISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InputVoidISM->SetCanEverAffectNavigation(false);
 
 	// Create collision plane for efficient line traces
 	GridCollisionPlane = CreateDefaultSubobject<UBoxComponent>(TEXT("GridCollisionPlane"));
@@ -153,6 +178,8 @@ void AHexFactoryActor::EnsureComponents()
 				Comp = NewObject<UInstancedStaticMeshComponent>(this, Name);
 				Comp->SetupAttachment(GetRootComponent());
 				Comp->RegisterComponent();
+				// Disable navigation to prevent ensure failures when clearing instances
+				Comp->SetCanEverAffectNavigation(false);
 				// Enable collision for tile ISMs to support line traces
 			if (Comp == TileISM || Comp == OutputTileISM || Comp == BeltTileISM || Comp == BondTileISM || Comp == UnbondTileISM)
 			{

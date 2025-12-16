@@ -163,7 +163,18 @@ void ABasicWalker::BeginPlay()
 											
 											// Convert world-space goal to component-local space (no scale)
 											// The goal should position the foot BONE at the tile center
-											*GoalValue = WorldToComponentNoScale.TransformPosition(FootWorld);
+											const FVector NewGoal = WorldToComponentNoScale.TransformPosition(FootWorld);
+											
+											// Validate goal before setting - NaN would crash the IK solver
+											if (!NewGoal.ContainsNaN())
+											{
+												*GoalValue = NewGoal;
+											}
+											else
+											{
+												UE_LOG(LogTemp, Warning, TEXT("Walker %s: Skipping NaN foot goal for %s (FootWorld=%s)"), 
+													*GetName(), *GoalName.ToString(), *FootWorld.ToString());
+											}
 										}
 									}
 								}
@@ -182,7 +193,18 @@ void ABasicWalker::BeginPlay()
 								if (GoalValue)
 								{
 									// Convert world-space goal to component-local space (no scale)
-									*GoalValue = WorldToComponentNoScale.TransformPosition(HexWorldPos);
+									const FVector NewGoal = WorldToComponentNoScale.TransformPosition(HexWorldPos);
+									
+									// Validate goal before setting - NaN would crash the IK solver
+									if (!NewGoal.ContainsNaN())
+									{
+										*GoalValue = NewGoal;
+									}
+									else
+									{
+										UE_LOG(LogTemp, Warning, TEXT("Walker %s: Skipping NaN body goal (HexWorldPos=%s)"), 
+											*GetName(), *HexWorldPos.ToString());
+									}
 								}
 							}
 						}
@@ -1015,7 +1037,18 @@ void ABasicWalker::Tick(float DeltaSeconds)
 										const FVector FootGoalWorld = HexToWorld(AssignedTile);
 										
 										// Convert to component-local space (without scale)
-										*GoalValue = WorldToComponentNoScale.TransformPosition(FootGoalWorld);
+										const FVector NewGoal = WorldToComponentNoScale.TransformPosition(FootGoalWorld);
+										
+										// Validate goal before setting - NaN would crash the IK solver
+										if (!NewGoal.ContainsNaN())
+										{
+											*GoalValue = NewGoal;
+										}
+										else
+										{
+											UE_LOG(LogTemp, Warning, TEXT("Walker %s: Skipping NaN foot goal for %s Tile(%d,%d) FootGoalWorld=%s"), 
+												*GetName(), *GoalName.ToString(), AssignedTile.Q, AssignedTile.R, *FootGoalWorld.ToString());
+										}
 										
 										// Debug: Log occasionally
 										static int32 LogCounter = 0;
@@ -1058,7 +1091,18 @@ void ABasicWalker::Tick(float DeltaSeconds)
 						if (GoalValue)
 						{
 							// Convert world-space goal to component-local space (no scale)
-							*GoalValue = WorldToComponentNoScale.TransformPosition(BodyEndWorld);
+							const FVector NewGoal = WorldToComponentNoScale.TransformPosition(BodyEndWorld);
+							
+							// Validate goal before setting - NaN would crash the IK solver
+							if (!NewGoal.ContainsNaN())
+							{
+								*GoalValue = NewGoal;
+							}
+							else
+							{
+								UE_LOG(LogTemp, Warning, TEXT("Walker %s: Skipping NaN body goal in Tick (BodyEndWorld=%s)"), 
+									*GetName(), *BodyEndWorld.ToString());
+							}
 						}
 					}
 				}
@@ -2234,6 +2278,11 @@ void ABasicWalker::GenerateBondedOrbMeshes(UStaticMeshComponent* HeldComp, const
 				Right = FVector::RightVector;
 			}
 			FVector Forward = FVector::CrossProduct(Right, Up).GetSafeNormal();
+			if (Forward.IsNearlyZero())
+			{
+				// Fallback if forward vector is degenerate
+				Forward = FVector::ForwardVector;
+			}
 
 			FMatrix RotationMatrix = FMatrix(Forward, Right, Up, FVector::ZeroVector);
 			FRotator Rotation = FQuat(RotationMatrix).Rotator();
