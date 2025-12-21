@@ -80,6 +80,14 @@ struct AUTOMATIONGAME_API FFootState
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FItem HeldItem;
+	
+	// The designated drop-off hex for the held item (set when picking up from a paired beacon)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FHex DesignatedDropOffHex;
+	
+	// Whether the held item has a designated drop-off location
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool bHasDesignatedDropOff = false;
 };
 
 // Legacy instruction system (kept for backward compatibility with scenario saving)

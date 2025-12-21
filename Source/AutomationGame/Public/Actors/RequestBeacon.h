@@ -27,6 +27,12 @@ enum class EBeaconRole : uint8
 	DropOff
 };
 
+// Grid visibility delegate
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGridVisibilityChanged, bool, bIsVisible);
+
+// State change delegate
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStateChanged, EBeaconState, NewState);
+
 UCLASS()
 class AUTOMATIONGAME_API ARequestBeacon : public AActor
 {
@@ -69,11 +75,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
 	int32 R = 0;
 
-	// Grid visibility delegate
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGridVisibilityChanged, bool, bIsVisible);
-	
 	UPROPERTY(BlueprintAssignable, Category = "Beacon")
 	FOnGridVisibilityChanged OnGridVisibilityChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Beacon")
+	FOnStateChanged OnStateChanged;
 
 	// Grid visibility getter
 	UFUNCTION(BlueprintPure, Category = "Beacon")

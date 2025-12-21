@@ -502,6 +502,24 @@ private:
 	bool bLFootHeldVisualReady = false;
 	bool bRFootHeldVisualReady = false;
 	bool bUFootHeldVisualReady = false;
+	
+	// Track pending drop visuals - keep showing held item until foot visually arrives at drop location
+	bool bDFootPendingDropVisual = false;
+	bool bLFootPendingDropVisual = false;
+	bool bRFootPendingDropVisual = false;
+	bool bUFootPendingDropVisual = false;
+	
+	// Store last drop target hex to check visual arrival during drop transition
+	FHex DFootDropTargetHex;
+	FHex LFootDropTargetHex;
+	FHex RFootDropTargetHex;
+	FHex UFootDropTargetHex;
+	
+	// Cache held item data for rendering during drop visual transition
+	FItem DFootCachedDropItem;
+	FItem LFootCachedDropItem;
+	FItem RFootCachedDropItem;
+	FItem UFootCachedDropItem;
 
 	// Helpers
 	void EnsureComps();

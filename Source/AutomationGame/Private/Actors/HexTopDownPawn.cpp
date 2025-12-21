@@ -152,44 +152,60 @@ void AHexTopDownPawn::Tick(float DeltaSeconds)
 			break;
 		}
 	}
-	const bool bSphere = (GM && GM->bSphereGrid);
-	if (bSphere)
+	
+	const bool bGoldbergMode = (GM && GM->IsGoldbergMode());
+	if (bGoldbergMode)
 	{
-		const FVector Center = GM->GridAnchor ? GM->GridAnchor->GetActorLocation() : GM->GetActorLocation();
-		FVector Pos = GetActorLocation();
-		FVector RadVec = Pos - Center;
-		float Radius = RadVec.Size();
-		if (Radius < 1.f) Radius = 1.f;
-		RadVec /= Radius; // normal
-		// Build an orthonormal frame with Up=RadVec; choose an arbitrary reference to build East/North (longitude/latitude tangents)
-		FVector Up = RadVec;
+		// Goldberg orbital movement - camera orbits OUTSIDE the sphere, always looking at center
+		const FVector GridCenter = GM->GridAnchor ? GM->GridAnchor->GetActorLocation() : GM->GetActorLocation();
+		const float OrbitRadius = GM->GoldbergRadius * OrbitalDistanceMultiplier;
+		
+		// Get current orbital position
+		FVector ToCamera = GetActorLocation() - GridCenter;
+		float CurrentRadius = ToCamera.Size();
+		if (CurrentRadius < 1.f)
+		{
+			// Initialize position if too close to center
+			ToCamera = FVector(0.f, 0.f, OrbitRadius);
+			CurrentRadius = OrbitRadius;
+		}
+		ToCamera /= CurrentRadius;
+		
+		// Build tangent frame for movement
+		FVector Up = ToCamera;
 		FVector East = FVector::CrossProduct(FVector::UpVector, Up);
-		if (East.IsNearlyZero()) East = FVector::CrossProduct(FVector::RightVector, Up);
+		if (East.IsNearlyZero()) East = FVector::RightVector;
 		East.Normalize();
-		FVector North = FVector::CrossProduct(Up, East).GetSafeNormal(); // points toward local north pole
-
-		// Convert input axes into small angular rotations: AxisX = yaw around world up? Better: move along East (longitude), AxisY along North (latitude)
-		float AngularSpeed = MoveSpeed / Radius; // rad/sec equivalent so that linear ground speed ~ MoveSpeed
-		float dLon = AxisX * AngularSpeed * DeltaSeconds; // rotation around North axis? Actually East tangent corresponds to increasing longitude
-		float dLat = AxisY * AngularSpeed * DeltaSeconds; // move toward poles
-
-		// Apply latitude change: rotate RadVec toward North by dLat
+		FVector North = FVector::CrossProduct(Up, East).GetSafeNormal();
+		
+		// Apply orbital movement from input axes
+		float AngularSpeed = MoveSpeed / OrbitRadius;
+		float dLon = AxisX * AngularSpeed * DeltaSeconds;
+		float dLat = AxisY * AngularSpeed * DeltaSeconds;
+		
+		// Apply latitude change (move toward poles)
 		if (!FMath::IsNearlyZero(dLat))
 		{
-			RadVec = (RadVec * FMath::Cos(dLat) + North * FMath::Sin(dLat)).GetSafeNormal();
+			ToCamera = (ToCamera * FMath::Cos(dLat) + North * FMath::Sin(dLat)).GetSafeNormal();
 		}
-		// Recompute East & North after latitude change
-		Up = RadVec;
-		East = FVector::CrossProduct(FVector::UpVector, Up);
-		if (East.IsNearlyZero()) East = FVector::CrossProduct(FVector::RightVector, Up);
+		
+		// Recompute frame after latitude change
+		East = FVector::CrossProduct(FVector::UpVector, ToCamera);
+		if (East.IsNearlyZero()) East = FVector::RightVector;
 		East.Normalize();
-		North = FVector::CrossProduct(Up, East).GetSafeNormal();
-		// Apply longitude change: rotate around Up axis by dLon using East/North plane
+		
+		// Apply longitude change
 		if (!FMath::IsNearlyZero(dLon))
 		{
-			RadVec = (RadVec * FMath::Cos(dLon) + East * FMath::Sin(dLon)).GetSafeNormal();
+			ToCamera = (ToCamera * FMath::Cos(dLon) + East * FMath::Sin(dLon)).GetSafeNormal();
 		}
-		SetActorLocation(Center + RadVec * Radius);
+		
+		// Set position outside sphere at fixed orbit radius
+		SetActorLocation(GridCenter + ToCamera * OrbitRadius);
+		
+		// Orient camera to look at grid center
+		FRotator LookAtRotation = (GridCenter - GetActorLocation()).Rotation();
+		SpringArm->SetWorldRotation(LookAtRotation);
 	}
 	else
 	{

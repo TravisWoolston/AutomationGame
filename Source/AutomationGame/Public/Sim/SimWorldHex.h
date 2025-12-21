@@ -445,7 +445,26 @@ private:
 	void AddItemBondLink(int32 ItemId, int32 BondIndex);
 	void RemoveItemBondLink(int32 ItemId, int32 BondIndex);
 
-	// Opus Magnum style cluster management
+	// Walker helpers
+	bool IsHexOccupied(const FHex& H, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TSet<FHex>& HoldingFootHexes = TSet<FHex>()) const;
+	TArray<struct FFootState*> GetAllFeet(struct FWalkerState& W) const;
+	bool AreFeetAdjacent(int32 FootIndexA, int32 FootIndexB) const;
+	FString GetFixedQuadrantFromHex(const FHex& BodyHex, const FHex& TestHex, float RotationOffsetDeg) const;
+	float CalculateSimWalkerRotation(const struct FWalkerState& W) const;
+	FHex GetQuadrantCenterHex(const FHex& BodyHex, int32 FootIndex, int32 ReachDistance, float MinReach, float RotationOffsetDeg) const;
+
+	// Walker simulation components
+	void ProcessWalkerRequestAssignment(const TArray<class ARequestBeacon*>& AllBeacons, const TMap<FHex, class ARequestBeacon*>& BeaconCache);
+	void ProcessWalkerTick(int32 WalkerIndex, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TMap<FHex, class ARequestBeacon*>& BeaconCache);
+	void HandleFootStateProcessing(struct FWalkerState& W, int32 WalkerIndex, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TMap<FHex, class ARequestBeacon*>& BeaconCache, const TSet<FHex>& HoldingFootHexes, bool bIsPivoting);
+	void HandleFootPlanted(struct FWalkerState& W, struct FFootState& Foot, int32 WalkerIndex, int32 FootIndex, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TSet<FHex>& HoldingFootHexes, const TMap<FHex, class ARequestBeacon*>& BeaconCache, bool bIsPivoting, int32& RaisedCount, TArray<int32>& RaisedIndices);
+	void HandleFootMoving(struct FWalkerState& W, struct FFootState& Foot, int32 WalkerIndex, int32 FootIndex, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TSet<FHex>& HoldingFootHexes, const TMap<FHex, class ARequestBeacon*>& BeaconCache, bool bIsPivoting);
+	void UpdateFootHorizontalTarget(struct FWalkerState& W, struct FFootState& Foot, int32 FootIndex, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TSet<FHex>& HoldingFootHexes, const TMap<FHex, class ARequestBeacon*>& BeaconCache, bool bIsPivoting);
+	void TryWalkerPickUp(struct FWalkerState& W, struct FFootState& Foot, int32 WalkerIndex, int32 FootIndex, const TMap<FHex, class ARequestBeacon*>& BeaconCache, const TArray<struct FFootState*>& AllFeet);
+	bool TryWalkerDropOff(FWalkerState& W, FFootState& Foot, int32 WalkerIndex, int32 FootIndex, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TSet<FHex>& HoldingFootHexes, const TMap<FHex, ARequestBeacon*>& BeaconCache);
+	void UpdateWalkerBodyPosition(struct FWalkerState& W, int32 WalkerIndex);
+	void ProcessWalkerInstructions(struct FWalkerState& W, int32 WalkerIndex);
+
 	void AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex);
 	void AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId, const FHex& BoardOrbHex);
 

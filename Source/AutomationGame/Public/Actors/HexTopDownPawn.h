@@ -33,6 +33,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Camera") float MinArm = 600.f;
 	UPROPERTY(EditAnywhere, Category = "Camera") float MaxArm = 6000.f;
 
+	/** Distance from grid center as multiple of Goldberg radius (for orbital camera). */
+	UPROPERTY(EditAnywhere, Category = "Camera|Goldberg")
+	float OrbitalDistanceMultiplier = 2.5f;
+
 	UPROPERTY(VisibleAnywhere, Category = "Camera") USpringArmComponent* SpringArm;
 	UPROPERTY(VisibleAnywhere, Category = "Camera") UCameraComponent* Camera;
 	UPROPERTY(VisibleAnywhere, Category = "Place")  UHexPlacementComponent* Placer;

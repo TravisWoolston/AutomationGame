@@ -114,8 +114,12 @@ void ARequestBeacon::OnConstruction(const FTransform& Transform)
 
 void ARequestBeacon::SetState(EBeaconState NewState)
 {
-	BeaconState = NewState;
-	UpdateVisuals();
+	if (BeaconState != NewState)
+	{
+		BeaconState = NewState;
+		UpdateVisuals();
+		OnStateChanged.Broadcast(BeaconState);
+	}
 }
 
 void ARequestBeacon::SetIsGridVisible(bool bVisible)

@@ -499,9 +499,9 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		float HeightInterpSpeed = 15.0f; // Default fallback
 		if (AGameTickManager* GTM = AGameTickManager::Get(this))
 		{
-			// Reach ~98% of target in one GTM tick
-			// InterpSpeed = 4.0 / TickInterval = 4.0 * TicksPerSecond
-			HeightInterpSpeed = 4.0f * FMath::Max(0.01f, GTM->TicksPerSecond);
+			// Match the position interpolation speed (2.0 * TicksPerSecond) for consistent motion
+			// This ensures height and horizontal position reach their targets at similar rates
+			HeightInterpSpeed = 2.0f * FMath::Max(0.01f, GTM->TicksPerSecond);
 		}
 		DFootSmoothedHeightOffset = FMath::FInterpTo(DFootSmoothedHeightOffset, DFootHeightOffset, DeltaSeconds, HeightInterpSpeed);
 		LFootSmoothedHeightOffset = FMath::FInterpTo(LFootSmoothedHeightOffset, LFootHeightOffset, DeltaSeconds, HeightInterpSpeed);
@@ -553,21 +553,52 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		RFootHeldItem = SimState.RFoot.HeldItem;
 		UFootHeldItem = SimState.UFoot.HeldItem;
 
-		// Log state changes
+		// Log state changes and handle drop visual transitions
 		if (bDFootHoldingItem != bPrevDHolding)
+		{
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': DFoot holding changed to %d"), *GetName(), bDFootHoldingItem ? 1 : 0);
+			if (!bDFootHoldingItem && bPrevDHolding)
+			{
+				// Transitioning to NOT holding - start pending drop visual
+				bDFootPendingDropVisual = true;
+				bDFootHeldVisualReady = false;
+				DFootDropTargetHex = Sim->Walkers[SimWalkerIndex].DFoot.CurrentTile;
+				DFootCachedDropItem = DFootHeldItem; // Cache the item for continued rendering
+			}
+		}
 		if (bLFootHoldingItem != bPrevLHolding)
+		{
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': LFoot holding changed to %d"), *GetName(), bLFootHoldingItem ? 1 : 0);
+			if (!bLFootHoldingItem && bPrevLHolding)
+			{
+				bLFootPendingDropVisual = true;
+				bLFootHeldVisualReady = false;
+				LFootDropTargetHex = Sim->Walkers[SimWalkerIndex].LFoot.CurrentTile;
+				LFootCachedDropItem = LFootHeldItem;
+			}
+		}
 		if (bRFootHoldingItem != bPrevRHolding)
+		{
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': RFoot holding changed to %d"), *GetName(), bRFootHoldingItem ? 1 : 0);
+			if (!bRFootHoldingItem && bPrevRHolding)
+			{
+				bRFootPendingDropVisual = true;
+				bRFootHeldVisualReady = false;
+				RFootDropTargetHex = Sim->Walkers[SimWalkerIndex].RFoot.CurrentTile;
+				RFootCachedDropItem = RFootHeldItem;
+			}
+		}
 		if (bUFootHoldingItem != bPrevUHolding)
+		{
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': UFoot holding changed to %d"), *GetName(), bUFootHoldingItem ? 1 : 0);
-
-		// Reset held visual ready flags when dropping (bHoldingItem transitions to false)
-		if (!bDFootHoldingItem && bPrevDHolding) bDFootHeldVisualReady = false;
-		if (!bLFootHoldingItem && bPrevLHolding) bLFootHeldVisualReady = false;
-		if (!bRFootHoldingItem && bPrevRHolding) bRFootHeldVisualReady = false;
-		if (!bUFootHoldingItem && bPrevUHolding) bUFootHeldVisualReady = false;
+			if (!bUFootHoldingItem && bPrevUHolding)
+			{
+				bUFootPendingDropVisual = true;
+				bUFootHeldVisualReady = false;
+				UFootDropTargetHex = Sim->Walkers[SimWalkerIndex].UFoot.CurrentTile;
+				UFootCachedDropItem = UFootHeldItem;
+			}
+		}
 		
 		// NOTE: UpdateHeldItemVisuals is now called AFTER smoothed positions are calculated,
 		// to delay showing held items until feet have visually arrived at pickup/dropoff tiles.
@@ -577,38 +608,37 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		// Helper lambda to calculate progress and visual state
 		auto CalcFootVisualProgress = [&](const FFootState& FootState, bool bIsHolding) -> TPair<float, EFootVisualState>
 		{
-			// If holding, use Holding state (always active while holding)
 			if (bIsHolding)
 			{
 				return TPair<float, EFootVisualState>(0.5f, EFootVisualState::Holding);
 			}
 			
-			// Calculate progress based on current step state
-			float Progress = 1.0f; // Default to 1 (complete/planted)
+			float TotalTicks = (float)(SimState.StepRaiseTicks + SimState.StepMoveTicks + SimState.StepLowerTicks);
+			if (TotalTicks <= 0.f || FootState.StepState == EFootStepState::Planted)
+			{
+				return TPair<float, EFootVisualState>(1.0f, EFootVisualState::Planted);
+			}
+
+			float CurrentTick = 0.f;
 			EFootVisualState VisState = EFootVisualState::Planted;
 			
 			switch (FootState.StepState)
 			{
 			case EFootStepState::Raising:
-				Progress = SimState.StepRaiseTicks > 0 ? (float)FootState.StepProgress / (float)SimState.StepRaiseTicks : 1.0f;
+				CurrentTick = (float)FootState.StepProgress;
 				VisState = EFootVisualState::Raising;
 				break;
 			case EFootStepState::Moving:
-				Progress = SimState.StepMoveTicks > 0 ? (float)FootState.StepProgress / (float)SimState.StepMoveTicks : 1.0f;
+				CurrentTick = (float)SimState.StepRaiseTicks + (float)FootState.StepProgress;
 				VisState = EFootVisualState::Moving;
 				break;
 			case EFootStepState::Lowering:
-				Progress = SimState.StepLowerTicks > 0 ? (float)FootState.StepProgress / (float)SimState.StepLowerTicks : 1.0f;
+				CurrentTick = (float)SimState.StepRaiseTicks + (float)SimState.StepMoveTicks + (float)FootState.StepProgress;
 				VisState = EFootVisualState::Lowering;
-				break;
-			case EFootStepState::Planted:
-			default:
-				Progress = 1.0f;
-				VisState = EFootVisualState::Planted;
 				break;
 			}
 			
-			return TPair<float, EFootVisualState>(Progress, VisState);
+			return TPair<float, EFootVisualState>(CurrentTick / TotalTicks, VisState);
 		};
 		
 		// Helper to convert EFootVisualState to EFootAnimState for AnimInstance
@@ -642,25 +672,23 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			FVector CurrentPos = HexToWorld(FootState.TargetTile);
 			FVector PreviousPos;
 			
-			// Detect phase transition to Moving - capture start position
-			if (CurrState == EFootStepState::Moving && PrevState != EFootStepState::Moving)
+			// Capture start position at the very beginning of the transition from Planted
+			if (CurrState != EFootStepState::Planted && PrevState == EFootStepState::Planted)
 			{
-				// Just started Moving phase - capture the starting position
 				VisualStartPos = HexToWorld(FootHex);
-				UE_LOG(LogTemp, Log, TEXT("Captured VisualStartPos: (%.0f,%.0f,%.0f) from FootHex (%d,%d)"),
+				UE_LOG(LogTemp, Log, TEXT("Captured VisualStartPos for horizontal flight: (%.0f,%.0f,%.0f) from FootHex (%d,%d)"),
 					VisualStartPos.X, VisualStartPos.Y, VisualStartPos.Z, FootHex.Q, FootHex.R);
 			}
 			
-			// Determine Previous based on current state
-			if (CurrState == EFootStepState::Moving)
+			if (CurrState != EFootStepState::Planted)
 			{
-				// During Moving: Previous is where we started, Current is target
+				// In-flight: interpolate from the captured start to the destination target
 				PreviousPos = VisualStartPos;
 				CurrentPos = HexToWorld(FootState.TargetTile);
 			}
 			else
 			{
-				// Raising/Lowering/Planted: Previous and Current are both the current tile
+				// Stationary/Planted
 				PreviousPos = HexToWorld(FootHex);
 				CurrentPos = HexToWorld(FootHex);
 			}
@@ -1165,47 +1193,65 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		const FVector RFootBonePos = BodyComp->GetBoneLocation(RFootBoneName, EBoneSpaces::WorldSpace);
 		const FVector UFootBonePos = BodyComp->GetBoneLocation(UFootBoneName, EBoneSpaces::WorldSpace);
 		
-		// Check each foot: if holding but visual not ready, check if actual bone position is close to target
-		auto CheckFootArrival = [&](bool bSimHolding, bool& bVisualReady, const FVector& BonePos, const FHex& TargetHex) -> bool
+		// Lambda to check foot arrival and handle both pickup and drop visual timing
+		// Returns: pair of (bShowItem, ItemToShow)
+		auto CheckFootVisualState = [&](bool bSimHolding, bool& bVisualReady, bool& bPendingDrop, 
+			const FVector& BonePos, const FHex& CurrentTile, const FHex& DropTargetHex,
+			const FItem& HeldItem, const FItem& CachedDropItem) -> TPair<bool, FItem>
 		{
+			// Case 1: Pending drop visual - sim dropped but foot hasn't arrived visually
+			if (bPendingDrop)
+			{
+				const FVector DropWorld = Driver->MapHexToWorld(DropTargetHex);
+				const float DistSq = FVector::DistSquared2D(BonePos, DropWorld);
+				
+				if (DistSq < ArrivalThresholdSq)
+				{
+					// Foot has visually arrived at drop location - stop showing
+					bPendingDrop = false;
+					return TPair<bool, FItem>(false, FItem());
+				}
+				
+				// Still in transit to drop location - keep showing cached item
+				return TPair<bool, FItem>(true, CachedDropItem);
+			}
+			
+			// Case 2: Not holding
 			if (!bSimHolding)
 			{
-				// Not holding, reset visual ready and don't show
 				bVisualReady = false;
-				return false;
+				return TPair<bool, FItem>(false, FItem());
 			}
 			
+			// Case 3: Already visually ready (holding and arrived) - keep showing
 			if (bVisualReady)
 			{
-				// Already visually ready, keep showing
-				return true;
+				return TPair<bool, FItem>(true, HeldItem);
 			}
 			
-			// Check if actual bone position is close to target tile
-			const FVector TargetWorld = Driver->MapHexToWorld(TargetHex);
-			const float DistSq = FVector::DistSquared2D(BonePos, TargetWorld);
-			
-			if (DistSq < ArrivalThresholdSq)
-			{
-				// Foot has visually arrived, mark as ready
-				bVisualReady = true;
-				return true;
-			}
-			
-			// Still en route, don't show item yet
-			return false;
+			// Case 4: Holding but waiting for visual arrival at pickup
+			// NOTE: For holding feet that are constantly recentering, CurrentTile changes every tick.
+			// Use a more lenient check - if we've been holding for a bit, just show it.
+			// The sim sets bHoldingItem=true when pickup completes, so we can trust that.
+			// Set bVisualReady=true immediately to avoid the check failing due to moving CurrentTile.
+			bVisualReady = true;
+			return TPair<bool, FItem>(true, HeldItem);
 		};
 		
-		const bool bShowDHeld = CheckFootArrival(bDFootHoldingItem, bDFootHeldVisualReady, DFootBonePos, SimState.DFoot.CurrentTile);
-		const bool bShowLHeld = CheckFootArrival(bLFootHoldingItem, bLFootHeldVisualReady, LFootBonePos, SimState.LFoot.CurrentTile);
-		const bool bShowRHeld = CheckFootArrival(bRFootHoldingItem, bRFootHeldVisualReady, RFootBonePos, SimState.RFoot.CurrentTile);
-		const bool bShowUHeld = CheckFootArrival(bUFootHoldingItem, bUFootHeldVisualReady, UFootBonePos, SimState.UFoot.CurrentTile);
+		auto DResult = CheckFootVisualState(bDFootHoldingItem, bDFootHeldVisualReady, bDFootPendingDropVisual,
+			DFootBonePos, SimState.DFoot.CurrentTile, DFootDropTargetHex, DFootHeldItem, DFootCachedDropItem);
+		auto LResult = CheckFootVisualState(bLFootHoldingItem, bLFootHeldVisualReady, bLFootPendingDropVisual,
+			LFootBonePos, SimState.LFoot.CurrentTile, LFootDropTargetHex, LFootHeldItem, LFootCachedDropItem);
+		auto RResult = CheckFootVisualState(bRFootHoldingItem, bRFootHeldVisualReady, bRFootPendingDropVisual,
+			RFootBonePos, SimState.RFoot.CurrentTile, RFootDropTargetHex, RFootHeldItem, RFootCachedDropItem);
+		auto UResult = CheckFootVisualState(bUFootHoldingItem, bUFootHeldVisualReady, bUFootPendingDropVisual,
+			UFootBonePos, SimState.UFoot.CurrentTile, UFootDropTargetHex, UFootHeldItem, UFootCachedDropItem);
 		
 		// Update held item visuals based on visual arrival state
-		UpdateHeldItemVisuals(DFootHeldOrbComp, bShowDHeld, DFootHeldItem, FName(TEXT("DFoot_Socket")), CachedDFootHeldItemId);
-		UpdateHeldItemVisuals(LFootHeldOrbComp, bShowLHeld, LFootHeldItem, FName(TEXT("LFoot_Socket")), CachedLFootHeldItemId);
-		UpdateHeldItemVisuals(RFootHeldOrbComp, bShowRHeld, RFootHeldItem, FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);
-		UpdateHeldItemVisuals(UFootHeldOrbComp, bShowUHeld, UFootHeldItem, FName(TEXT("UFoot_Socket")), CachedUFootHeldItemId);
+		UpdateHeldItemVisuals(DFootHeldOrbComp, DResult.Key, DResult.Value, FName(TEXT("DFoot_Socket")), CachedDFootHeldItemId);
+		UpdateHeldItemVisuals(LFootHeldOrbComp, LResult.Key, LResult.Value, FName(TEXT("LFoot_Socket")), CachedLFootHeldItemId);
+		UpdateHeldItemVisuals(RFootHeldOrbComp, RResult.Key, RResult.Value, FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);
+		UpdateHeldItemVisuals(UFootHeldOrbComp, UResult.Key, UResult.Value, FName(TEXT("UFoot_Socket")), CachedUFootHeldItemId);
 	}
 	else
 	{

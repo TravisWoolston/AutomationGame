@@ -400,22 +400,30 @@ void AGameManager::BuildGridInstances()
 	const float OriYawOffsetDegPlanar = (GridOrientation == EHexOrientation::PointyTop) ? 30.f : 0.f;
 	USimWorldHex* Sim = OrbSimDriver ? OrbSimDriver->GetSim() : nullptr;
 
-	if (bSphereGrid && bUseGoldbergSphere)
+	if (IsGoldbergMode())
 	{
+		// Build Goldberg grid
 		if (!GoldbergGrid) GoldbergGrid = NewObject<UGoldbergGrid>(this, TEXT("GoldbergGrid"));
-		GoldbergGrid->Build(GoldbergFrequency, GetEffectiveSphereRadius(), Origin);
+		GoldbergGrid->Build(GoldbergFrequency, GoldbergRadius, Origin);
 		const TArray<FGoldbergCell>& Cells = GoldbergGrid->GetCells();
 		const bool bPointy = (GridOrientation == EHexOrientation::PointyTop);
-		for (int32 i = 0;i < Cells.Num();++i)
+		
+		for (int32 i = 0; i < Cells.Num(); ++i)
 		{
 			const FGoldbergCell& C = Cells[i];
-			if (C.bPentagon) continue; // leave pentagon slots empty for now
-			FVector Up = (C.Position - Origin).GetSafeNormal(); if (Up.IsNearlyZero()) Up = FVector::UpVector;
-			FVector East = FVector::CrossProduct(FVector::UpVector, Up); if (East.IsNearlyZero()) East = FVector::RightVector; East.Normalize();
+			if (C.bPentagon) continue; // Skip pentagon cells
+			
+			FVector Up = (C.Position - Origin).GetSafeNormal();
+			if (Up.IsNearlyZero()) Up = FVector::UpVector;
+			FVector East = FVector::CrossProduct(FVector::UpVector, Up);
+			if (East.IsNearlyZero()) East = FVector::RightVector;
+			East.Normalize();
 			FVector North = FVector::CrossProduct(Up, East).GetSafeNormal();
+			
 			// Unreal forward = X (use East), right = Y (use North), up = Z
 			FMatrix M(East, North, Up, FVector::ZeroVector);
 			FTransform XForm(M.Rotator(), C.Position, FVector(1));
+			
 			if (bPointy)
 			{
 				// Apply same 30 deg yaw offset used in planar grid so hex mesh aligns consistently
@@ -424,22 +432,53 @@ void AGameManager::BuildGridInstances()
 			}
 			ISM->AddInstance(XForm);
 		}
-		return; // done
-	}
-
-	if (bSphereGrid && OrbSimDriver)
-	{
-		TArray<FHex> Hexes; Hexes.Reserve((Radius * 2 + 1) * (Radius * 2 + 1));
-		float MinX = FLT_MAX, MaxX = -FLT_MAX, MinY = FLT_MAX, MaxY = -FLT_MAX;
-		for (int r = -Radius;r <= Radius;++r) { for (int q = -Radius;q <= Radius;++q) { int s = -q - r; if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue; Hexes.Add(FHex(q, r)); FVector2D XY = HexCoord::AxialToXY(FHexAxial(q, r), S, GridOrientation); MinX = FMath::Min(MinX, XY.X); MaxX = FMath::Max(MaxX, XY.X); MinY = FMath::Min(MinY, XY.Y); MaxY = FMath::Max(MaxY, XY.Y); } }
-		const float SphereR = GetEffectiveSphereRadius();
-		OrbSimDriver->SetSphereMappingExtents(MinX, MaxX, MinY, MaxY, SphereR);
-		for (const FHex& H : Hexes) { if (Sim && Sim->TileMap.Contains(H)) { const FTile& PT = Sim->TileMap[H]; if (PT.Kind == ETileKind::Output) continue; } FVector P = OrbSimDriver->MapHexToWorld(H); FVector Radial = (P - Origin).GetSafeNormal(); if (Radial.IsNearlyZero()) Radial = FVector::UpVector; FVector East = FVector::CrossProduct(FVector::UpVector, Radial); if (East.IsNearlyZero()) East = FVector::CrossProduct(FVector::RightVector, Radial); East.Normalize(); FVector North = FVector::CrossProduct(Radial, East).GetSafeNormal(); FMatrix M(East, North, Radial, FVector::ZeroVector); FTransform X(M.Rotator(), P, FVector(1)); if (GridOrientation == EHexOrientation::PointyTop) { FQuat Off(Radial, FMath::DegreesToRadians(30.f)); X.ConcatenateRotation(Off); } ISM->AddInstance(X); }
 		return;
 	}
-	// planar path
-	const auto ToWorld = [S, Origin, this](int32 Q, int32 R) { FVector2D XY = HexCoord::AxialToXY(FHexAxial(Q, R), S, GridOrientation); FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg); return Origin + FVector(RotXY.X, RotXY.Y, 0.f); };
-	for (int r = -Radius;r <= Radius;++r) { for (int q = -Radius;q <= Radius;++q) { int s = -q - r; if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue; if (Sim && Sim->TileMap.Contains(FHex(q, r))) { const FTile& PT = Sim->TileMap[FHex(q, r)]; if (PT.Kind == ETileKind::Output) continue; } FVector P = ToWorld(q, r); FRotator R(0.f, GridYawDeg + OriYawOffsetDegPlanar, 0.f); ISM->AddInstance(FTransform(R, P, FVector(1))); } }
+
+	// Planar grid path
+	const auto ToWorld = [S, Origin, this](int32 Q, int32 R)
+	{
+		FVector2D XY = HexCoord::AxialToXY(FHexAxial(Q, R), S, GridOrientation);
+		FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
+		return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
+	};
+	
+	for (int r = -Radius; r <= Radius; ++r)
+	{
+		for (int q = -Radius; q <= Radius; ++q)
+		{
+			int s = -q - r;
+			if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue;
+			
+			if (Sim && Sim->TileMap.Contains(FHex(q, r)))
+			{
+				const FTile& PT = Sim->TileMap[FHex(q, r)];
+				if (PT.Kind == ETileKind::Output) continue;
+			}
+			
+			FVector P = ToWorld(q, r);
+			FRotator RotR(0.f, GridYawDeg + OriYawOffsetDegPlanar, 0.f);
+			ISM->AddInstance(FTransform(RotR, P, FVector(1)));
+		}
+	}
+}
+
+FVector AGameManager::GetGoldbergCellPosition(int32 CellIndex) const
+{
+	if (!GoldbergGrid || CellIndex < 0 || CellIndex >= GoldbergGrid->GetCells().Num())
+	{
+		return FVector::ZeroVector;
+	}
+	return GoldbergGrid->GetCells()[CellIndex].Position;
+}
+
+FRotator AGameManager::GetGoldbergCellRotation(int32 CellIndex) const
+{
+	if (!GoldbergGrid)
+	{
+		return FRotator::ZeroRotator;
+	}
+	return GoldbergGrid->GetCellRotation(CellIndex);
 }
 
 void AGameManager::Rebuild()
@@ -810,30 +849,30 @@ void AGameManager::SyncOrbSimDriverParameters()
 	static EHexOrientation PrevOrientation = EHexOrientation::PointyTop;
 	static float PrevYaw = 0.f;
 	static float PrevTileSize = 0.f;
-	static float PrevSphereR = 0.f;
-	static bool PrevSphereGrid = false;
+	static float PrevGoldbergR = 0.f;
+	static EGridMode PrevGridMode = EGridMode::Planar;
 
-	const float CurrentSphereR = GetEffectiveSphereRadius();
 	const bool bParamsChanged = (PrevOrientation != GridOrientation) ||
 		!FMath::IsNearlyEqual(PrevYaw, GridYawDeg, 0.01f) ||
 		!FMath::IsNearlyEqual(PrevTileSize, TileSizeUU, 0.01f) ||
-		!FMath::IsNearlyEqual(PrevSphereR, CurrentSphereR, 0.01f) ||
-		(PrevSphereGrid != bSphereGrid);
+		!FMath::IsNearlyEqual(PrevGoldbergR, GoldbergRadius, 0.01f) ||
+		(PrevGridMode != GridMode);
 
 	OrbSimDriver->SetGridParameters(GridOrientation, GridYawDeg, TileSizeUU, GridAnchor);
-	OrbSimDriver->ApplySphereSettings(bSphereGrid, CurrentSphereR);
+	OrbSimDriver->SetGoldbergMode(IsGoldbergMode(), GoldbergGrid);
 
 	// Only log if parameters actually changed
 	if (bParamsChanged)
 	{
-		UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver params Orientation=%d Yaw=%.1f TileSpacing=%.1f SphereR=%.1f Auto=%d"), (int32)GridOrientation, GridYawDeg, TileSizeUU, CurrentSphereR, bAutoSphereRadius ? 1 : 0);
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Synced OrbSimDriver params Orientation=%d Yaw=%.1f TileSpacing=%.1f GridMode=%d GoldbergR=%.1f"), 
+			(int32)GridOrientation, GridYawDeg, TileSizeUU, (int32)GridMode, GoldbergRadius);
 
 		// Update stored values
 		PrevOrientation = GridOrientation;
 		PrevYaw = GridYawDeg;
 		PrevTileSize = TileSizeUU;
-		PrevSphereR = CurrentSphereR;
-		PrevSphereGrid = bSphereGrid;
+		PrevGoldbergR = GoldbergRadius;
+		PrevGridMode = GridMode;
 	}
 }
 

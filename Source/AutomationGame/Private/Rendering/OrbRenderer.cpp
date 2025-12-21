@@ -934,7 +934,7 @@ void UOrbRenderer::RebuildBondedOrbs()
 		auto CalcZOffset = [&](const USimWorldHex::FAnimatedOrb& Orb) -> float
 		{
 			float StepProgress = 0.f;
-			const int32 AnimationDuration = Orb.CompletionStep - Orb.StartStep;
+			const int32 AnimationDuration = (Orb.CompletionStep + 20)- Orb.StartStep;
 			
 			if (CurrentStep < Orb.StartStep)
 				StepProgress = 0.f;

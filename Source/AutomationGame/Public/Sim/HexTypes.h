@@ -19,6 +19,13 @@ struct AUTOMATIONGAME_API FHex
 
 	bool operator==(const FHex& Other) const { return Q == Other.Q && R == Other.R; }
 	bool operator!=(const FHex& Other) const { return !(*this == Other); }
+
+	int32 Distance(const FHex& Other) const
+	{
+		const int32 dq = Q - Other.Q;
+		const int32 dr = R - Other.R;
+		return FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
+	}
 };
 
 FORCEINLINE uint32 GetTypeHash(const FHex& H)
@@ -52,6 +59,13 @@ namespace HexUtil
 		const float x = TileSize * (FMath::Sqrt(3.f) * (float)H.Q + FMath::Sqrt(3.f) / 2.f * (float)H.R);
 		const float y = TileSize * (3.f / 2.f * (float)H.R);
 		return FVector(x, y, 0.f);
+	}
+
+	FORCEINLINE int32 Dist(const FHex& A, const FHex& B)
+	{
+		const int32 dq = A.Q - B.Q;
+		const int32 dr = A.R - B.R;
+		return FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)), FMath::Abs(dq + dr));
 	}
 }
 

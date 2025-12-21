@@ -7,6 +7,7 @@
 
 class USimWorldHex;
 class AGameManager;
+class UGoldbergGrid;
 
 /** Broadcasts after simulation has stepped */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSimStepComplete, float, StepSeconds);
@@ -104,18 +105,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Grid")
 	void SetGridParameters(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor);
 
-	// Apply sphere settings as dictated by GameManager (no public editable toggle anymore)
-	void ApplySphereSettings(bool bEnable, float InRadius) { bSphereGrid = bEnable; SphereRadiusUU = InRadius; }
-	bool IsSphereEnabled() const { return bSphereGrid; }
-	float GetSphereRadius() const { return SphereRadiusUU; }
-
-	// (Deprecated) kept for backward compatibility � just forwards to SetGridParameters + ApplySphereSettings
-	UFUNCTION(BlueprintCallable, Category="Grid", meta=(DeprecatedFunction, DeprecationMessage="Use GameManager settings instead."))
-	void SetGridParametersSphere(EHexOrientation InOrientation, float InYawDeg, float InTileSizeUU, AActor* InAnchor, bool bInSphere, float InSphereRadius)
-	{
-		SetGridParameters(InOrientation, InYawDeg, InTileSizeUU, InAnchor);
-		ApplySphereSettings(bInSphere, InSphereRadius);
-	}
+	// Set Goldberg mode and grid reference (called by GameManager)
+	void SetGoldbergMode(bool bEnable, UGoldbergGrid* InGrid) { bGoldbergMode = bEnable; CachedGoldbergGrid = InGrid; }
+	bool IsGoldbergMode() const { return bGoldbergMode; }
+	UGoldbergGrid* GetGoldbergGrid() const { return CachedGoldbergGrid; }
+	
+	// Backward compatibility: IsSphereEnabled now returns whether Goldberg mode is active
+	// (Goldberg grid is a curved surface like the old sphere mode)
+	bool IsSphereEnabled() const { return bGoldbergMode; }
 	
 	/** Sync debug settings to all BasicArm actors in the world */
 	UFUNCTION(BlueprintCallable, Category = "Debug")
@@ -174,19 +171,9 @@ private:
 	float GridYawDeg = 0.f;
 	float TileSizeUU = 120.f;
 
-	// Sphere mapping extents (rotated planar XY bounds) for converting axial -> lon/lat
-	float SphereMinX = -1.f;
-	float SphereMaxX = 1.f;
-	float SphereMinY = -1.f;
-	float SphereMaxY = 1.f;
-
-	// Internal sphere state (no longer publicly editable)
-	bool  bSphereGrid = false;
-	float SphereRadiusUU = 2000.f;
-
-public:
-	void SetSphereMappingExtents(float InMinX, float InMaxX, float InMinY, float InMaxY, float InRadius)
-	{
-		SphereMinX = InMinX; SphereMaxX = InMaxX; SphereMinY = InMinY; SphereMaxY = InMaxY; SphereRadiusUU = InRadius; bSphereGrid = true;
-	}
+	// Goldberg mode state
+	bool bGoldbergMode = false;
+	
+	UPROPERTY(Transient)
+	UGoldbergGrid* CachedGoldbergGrid = nullptr;
 };

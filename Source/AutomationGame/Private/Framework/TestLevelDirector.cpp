@@ -5,6 +5,7 @@
 #include "Actors/HexFactoryActor.h"
 #include "Actors/RequestBeacon.h"
 #include "Sim/SimWorldHex.h"
+#include "Geometry/GoldbergGrid.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "AGLogChannels.h"
@@ -281,6 +282,16 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 	UWorld* W = GetWorld();
 	if (!W || !Driver) return;
 
+	// Find GameManager for Goldberg mode check
+	AGameManager* GM = nullptr;
+	for (TActorIterator<AGameManager> It(W); It; ++It)
+	{
+		GM = *It;
+		break;
+	}
+	const bool bGoldbergMode = GM && GM->IsGoldbergMode();
+	UGoldbergGrid* GoldbergGrid = bGoldbergMode ? GM->GetGoldbergGrid() : nullptr;
+
 	if (USimWorldHex* Sim = Driver->GetSim())
 	{
 		// Build a map of hex -> orb type for ClusterOutput tiles from the saved specs
@@ -295,6 +306,19 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		
 		for (const FPlacedTileSpec& P : S.Tiles)
 		{
+			// In Goldberg mode, validate that the hex has a corresponding cell
+			if (bGoldbergMode && GoldbergGrid)
+			{
+				int32 CellIndex = GoldbergGrid->GetCellIndexForHex(P.Hex);
+				if (CellIndex == INDEX_NONE)
+				{
+					// Invalid hex (out of range or pentagon) - skip tile
+					UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: Skipping tile at (%d,%d) - no valid Goldberg cell"), 
+						P.Hex.Q, P.Hex.R);
+					continue;
+				}
+			}
+			
 			FTile T; T.Kind = P.Kind; T.Arg = P.Dir;
 			Sim->PlaceTile(P.Hex, T);
 		}
@@ -362,16 +386,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		// A.Spawned->PushProgramToSim();
 	}
 
-	// Spawn walkers from scenario
-	AGameManager* GM = nullptr;
-	if (W)
-	{
-		for (TActorIterator<AGameManager> It(W); It; ++It)
-		{
-			GM = *It;
-			break;
-		}
-	}
+	// Spawn walkers from scenario (GM already found above)
 
 	for (FWalkerSpawnSpec& WalkerSpec : const_cast<TArray<FWalkerSpawnSpec>&>(S.Walkers))
 	{

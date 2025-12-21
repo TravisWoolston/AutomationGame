@@ -20,6 +20,14 @@ enum class EWalkerFoot : uint8
 	UFoot     UMETA(DisplayName = "U Foot")
 };
 
+/** Grid mode selection */
+UENUM(BlueprintType)
+enum class EGridMode : uint8
+{
+	Planar      UMETA(DisplayName = "Planar Grid"),
+	Goldberg    UMETA(DisplayName = "Goldberg Grid")
+};
+
 class AGameTickManager;
 class UInstancedStaticMeshComponent;
 class UStaticMesh;
@@ -317,33 +325,33 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Grid", meta = (ClampMin = "1.0", ClampMax = "3.0"))
 	float ClusterOutputScale = 1.3f;
 
-	/** If true, map hex grid onto a sphere surface instead of a plane. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere")
-	bool bSphereGrid = false;
+	/** Grid mode: Planar (flat hex grid) or Goldberg (geodesic sphere). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	EGridMode GridMode = EGridMode::Planar;
 
-	/** Multiplier for automatic sphere radius: AutoSphereRadius = TileSizeUU * Radius * SphereRadiusScale. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid", ClampMin = "0.1"))
-	float SphereRadiusScale = 1.0f;
+	/** Subdivision frequency for Goldberg grid (>=1). Higher values = more cells. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Goldberg", meta = (EditCondition = "GridMode == EGridMode::Goldberg", ClampMin = "1", UIMin = "1"))
+	int32 GoldbergFrequency = 3;
 
-	/** If true, sphere radius derives from TileSpacing*Radius*SphereRadiusScale; otherwise uses SphereRadiusOverrideUU. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid"))
-	bool bAutoSphereRadius = true;
+	/** Radius of the Goldberg sphere in world units. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Goldberg", meta = (EditCondition = "GridMode == EGridMode::Goldberg", ClampMin = "100"))
+	float GoldbergRadius = 3000.f;
 
-	/** Explicit sphere radius to use when bAutoSphereRadius is false. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid && !bAutoSphereRadius", ClampMin = "10"))
-	float SphereRadiusOverrideUU = 3000.f;
+	/** Check if currently in Goldberg grid mode. */
+	UFUNCTION(BlueprintPure, Category = "Grid")
+	bool IsGoldbergMode() const { return GridMode == EGridMode::Goldberg; }
 
-	/** Use Goldberg (geodesic) sphere instead of projected hex disc. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid"))
-	bool bUseGoldbergSphere = false; // NEW
+	/** Get the Goldberg grid object (only valid in Goldberg mode). */
+	UFUNCTION(BlueprintPure, Category = "Grid|Goldberg")
+	UGoldbergGrid* GetGoldbergGrid() const { return GoldbergGrid; }
 
-	/** Subdivision frequency for Goldberg sphere (>=1). */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Sphere", meta = (EditCondition = "bSphereGrid && bUseGoldbergSphere", ClampMin = "1", UIMin = "1"))
-	int32 GoldbergFrequency = 3; // NEW
+	/** Get position for a Goldberg cell by index. */
+	UFUNCTION(BlueprintCallable, Category = "Grid|Goldberg")
+	FVector GetGoldbergCellPosition(int32 CellIndex) const;
 
-	/** Current effective sphere radius (auto or override). */
-	UFUNCTION(BlueprintPure, Category = "Grid|Sphere")
-	float GetEffectiveSphereRadius() const { return bAutoSphereRadius ? (TileSizeUU * Radius * SphereRadiusScale) : SphereRadiusOverrideUU; }
+	/** Get rotation for a Goldberg cell by index (surface normal as up). */
+	UFUNCTION(BlueprintCallable, Category = "Grid|Goldberg")
+	FRotator GetGoldbergCellRotation(int32 CellIndex) const;
 
 	// ------------ Arm Timeline System ------------
 	// NOTE: These settings control ALL arm timeline widgets globally

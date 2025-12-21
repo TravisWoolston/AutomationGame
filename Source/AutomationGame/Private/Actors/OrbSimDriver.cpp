@@ -4,6 +4,7 @@
 #include "Sim/SimWorldHex.h"
 #include "Sim/HexCoord.h"
 #include "Sim/HexTypes.h"
+#include "Geometry/GoldbergGrid.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
@@ -540,82 +541,64 @@ FVector AOrbSimDriver::MapHexToWorld(const FHex& H) const
 {
 	const AActor* Anchor = GetGridAnchor();
 	const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
-	if (!IsSphereEnabled())
+	
+	// Goldberg mode: lookup cell position from the grid
+	if (bGoldbergMode && CachedGoldbergGrid)
 	{
-		const FVector2D XY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), TileSizeUU, GridOrientation);
-		const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
-		return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
+		const int32 CellIndex = CachedGoldbergGrid->GetCellIndexForHex(H);
+		if (CellIndex != INDEX_NONE)
+		{
+			return CachedGoldbergGrid->GetCells()[CellIndex].Position;
+		}
+		// Invalid hex - return zero (or could return anchor location)
+		UE_LOG(LogTemp, Warning, TEXT("MapHexToWorld: No Goldberg cell for hex (%d,%d)"), H.Q, H.R);
+		return FVector::ZeroVector;
 	}
-
-	// --- Full sphere mapping with equal-area latitude to avoid polar clustering ---
-	const FVector2D BaseXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), TileSizeUU, GridOrientation);
-	const float SpanX = FMath::Max(1.f, SphereMaxX - SphereMinX);
-	const float SpanY = FMath::Max(1.f, SphereMaxY - SphereMinY);
-	float tX = (BaseXY.X - SphereMinX) / SpanX; // [0,1]
-	float tY = (BaseXY.Y - SphereMinY) / SpanY; // [0,1]
-	const float OneMinusEps = 0.999999f;
-	tX = FMath::Clamp(tX, 0.f, OneMinusEps);
-	tY = FMath::Clamp(tY, 0.f, 1.f);
-
-	// Equal-area latitude: y in [0,1] -> m = 2y-1 in [-1,1]; Lat = asin(m)
-	const float m = FMath::Clamp(2.f * tY - 1.f, -0.999999f, 0.999999f); // avoid exactly +/-1
-	const float Lat = FMath::Asin(m); // [-pi/2, pi/2]
-	const float Lon = (tX * TWO_PI) - PI; // [-pi,pi)
-
-	const float CosLat = FMath::Cos(Lat);
-	const float SinLat = FMath::Sin(Lat);
-	const float SinLon = FMath::Sin(Lon);
-	const float CosLon = FMath::Cos(Lon);
-	FVector P(
-		SphereRadiusUU * CosLat * SinLon, // X
-		SphereRadiusUU * SinLat,          // Y (up before reorientation)
-		SphereRadiusUU * CosLat * CosLon  // Z
-	);
-	// Reorient to match existing convention (swap Y/Z)
-	P = FVector(P.X, P.Z, P.Y);
-	return AnchorLoc + P;
+	
+	// Planar mode
+	const FVector2D XY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), TileSizeUU, GridOrientation);
+	const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
+	return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
 }
 
 bool AOrbSimDriver::WorldToHex(const FVector& World, FHex& OutHex) const
 {
 	const AActor* Anchor = GetGridAnchor();
 	const FVector AnchorLoc = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
-	if (!IsSphereEnabled())
+	
+	// Goldberg mode: find nearest cell
+	if (bGoldbergMode && CachedGoldbergGrid)
 	{
-		FVector Local = World - AnchorLoc;
-		FVector2D Rot2D = HexCoord::Rotate2D(FVector2D(Local.X, Local.Y), -GridYawDeg);
-		FHexAxial A = HexCoord::XYToAxialRound(Rot2D, TileSizeUU, GridOrientation);
-		OutHex = FHex(A.Q, A.R);
-		return true;
+		const TArray<FGoldbergCell>& Cells = CachedGoldbergGrid->GetCells();
+		float BestDistSq = FLT_MAX;
+		int32 BestCellIndex = INDEX_NONE;
+		
+		for (int32 i = 0; i < Cells.Num(); ++i)
+		{
+			if (Cells[i].bPentagon) continue; // Skip pentagons
+			
+			float DistSq = FVector::DistSquared(World, Cells[i].Position);
+			if (DistSq < BestDistSq)
+			{
+				BestDistSq = DistSq;
+				BestCellIndex = i;
+			}
+		}
+		
+		if (BestCellIndex != INDEX_NONE)
+		{
+			OutHex = CachedGoldbergGrid->GetHexForCellIndex(BestCellIndex);
+			return true;
+		}
+		
+		OutHex = FHex(0, 0);
+		return false;
 	}
-
-	FVector D = World - AnchorLoc;
-	if (D.IsNearlyZero()) { OutHex = FHex(0, 0); return true; }
-	// Undo reorientation (stored as X,Z,Y)
-	const float Xs = D.X;
-	const float Ys = D.Z; // original Y (sinLat * R)
-	const float Zs = D.Y; // original Z
-	const float R = FVector(Xs, Ys, Zs).Size();
-	if (R < KINDA_SMALL_NUMBER) { OutHex = FHex(0, 0); return true; }
-	// Recover latitude via equal-area: SinLat = Ys / R
-	float SinLat = FMath::Clamp(Ys / R, -0.999999f, 0.999999f);
-	float Lat = FMath::Asin(SinLat);
-	float Lon = FMath::Atan2(Xs, Zs);
-	Lon = FMath::UnwindRadians(Lon);
-
-	// Forward mapping used: m = sin(Lat) = 2*tY -1  => tY = (m+1)/2
-	float tY = (SinLat + 1.f) * 0.5f; // [0,1]
-	float tX = (Lon + PI) / TWO_PI;   // [0,1)
-	tX = FMath::Clamp(tX, 0.f, 0.999999f);
-	tY = FMath::Clamp(tY, 0.f, 1.f);
-
-	const float SpanX = FMath::Max(1.f, SphereMaxX - SphereMinX);
-	const float SpanY = FMath::Max(1.f, SphereMaxY - SphereMinY);
-	const float PlanarX = SphereMinX + tX * SpanX;
-	const float PlanarY = SphereMinY + tY * SpanY;
-
-	FVector2D Planar(PlanarX, PlanarY);
-	FHexAxial A = HexCoord::XYToAxialRound(Planar, TileSizeUU, GridOrientation);
+	
+	// Planar mode
+	FVector Local = World - AnchorLoc;
+	FVector2D Rot2D = HexCoord::Rotate2D(FVector2D(Local.X, Local.Y), -GridYawDeg);
+	FHexAxial A = HexCoord::XYToAxialRound(Rot2D, TileSizeUU, GridOrientation);
 	OutHex = FHex(A.Q, A.R);
 	return true;
 }

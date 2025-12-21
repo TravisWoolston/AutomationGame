@@ -293,13 +293,12 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		}
 		else if (BeaconPlacementStep == 1) // DropOff Beacon
 		{
-			// Spawn DropOff Beacon
-			// Apply rotation based on BeltDir (reusing it for beacon rotation)
-			FRotator Rotation(0.f, (BeltDir % 6) * 60.f, 0.f);
-			// Add base grid rotation
+			// Spawn DropOff Beacon with same default rotation as Pickup
+			// (User can rotate with BeltDir if needed, but default matches Pickup)
+			FRotator Rotation = FRotator::ZeroRotator;
 			if (Driver)
 			{
-				Rotation.Yaw += Driver->GetGridYaw();
+				Rotation.Yaw = Driver->GetGridYaw();
 				if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
 				{
 					Rotation.Yaw += 30.f;
