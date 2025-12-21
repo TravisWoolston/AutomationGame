@@ -110,6 +110,13 @@ void USimWorldHex::StepBelts()
 					
 					for (int32 BondedId : BondedClusterIds)
 					{
+						// Don't move clusters containing newly placed items
+						if (NewlyPlacedItems.Contains(BondedId))
+						{
+							bCanMoveCluster = false;
+							break;
+						}
+						
 						// Find current position
 						FHex CurrentPos;
 						bool bFound = false;
@@ -422,7 +429,15 @@ void USimWorldHex::StepBelts()
 					bool bCanMoveCluster = true;
 					for (const auto& DestKV : ClusterDestinations)
 					{
+						int32 ItemId = DestKV.Key;
 						const FHex& DestPos = DestKV.Value;
+						
+						// Don't move clusters containing newly placed items
+						if (NewlyPlacedItems.Contains(ItemId))
+						{
+							bCanMoveCluster = false;
+							break;
+						}
 
 						if (HeldOrbHexes.Contains(DestPos))
 						{
@@ -611,6 +626,13 @@ void USimWorldHex::StepBelts()
 			bCanMove = false;
 		}
 		
+		// Don't move items that were just placed this tick (by walkers, inputs, etc.)
+		// They need to spend at least one tick on their placement tile
+		if (NewlyPlacedItems.Contains(Item.Id))
+		{
+			bCanMove = false;
+		}
+		
 		// Special case for bond/unbond tiles - can move there if empty
 		// Note: Still respect walker feet and held orb obstacles (don't overwrite bCanMove)
 		DestTile = TileMap.Find(ToHex);
@@ -675,6 +697,13 @@ void USimWorldHex::StepBelts()
 
 		for (int32 ConnectedId : MoveOp.ConnectedItemIds)
 		{
+			// Don't move clusters containing newly placed items
+			if (NewlyPlacedItems.Contains(ConnectedId))
+			{
+				bCanMoveCluster = false;
+				break;
+			}
+			
 			FHex ConnectedCurrentHex;
 			bool bFoundConnected = false;
 			for (const auto& BoardKV : ItemMap)
@@ -993,6 +1022,13 @@ void USimWorldHex::StepBelts()
 			// Check all items in the cluster
 		for (int32 ItemId : MoveOp.ConnectedItemIds)
 		{
+				// Don't move clusters containing newly placed items
+				if (NewlyPlacedItems.Contains(ItemId))
+				{
+					bCanMove = false;
+					break;
+				}
+				
 				// Find current position of this item
 				FHex CurrentPos;
 				bool bFoundPos = false;

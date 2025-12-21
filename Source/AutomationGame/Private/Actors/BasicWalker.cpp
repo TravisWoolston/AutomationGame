@@ -553,49 +553,99 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		RFootHeldItem = SimState.RFoot.HeldItem;
 		UFootHeldItem = SimState.UFoot.HeldItem;
 
-		// Log state changes and handle drop visual transitions
+		// Calculate visual delay based on step duration (wait for move animation to complete)
+		const int32 VisualDelay = SimState.StepMoveTicks;
+		
+		// Detect sim tick boundaries BEFORE prev variables are updated (for visual delay system)
+		// This must happen here because the foot processing loops update Prev variables
+		bool bSimTickOccurredThisFrame = 
+			(SimState.DFoot.StepState != DFootPrevStepState) || 
+			(SimState.DFoot.StepProgress != DFootPrevStepProgress) ||
+			(SimState.LFoot.StepState != LFootPrevStepState) || 
+			(SimState.LFoot.StepProgress != LFootPrevStepProgress) ||
+			(SimState.RFoot.StepState != RFootPrevStepState) || 
+			(SimState.RFoot.StepProgress != RFootPrevStepProgress) ||
+			(SimState.UFoot.StepState != UFootPrevStepState) || 
+			(SimState.UFoot.StepProgress != UFootPrevStepProgress);
+		
+		// Decrement visual delay counters on each sim tick (done here before Prev vars are updated)
+		if (bSimTickOccurredThisFrame)
+		{
+			if (DFootPickupVisualDelay > 0) DFootPickupVisualDelay--;
+			if (LFootPickupVisualDelay > 0) LFootPickupVisualDelay--;
+			if (RFootPickupVisualDelay > 0) RFootPickupVisualDelay--;
+			if (UFootPickupVisualDelay > 0) UFootPickupVisualDelay--;
+			
+			if (DFootDropVisualDelay > 0) DFootDropVisualDelay--;
+			if (LFootDropVisualDelay > 0) LFootDropVisualDelay--;
+			if (RFootDropVisualDelay > 0) RFootDropVisualDelay--;
+			if (UFootDropVisualDelay > 0) UFootDropVisualDelay--;
+		}
+		
+		// Log state changes and handle pickup/drop visual transitions with sim-tick-based delay
 		if (bDFootHoldingItem != bPrevDHolding)
 		{
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': DFoot holding changed to %d"), *GetName(), bDFootHoldingItem ? 1 : 0);
-			if (!bDFootHoldingItem && bPrevDHolding)
+			if (bDFootHoldingItem && !bPrevDHolding)
 			{
-				// Transitioning to NOT holding - start pending drop visual
+				// Transitioning to holding - set delay counter for pickup visual
+				bDFootHeldVisualReady = false;
+				DFootPickupVisualDelay = VisualDelay;
+			}
+			else if (!bDFootHoldingItem && bPrevDHolding)
+			{
+				// Transitioning to NOT holding - set delay counter for drop visual
 				bDFootPendingDropVisual = true;
 				bDFootHeldVisualReady = false;
-				DFootDropTargetHex = Sim->Walkers[SimWalkerIndex].DFoot.CurrentTile;
+				DFootDropVisualDelay = VisualDelay;
 				DFootCachedDropItem = DFootHeldItem; // Cache the item for continued rendering
 			}
 		}
 		if (bLFootHoldingItem != bPrevLHolding)
 		{
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': LFoot holding changed to %d"), *GetName(), bLFootHoldingItem ? 1 : 0);
-			if (!bLFootHoldingItem && bPrevLHolding)
+			if (bLFootHoldingItem && !bPrevLHolding)
+			{
+				bLFootHeldVisualReady = false;
+				LFootPickupVisualDelay = VisualDelay;
+			}
+			else if (!bLFootHoldingItem && bPrevLHolding)
 			{
 				bLFootPendingDropVisual = true;
 				bLFootHeldVisualReady = false;
-				LFootDropTargetHex = Sim->Walkers[SimWalkerIndex].LFoot.CurrentTile;
+				LFootDropVisualDelay = VisualDelay;
 				LFootCachedDropItem = LFootHeldItem;
 			}
 		}
 		if (bRFootHoldingItem != bPrevRHolding)
 		{
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': RFoot holding changed to %d"), *GetName(), bRFootHoldingItem ? 1 : 0);
-			if (!bRFootHoldingItem && bPrevRHolding)
+			if (bRFootHoldingItem && !bPrevRHolding)
+			{
+				bRFootHeldVisualReady = false;
+				RFootPickupVisualDelay = VisualDelay;
+			}
+			else if (!bRFootHoldingItem && bPrevRHolding)
 			{
 				bRFootPendingDropVisual = true;
 				bRFootHeldVisualReady = false;
-				RFootDropTargetHex = Sim->Walkers[SimWalkerIndex].RFoot.CurrentTile;
+				RFootDropVisualDelay = VisualDelay;
 				RFootCachedDropItem = RFootHeldItem;
 			}
 		}
 		if (bUFootHoldingItem != bPrevUHolding)
 		{
 			UE_LOG(LogTemp, Log, TEXT("Walker '%s': UFoot holding changed to %d"), *GetName(), bUFootHoldingItem ? 1 : 0);
-			if (!bUFootHoldingItem && bPrevUHolding)
+			if (bUFootHoldingItem && !bPrevUHolding)
+			{
+				bUFootHeldVisualReady = false;
+				UFootPickupVisualDelay = VisualDelay;
+			}
+			else if (!bUFootHoldingItem && bPrevUHolding)
 			{
 				bUFootPendingDropVisual = true;
 				bUFootHeldVisualReady = false;
-				UFootDropTargetHex = Sim->Walkers[SimWalkerIndex].UFoot.CurrentTile;
+				UFootDropVisualDelay = VisualDelay;
 				UFootCachedDropItem = UFootHeldItem;
 			}
 		}
@@ -1177,42 +1227,27 @@ void ABasicWalker::Tick(float DeltaSeconds)
 	}
 
 	// --- Deferred Held Item Visuals ---
-	// Only show held item visual once foot has visually arrived at target tile
-	// This prevents items from appearing before the foot animation completes
-	if (Sim && SimWalkerIndex >= 0 && SimWalkerIndex < Sim->Walkers.Num() && Driver && BodyComp)
+	// Uses sim-tick-based delays to sync visual with foot movement animation
+	// Delay counters are decremented earlier in Tick (before Prev vars are updated)
+	if (Sim && SimWalkerIndex >= 0 && SimWalkerIndex < Sim->Walkers.Num() && Driver)
 	{
-		const FWalkerState& SimState = Sim->Walkers[SimWalkerIndex];
-		
-		// Use actual tile size for threshold - foot should be within ~25% of tile radius
-		const float TileSize = Driver->GetTileSize();
-		const float ArrivalThresholdSq = (TileSize * 0.25f) * (TileSize * 0.25f);
-		
-		// Get actual foot bone world positions (works correctly with ManualFootGoals)
-		const FVector DFootBonePos = BodyComp->GetBoneLocation(DFootBoneName, EBoneSpaces::WorldSpace);
-		const FVector LFootBonePos = BodyComp->GetBoneLocation(LFootBoneName, EBoneSpaces::WorldSpace);
-		const FVector RFootBonePos = BodyComp->GetBoneLocation(RFootBoneName, EBoneSpaces::WorldSpace);
-		const FVector UFootBonePos = BodyComp->GetBoneLocation(UFootBoneName, EBoneSpaces::WorldSpace);
-		
-		// Lambda to check foot arrival and handle both pickup and drop visual timing
+		// Lambda to check foot visual state using sim-tick-based delays
 		// Returns: pair of (bShowItem, ItemToShow)
-		auto CheckFootVisualState = [&](bool bSimHolding, bool& bVisualReady, bool& bPendingDrop, 
-			const FVector& BonePos, const FHex& CurrentTile, const FHex& DropTargetHex,
+		auto CheckFootVisualState = [&](bool bSimHolding, bool& bVisualReady, bool& bPendingDrop,
+			int32 PickupDelay, int32 DropDelay,
 			const FItem& HeldItem, const FItem& CachedDropItem) -> TPair<bool, FItem>
 		{
-			// Case 1: Pending drop visual - sim dropped but foot hasn't arrived visually
+			// Case 1: Pending drop visual - sim dropped but delay hasn't elapsed
 			if (bPendingDrop)
 			{
-				const FVector DropWorld = Driver->MapHexToWorld(DropTargetHex);
-				const float DistSq = FVector::DistSquared2D(BonePos, DropWorld);
-				
-				if (DistSq < ArrivalThresholdSq)
+				if (DropDelay <= 0)
 				{
-					// Foot has visually arrived at drop location - stop showing
+					// Delay elapsed - stop showing
 					bPendingDrop = false;
 					return TPair<bool, FItem>(false, FItem());
 				}
 				
-				// Still in transit to drop location - keep showing cached item
+				// Still in delay period - keep showing cached item
 				return TPair<bool, FItem>(true, CachedDropItem);
 			}
 			
@@ -1223,31 +1258,34 @@ void ABasicWalker::Tick(float DeltaSeconds)
 				return TPair<bool, FItem>(false, FItem());
 			}
 			
-			// Case 3: Already visually ready (holding and arrived) - keep showing
+			// Case 3: Already visually ready - keep showing
 			if (bVisualReady)
 			{
 				return TPair<bool, FItem>(true, HeldItem);
 			}
 			
-			// Case 4: Holding but waiting for visual arrival at pickup
-			// NOTE: For holding feet that are constantly recentering, CurrentTile changes every tick.
-			// Use a more lenient check - if we've been holding for a bit, just show it.
-			// The sim sets bHoldingItem=true when pickup completes, so we can trust that.
-			// Set bVisualReady=true immediately to avoid the check failing due to moving CurrentTile.
-			bVisualReady = true;
-			return TPair<bool, FItem>(true, HeldItem);
+			// Case 4: Holding but waiting for delay to elapse
+			if (PickupDelay <= 0)
+			{
+				// Delay elapsed - show item
+				bVisualReady = true;
+				return TPair<bool, FItem>(true, HeldItem);
+			}
+			
+			// Still in delay period - don't show yet
+			return TPair<bool, FItem>(false, FItem());
 		};
 		
 		auto DResult = CheckFootVisualState(bDFootHoldingItem, bDFootHeldVisualReady, bDFootPendingDropVisual,
-			DFootBonePos, SimState.DFoot.CurrentTile, DFootDropTargetHex, DFootHeldItem, DFootCachedDropItem);
+			DFootPickupVisualDelay, DFootDropVisualDelay, DFootHeldItem, DFootCachedDropItem);
 		auto LResult = CheckFootVisualState(bLFootHoldingItem, bLFootHeldVisualReady, bLFootPendingDropVisual,
-			LFootBonePos, SimState.LFoot.CurrentTile, LFootDropTargetHex, LFootHeldItem, LFootCachedDropItem);
+			LFootPickupVisualDelay, LFootDropVisualDelay, LFootHeldItem, LFootCachedDropItem);
 		auto RResult = CheckFootVisualState(bRFootHoldingItem, bRFootHeldVisualReady, bRFootPendingDropVisual,
-			RFootBonePos, SimState.RFoot.CurrentTile, RFootDropTargetHex, RFootHeldItem, RFootCachedDropItem);
+			RFootPickupVisualDelay, RFootDropVisualDelay, RFootHeldItem, RFootCachedDropItem);
 		auto UResult = CheckFootVisualState(bUFootHoldingItem, bUFootHeldVisualReady, bUFootPendingDropVisual,
-			UFootBonePos, SimState.UFoot.CurrentTile, UFootDropTargetHex, UFootHeldItem, UFootCachedDropItem);
+			UFootPickupVisualDelay, UFootDropVisualDelay, UFootHeldItem, UFootCachedDropItem);
 		
-		// Update held item visuals based on visual arrival state
+		// Update held item visuals based on sim-tick delay state
 		UpdateHeldItemVisuals(DFootHeldOrbComp, DResult.Key, DResult.Value, FName(TEXT("DFoot_Socket")), CachedDFootHeldItemId);
 		UpdateHeldItemVisuals(LFootHeldOrbComp, LResult.Key, LResult.Value, FName(TEXT("LFoot_Socket")), CachedLFootHeldItemId);
 		UpdateHeldItemVisuals(RFootHeldOrbComp, RResult.Key, RResult.Value, FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);

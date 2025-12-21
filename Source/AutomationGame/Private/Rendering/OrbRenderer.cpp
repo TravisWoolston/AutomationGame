@@ -934,7 +934,7 @@ void UOrbRenderer::RebuildBondedOrbs()
 		auto CalcZOffset = [&](const USimWorldHex::FAnimatedOrb& Orb) -> float
 		{
 			float StepProgress = 0.f;
-			const int32 AnimationDuration = (Orb.CompletionStep + 20)- Orb.StartStep;
+			const int32 AnimationDuration = (Orb.CompletionStep)- Orb.StartStep;
 			
 			if (CurrentStep < Orb.StartStep)
 				StepProgress = 0.f;
@@ -948,10 +948,14 @@ void UOrbRenderer::RebuildBondedOrbs()
 			
 			const float Progress = FMath::Clamp(StepProgress, 0.f, 1.f);
 			
+			// Maintain constant descent rate: 50 units per 3 ticks
+			constexpr float DescentRatePerTick = 100.0f / 3.0f;
+			const float TotalDistance = DescentRatePerTick * (float)AnimationDuration;
+			
 			if (Orb.bIsInput)
-				return FMath::Lerp(-50.f, 0.f, Progress);
+				return FMath::Lerp(-TotalDistance, 0.f, Progress);
 			else
-				return FMath::Lerp(0.f, -50.f, Progress);
+				return FMath::Lerp(0.f, -TotalDistance, Progress);
 		};
 		
 		const FVector FinalPos1 = BasePos1 + FVector(0.f, 0.f, CalcZOffset(AnimatedOrb));
@@ -1045,16 +1049,20 @@ void UOrbRenderer::RenderAnimatedOrbs()
 		
 		
 		// Calculate Z offset based on animation type and progress
+		// Maintain constant descent rate: 50 units per 3 ticks
+		constexpr float DescentRatePerTick = 100.0f / 3.0f;
+		const float TotalDistance = DescentRatePerTick * (float)AnimationDuration;
+		
 		float ZOffset = 0.f;
 		if (AnimatedOrb.bIsInput)
 		{
 			// Input: start below ground, ascend to tile level
-			ZOffset = FMath::Lerp(-50.f, 0.f, Progress);
+			ZOffset = FMath::Lerp(-TotalDistance, 0.f, Progress);
 		}
 		else
 		{
 			// Output: start at tile level, descend below ground
-			ZOffset = FMath::Lerp(0.f, -50.f, Progress);
+			ZOffset = FMath::Lerp(0.f, -TotalDistance, Progress);
 		}
 		
 		const FVector FinalPos = BasePos + FVector(0.f, 0.f, ZOffset);

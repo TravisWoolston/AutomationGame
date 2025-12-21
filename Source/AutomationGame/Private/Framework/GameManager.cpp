@@ -1343,6 +1343,7 @@ int32 AGameManager::GenerateRandomCluster()
 
 	// Generate bonds: bond each orb to its neighbors in the structure
 	TArray<TPair<int32, int32>> Bonds;
+	int32 DifferentTypePairs = 0; // Count adjacent pairs with different orb types
 	for (int32 i = 0; i < GeneratedOrbs.Num(); i++)
 	{
 		const FOrbData& Orb1 = GeneratedOrbs[i];
@@ -1358,20 +1359,28 @@ int32 AGameManager::GenerateRandomCluster()
 			if (Dist == 1)
 			{
 				Bonds.Add(TPair<int32, int32>(i, j));
+				// Add 1 difficulty point for each adjacent pair of different orb types
+				if (Orb1.Type != Orb2.Type)
+				{
+					DifferentTypePairs++;
+				}
 			}
 		}
 	}
+
+	// Calculate final difficulty: base + bonus from different type pairs
+	const int32 FinalDifficulty = DifficultyValue + DifferentTypePairs;
 
 	// Generate a unique template ID
 	uint8 TemplateId = Sim->GenerateNewTemplateId();
 
 	// Register the template
 	FString TemplateName = FString::Printf(TEXT("Random_Difficulty%d_Types%d_Orbs%d"),
-		DifficultyValue, NumUniqueTypes, GeneratedOrbs.Num());
+		FinalDifficulty, NumUniqueTypes, GeneratedOrbs.Num());
 	Sim->RegisterClusterTemplate(TemplateId, GeneratedOrbs, Bonds, TemplateName);
 
-	UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Registered template ID %d with %d orbs and %d bonds"),
-		TemplateId, GeneratedOrbs.Num(), Bonds.Num());
+	UE_LOG(LogTemp, Log, TEXT("GenerateRandomCluster: Registered template ID %d with %d orbs and %d bonds (Difficulty: %d base + %d different-type pairs = %d)"),
+		TemplateId, GeneratedOrbs.Num(), Bonds.Num(), DifficultyValue, DifferentTypePairs, FinalDifficulty);
 
 	return (int32)TemplateId;
 }

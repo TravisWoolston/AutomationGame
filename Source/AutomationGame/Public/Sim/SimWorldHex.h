@@ -281,7 +281,7 @@ private:
 	FVector WorldAnchor = FVector::ZeroVector;
 	float   GridYawDeg = 0.f;
 	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
-	int OUTPUT_DESCEND_TICKS = 3;
+	int OUTPUT_DESCEND_TICKS = 40;
 	// One-frame skip sets
 	TSet<FHex> SkipInputThisFrame;
 	TSet<FHex> SkipOutputThisFrame;

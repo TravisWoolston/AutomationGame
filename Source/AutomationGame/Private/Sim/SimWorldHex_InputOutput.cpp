@@ -934,12 +934,12 @@ void USimWorldHex::ProcessOutputs()
 				ItemMap.Remove(H);
 				OrbAt.Remove(H);
 
-				// Create animated orb for output (descending) - synchronized to step counter
-				FAnimatedOrb AnimatedOrb;
-				AnimatedOrb.Item = Temp;
-				AnimatedOrb.Hex = H;
-				AnimatedOrb.StartStep = StepCounter; // Start immediately this step
-				AnimatedOrb.CompletionStep = StepCounter + 3;
+			// Create animated orb for output (descending) - synchronized to step counter
+			FAnimatedOrb AnimatedOrb;
+			AnimatedOrb.Item = Temp;
+			AnimatedOrb.Hex = H;
+			AnimatedOrb.StartStep = StepCounter; // Start immediately this step
+			AnimatedOrb.CompletionStep = StepCounter + OUTPUT_DESCEND_TICKS;
 				AnimatedOrb.bIsInput = false;
 				AnimatedOrb.bActive = true;
 				
@@ -955,12 +955,12 @@ void USimWorldHex::ProcessOutputs()
 					ItemMap.Remove(PartnerOutputHex);
 					OrbAt.Remove(PartnerOutputHex);
 					
-					FAnimatedOrb PartnerAnimatedOrb;
-					PartnerAnimatedOrb.Item = PartnerTemp;
-					PartnerAnimatedOrb.Hex = PartnerOutputHex;
-					PartnerAnimatedOrb.StartStep = StepCounter;
-					PartnerAnimatedOrb.CompletionStep = StepCounter + 3;
-					PartnerAnimatedOrb.bIsInput = false;
+				FAnimatedOrb PartnerAnimatedOrb;
+				PartnerAnimatedOrb.Item = PartnerTemp;
+				PartnerAnimatedOrb.Hex = PartnerOutputHex;
+				PartnerAnimatedOrb.StartStep = StepCounter;
+				PartnerAnimatedOrb.CompletionStep = StepCounter + OUTPUT_DESCEND_TICKS;
+				PartnerAnimatedOrb.bIsInput = false;
 					PartnerAnimatedOrb.bActive = true;
 					PartnerAnimatedOrb.bIsBonded = true;
 					PartnerAnimatedOrb.PartnerHex = H;
@@ -1183,13 +1183,13 @@ void USimWorldHex::ProcessOutputs()
 			const FItem* TileItem = ItemMap.Find(TileHex);
 			if (TileItem)
 			{
-				// Create descending animation for this orb
-				FAnimatedOrb AnimatedOrb;
-				AnimatedOrb.Item = *TileItem;
-				AnimatedOrb.Hex = TileHex;
-				AnimatedOrb.StartStep = StepCounter;
-				AnimatedOrb.CompletionStep = StepCounter + 3;
-				AnimatedOrb.bIsInput = false;
+			// Create descending animation for this orb
+			FAnimatedOrb AnimatedOrb;
+			AnimatedOrb.Item = *TileItem;
+			AnimatedOrb.Hex = TileHex;
+			AnimatedOrb.StartStep = StepCounter;
+			AnimatedOrb.CompletionStep = StepCounter + OUTPUT_DESCEND_TICKS;
+			AnimatedOrb.bIsInput = false;
 				AnimatedOrb.bActive = true;
 				AnimatedOrb.bIsBonded = false; // Will be set if bonded to another orb in cluster
 				

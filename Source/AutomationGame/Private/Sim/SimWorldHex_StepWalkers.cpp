@@ -60,11 +60,17 @@ void USimWorldHex::StepWalkers()
 			ActiveTargetHexes.Add(W.Requests[0].TargetHex);
 		}
 
-		// Also check holding feet destinations
+		// Also check holding feet destinations (drop-off)
 		if (W.DFoot.bHoldingItem && W.DFoot.bHasDesignatedDropOff) ActiveTargetHexes.Add(W.DFoot.DesignatedDropOffHex);
 		if (W.LFoot.bHoldingItem && W.LFoot.bHasDesignatedDropOff) ActiveTargetHexes.Add(W.LFoot.DesignatedDropOffHex);
 		if (W.RFoot.bHoldingItem && W.RFoot.bHasDesignatedDropOff) ActiveTargetHexes.Add(W.RFoot.DesignatedDropOffHex);
 		if (W.UFoot.bHoldingItem && W.UFoot.bHasDesignatedDropOff) ActiveTargetHexes.Add(W.UFoot.DesignatedDropOffHex);
+		
+		// Also track source pickup beacons to keep them InProgress until delivery
+		if (W.DFoot.bHoldingItem && W.DFoot.bHasSourcePickUp) ActiveTargetHexes.Add(W.DFoot.SourcePickUpHex);
+		if (W.LFoot.bHoldingItem && W.LFoot.bHasSourcePickUp) ActiveTargetHexes.Add(W.LFoot.SourcePickUpHex);
+		if (W.RFoot.bHoldingItem && W.RFoot.bHasSourcePickUp) ActiveTargetHexes.Add(W.RFoot.SourcePickUpHex);
+		if (W.UFoot.bHoldingItem && W.UFoot.bHasSourcePickUp) ActiveTargetHexes.Add(W.UFoot.SourcePickUpHex);
 	}
 
 	for (ARequestBeacon* Beacon : AllBeacons)

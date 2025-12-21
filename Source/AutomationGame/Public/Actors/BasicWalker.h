@@ -503,17 +503,23 @@ private:
 	bool bRFootHeldVisualReady = false;
 	bool bUFootHeldVisualReady = false;
 	
-	// Track pending drop visuals - keep showing held item until foot visually arrives at drop location
+	// Track pending drop visuals - keep showing held item until delay elapses
 	bool bDFootPendingDropVisual = false;
 	bool bLFootPendingDropVisual = false;
 	bool bRFootPendingDropVisual = false;
 	bool bUFootPendingDropVisual = false;
 	
-	// Store last drop target hex to check visual arrival during drop transition
-	FHex DFootDropTargetHex;
-	FHex LFootDropTargetHex;
-	FHex RFootDropTargetHex;
-	FHex UFootDropTargetHex;
+	// Sim-tick-based delay counters for pickup/drop visual timing
+	// When pickup/drop occurs, set to StepMoveTicks; decrement each sim tick; show/hide when <= 0
+	int32 DFootPickupVisualDelay = 0;
+	int32 LFootPickupVisualDelay = 0;
+	int32 RFootPickupVisualDelay = 0;
+	int32 UFootPickupVisualDelay = 0;
+	
+	int32 DFootDropVisualDelay = 0;
+	int32 LFootDropVisualDelay = 0;
+	int32 RFootDropVisualDelay = 0;
+	int32 UFootDropVisualDelay = 0;
 	
 	// Cache held item data for rendering during drop visual transition
 	FItem DFootCachedDropItem;

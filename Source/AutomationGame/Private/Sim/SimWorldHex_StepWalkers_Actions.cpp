@@ -135,7 +135,7 @@ void USimWorldHex::TryWalkerPickUp(FWalkerState& W, FFootState& Foot, int32 Walk
 
 	if (bPickedSuccessfully)
 	{
-		PickUpBeacon->SetState(EBeaconState::NotReady);
+		// PickUp beacon stays InProgress until delivery - will be set to NotReady when drop-off completes
 		Foot.HeldItem = PickedItem;
 		Foot.bHoldingItem = true;
 		Foot.CurrentTile = Foot.TargetTile;
@@ -143,6 +143,10 @@ void USimWorldHex::TryWalkerPickUp(FWalkerState& W, FFootState& Foot, int32 Walk
 		Foot.StepState = EFootStepState::Planted;
 		Foot.StepProgress = 0;
 		Foot.HeightOffset = W.StepHeight;
+		
+		// Track the source pickup beacon hex to keep it InProgress until delivery
+		Foot.SourcePickUpHex = FHex(PickUpBeacon->Q, PickUpBeacon->R);
+		Foot.bHasSourcePickUp = true;
 
 		if (PickUpBeacon->PairedBeacon)
 		{
@@ -412,8 +416,15 @@ bool USimWorldHex::TryWalkerDropOff(FWalkerState& W, FFootState& Foot, int32 Wal
 			{
 				Foot.bHoldingItem = false;
 				Foot.bHasDesignatedDropOff = false;
+				Foot.bHasSourcePickUp = false;
 				Foot.HeldItem = FItem();
 				DropOffBeacon->SetState(EBeaconState::NotReady);
+				
+				// Also set the paired PickUp beacon to NotReady now that delivery is complete
+				if (DropOffBeacon->PairedBeacon)
+				{
+					DropOffBeacon->PairedBeacon->SetState(EBeaconState::NotReady);
+				}
 
 				Foot.CurrentTile = Foot.TargetTile;
 				Foot.StepState = EFootStepState::Lowering;

@@ -88,6 +88,14 @@ struct AUTOMATIONGAME_API FFootState
 	// Whether the held item has a designated drop-off location
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bHasDesignatedDropOff = false;
+	
+	// The source pickup beacon hex (to keep it InProgress until delivery)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FHex SourcePickUpHex;
+	
+	// Whether there's a source pickup beacon to track
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool bHasSourcePickUp = false;
 };
 
 // Legacy instruction system (kept for backward compatibility with scenario saving)
