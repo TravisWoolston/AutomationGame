@@ -1678,6 +1678,25 @@ int32 AGameManager::GetClusterCount(const USimWorldHex::FClusterTemplate& Cluste
 	return 0;
 }
 
+int32 AGameManager::GetTotalClusterCount() const
+{
+	int32 Total = 0;
+	for (const auto& KV : ClusterCounts)
+	{
+		Total += KV.Value;
+	}
+	return Total;
+}
+
+bool AGameManager::HasStorageRoomForCluster(const USimWorldHex::FClusterTemplate& ClusterTemplate) const
+{
+	if (!UseStorageLimit)
+	{
+		return true;
+	}
+	return GetClusterCount(ClusterTemplate) < StorageLimit;
+}
+
 int32 AGameManager::GetClusterCountByTemplateId(uint8 TemplateId) const
 {
 	if (const FClusterCanonicalKey* CachedKey = TemplateIdToCanonicalKey.Find(TemplateId))

@@ -581,6 +581,11 @@ void USimWorldHex::StepBelts()
 		// Handle items on belts
 		if (SourceTile->Kind == ETileKind::Belt)
 		{
+		// Check if this belt is disabled by a TriggerTile
+		if (!IsBeltEnabled(FromHex))
+		{
+			continue; // Belt is disabled, skip processing
+		}
 		
 		// Get belt direction and destination
 			const uint8 BeltDir = (uint8)(SourceTile->Arg & 0xFF);
@@ -1299,6 +1304,7 @@ void USimWorldHex::StepBelts()
 		const FTile& BeltTile = KV.Value;
 
 		if (BeltTile.Kind != ETileKind::Belt) continue;
+		if (!IsBeltEnabled(BeltHex)) continue; // Skip disabled belts
 		if (ItemMap.Contains(BeltHex)) continue;
 		if (HeldOrbHexes.Contains(BeltHex)) continue;
 

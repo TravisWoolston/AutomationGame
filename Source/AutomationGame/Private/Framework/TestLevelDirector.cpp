@@ -4,6 +4,7 @@
 #include "Actors/OrbSimDriver.h"
 #include "Actors/HexFactoryActor.h"
 #include "Actors/RequestBeacon.h"
+#include "Actors/TriggerTile.h"
 #include "Sim/SimWorldHex.h"
 #include "Geometry/GoldbergGrid.h"
 #include "Engine/World.h"
@@ -228,6 +229,22 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 					DestroyActorNow(Beacon);
 				}
 			}
+			
+			// Also destroy any residual trigger tiles
+			TArray<ATriggerTile*> TriggerTilesToDestroy;
+			for (TActorIterator<ATriggerTile> It(W); It; ++It)
+			{
+				TriggerTilesToDestroy.Add(*It);
+			}
+			for (ATriggerTile* TriggerTile : TriggerTilesToDestroy)
+			{
+				if (TriggerTile)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying TriggerTile at (%d,%d) during scenario reset"),
+						TriggerTile->Q, TriggerTile->R);
+					DestroyActorNow(TriggerTile);
+				}
+			}
 		}
 	}
 
@@ -269,6 +286,12 @@ void ATestLevelDirector::ClearArms()
 			{
 				DestroyActorNow(B.Spawned);
 				B.Spawned = nullptr;
+			}
+		for (FTriggerTileSpec& T : Sc.TriggerTiles)
+			if (T.Spawned)
+			{
+				DestroyActorNow(T.Spawned);
+				T.Spawned = nullptr;
 			}
 	}
 }
@@ -481,6 +504,43 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 					OtherSpec.Q, OtherSpec.R, (int32)OtherSpec.BeaconRole);
 				break;
 			}
+		}
+	}
+
+	// Spawn trigger tiles from scenario
+	UClass* TriggerTileClassToUse = TriggerTileClass ? TriggerTileClass.Get() : nullptr;
+	if (!TriggerTileClassToUse && GM && GM->TriggerTileClass)
+	{
+		TriggerTileClassToUse = GM->TriggerTileClass.Get();
+	}
+
+	for (FTriggerTileSpec& TriggerSpec : const_cast<TArray<FTriggerTileSpec>&>(S.TriggerTiles))
+	{
+		if (!TriggerTileClassToUse) continue;
+		
+		// Skip if already spawned
+		if (TriggerSpec.Spawned && IsValid(TriggerSpec.Spawned))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: TriggerTile at (%d,%d) already spawned, skipping"), TriggerSpec.Q, TriggerSpec.R);
+			continue;
+		}
+
+		FHex TriggerHex(TriggerSpec.Q, TriggerSpec.R);
+		FVector Location = Driver->MapHexToWorld(TriggerHex);
+		FRotator Rotation(0.f, TriggerSpec.Rotation, 0.f);
+		
+		TriggerSpec.Spawned = W->SpawnActor<ATriggerTile>(TriggerTileClassToUse, Location, Rotation);
+		if (TriggerSpec.Spawned)
+		{
+			TriggerSpec.Spawned->Q = TriggerSpec.Q;
+			TriggerSpec.Spawned->R = TriggerSpec.R;
+			TriggerSpec.Spawned->TriggerOrbType = TriggerSpec.TriggerOrbType;
+			TriggerSpec.Spawned->SetOwnerBelt(TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
+			TriggerSpec.Spawned->UpdateVisuals();
+			
+			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Spawned TriggerTile at (%d,%d) Type=%s Owner=(%d,%d)"),
+				TriggerSpec.Q, TriggerSpec.R, *UEnum::GetValueAsString(TriggerSpec.TriggerOrbType),
+				TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
 		}
 	}
 
@@ -1071,6 +1131,124 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 	return bRemovedAny;
 }
 
+void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, int32 OwnerQ, int32 OwnerR, float Rotation)
+{
+	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
+	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+
+	auto FindRuntimeTriggerTileAt = [&](int32 InQ, int32 InR) -> ATriggerTile*
+		{
+			if (!GetWorld()) return nullptr;
+			for (TActorIterator<ATriggerTile> It(GetWorld()); It; ++It)
+			{
+				if (It->Q == InQ && It->R == InR)
+				{
+					return *It;
+				}
+			}
+			return nullptr;
+		};
+
+	for (FTriggerTileSpec& T : Sc.TriggerTiles)
+	{
+		if (T.Q == Q && T.R == R)
+		{
+			T.TriggerOrbType = TriggerOrbType;
+			T.OwnerQ = OwnerQ;
+			T.OwnerR = OwnerR;
+			T.Rotation = Rotation;
+			if (!T.Spawned) T.Spawned = FindRuntimeTriggerTileAt(Q, R);
+			MarkActiveScenarioDirty();
+#if WITH_EDITOR
+			MirrorScenarioEditsToEditor();
+#endif
+			return;
+		}
+	}
+
+	FTriggerTileSpec NewT;
+	NewT.Q = Q;
+	NewT.R = R;
+	NewT.TriggerOrbType = TriggerOrbType;
+	NewT.OwnerQ = OwnerQ;
+	NewT.OwnerR = OwnerR;
+	NewT.Rotation = Rotation;
+	NewT.Spawned = FindRuntimeTriggerTileAt(Q, R);
+	
+	Sc.TriggerTiles.Add(NewT);
+	MarkActiveScenarioDirty();
+#if WITH_EDITOR
+	MirrorScenarioEditsToEditor();
+#endif
+}
+
+bool ATestLevelDirector::RemoveTriggerTileSpec(int32 Q, int32 R)
+{
+	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
+	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+
+	bool bRemovedAny = false;
+	
+	// Remove all trigger tiles at this hex
+	for (int32 i = Sc.TriggerTiles.Num() - 1; i >= 0; --i)
+	{
+		if (Sc.TriggerTiles[i].Q == Q && Sc.TriggerTiles[i].R == R)
+		{
+			if (Sc.TriggerTiles[i].Spawned)
+			{
+				DestroyActorNow(Sc.TriggerTiles[i].Spawned);
+				Sc.TriggerTiles[i].Spawned = nullptr;
+			}
+			else if (UWorld* W = GetWorld())
+			{
+				for (TActorIterator<ATriggerTile> It(W); It; ++It)
+				{
+					if (It->Q == Q && It->R == R)
+					{
+						DestroyActorNow(*It);
+						break;
+					}
+				}
+			}
+
+			Sc.TriggerTiles.RemoveAt(i);
+			bRemovedAny = true;
+		}
+	}
+
+	if (bRemovedAny)
+	{
+		MarkActiveScenarioDirty();
+#if WITH_EDITOR
+		MirrorScenarioEditsToEditor();
+#endif
+		return true;
+	}
+
+	// Fallback: remove any runtime trigger tiles not in specs
+	if (UWorld* W = GetWorld())
+	{
+		for (TActorIterator<ATriggerTile> It(W); It; ++It)
+		{
+			if (It->Q == Q && It->R == R)
+			{
+				DestroyActorNow(*It);
+				bRemovedAny = true;
+			}
+		}
+	}
+	
+	if (bRemovedAny)
+	{
+		MarkActiveScenarioDirty();
+#if WITH_EDITOR
+		MirrorScenarioEditsToEditor();
+#endif
+	}
+	
+	return bRemovedAny;
+}
+
 /* ---------------- PIE Sync (Editor Only) ---------------- */
 #if WITH_EDITOR
 void ATestLevelDirector::HandlePreBeginPIE(bool /*bIsSimulating*/)
@@ -1364,6 +1542,25 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			}
 			
 			Scenario.Beacons.Add(NewBeaconSpec);
+		}
+
+		// Capture trigger tiles
+		Scenario.TriggerTiles.Empty();
+		for (TActorIterator<ATriggerTile> It(W); It; ++It)
+		{
+			ATriggerTile* TriggerTile = *It;
+			if (!TriggerTile) continue;
+
+			FTriggerTileSpec NewTriggerSpec;
+			NewTriggerSpec.Q = TriggerTile->Q;
+			NewTriggerSpec.R = TriggerTile->R;
+			NewTriggerSpec.TriggerOrbType = TriggerTile->TriggerOrbType;
+			NewTriggerSpec.OwnerQ = TriggerTile->OwnerQ;
+			NewTriggerSpec.OwnerR = TriggerTile->OwnerR;
+			NewTriggerSpec.Rotation = TriggerTile->GetActorRotation().Yaw;
+			NewTriggerSpec.Spawned = TriggerTile;
+			
+			Scenario.TriggerTiles.Add(NewTriggerSpec);
 		}
 	}
 }

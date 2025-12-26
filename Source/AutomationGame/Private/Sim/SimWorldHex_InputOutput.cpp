@@ -1297,11 +1297,24 @@ void USimWorldHex::ProcessOutputs()
 				}
 			}
 			
-			// Notify GameManager to store this cluster
+			// Check storage limit per cluster structure before adding
 			if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
 			{
 				if (Driver->GM)
 				{
+					// If UseStorageLimit is true, check if this specific cluster structure has reached the limit
+					if (Driver->GM->UseStorageLimit)
+					{
+						int32 CurrentCount = Driver->GM->GetClusterCount(ProcessedClusterTemplate);
+						if (CurrentCount >= Driver->GM->StorageLimit)
+						{
+							// This cluster structure has reached its storage limit
+							// Skip processing - leave items on output tiles until room is available
+							continue;
+						}
+					}
+					
+					// Add cluster to storage
 					Driver->GM->AddClusterToStorage(ProcessedClusterTemplate);
 				}
 			}

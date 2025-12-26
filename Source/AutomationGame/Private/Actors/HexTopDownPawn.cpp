@@ -9,6 +9,7 @@
 #include "Actors/OrbSimDriver.h"
 #include "Actors/BasicArm.h"
 #include "Actors/RequestBeacon.h"
+#include "Actors/TriggerTile.h"
 #include "Sim/SimWorldHex.h"
 #include "Sim/HexCoord.h"
 #include "Sim/HexTypes.h"
@@ -542,7 +543,7 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	IC->BindAction("Kind7", IE_Pressed, this, &AHexTopDownPawn::SetInputMode7);
 	IC->BindAction("Kind8", IE_Pressed, this, &AHexTopDownPawn::SetInputMode8);
 	IC->BindAction("Kind9", IE_Pressed, this, &AHexTopDownPawn::SetInputMode9);
-
+	IC->BindAction("Kind10", IE_Pressed, this, &AHexTopDownPawn::SetInputMode10);
 	// Type cycling (works for both Input and Output based on current placement mode)
 	IC->BindAction("CycleNextType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypeNext);
 	IC->BindAction("CyclePreviousType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypePrevious);
@@ -599,6 +600,7 @@ void AHexTopDownPawn::SetInputMode5() { if (Placer) Placer->SetPlaceKind(EPlaceK
 void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Unbond); }
 void AHexTopDownPawn::SetInputMode7() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterOutput); }
 void AHexTopDownPawn::SetInputMode9() { if (Placer) Placer->SetPlaceKind(EPlaceKind::RequestBeacon); }
+void AHexTopDownPawn::SetInputMode10() { if (Placer) Placer->SetPlaceKind(EPlaceKind::TriggerTile); }
 void AHexTopDownPawn::RequestMoveToTile()
 {
 	if (!Placer || !Placer->IsHoverValid())
@@ -1926,9 +1928,10 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 
 	if (!bGridVisible)
 	{
-		// Hidden Grid: Only delete RequestBeacons
+		// Hidden Grid: Only delete RequestBeacons and TriggerTiles
 		if (UWorld* World = GetWorld())
 		{
+			// Delete RequestBeacons at this location
 			for (TActorIterator<ARequestBeacon> It(World); It; ++It)
 			{
 				ARequestBeacon* Beacon = *It;
@@ -1949,6 +1952,30 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 					
 					Beacon->Destroy();
 					// Don't break, maybe multiple beacons? (Though unlikely on same tile)
+				}
+			}
+			
+			// Delete TriggerTiles at this location
+			for (TActorIterator<ATriggerTile> It(World); It; ++It)
+			{
+				ATriggerTile* TriggerTile = *It;
+				if (TriggerTile && TriggerTile->Q == Hex.Q && TriggerTile->R == Hex.R)
+				{
+					UE_LOG(LogTemp, Log, TEXT("Destroying TriggerTile at (%d,%d)"), Hex.Q, Hex.R);
+					
+					// Capture removal in scenario via TestLevelDirector
+					for (TActorIterator<ATestLevelDirector> TLDIt(World); TLDIt; ++TLDIt)
+					{
+						ATestLevelDirector* TLD = *TLDIt;
+						if (TLD)
+						{
+							TLD->RemoveTriggerTileSpec(Hex.Q, Hex.R);
+							break;
+						}
+					}
+					
+					TriggerTile->Destroy();
+					// Don't break, in case multiple triggers on same tile
 				}
 			}
 		}

@@ -205,6 +205,8 @@ private:
 	void SetInputMode8();
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode9();
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	void SetInputMode10(); // TriggerTile
 	void RotCW() { 
 		if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0) {
 			RotateBlueprintCW();

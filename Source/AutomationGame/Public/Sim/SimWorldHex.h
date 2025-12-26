@@ -119,6 +119,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Sim|Walker")
 	bool RequestWalkerMoveTo(int32 WalkerIndex, const FHex& TargetHex, int32 Priority = 0);
 	
+	// TriggerTile signal API - controls belt enable/disable based on trigger signals
+	void SetBeltTriggerSignal(const FHex& BeltOwnerHex, bool bEnabled);
+	void ClearBeltTriggerSignal(const FHex& BeltOwnerHex);
+	bool IsBeltEnabled(const FHex& BeltHex) const;
+	
 	// Cluster template API (C++ only - TPair is not Blueprint-compatible)
 	// Cluster template structure (must be public for external access)
 	struct FClusterTemplate
@@ -281,7 +286,7 @@ private:
 	FVector WorldAnchor = FVector::ZeroVector;
 	float   GridYawDeg = 0.f;
 	EHexOrientation GridOrientation = EHexOrientation::PointyTop;
-	int OUTPUT_DESCEND_TICKS = 40;
+	int OUTPUT_DESCEND_TICKS = 100;
 	// One-frame skip sets
 	TSet<FHex> SkipInputThisFrame;
 	TSet<FHex> SkipOutputThisFrame;
@@ -311,6 +316,11 @@ private:
 	// Output tile gates - tracks whether output tiles are open for new orbs
 	// True = open for new orbs, False = blocked (incorrect type orb on tile)
 	TMap<FHex, bool> OutputTileGates;
+
+	// TriggerTile signals - tracks whether belts are enabled based on TriggerTile signals
+	// Key = belt hex location (owner), Value = true if enabled (positive signal or no trigger)
+	// If a belt has no entry, it is enabled by default
+	TMap<FHex, bool> BeltTriggerSignals;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;

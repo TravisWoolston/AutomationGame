@@ -12,6 +12,7 @@
 #include "Actors/BasicArm.h"
 #include "Actors/BasicWalker.h"
 #include "Actors/RequestBeacon.h"
+#include "Actors/TriggerTile.h"
 #include "Sim/WalkerTypes.h"
 #include "DrawDebugHelpers.h"
 #include "Components/StaticMeshComponent.h"
@@ -355,6 +356,139 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 		}
 		return;
 	}
+	case EPlaceKind::TriggerTile:
+	{
+		// Find GameManager
+		AGameManager* GM = nullptr;
+		for (TActorIterator<AGameManager> It(GetWorld()); It; ++It)
+		{
+			GM = *It;
+			break;
+		}
+
+		if (!GM)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn TriggerTile (no GameManager)."));
+			return;
+		}
+
+		// Check for arms at this location (can't place on arms)
+		bool bHasArm = false;
+		if (Sim)
+		{
+			for (const FArmState& ArmState : Sim->Arms)
+			{
+				if (ArmState.BaseHex.Q == A.Q && ArmState.BaseHex.R == A.R)
+				{
+					bHasArm = true;
+					break;
+				}
+			}
+		}
+		if (bHasArm)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place TriggerTile - arm present."));
+			return;
+		}
+
+		if (TriggerTilePlacementStep == 0) // TriggerTile location
+		{
+			// Calculate rotation to match grid orientation
+			FRotator TileRotation = FRotator::ZeroRotator;
+			if (Driver)
+			{
+				TileRotation.Yaw = Driver->GetGridYaw();
+				if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
+				{
+					TileRotation.Yaw += 30.f;
+				}
+			}
+
+			// Spawn TriggerTile
+			UClass* TriggerClass = GM->TriggerTileClass ? GM->TriggerTileClass.Get() : ATriggerTile::StaticClass();
+			FVector CenteredLocation = HexToWorld(Root);
+			ATriggerTile* TriggerTile = GetWorld()->SpawnActor<ATriggerTile>(TriggerClass, CenteredLocation, TileRotation);
+			if (TriggerTile)
+			{
+				TriggerTile->Q = A.Q;
+				TriggerTile->R = A.R;
+				TriggerTile->TriggerOrbType = GetCurrentTriggerOrbType();
+				TriggerTile->UpdateVisuals();
+
+				PendingTriggerTile = TriggerTile;
+				TriggerTilePlacementStep = 1; // Move to owner selection step
+				UE_LOG(LogTemp, Log, TEXT("Placed TriggerTile at (%d,%d) with type %d. Select owner belt tile next."), 
+					A.Q, A.R, (int32)TriggerTile->TriggerOrbType);
+				
+				if (GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
+						TEXT("TriggerTile placed. Click on a belt tile to set as owner."));
+				}
+			}
+		}
+		else if (TriggerTilePlacementStep == 1) // Owner belt selection
+		{
+			// Check if clicked tile has a belt
+			bool bHasBelt = false;
+			if (Sim && Sim->TileMap.Contains(Root))
+			{
+				const FTile* ClickedTile = Sim->TileMap.Find(Root);
+				if (ClickedTile && ClickedTile->Kind == ETileKind::Belt)
+				{
+					bHasBelt = true;
+				}
+			}
+
+			if (!bHasBelt)
+			{
+				// Cancel placement - no valid belt selected
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: No belt at (%d,%d) - canceling TriggerTile placement."), A.Q, A.R);
+				if (GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red,
+						TEXT("No belt at selected location. TriggerTile placement canceled."));
+				}
+				
+				if (PendingTriggerTile && IsValid(PendingTriggerTile))
+				{
+					PendingTriggerTile->Destroy();
+					PendingTriggerTile = nullptr;
+				}
+				TriggerTilePlacementStep = 0;
+				return;
+			}
+
+			// Valid belt found - set as owner
+			if (PendingTriggerTile && IsValid(PendingTriggerTile))
+			{
+				PendingTriggerTile->SetOwnerBelt(A.Q, A.R);
+				UE_LOG(LogTemp, Log, TEXT("TriggerTile owner set to belt at (%d,%d). Placement complete."), A.Q, A.R);
+				
+				// Save to scenario via TestLevelDirector
+				if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
+				if (CachedTLD)
+				{
+					CachedTLD->UpsertTriggerTileSpec(
+						PendingTriggerTile->Q, PendingTriggerTile->R,
+						PendingTriggerTile->TriggerOrbType,
+						A.Q, A.R, // Owner belt coords
+						PendingTriggerTile->GetActorRotation().Yaw);
+				}
+				
+				if (GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green,
+						FString::Printf(TEXT("TriggerTile at (%d,%d) now owned by belt at (%d,%d)"),
+							PendingTriggerTile->Q, PendingTriggerTile->R, A.Q, A.R));
+				}
+			}
+
+			PendingTriggerTile = nullptr;
+			TriggerTilePlacementStep = 0; // Reset
+		}
+		return;
+	}
 	default:
 		UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: PlaceKind unset; skip."));
 		return;
@@ -611,6 +745,17 @@ void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind)
 		}
 		BeaconPlacementStep = 0;
 	}
+	
+	if (PlaceKind == EPlaceKind::TriggerTile && NewKind != EPlaceKind::TriggerTile)
+	{
+		// Switching away from trigger tile mode, cancel pending
+		if (PendingTriggerTile && IsValid(PendingTriggerTile))
+		{
+			PendingTriggerTile->Destroy();
+			PendingTriggerTile = nullptr;
+		}
+		TriggerTilePlacementStep = 0;
+	}
 	PlaceKind = NewKind; 
 }
 
@@ -634,6 +779,16 @@ void UHexPlacementComponent::CycleNextType()
 		// ClusterInputs cycle through orb types like regular Inputs
 		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
+	else if (PlaceKind == EPlaceKind::TriggerTile)
+	{
+		// TriggerTiles include Void option for "any orb"
+		TArray<EOrbType> TriggerTypes = ValidTypes;
+		if (!TriggerTypes.Contains(EOrbType::Void))
+		{
+			TriggerTypes.Add(EOrbType::Void);
+		}
+		CurrentTriggerOrbTypeIndex = (CurrentTriggerOrbTypeIndex + 1) % TriggerTypes.Num();
+	}
 }
 
 void UHexPlacementComponent::CyclePreviousType()
@@ -655,6 +810,16 @@ void UHexPlacementComponent::CyclePreviousType()
 	{
 		// ClusterInputs cycle through orb types like regular Inputs
 		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
+	}
+	else if (PlaceKind == EPlaceKind::TriggerTile)
+	{
+		// TriggerTiles include Void option for "any orb"
+		TArray<EOrbType> TriggerTypes = ValidTypes;
+		if (!TriggerTypes.Contains(EOrbType::Void))
+		{
+			TriggerTypes.Add(EOrbType::Void);
+		}
+		CurrentTriggerOrbTypeIndex = (CurrentTriggerOrbTypeIndex - 1 + TriggerTypes.Num()) % TriggerTypes.Num();
 	}
 }
 
@@ -776,6 +941,28 @@ EOrbType UHexPlacementComponent::GetCurrentOutputOrbType() const
 
 	// Clamp the index to valid range
 	int32 ClampedIndex = FMath::Clamp(CurrentOutputOrbTypeIndex, 0, ValidTypes.Num() - 1);
+	return ValidTypes[ClampedIndex];
+}
+
+EOrbType UHexPlacementComponent::GetCurrentTriggerOrbType() const
+{
+	// Get the list of valid orb types (those with assigned materials)
+	// For TriggerTile, we also include Void type as a special "any orb" option
+	TArray<EOrbType> ValidTypes = GetValidOrbTypes();
+	
+	// Ensure Void is included for TriggerTiles (allows "any orb" triggering)
+	if (!ValidTypes.Contains(EOrbType::Void))
+	{
+		ValidTypes.Add(EOrbType::Void);
+	}
+	
+	if (ValidTypes.Num() == 0)
+	{
+		return EOrbType::BaseA; // Fallback if no valid types
+	}
+
+	// Clamp the index to valid range
+	int32 ClampedIndex = FMath::Clamp(CurrentTriggerOrbTypeIndex, 0, ValidTypes.Num() - 1);
 	return ValidTypes[ClampedIndex];
 }
 
@@ -969,6 +1156,28 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 					if (DefaultBeacon && DefaultBeacon->MeshComp && DefaultBeacon->MeshComp->GetStaticMesh())
 					{
 						return DefaultBeacon->MeshComp->GetStaticMesh();
+					}
+				}
+				break;
+			}
+		}
+		// Fallback to generic
+		return GenericTilePreviewMesh;
+	}
+
+	case EPlaceKind::TriggerTile:
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				AGameManager* GameManager = *It;
+				if (GameManager && GameManager->TriggerTileClass)
+				{
+					ATriggerTile* DefaultTrigger = GameManager->TriggerTileClass->GetDefaultObject<ATriggerTile>();
+					if (DefaultTrigger && DefaultTrigger->MeshComp && DefaultTrigger->MeshComp->GetStaticMesh())
+					{
+						return DefaultTrigger->MeshComp->GetStaticMesh();
 					}
 				}
 				break;
@@ -1364,7 +1573,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 	}
 
 	// Mesh preview (for all placeable tiles)
-	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Walker || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond || PlaceKind == EPlaceKind::RequestBeacon)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Walker || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond || PlaceKind == EPlaceKind::RequestBeacon || PlaceKind == EPlaceKind::TriggerTile)
 	{
 
 		// For now, use static mesh preview for arms (ArmBasePreviewMesh)
@@ -1477,6 +1686,15 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 			{
 				// For input tiles, we need to match the grid orientation (same as output)
 				// If the grid is using FlatTop orientation, rotate the tile mesh 30 degrees
+				const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+				if (Ori == EHexOrientation::FlatTop)
+				{
+					FixedYaw = FMath::UnwindDegrees(FixedYaw + 30.0f);
+				}
+			}
+			else if (PlaceKind == EPlaceKind::TriggerTile)
+			{
+				// For trigger tiles, match the grid orientation like input/output tiles
 				const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 				if (Ori == EHexOrientation::FlatTop)
 				{
@@ -1609,6 +1827,49 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 					const FLinearColor Col = (BeaconPlacementStep == 0) 
 						? FLinearColor(0.f, 1.f, 0.f, 0.5f) 
 						: FLinearColor(0.f, 0.5f, 1.f, 0.5f);
+					PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
+				}
+			}
+			else if (PlaceKind == EPlaceKind::TriggerTile)
+			{
+				// For TriggerTile, use the orb type material with transparency
+				EOrbType CurrentType = GetCurrentTriggerOrbType();
+				UMaterialInterface* OrbMaterial = nullptr;
+				
+				// Get material from OrbMaterialManager
+				if (UWorld* World = GetWorld())
+				{
+					for (TActorIterator<AActor> It(World); It; ++It)
+					{
+						if (UOrbMaterialManager* MaterialManager = (*It)->FindComponentByClass<UOrbMaterialManager>())
+						{
+							OrbMaterial = MaterialManager->GetMaterialForOrbType(CurrentType);
+							break;
+						}
+					}
+				}
+				
+				if (OrbMaterial)
+				{
+					UMaterialInstanceDynamic* TriggerMID = UMaterialInstanceDynamic::Create(OrbMaterial, this);
+					if (TriggerMID)
+					{
+						// Set 60% opacity for trigger tile preview
+						TriggerMID->SetScalarParameterValue(FName("Opacity"), 0.6f);
+						PreviewComp->SetMaterial(0, TriggerMID);
+					}
+					else
+					{
+						PreviewComp->SetMaterial(0, OrbMaterial);
+					}
+				}
+				else if (PreviewMID)
+				{
+					// Fallback: use tinted material
+					// During step 0 (placement), use yellow; during step 1 (owner selection), use cyan
+					const FLinearColor Col = (TriggerTilePlacementStep == 0)
+						? FLinearColor(1.0f, 0.8f, 0.f, 0.6f)   // Yellow-ish for placement
+						: FLinearColor(0.f, 0.8f, 1.0f, 0.6f);  // Cyan for owner selection
 					PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
 				}
 			}

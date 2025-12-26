@@ -37,6 +37,7 @@ class UGoldbergGrid; // NEW
 class UTexture2D;
 class UArmTimelineWidget;
 class UPoseableMeshComponent;
+class ATriggerTile;
 
 /** Persistent walker calibration data (saved between sessions) */
 USTRUCT()
@@ -149,6 +150,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Factory|Beacons")
 	TSubclassOf<class ARequestBeacon> RequestBeaconClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Factory|TriggerTiles")
+	TSubclassOf<class ATriggerTile> TriggerTileClass;
 
 	UFUNCTION(CallInEditor, Category = "Walker|Calibration")
 	void CalibrateWalker();
@@ -267,6 +271,15 @@ public:
 	/** Difficulty value for generating random target cluster structures. TotalOrbs + NumOfUniqueOrbTypes = DifficultyValue */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "4"))
 	int32 DifficultyValue = 6;
+
+	// ------------ Cluster Storage Limit ------------
+	/** Maximum number of each unique cluster structure that can be held in storage */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Storage", meta = (ClampMin = "1"))
+	int32 StorageLimit = 10;
+
+	/** When true, ClusterOutputs won't add a cluster structure if that structure's count has reached StorageLimit (clusters remain on output tiles until room is available) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Storage")
+	bool UseStorageLimit = false;
 
 	/** Base difficulty required to unlock the first orb type beyond BaseA (BaseA is always available, BaseB unlocks here) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cluster Generation", meta = (ClampMin = "0"))
@@ -517,6 +530,12 @@ public:
 	// ------------ Cluster Storage ------------
 	/** Add a processed cluster to storage or increment its count if already exists (C++ only) */
 	void AddClusterToStorage(const USimWorldHex::FClusterTemplate& ClusterTemplate);
+
+	/** Get the total count of all clusters in storage (C++ only) */
+	int32 GetTotalClusterCount() const;
+
+	/** Check if storage has room for a specific cluster structure (respects UseStorageLimit and StorageLimit) (C++ only) */
+	bool HasStorageRoomForCluster(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;
 
 	/** Get the count for a specific cluster structure (C++ only) */
 	int32 GetClusterCount(const USimWorldHex::FClusterTemplate& ClusterTemplate) const;

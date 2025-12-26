@@ -726,8 +726,8 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			if (CurrState != EFootStepState::Planted && PrevState == EFootStepState::Planted)
 			{
 				VisualStartPos = HexToWorld(FootHex);
-				UE_LOG(LogTemp, Log, TEXT("Captured VisualStartPos for horizontal flight: (%.0f,%.0f,%.0f) from FootHex (%d,%d)"),
-					VisualStartPos.X, VisualStartPos.Y, VisualStartPos.Z, FootHex.Q, FootHex.R);
+				// UE_LOG(LogTemp, Log, TEXT("Captured VisualStartPos for horizontal flight: (%.0f,%.0f,%.0f) from FootHex (%d,%d)"),
+				// 	VisualStartPos.X, VisualStartPos.Y, VisualStartPos.Z, FootHex.Q, FootHex.R);
 			}
 			
 			if (CurrState != EFootStepState::Planted)
@@ -1189,7 +1189,7 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			// Force animation update
 			AnimInstance->BlueprintThreadSafeUpdateAnimation(0.f);
 			BodyComp->TickAnimation(0.f, false);
-			BodyComp->RefreshBoneTransforms();
+			// BodyComp->RefreshBoneTransforms();
 		}
 
 		// Draw debug lines from body to foot goals if enabled

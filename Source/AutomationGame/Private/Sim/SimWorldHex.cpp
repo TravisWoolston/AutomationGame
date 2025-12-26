@@ -35,6 +35,7 @@ USimWorldHex::USimWorldHex()
 	OrbsNewlyMovedToOutput.Empty();
 	OrbsNewlyMovedByBelts.Empty();
 	OutputTileGates.Empty();
+	BeltTriggerSignals.Empty();
 	AnimatedOrbs.Empty();
 	HeldItemLastHex.Empty();
 	PendingBondFormations.Empty();
@@ -76,6 +77,7 @@ USimWorldHex::~USimWorldHex()
 	OrbsNewlyMovedToOutput.Empty();
 	OrbsNewlyMovedByBelts.Empty();
 	OutputTileGates.Empty();
+	BeltTriggerSignals.Empty();
 	AnimatedOrbs.Empty();
 	HeldItemLastHex.Empty();
 	PendingBondFormations.Empty();
@@ -2537,5 +2539,27 @@ TArray<FHex> USimWorldHex::FindClusterInputChain(const FHex& StartHex, const TSe
 	}
 	
 	return ClusterInputTiles;
+}
+
+// TriggerTile signal management
+void USimWorldHex::SetBeltTriggerSignal(const FHex& BeltOwnerHex, bool bEnabled)
+{
+	BeltTriggerSignals.Add(BeltOwnerHex, bEnabled);
+}
+
+void USimWorldHex::ClearBeltTriggerSignal(const FHex& BeltOwnerHex)
+{
+	BeltTriggerSignals.Remove(BeltOwnerHex);
+}
+
+bool USimWorldHex::IsBeltEnabled(const FHex& BeltHex) const
+{
+	// If no trigger signal registered for this belt, it's enabled by default
+	const bool* Signal = BeltTriggerSignals.Find(BeltHex);
+	if (!Signal)
+	{
+		return true; // No trigger = enabled
+	}
+	return *Signal; // Return the signal state (true = enabled/positive, false = disabled/negative)
 }
 

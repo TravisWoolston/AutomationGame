@@ -8,6 +8,7 @@
 
 class USimWorldHex; class APlayerController; class AActor; class AOrbSimDriver; class ATestLevelDirector;
 class ARequestBeacon;
+class ATriggerTile;
 
 UENUM(BlueprintType)
 enum class EPlaceKind : uint8
@@ -21,7 +22,8 @@ enum class EPlaceKind : uint8
 	Unbond,        // place an Unbond glyph (uses BeltDir for its direction)
 	ClusterOutput, // place a ClusterOutput tile (cycles through registered templates)
 	ClusterInput,  // place a ClusterInput tile (spawns clusters from storage)
-	RequestBeacon  // place a RequestBeacon (e.g. Relocate)
+	RequestBeacon, // place a RequestBeacon (e.g. Relocate)
+	TriggerTile    // place a TriggerTile (sends signals based on orb presence)
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of truth). */
@@ -246,4 +248,19 @@ public:
 
 	UPROPERTY(Transient)
 	ARequestBeacon* PendingPickupBeacon = nullptr;
+
+	// TriggerTile placement state
+	UPROPERTY(Transient)
+	int32 TriggerTilePlacementStep = 0; // 0 = TriggerTile location, 1 = Owner belt selection
+
+	UPROPERTY(Transient)
+	ATriggerTile* PendingTriggerTile = nullptr;
+	
+	// Current orb type for TriggerTile placement
+	UPROPERTY(EditAnywhere, Category = "TriggerTile", meta = (ClampMin = "0", ClampMax = "6"))
+	int32 CurrentTriggerOrbTypeIndex = 0;
+	
+	/** Get the current orb type for TriggerTile placement */
+	UFUNCTION(BlueprintPure, Category = "Place|TriggerTile")
+	EOrbType GetCurrentTriggerOrbType() const;
 };
