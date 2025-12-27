@@ -46,6 +46,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class UStaticMeshComponent* MeshComp;
 
+	/** Spline mesh component for the wire connecting to owner belt */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	class USplineMeshComponent* WireComp;
+
 	// Location
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
 	int32 Q = 0;
@@ -120,6 +124,40 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float TriggerTileOpacity = 0.5f;
 
+	// ---- Wire Visuals ----
+	
+	/** Static mesh to use for the wire (should be a cylinder/tube oriented along X axis) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+	UStaticMesh* WireMesh;
+
+	/** Base material for the wire (should support "BaseColor" or "Color" parameter) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+	UMaterialInterface* WireMaterial;
+
+	/** Color for positive signal (green) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+	FLinearColor PositiveWireColor = FLinearColor(0.1f, 0.9f, 0.1f, 1.0f);
+
+	/** Color for negative signal (red) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+	FLinearColor NegativeWireColor = FLinearColor(0.9f, 0.1f, 0.1f, 1.0f);
+
+	/** Height offset for the wire above the ground */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire", meta = (ClampMin = "0.0"))
+	float WireHeightOffset = 10.0f;
+
+	/** Radius/thickness of the wire */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire", meta = (ClampMin = "0.1"))
+	float WireRadius = 3.0f;
+
+	/** How much the wire droops/sags in the middle (creates cable-like curve) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+	float WireSagAmount = 20.0f;
+
+	/** Update the wire visual connecting to owner belt */
+	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
+	void UpdateWireVisual();
+
 private:
 	// Check if an orb of the correct type is on this tile
 	void CheckTriggerCondition();
@@ -130,6 +168,18 @@ private:
 	// Cached references
 	class AOrbSimDriver* Driver = nullptr;
 	class USimWorldHex* Sim = nullptr;
+
+	// Cached dynamic material instances (to avoid recreating each frame)
+	UPROPERTY()
+	UMaterialInstanceDynamic* CachedWireMID = nullptr;
+
+	// Track what material was used to create the cache (to detect changes)
+	UPROPERTY()
+	UMaterialInterface* LastWireMaterialUsed = nullptr;
+
+	// Flag to force wire update after initialization (to catch late Blueprint property setting)
+	bool bWireNeedsInitialUpdate = true;
+	int32 WireUpdateRetryCount = 0;
 
 	// Grid visibility state
 	bool bIsGridVisible = true;

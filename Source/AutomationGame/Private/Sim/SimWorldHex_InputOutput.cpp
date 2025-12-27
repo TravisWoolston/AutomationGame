@@ -320,34 +320,41 @@ void USimWorldHex::SpawnInputs()
 								if (HexA.Q < HexB.Q || (HexA.Q == HexB.Q && HexA.R < HexB.R))
 								{
 									// These are adjacent - create a bond between the orbs at these positions
-									int32* ItemIdA = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexA]);
-									int32* ItemIdB = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexB]);
-
-									if (ItemIdA && ItemIdB && *ItemIdA > 0 && *ItemIdB > 0)
+									// Use Find() instead of [] to avoid inserting spurious entries if hex is missing
+									const int32* OrbIndexA = HexToOrbIndex.Find(HexA);
+									const int32* OrbIndexB = HexToOrbIndex.Find(HexB);
+									
+									if (OrbIndexA && OrbIndexB)
 									{
-										// Avoid duplicate bonds (order-independent check)
-										int32 MinItemId = FMath::Min(*ItemIdA, *ItemIdB);
-										int32 MaxItemId = FMath::Max(*ItemIdA, *ItemIdB);
-										TPair<int32, int32> BondKey(MinItemId, MaxItemId);
+										int32* ItemIdA = ChainTemplateIndexToItemId.Find(*OrbIndexA);
+										int32* ItemIdB = ChainTemplateIndexToItemId.Find(*OrbIndexB);
 
-										if (!AppliedBonds.Contains(BondKey))
+										if (ItemIdA && ItemIdB && *ItemIdA > 0 && *ItemIdB > 0)
 										{
-											AppliedBonds.Add(BondKey);
+											// Avoid duplicate bonds (order-independent check)
+											int32 MinItemId = FMath::Min(*ItemIdA, *ItemIdB);
+											int32 MaxItemId = FMath::Max(*ItemIdA, *ItemIdB);
+											TPair<int32, int32> BondKey(MinItemId, MaxItemId);
 
-											// Create bond between these two orbs
-											FBond NewBond;
-											NewBond.ItemA = *ItemIdA;
-											NewBond.ItemB = *ItemIdB;
-											NewBond.Root = HexA;
-											NewBond.dQ = HexB.Q - HexA.Q;
-											NewBond.dR = HexB.R - HexA.R;
-											NewBond.bActive = true;
-											
-											const int32 BondIndex = Bonds.Add(NewBond);
-											AddItemBondLink(NewBond.ItemA, BondIndex);
-											AddItemBondLink(NewBond.ItemB, BondIndex);
+											if (!AppliedBonds.Contains(BondKey))
+											{
+												AppliedBonds.Add(BondKey);
 
-											BondsCreated++; // Debug counter
+												// Create bond between these two orbs
+												FBond NewBond;
+												NewBond.ItemA = *ItemIdA;
+												NewBond.ItemB = *ItemIdB;
+												NewBond.Root = HexA;
+												NewBond.dQ = HexB.Q - HexA.Q;
+												NewBond.dR = HexB.R - HexA.R;
+												NewBond.bActive = true;
+												
+												const int32 BondIndex = Bonds.Add(NewBond);
+												AddItemBondLink(NewBond.ItemA, BondIndex);
+												AddItemBondLink(NewBond.ItemB, BondIndex);
+
+												BondsCreated++; // Debug counter
+											}
 										}
 									}
 								}
@@ -706,34 +713,41 @@ void USimWorldHex::SpawnInputsAfterBelts()
 								if (HexA.Q < HexB.Q || (HexA.Q == HexB.Q && HexA.R < HexB.R))
 								{
 									// These are adjacent - create a bond between the orbs at these positions
-									int32* ItemIdA = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexA]);
-									int32* ItemIdB = ChainTemplateIndexToItemId.Find(HexToOrbIndex[HexB]);
-
-									if (ItemIdA && ItemIdB && *ItemIdA > 0 && *ItemIdB > 0)
+									// Use Find() instead of [] to avoid inserting spurious entries if hex is missing
+									const int32* OrbIndexA = HexToOrbIndex.Find(HexA);
+									const int32* OrbIndexB = HexToOrbIndex.Find(HexB);
+									
+									if (OrbIndexA && OrbIndexB)
 									{
-										// Avoid duplicate bonds (order-independent check)
-										int32 MinItemId = FMath::Min(*ItemIdA, *ItemIdB);
-										int32 MaxItemId = FMath::Max(*ItemIdA, *ItemIdB);
-										TPair<int32, int32> BondKey(MinItemId, MaxItemId);
+										int32* ItemIdA = ChainTemplateIndexToItemId.Find(*OrbIndexA);
+										int32* ItemIdB = ChainTemplateIndexToItemId.Find(*OrbIndexB);
 
-										if (!AppliedBonds.Contains(BondKey))
+										if (ItemIdA && ItemIdB && *ItemIdA > 0 && *ItemIdB > 0)
 										{
-											AppliedBonds.Add(BondKey);
+											// Avoid duplicate bonds (order-independent check)
+											int32 MinItemId = FMath::Min(*ItemIdA, *ItemIdB);
+											int32 MaxItemId = FMath::Max(*ItemIdA, *ItemIdB);
+											TPair<int32, int32> BondKey(MinItemId, MaxItemId);
 
-											// Create bond between these two orbs
-											FBond NewBond;
-											NewBond.ItemA = *ItemIdA;
-											NewBond.ItemB = *ItemIdB;
-											NewBond.Root = HexA;
-											NewBond.dQ = HexB.Q - HexA.Q;
-											NewBond.dR = HexB.R - HexA.R;
-											NewBond.bActive = true;
-											
-											const int32 BondIndex = Bonds.Add(NewBond);
-											AddItemBondLink(NewBond.ItemA, BondIndex);
-											AddItemBondLink(NewBond.ItemB, BondIndex);
+											if (!AppliedBonds.Contains(BondKey))
+											{
+												AppliedBonds.Add(BondKey);
 
-											BondsCreated++; // Debug counter
+												// Create bond between these two orbs
+												FBond NewBond;
+												NewBond.ItemA = *ItemIdA;
+												NewBond.ItemB = *ItemIdB;
+												NewBond.Root = HexA;
+												NewBond.dQ = HexB.Q - HexA.Q;
+												NewBond.dR = HexB.R - HexA.R;
+												NewBond.bActive = true;
+												
+												const int32 BondIndex = Bonds.Add(NewBond);
+												AddItemBondLink(NewBond.ItemA, BondIndex);
+												AddItemBondLink(NewBond.ItemB, BondIndex);
+
+												BondsCreated++; // Debug counter
+											}
 										}
 									}
 								}

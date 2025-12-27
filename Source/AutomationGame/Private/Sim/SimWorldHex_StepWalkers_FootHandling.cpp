@@ -105,6 +105,39 @@ void USimWorldHex::HandleFootPlanted(FWalkerState& W, FFootState& Foot, int32 Wa
 		}
 	}
 	
+	// CRITICAL: If non-holding foot is Planted at pickup beacon tile that's InProgress,
+	// start a step so TryWalkerPickUp gets called to perform pickup.
+	if (!Foot.bHoldingItem && Foot.CurrentTile == W.CurrentTargetHex)
+	{
+		if (ARequestBeacon* const* BeaconPtr = BeaconCache.Find(Foot.CurrentTile))
+		{
+			if ((*BeaconPtr)->BeaconRole == EBeaconRole::PickUp && (*BeaconPtr)->BeaconState == EBeaconState::InProgress)
+			{
+				// Check that no other foot is already holding
+				TArray<FFootState*> AllFeet = GetAllFeet(W);
+				bool bAnotherFootHolding = false;
+				for (int32 i = 0; i < AllFeet.Num(); ++i)
+				{
+					if (i != FootIndex && AllFeet[i]->bHoldingItem)
+					{
+						bAnotherFootHolding = true;
+						break;
+					}
+				}
+				
+				if (!bAnotherFootHolding && ItemMap.Contains(Foot.CurrentTile))
+				{
+					// Ready to pick up! Start a step toward the same tile to trigger TryWalkerPickUp
+					Foot.TargetTile = Foot.CurrentTile;
+					Foot.StepState = EFootStepState::Moving;
+					Foot.StepProgress = W.StepMoveTicks; // Start at max so TryWalkerPickUp is called immediately
+					RaisedCount++; RaisedIndices.Add(FootIndex);
+					return;
+				}
+			}
+		}
+	}
+	
 	// Stability guard: don't start new steps if we are arrived and others are still landing
 	if (!W.bProcessingRequest && RaisedCount > 0) return;
 	

@@ -1,5 +1,6 @@
 #include "Actors/TriggerTile.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/SplineMeshComponent.h"
 #include "Actors/OrbSimDriver.h"
 #include "Sim/SimWorldHex.h"
 #include "Sim/HexTypes.h"
@@ -8,6 +9,7 @@
 #include "Data/OrbMaterialManager.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "EngineUtils.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 ATriggerTile::ATriggerTile()
 {
@@ -19,6 +21,15 @@ ATriggerTile::ATriggerTile()
 	MeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshComp"));
 	MeshComp->SetupAttachment(RootComp);
 	MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// Create wire component for visual connection to owner
+	WireComp = CreateDefaultSubobject<USplineMeshComponent>(TEXT("WireComp"));
+	WireComp->SetupAttachment(RootComp);
+	WireComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	WireComp->SetMobility(EComponentMobility::Movable);
+	// Use Z-axis as forward since engine cylinder is oriented along Z
+	WireComp->SetForwardAxis(ESplineMeshAxis::Z);
+	WireComp->SetVisibility(false); // Hidden until owner is set
 }
 
 void ATriggerTile::BeginPlay()
@@ -34,12 +45,18 @@ void ATriggerTile::BeginPlay()
 			Sim = Driver->GetSim();
 		}
 
-		// Initialize IsGridVisible from GameManager's current state
+		// Initialize IsGridVisible from GameManager's current state and get mesh if not set
 		for (TActorIterator<AGameManager> It(World); It; ++It)
 		{
 			AGameManager* GM = *It;
 			if (GM)
 			{
+				// If mesh isn't already set (e.g., from Blueprint), use GameManager's TileMesh
+				if (MeshComp && !MeshComp->GetStaticMesh() && GM->TileMesh)
+				{
+					MeshComp->SetStaticMesh(GM->TileMesh);
+				}
+				
 				if (UInstancedStaticMeshComponent* ISM = GM->FindComponentByClass<UInstancedStaticMeshComponent>())
 				{
 					SetIsGridVisible(ISM->IsVisible());
@@ -50,11 +67,32 @@ void ATriggerTile::BeginPlay()
 	}
 
 	UpdateVisuals();
+	UpdateWireVisual();
 }
 
 void ATriggerTile::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// Force wire update for first few frames to catch late Blueprint property initialization
+	if (bWireNeedsInitialUpdate && WireUpdateRetryCount < 5)
+	{
+		WireUpdateRetryCount++;
+		
+		// Check if WireMaterial is now set (from Blueprint)
+		if (WireMaterial && WireMaterial != LastWireMaterialUsed)
+		{
+			UE_LOG(LogTemp, Log, TEXT("TriggerTile: Late wire material detected (%s), updating wire"), *WireMaterial->GetName());
+			CachedWireMID = nullptr; // Force recreation
+			UpdateWireVisual();
+			bWireNeedsInitialUpdate = false;
+		}
+		else if (WireUpdateRetryCount >= 5)
+		{
+			// Stop retrying after 5 frames
+			bWireNeedsInitialUpdate = false;
+		}
+	}
 
 	// Only check trigger condition if we have an owner
 	if (bHasOwner)
@@ -140,15 +178,35 @@ void ATriggerTile::SetSignal(bool bNewSignal)
 				OwnerQ, OwnerR, bCurrentSignal ? TEXT("ENABLED") : TEXT("DISABLED"));
 		}
 
-		// Optionally update visuals to reflect signal state
+		// Update visuals to reflect signal state
 		UpdateVisuals();
+		UpdateWireVisual();
 	}
 }
 
 void ATriggerTile::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	
+	// Try to set mesh from GameManager if not already set
+	if (MeshComp && !MeshComp->GetStaticMesh())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				AGameManager* GM = *It;
+				if (GM && GM->TileMesh)
+				{
+					MeshComp->SetStaticMesh(GM->TileMesh);
+					break;
+				}
+			}
+		}
+	}
+	
 	UpdateVisuals();
+	UpdateWireVisual();
 }
 
 void ATriggerTile::SetIsGridVisible(bool bVisible)
@@ -175,11 +233,31 @@ void ATriggerTile::SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR)
 		FHex OwnerHex(OwnerQ, OwnerR);
 		Sim->SetBeltTriggerSignal(OwnerHex, bCurrentSignal);
 	}
+
+	// Update wire visual to show connection
+	UpdateWireVisual();
 }
 
 void ATriggerTile::UpdateVisuals()
 {
 	if (!MeshComp) return;
+
+	// Ensure mesh is set before applying materials
+	if (!MeshComp->GetStaticMesh())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			for (TActorIterator<AGameManager> It(World); It; ++It)
+			{
+				AGameManager* GM = *It;
+				if (GM && GM->TileMesh)
+				{
+					MeshComp->SetStaticMesh(GM->TileMesh);
+					break;
+				}
+			}
+		}
+	}
 
 	// Priority 1: Use explicit signal state materials if provided
 	if (bCurrentSignal && PositiveSignalMaterial)
@@ -257,6 +335,156 @@ void ATriggerTile::UpdateVisuals()
 			}
 		}
 	}
+}
+
+void ATriggerTile::UpdateWireVisual()
+{
+	if (!WireComp) return;
+
+	// Hide wire if no owner
+	if (!bHasOwner)
+	{
+		WireComp->SetVisibility(false);
+		return;
+	}
+
+	// Get world positions for start and end points
+	FVector StartPos = GetActorLocation();
+	FVector EndPos = StartPos; // Default to same position
+
+	// Calculate owner world position
+	if (Driver)
+	{
+		FHex OwnerHex(OwnerQ, OwnerR);
+		EndPos = Driver->MapHexToWorld(OwnerHex);
+	}
+
+	// Apply height offset
+	StartPos.Z += WireHeightOffset;
+	EndPos.Z += WireHeightOffset;
+
+	// Convert to local space (relative to actor)
+	FVector LocalStart = GetActorTransform().InverseTransformPosition(StartPos);
+	FVector LocalEnd = GetActorTransform().InverseTransformPosition(EndPos);
+
+	// Calculate distance and direction
+	FVector ToEnd = LocalEnd - LocalStart;
+	float Distance = ToEnd.Size();
+	FVector HorizontalDir = ToEnd.GetSafeNormal();
+
+	// Create tangents that produce a drooping cable effect
+	// The tangents point horizontally at start/end, but the spline will sag in the middle
+	// due to how Bezier curves work with these tangent directions
+	float TangentLength = Distance * 0.5f;
+	
+	// Start tangent: point toward the end, but also slightly downward to create sag
+	FVector StartTangent = HorizontalDir * TangentLength;
+	StartTangent.Z -= WireSagAmount; // Add downward component for sag
+	
+	// End tangent: point from start direction, also with downward component
+	FVector EndTangent = HorizontalDir * TangentLength;
+	EndTangent.Z -= WireSagAmount; // Add downward component for sag
+
+	// Set spline mesh geometry
+	WireComp->SetStartAndEnd(LocalStart, StartTangent, LocalEnd, EndTangent);
+
+	// Set start/end scale based on wire radius
+	// SplineMesh scale is applied to the mesh's original size
+	// Assuming a unit cylinder, scale to desired radius
+	FVector2D WireScale(WireRadius, WireRadius);
+	WireComp->SetStartScale(WireScale);
+	WireComp->SetEndScale(WireScale);
+
+	// Try to set the wire mesh if not already set
+	if (!WireComp->GetStaticMesh() && WireMesh)
+	{
+		WireComp->SetStaticMesh(WireMesh);
+	}
+
+	// If still no mesh, try to load a default cylinder from engine
+	if (!WireComp->GetStaticMesh())
+	{
+		UStaticMesh* DefaultCylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+		if (DefaultCylinder)
+		{
+			WireComp->SetStaticMesh(DefaultCylinder);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("TriggerTile: Could not load default cylinder mesh for wire. Assign WireMesh property."));
+		}
+	}
+
+	// Apply material with signal-based color
+	FLinearColor WireColor = bCurrentSignal ? PositiveWireColor : NegativeWireColor;
+
+	// Determine the base material to use - prioritize explicitly set WireMaterial
+	UMaterialInterface* DesiredBaseMaterial = nullptr;
+	
+	if (WireMaterial)
+	{
+		DesiredBaseMaterial = WireMaterial;
+		UE_LOG(LogTemp, Verbose, TEXT("TriggerTile: Using assigned WireMaterial: %s"), *WireMaterial->GetName());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("TriggerTile: WireMaterial is not set! Assign a material in the Blueprint."));
+		if (WireComp->GetStaticMesh())
+		{
+			// Fallback to mesh's default material
+			DesiredBaseMaterial = WireComp->GetStaticMesh()->GetMaterial(0);
+			if (DesiredBaseMaterial)
+			{
+				UE_LOG(LogTemp, Log, TEXT("TriggerTile: Falling back to mesh default material: %s"), *DesiredBaseMaterial->GetName());
+			}
+		}
+	}
+
+	// Check if we need to (re)create the cached MID
+	// Recreate if: no cache exists, OR the source material changed, OR WireMaterial was set but we used mesh default
+	bool bNeedNewMID = !CachedWireMID || 
+	                   (WireMaterial && LastWireMaterialUsed != WireMaterial) ||
+	                   (!WireMaterial && DesiredBaseMaterial != LastWireMaterialUsed);
+
+	if (bNeedNewMID && DesiredBaseMaterial)
+	{
+		UMaterialInterface* BaseMaterial = DesiredBaseMaterial;
+		
+		// Make sure we're not creating a MID from another MID
+		if (UMaterialInstanceDynamic* ExistingMID = Cast<UMaterialInstanceDynamic>(BaseMaterial))
+		{
+			// Get the parent material instead
+			BaseMaterial = ExistingMID->Parent;
+		}
+		
+		if (BaseMaterial)
+		{
+			CachedWireMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			LastWireMaterialUsed = DesiredBaseMaterial;
+			
+			UE_LOG(LogTemp, Log, TEXT("TriggerTile: Created wire MID from material %s"), 
+				*BaseMaterial->GetName());
+		}
+	}
+
+	// Update the color on the cached MID
+	if (CachedWireMID)
+	{
+		CachedWireMID->SetVectorParameterValue(FName("BaseColor"), WireColor);
+		CachedWireMID->SetVectorParameterValue(FName("Color"), WireColor);
+		CachedWireMID->SetVectorParameterValue(FName("Tint"), WireColor);
+		CachedWireMID->SetVectorParameterValue(FName("EmissiveColor"), WireColor);
+		WireComp->SetMaterial(0, CachedWireMID);
+	}
+	else if (DesiredBaseMaterial)
+	{
+		// Fallback: apply material directly without dynamic instance
+		WireComp->SetMaterial(0, DesiredBaseMaterial);
+		UE_LOG(LogTemp, Warning, TEXT("TriggerTile: Could not create MID, applying material directly"));
+	}
+
+	// Show the wire
+	WireComp->SetVisibility(true);
 }
 
 void ATriggerTile::Destroyed()
