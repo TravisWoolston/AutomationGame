@@ -50,6 +50,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	class USplineMeshComponent* WireComp;
 
+	/** Mesh component for the traveling wave pulse indicator */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	class UStaticMeshComponent* WavePulseComp;
+
 	// Location
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
 	int32 Q = 0;
@@ -158,6 +162,52 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
 	void UpdateWireVisual();
 
+	// ---- Wave Pulse Indicator ----
+
+	/** Mesh for the traveling wave pulse (e.g., small sphere or ring) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
+	UStaticMesh* WavePulseMesh;
+
+	/** Material for the wave pulse (should support BaseColor/EmissiveColor parameters) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
+	UMaterialInterface* WavePulseMaterial;
+
+	/** Speed of the wave pulse travel in GTM ticks (1.0 = travels from trigger to owner in one tick) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.1"))
+	float WavePulseSpeed = 1.0f;
+
+	/** Scale of the wave pulse mesh */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.1"))
+	float WavePulseScale = 0.3f;
+
+	/** Height offset for the wave pulse above the wire */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
+	float WavePulseHeightOffset = 5.0f;
+
+	/** Enable/disable the traveling wave pulse effect */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
+	bool bEnableWavePulse = true;
+
+	/** Emissive intensity multiplier for the pulse glow */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.0"))
+	float WavePulseEmissiveIntensity = 3.0f;
+
+	/** Radius of the ripple effect on the grid material (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "1.0"))
+	float RippleRadius = 50.0f;
+
+	/** Falloff distance for soft edge on the ripple (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "1.0"))
+	float RippleFalloff = 30.0f;
+
+	/** Duration in GTM ticks for ripple to fade in at start */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.0"))
+	float RippleFadeInTicks = 0.2f;
+
+	/** Duration in GTM ticks for ripple to fade out at end */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.0"))
+	float RippleFadeOutTicks = 0.2f;
+
 private:
 	// Check if an orb of the correct type is on this tile
 	void CheckTriggerCondition();
@@ -168,6 +218,7 @@ private:
 	// Cached references
 	class AOrbSimDriver* Driver = nullptr;
 	class USimWorldHex* Sim = nullptr;
+	class AGameTickManager* TickManager = nullptr;
 
 	// Cached dynamic material instances (to avoid recreating each frame)
 	UPROPERTY()
@@ -180,6 +231,19 @@ private:
 	// Flag to force wire update after initialization (to catch late Blueprint property setting)
 	bool bWireNeedsInitialUpdate = true;
 	int32 WireUpdateRetryCount = 0;
+
+	// Wave pulse animation state
+	float WavePulseT = 0.0f; // 0 to 1 interpolation factor
+	float RippleIntensity = 0.0f; // 0 to 1, controls fade in/out
+	UPROPERTY()
+	UMaterialInstanceDynamic* WavePulseMID = nullptr;
+	
+	// Cached material instance for drawing to render target
+	UPROPERTY()
+	UMaterialInstanceDynamic* RippleDrawMID = nullptr;
+
+	// Update ripple visuals (draws to render target)
+	void UpdateRippleVisuals();
 
 	// Grid visibility state
 	bool bIsGridVisible = true;

@@ -10,6 +10,9 @@
 #include "Components/InstancedStaticMeshComponent.h"
 #include "EngineUtils.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Framework/GameTickManager.h"
+#include "Kismet/KismetRenderingLibrary.h"
+#include "Engine/TextureRenderTarget2D.h"
 
 ATriggerTile::ATriggerTile()
 {
@@ -30,6 +33,14 @@ ATriggerTile::ATriggerTile()
 	// Use Z-axis as forward since engine cylinder is oriented along Z
 	WireComp->SetForwardAxis(ESplineMeshAxis::Z);
 	WireComp->SetVisibility(false); // Hidden until owner is set
+
+	// Create wave pulse indicator component
+	WavePulseComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WavePulseComp"));
+	WavePulseComp->SetupAttachment(RootComp);
+	WavePulseComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	WavePulseComp->SetMobility(EComponentMobility::Movable);
+	WavePulseComp->SetVisibility(false); // Hidden until owner is set
+	WavePulseComp->SetCastShadow(false);
 }
 
 void ATriggerTile::BeginPlay()
@@ -64,6 +75,9 @@ void ATriggerTile::BeginPlay()
 				break;
 			}
 		}
+
+		// Find GameTickManager for tick rate reference
+		TickManager = AGameTickManager::Get(this);
 	}
 
 	UpdateVisuals();
@@ -98,6 +112,208 @@ void ATriggerTile::Tick(float DeltaTime)
 	if (bHasOwner)
 	{
 		CheckTriggerCondition();
+	}
+
+	// Animate ripple based on GTM tick rate (updates every engine tick)
+	if (bEnableWavePulse && bHasOwner && Driver && TickManager)
+	{
+		// Get GTM's current ticks per second
+		float GTMTicksPerSecond = TickManager->TicksPerSecond;
+		
+		// Advance ripple position based on GTM tick rate
+		// WavePulseSpeed = 1.0 means it takes 1 GTM tick to travel from start to end
+		// So we advance by: (DeltaTime * TicksPerSecond) / WavePulseSpeed
+		float AdvanceRate = (DeltaTime * GTMTicksPerSecond) / FMath::Max(0.001f, WavePulseSpeed);
+		WavePulseT += AdvanceRate;
+		
+		if (WavePulseT >= 1.0f)
+		{
+			WavePulseT -= FMath::Floor(WavePulseT); // Wrap around for continuous loop
+			RippleIntensity = 0.0f; // Reset intensity when starting new cycle
+		}
+
+		// Calculate fade in/out based on position
+		// Convert fade ticks to normalized position (0-1)
+		float TotalTravelTicks = WavePulseSpeed;
+		float FadeInEnd = (RippleFadeInTicks / TotalTravelTicks);
+		float FadeOutStart = 1.0f - (RippleFadeOutTicks / TotalTravelTicks);
+		
+		if (WavePulseT < FadeInEnd)
+		{
+			// Fading in
+			RippleIntensity = (FadeInEnd > 0.0f) ? FMath::Clamp(WavePulseT / FadeInEnd, 0.0f, 1.0f) : 1.0f;
+		}
+		else if (WavePulseT > FadeOutStart)
+		{
+			// Fading out
+			float FadeOutRange = (RippleFadeOutTicks / TotalTravelTicks);
+			RippleIntensity = (FadeOutRange > 0.0f) ? FMath::Clamp((1.0f - WavePulseT) / FadeOutRange, 0.0f, 1.0f) : 1.0f;
+		}
+		else
+		{
+			// Full intensity in the middle
+			RippleIntensity = 1.0f;
+		}
+	}
+
+	// Update visuals every frame
+	UpdateRippleVisuals();
+}
+
+void ATriggerTile::UpdateRippleVisuals()
+{
+	if (!bEnableWavePulse || !bHasOwner || !Driver)
+	{
+		// Disable effects when wave pulse is disabled or no owner
+		if (WavePulseComp)
+		{
+			WavePulseComp->SetVisibility(false);
+		}
+		return;
+	}
+
+	// Calculate start and end positions (at grid level)
+	FVector StartPos = GetActorLocation();
+	FHex OwnerHex(OwnerQ, OwnerR);
+	FVector EndPos = Driver->MapHexToWorld(OwnerHex);
+	
+	// Calculate current ripple position at grid level
+	FVector RipplePos = FMath::Lerp(StartPos, EndPos, WavePulseT);
+	
+	// Draw ripple to render target
+	if (UWorld* World = GetWorld())
+	{
+		AGameManager* GM = nullptr;
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			GM = *It;
+			break;
+		}
+		
+		if (GM)
+		{
+			UTextureRenderTarget2D* RT = GM->GetRippleRenderTarget();
+			UMaterialInterface* DrawMaterial = GM->RippleDrawMaterial;
+			
+			// Skip if draw material isn't set (prevents crash)
+			if (!DrawMaterial)
+			{
+				return;
+			}
+			
+			if (RT && RippleIntensity > 0.0f && RT->IsValidLowLevel() && DrawMaterial->IsValidLowLevel())
+			{
+				// Create or get material instance for drawing
+				if (!RippleDrawMID)
+				{
+					UMaterialInterface* BaseMat = DrawMaterial;
+					if (UMaterialInstanceDynamic* ExistingMID = Cast<UMaterialInstanceDynamic>(BaseMat))
+					{
+						BaseMat = ExistingMID->Parent;
+					}
+					
+					if (BaseMat && BaseMat->IsValidLowLevel())
+					{
+						RippleDrawMID = UMaterialInstanceDynamic::Create(BaseMat, this);
+					}
+				}
+				
+				if (RippleDrawMID && RippleDrawMID->IsValidLowLevel())
+				{
+					// Convert world position to RT UV coordinates
+					FVector2D RTUV = GM->WorldPositionToRippleRTUV(RipplePos);
+					
+					// Encode data: R = intensity, G = signal type (0=red, 1=green)
+					FLinearColor EncodedColor(
+						RippleIntensity,  // R channel: intensity
+						bCurrentSignal ? 1.0f : 0.0f,  // G channel: signal type
+						0.0f,  // B channel: reserved for waves
+						1.0f   // A channel: unused
+					);
+					
+					// Set material parameters for ripple drawing
+					// Parameters expected by the draw material:
+					// - RippleCenter: UV coordinates in RT (0-1 range)
+					// - RippleColor: Encoded color (R=intensity, G=signal type)
+					// - RippleRadius: Radius in RT UV space (0-1)
+					// - RippleFalloff: Falloff distance in RT UV space (0-1)
+					float RTWorldSize = GM->RippleRenderTargetWorldSize;
+					if (RTWorldSize > 0.0f)
+					{
+						RippleDrawMID->SetVectorParameterValue(FName("RippleCenter"), FLinearColor(RTUV.X, RTUV.Y, 0.0f, 1.0f));
+						RippleDrawMID->SetVectorParameterValue(FName("RippleColor"), EncodedColor);
+						RippleDrawMID->SetScalarParameterValue(FName("RippleRadius"), RippleRadius / RTWorldSize);
+						RippleDrawMID->SetScalarParameterValue(FName("RippleFalloff"), RippleFalloff / RTWorldSize);
+						
+						// Draw to render target (additive blend mode in material)
+						// Only draw if we're in game world (not editor preview)
+						if (World->WorldType == EWorldType::Game || World->WorldType == EWorldType::PIE)
+						{
+							UKismetRenderingLibrary::DrawMaterialToRenderTarget(World, RT, RippleDrawMID);
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Optional: Update visible pulse mesh indicator (if mesh is set up)
+	if (WavePulseComp && WavePulseMesh)
+	{
+		// Add height offset for visible mesh
+		FVector MeshPos = RipplePos;
+		MeshPos.Z += WireHeightOffset + WavePulseHeightOffset;
+		
+		WavePulseComp->SetWorldLocation(MeshPos);
+		WavePulseComp->SetWorldScale3D(FVector(WavePulseScale));
+		
+		// Setup mesh if needed
+		if (!WavePulseComp->GetStaticMesh())
+		{
+			WavePulseComp->SetStaticMesh(WavePulseMesh);
+		}
+		
+		// Setup material if needed
+		if (!WavePulseMID && WavePulseComp->GetStaticMesh())
+		{
+			UMaterialInterface* BaseMat = WavePulseMaterial;
+			if (!BaseMat)
+			{
+				BaseMat = WavePulseComp->GetStaticMesh()->GetMaterial(0);
+			}
+			
+			if (BaseMat)
+			{
+				if (UMaterialInstanceDynamic* ExistingMID = Cast<UMaterialInstanceDynamic>(BaseMat))
+				{
+					BaseMat = ExistingMID->Parent;
+				}
+				
+				if (BaseMat)
+				{
+					WavePulseMID = UMaterialInstanceDynamic::Create(BaseMat, this);
+					WavePulseComp->SetMaterial(0, WavePulseMID);
+				}
+			}
+		}
+		
+		// Update color with intensity
+		if (WavePulseMID)
+		{
+			FLinearColor PulseColor = bCurrentSignal ? PositiveWireColor : NegativeWireColor;
+			FLinearColor EmissiveColor = PulseColor * WavePulseEmissiveIntensity * RippleIntensity;
+			
+			WavePulseMID->SetVectorParameterValue(FName("BaseColor"), PulseColor * RippleIntensity);
+			WavePulseMID->SetVectorParameterValue(FName("Color"), PulseColor * RippleIntensity);
+			WavePulseMID->SetVectorParameterValue(FName("Tint"), PulseColor * RippleIntensity);
+			WavePulseMID->SetVectorParameterValue(FName("EmissiveColor"), EmissiveColor);
+		}
+		
+		WavePulseComp->SetVisibility(RippleIntensity > 0.0f);
+	}
+	else if (WavePulseComp)
+	{
+		WavePulseComp->SetVisibility(false);
 	}
 }
 

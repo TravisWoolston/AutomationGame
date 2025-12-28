@@ -35,6 +35,7 @@ class UMaterialInterface;
 class AOrbSimDriver;
 class UGoldbergGrid; // NEW
 class UTexture2D;
+class UTextureRenderTarget2D;
 class UArmTimelineWidget;
 class UPoseableMeshComponent;
 class ATriggerTile;
@@ -327,6 +328,14 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Grid")
 	UMaterialInterface* TileMaterial = nullptr;
 
+	/** Dynamic material instance for grid tiles (created from TileMaterial, used to set ripple parameters) */
+	UPROPERTY()
+	UMaterialInstanceDynamic* GridTileMID = nullptr;
+	
+	/** Cached base material used to create GridTileMID (to detect changes) */
+	UPROPERTY()
+	UMaterialInterface* CachedGridTileBaseMaterial = nullptr;
+
 	/** Auto-rebuild when moved farther than this threshold. */
 	UPROPERTY(EditAnywhere, Category = "Grid")
 	bool bAutoExpandAtRuntime = true;
@@ -584,6 +593,75 @@ public:
 
 	/** Get the icon texture for a stored cluster (generates if needed) (C++ only) */
 	UTexture2D* GetClusterIcon(const USimWorldHex::FClusterTemplate& ClusterTemplate);
+
+	// ------------ Ripple/Wave Render Target ------------
+	/** Render target for storing ripple and wave data (RGBA: RippleIntensity, SignalType, WaveHeight, Reserved) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget")
+	class UTextureRenderTarget2D* RippleRenderTarget;
+
+	/** Size of the ripple render target (should be power of 2, e.g., 512, 1024, 2048) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget", meta = (ClampMin = "256", ClampMax = "4096"))
+	int32 RippleRenderTargetSize = 1024;
+
+	/** World space size covered by the render target (in units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget", meta = (ClampMin = "100.0"))
+	float RippleRenderTargetWorldSize = 2000.0f;
+
+	/** 
+	 * World position offset for the render target (allows RT to follow camera/viewport).
+	 * The RT covers a square area centered at (RippleRTOffset.X, RippleRTOffset.Y).
+	 * Set this to camera position to make ripples only visible in viewport area.
+	 * Leave at (0,0) to center RT at grid anchor.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget")
+	FVector2D RippleRTOffset = FVector2D::ZeroVector;
+
+	/** Automatically update RippleRTOffset to follow player camera position */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget")
+	bool bAutoFollowPlayerCamera = true;
+
+	/** 
+	 * Material used to draw ripples to the render target.
+	 * IMPORTANT: This material MUST be configured as:
+	 * - Material Domain: Post Process (or User Interface)
+	 * - Blendable Location: After Tonemapping
+	 * - Simple material without lighting/VSMs (causes crashes otherwise)
+	 * 
+	 * Expected parameters:
+	 * - RippleCenter (Vector2): UV coordinates of ripple center (0-1 range)
+	 * - RippleColor (Vector4): Encoded color (R=intensity, G=signal type 0/1)
+	 * - RippleRadius (Scalar): Radius in RT UV space (0-1)
+	 * - RippleFalloff (Scalar): Falloff distance in RT UV space (0-1)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget")
+	class UMaterialInterface* RippleDrawMaterial;
+
+	/** Color for positive ripple signal (green) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget")
+	FLinearColor RipplePositiveColor = FLinearColor(0.1f, 0.9f, 0.1f, 1.0f);
+
+	/** Color for negative ripple signal (red) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget")
+	FLinearColor RippleNegativeColor = FLinearColor(0.9f, 0.1f, 0.1f, 1.0f);
+
+	/** Initialize or recreate the ripple render target */
+	UFUNCTION(BlueprintCallable, Category = "Ripple|RenderTarget")
+	void InitializeRippleRenderTarget();
+
+	/** Clear the ripple render target (call at start of each frame) */
+	UFUNCTION(BlueprintCallable, Category = "Ripple|RenderTarget")
+	void ClearRippleRenderTarget();
+
+	/** Get the ripple render target (creates it if needed) */
+	UFUNCTION(BlueprintPure, Category = "Ripple|RenderTarget")
+	UTextureRenderTarget2D* GetRippleRenderTarget();
+
+	/** Convert world position to render target UV coordinates */
+	UFUNCTION(BlueprintPure, Category = "Ripple|RenderTarget")
+	FVector2D WorldPositionToRippleRTUV(const FVector& WorldPos) const;
+
+	/** Create or update the grid tile MID from TileMaterial (for setting ripple parameters) */
+	void UpdateGridTileMID();
 
 	// ------------ Walker Calibration (Public for access from BasicWalker) ------------
 	/** Whether walker calibration is currently active */

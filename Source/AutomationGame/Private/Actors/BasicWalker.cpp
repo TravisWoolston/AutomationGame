@@ -429,15 +429,9 @@ void ABasicWalker::Tick(float DeltaSeconds)
 						}
 					}
 				}
-				else
-				{
-					UE_LOG(LogTemp, VeryVerbose, TEXT("BasicWalker::Tick: Component transform contains NaN during calibration, skipping animation update"));
-				}
+
 			}
-			else
-			{
-				UE_LOG(LogTemp, VeryVerbose, TEXT("BasicWalker::Tick: No animation instance during calibration, attempting to initialize"));
-			}
+
 		}
 	}
 
@@ -1309,12 +1303,21 @@ void ABasicWalker::Tick(float DeltaSeconds)
 	float ClusterRotationDeg = 0.f; 
 	TargetRot.Yaw += ClusterRotationDeg;
 	
-	for (UStaticMeshComponent* Comp : HandComps)
+	// Validate rotation before setting - NaN would cause SetWorldRotation to fail
+	if (!TargetRot.ContainsNaN())
 	{
-		if (Comp && Comp->IsUsingAbsoluteRotation())
+		for (UStaticMeshComponent* Comp : HandComps)
 		{
-			Comp->SetWorldRotation(TargetRot);
+			if (Comp && Comp->IsUsingAbsoluteRotation())
+			{
+				Comp->SetWorldRotation(TargetRot);
+			}
 		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Walker %s: Skipping SetWorldRotation due to NaN in actor rotation (TargetRot=%s)"), 
+			*GetName(), *TargetRot.ToString());
 	}
 
 	RefreshPose(1.0f);
@@ -1701,11 +1704,7 @@ void ABasicWalker::UpdateAssignedTileWorldLocations()
 		}
 	}
 	
-	UE_LOG(LogTemp, VeryVerbose, TEXT("UpdateAssignedTileWorldLocations: Final locations - D(%.1f,%.1f,%.1f) L(%.1f,%.1f,%.1f) R(%.1f,%.1f,%.1f) U(%.1f,%.1f,%.1f)"), 
-		DFootAssignedTileWorldLocation.X, DFootAssignedTileWorldLocation.Y, DFootAssignedTileWorldLocation.Z,
-		LFootAssignedTileWorldLocation.X, LFootAssignedTileWorldLocation.Y, LFootAssignedTileWorldLocation.Z,
-		RFootAssignedTileWorldLocation.X, RFootAssignedTileWorldLocation.Y, RFootAssignedTileWorldLocation.Z,
-		UFootAssignedTileWorldLocation.X, UFootAssignedTileWorldLocation.Y, UFootAssignedTileWorldLocation.Z);
+
 	
 	// Broadcast event so Event Graph can respond to assigned tile updates
 	OnAssignedTilesUpdated.Broadcast();

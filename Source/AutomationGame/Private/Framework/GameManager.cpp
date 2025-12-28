@@ -9,14 +9,18 @@
 #include "Actors/BasicWalker.h"
 #include "Actors/RequestBeacon.h"
 #include "Actors/OrbSimDriver.h"
+#include "Actors/HexTopDownPawn.h"
 #include "Sim/HexCoord.h"
 #include "Sim/SimWorldHex.h"          // <-- ADDED for USimWorldHex / FArmState
 #include "Sim/HexTypes.h" // <-- ADDED for HexUtil
 #include "Geometry/GoldbergGrid.h" // NEW
 #include "UI/ArmTimelineWidget.h"
 #include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "Sim/OrbTypes.h"
 #include "Data/OrbMaterialManager.h"
+#include "Kismet/KismetRenderingLibrary.h"
+#include "Materials/MaterialParameterCollectionInstance.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -119,6 +123,9 @@ void AGameManager::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Initialize ripple render target
+	InitializeRippleRenderTarget();
+
 	// Cancel walker calibration if active (calibration is editor-only, not for PIE)
 	// This runs when PIE starts
 	if (bWalkerCalibrationActive)
@@ -165,6 +172,59 @@ void AGameManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AGameManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	
+	// Clear ripple render target at start of each frame
+	ClearRippleRenderTarget();
+	
+	// Auto-update RT offset to follow player camera (top-down view)
+	if (bAutoFollowPlayerCamera)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			// Find the player pawn (HexTopDownPawn)
+			for (TActorIterator<AHexTopDownPawn> It(World); It; ++It)
+			{
+				AHexTopDownPawn* PlayerPawn = *It;
+				if (PlayerPawn && PlayerPawn->IsValidLowLevel())
+				{
+					// For top-down view, use the pawn's root location (camera looks straight down)
+					FVector PlayerLoc = PlayerPawn->GetActorLocation();
+					RippleRTOffset = FVector2D(PlayerLoc.X, PlayerLoc.Y);
+					break;
+				}
+			}
+		}
+	}
+	
+	// Update grid material parameters for ripple RT conversion
+	if (GridTileMID)
+	{
+		// Get RT center position (can be offset to follow camera/viewport)
+		FVector2D RTCenter;
+		if (RippleRTOffset.IsNearlyZero())
+		{
+			// Default: center RT at grid anchor
+			FVector AnchorLoc = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
+			RTCenter = FVector2D(AnchorLoc.X, AnchorLoc.Y);
+		}
+		else
+		{
+			// Use custom offset (e.g., camera position)
+			RTCenter = RippleRTOffset;
+		}
+		
+		GridTileMID->SetVectorParameterValue(FName("RippleRTAnchor"), FLinearColor(RTCenter.X, RTCenter.Y, 0.0f, 1.0f));
+		GridTileMID->SetScalarParameterValue(FName("RippleRTWorldSize"), RippleRenderTargetWorldSize);
+		GridTileMID->SetVectorParameterValue(FName("RipplePositiveColor"), RipplePositiveColor);
+		GridTileMID->SetVectorParameterValue(FName("RippleNegativeColor"), RippleNegativeColor);
+		
+		UTextureRenderTarget2D* RT = GetRippleRenderTarget();
+		if (RT)
+		{
+			GridTileMID->SetTextureParameterValue(FName("RippleRenderTarget"), RT);
+		}
+	}
+	
 	if (!bAutoExpandAtRuntime) return;
 
 	const FVector AnchorLoc = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
@@ -392,7 +452,17 @@ void AGameManager::BuildGridInstances()
 	if (!ISM) return;
 	ISM->ClearInstances();
 	if (TileMesh) ISM->SetStaticMesh(TileMesh);
-	if (TileMaterial) ISM->SetMaterial(0, TileMaterial);
+	
+	// Create/update MID and apply it to ISM
+	UpdateGridTileMID();
+	if (GridTileMID)
+	{
+		ISM->SetMaterial(0, GridTileMID);
+	}
+	else if (TileMaterial)
+	{
+		ISM->SetMaterial(0, TileMaterial);
+	}
 
 	const float TileSpacing = TileSizeUU; // alias for clarity
 	const float S = FMath::Max(1.f, TileSpacing);
@@ -2568,3 +2638,123 @@ void AGameManager::ClearWalkerQuadrantVisualization(ABasicWalker* Walker)
 	}
 }
 
+// ------------ Ripple/Wave Render Target Implementation ------------
+
+UTextureRenderTarget2D* AGameManager::GetRippleRenderTarget()
+{
+	if (!RippleRenderTarget)
+	{
+		InitializeRippleRenderTarget();
+	}
+	return RippleRenderTarget;
+}
+
+void AGameManager::InitializeRippleRenderTarget()
+{
+	if (RippleRenderTarget && 
+		RippleRenderTarget->SizeX == RippleRenderTargetSize && 
+		RippleRenderTarget->SizeY == RippleRenderTargetSize)
+	{
+		// Already initialized with correct size
+		return;
+	}
+
+	// Create new render target
+	RippleRenderTarget = NewObject<UTextureRenderTarget2D>(this);
+	if (RippleRenderTarget)
+	{
+		RippleRenderTarget->InitAutoFormat(RippleRenderTargetSize, RippleRenderTargetSize);
+		RippleRenderTarget->UpdateResourceImmediate(true);
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Created ripple render target %dx%d"), 
+			RippleRenderTargetSize, RippleRenderTargetSize);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("GameManager: Failed to create ripple render target"));
+	}
+}
+
+void AGameManager::ClearRippleRenderTarget()
+{
+	if (!RippleRenderTarget)
+	{
+		GetRippleRenderTarget();
+	}
+
+	if (RippleRenderTarget)
+	{
+		// Clear to black (no ripples)
+		UKismetRenderingLibrary::ClearRenderTarget2D(this, RippleRenderTarget, FLinearColor::Black);
+	}
+}
+
+FVector2D AGameManager::WorldPositionToRippleRTUV(const FVector& WorldPos) const
+{
+	if (!RippleRenderTarget || RippleRenderTargetWorldSize <= 0.0f)
+	{
+		return FVector2D(0.5f, 0.5f); // Center if not initialized
+	}
+
+	// Get RT center position (can be offset from grid anchor to follow camera)
+	FVector2D RTCenter;
+	if (RippleRTOffset.IsNearlyZero())
+	{
+		// Default: center RT at grid anchor
+		FVector AnchorPos = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
+		RTCenter = FVector2D(AnchorPos.X, AnchorPos.Y);
+	}
+	else
+	{
+		// Use custom offset (e.g., camera position)
+		RTCenter = RippleRTOffset;
+	}
+	
+	// Convert world position to local space relative to RT center
+	FVector2D LocalPos = FVector2D(WorldPos.X, WorldPos.Y) - RTCenter;
+	
+	// Convert to UV coordinates (0-1 range)
+	// RT covers a square area centered at RTCenter
+	float HalfSize = RippleRenderTargetWorldSize * 0.5f;
+	FVector2D UV;
+	UV.X = (LocalPos.X + HalfSize) / RippleRenderTargetWorldSize;
+	UV.Y = (LocalPos.Y + HalfSize) / RippleRenderTargetWorldSize;
+	
+	// Don't clamp - let values outside 0-1 be handled by the material
+	// Clamping to edges causes beams when positions are outside RT bounds
+	// The material should handle out-of-bounds by not drawing
+	
+	return UV;
+}
+
+void AGameManager::UpdateGridTileMID()
+{
+	if (!TileMaterial)
+	{
+		GridTileMID = nullptr;
+		CachedGridTileBaseMaterial = nullptr;
+		return;
+	}
+
+	// Get the base material (parent if TileMaterial is already a MID)
+	UMaterialInterface* BaseMaterial = TileMaterial;
+	if (UMaterialInstanceDynamic* ExistingMID = Cast<UMaterialInstanceDynamic>(BaseMaterial))
+	{
+		BaseMaterial = ExistingMID->Parent;
+	}
+
+	// Recreate MID if material changed or doesn't exist
+	if (!GridTileMID || CachedGridTileBaseMaterial != BaseMaterial)
+	{
+		if (BaseMaterial)
+		{
+			GridTileMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+			CachedGridTileBaseMaterial = BaseMaterial;
+			UE_LOG(LogTemp, Log, TEXT("GameManager: Created grid tile MID from material %s"), *BaseMaterial->GetName());
+		}
+		else
+		{
+			GridTileMID = nullptr;
+			CachedGridTileBaseMaterial = nullptr;
+		}
+	}
+}
