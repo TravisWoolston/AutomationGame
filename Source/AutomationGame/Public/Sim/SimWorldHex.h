@@ -123,6 +123,12 @@ public:
 	void SetBeltTriggerSignal(const FHex& BeltOwnerHex, bool bEnabled);
 	void ClearBeltTriggerSignal(const FHex& BeltOwnerHex);
 	bool IsBeltEnabled(const FHex& BeltHex) const;
+
+	// TriggerTile signal API - controls arm enable/disable based on trigger signals
+	void SetArmTriggerSignal(const FHex& ArmBaseHex, bool bEnabled);
+	void ClearArmTriggerSignal(const FHex& ArmBaseHex);
+	bool IsArmEnabled(const FHex& ArmBaseHex) const;
+	bool IsArmActivated(const FHex& ArmBaseHex) const; // Returns true if arm was activated by positive signal and should continue until reset
 	
 	// Cluster template API (C++ only - TPair is not Blueprint-compatible)
 	// Cluster template structure (must be public for external access)
@@ -321,6 +327,15 @@ private:
 	// Key = belt hex location (owner), Value = true if enabled (positive signal or no trigger)
 	// If a belt has no entry, it is enabled by default
 	TMap<FHex, bool> BeltTriggerSignals;
+
+	// TriggerTile signals - tracks whether arms are enabled based on TriggerTile signals
+	// Key = arm base hex location, Value = true if enabled (positive signal or no trigger)
+	// If an arm has no entry, it is enabled by default
+	TMap<FHex, bool> ArmTriggerSignals;
+
+	// Tracks which arms have been "activated" by a positive signal and should continue executing until reset
+	// Key = arm base hex location, Value = true if activated (should continue until reset command)
+	TMap<FHex, bool> ArmTriggerActivated;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;

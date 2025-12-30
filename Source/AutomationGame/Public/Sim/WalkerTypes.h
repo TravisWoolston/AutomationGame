@@ -154,6 +154,10 @@ struct AUTOMATIONGAME_API FWalkerState
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex CurrentTargetHex; // Current request target
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bProcessingRequest = false;
 	
+	// --- Timeout tracking ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 TicksSinceLastFootTargetChange = 0; // Tracks when feet last updated their target tiles
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 RequestCooldownTicks = 0; // Cooldown period after canceling a request before accepting new ones
+	
 	// --- Foot states (D, L, R, U order) ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FFootState DFoot;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FFootState LFoot;

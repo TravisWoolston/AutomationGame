@@ -158,6 +158,11 @@ void USimWorldHex::StepArms()
 		FArmState& S = Arms[ArmIndex];
 		if (S.Tape.Num() == 0) continue;
 
+		// Check if arm is enabled by trigger signal
+		if (!IsArmEnabled(S.BaseHex))
+		{
+			continue; // Skip disabled arms
+		}
 
 		// Allow multiple operations per tick for immediate execution
 		int32 OpsExecutedThisTick = 0;
@@ -1316,6 +1321,10 @@ void USimWorldHex::StepArms()
 			case ECmd::PivotR:  break;
 			case ECmd::Reset:
 			{
+				// Clear activation flag when reset command is executed
+				// This allows the arm to be disabled again if signal becomes negative
+				ArmTriggerActivated.Remove(S.BaseHex);
+				
 				// Reset command implementation: Generate commands to drop and return to home position
 				// Calculate movements needed to return to home position
 				int32 CurrentReach = S.ArmLen;  // Not const, as we may update it after extend/drop

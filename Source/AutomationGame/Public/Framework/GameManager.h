@@ -8,6 +8,7 @@
 #include "Sim/WalkerTypes.h"
 #include "Templates/Tuple.h"
 #include "Sim/SimWorldHex.h"
+#include "Framework/WaveTypes.h"
 #include "GameManager.generated.h"
 
 /** Walker foot selection for calibration */
@@ -663,6 +664,109 @@ public:
 	/** Create or update the grid tile MID from TileMaterial (for setting ripple parameters) */
 	void UpdateGridTileMID();
 
+	// ------------ Wave Render Target (Physical Displacement) ------------
+	/** Render target for storing wave height/displacement data (for World Position Offset) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget")
+	class UTextureRenderTarget2D* WaveRenderTarget;
+
+	/** Size of the wave render target (should be power of 2, e.g., 512, 1024, 2048) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget", meta = (ClampMin = "256", ClampMax = "4096"))
+	int32 WaveRenderTargetSize = 2048;
+
+	/** World space size covered by the wave render target (in units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget", meta = (ClampMin = "100.0"))
+	float WaveRenderTargetWorldSize = 10000.0f;
+
+	/** 
+	 * World position offset for the wave render target (allows RT to follow camera/viewport).
+	 * The RT covers a square area centered at (WaveRTOffset.X, WaveRTOffset.Y).
+	 * Set this to camera position to make waves only visible in viewport area.
+	 * Leave at (0,0) to center RT at grid anchor.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget")
+	FVector2D WaveRTOffset = FVector2D::ZeroVector;
+
+	/** Automatically update WaveRTOffset to follow player camera position */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget")
+	bool bAutoFollowPlayerCameraForWaves = true;
+
+	/** 
+	 * Material used to draw waves to the render target.
+	 * IMPORTANT: This material MUST be configured as:
+	 * - Material Domain: Surface
+	 * - Blend Mode: Additive
+	 * - Shading Model: Unlit
+	 * 
+	 * Expected parameters:
+	 * - WaveCenter (Vector2): UV coordinates of wave center (0-1 range)
+	 * - WaveHeight (Scalar): Wave height/displacement (Delta from 0)
+	 * - WaveRadius (Scalar): Radius in RT UV space (0-1)
+	 * - WaveFalloff (Scalar): Falloff distance in RT UV space (0-1)
+	 * - WaveTime (Scalar): Time value for animation
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget")
+	class UMaterialInterface* WaveDrawMaterial;
+
+	/** Maximum wave height/displacement in world units */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget", meta = (ClampMin = "0.0"))
+	float MaxWaveHeight = 50.0f;
+
+	/** Wave animation speed (waves per second) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget", meta = (ClampMin = "0.0"))
+	float WaveAnimationSpeed = 1.0f;
+
+	/** 
+	 * Controls how quickly waves fade out.
+	 * Lower values = gradual "simmer" effect (0.25-0.5)
+	 * Higher values = faster fade (1.0 = linear, 2.0 = quadratic)
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget", meta = (ClampMin = "0.1", ClampMax = "4.0"))
+	float WaveFadeExponent = 0.5f;
+
+	/** Wave height for regular Output tiles (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Output", meta = (ClampMin = "0.0"))
+	float OutputWaveHeight = 60.0f;
+
+	/** Wave radius for regular Output tiles (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Output", meta = (ClampMin = "1.0"))
+	float OutputWaveRadius = 50.0f; // Increased start radius for visibility
+
+	/** Wave falloff distance for regular Output tiles (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Output", meta = (ClampMin = "1.0"))
+	float OutputWaveFalloff = 50.0f;
+
+	/** Wave height for ClusterOutput tiles (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Output", meta = (ClampMin = "0.0"))
+	float ClusterOutputWaveHeight = 35.0f;
+
+	/** Wave radius for ClusterOutput tiles (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Output", meta = (ClampMin = "1.0"))
+	float ClusterOutputWaveRadius = 120.0f;
+
+	/** Wave falloff distance for ClusterOutput tiles (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Output", meta = (ClampMin = "1.0"))
+	float ClusterOutputWaveFalloff = 60.0f;
+
+	/** Initialize or recreate the wave render target */
+	UFUNCTION(BlueprintCallable, Category = "Wave|RenderTarget")
+	void InitializeWaveRenderTarget();
+
+	/** Clear the wave render target (call at start of each frame) */
+	UFUNCTION(BlueprintCallable, Category = "Wave|RenderTarget")
+	void ClearWaveRenderTarget();
+
+	/** Get the wave render target (creates it if needed) */
+	UFUNCTION(BlueprintPure, Category = "Wave|RenderTarget")
+	UTextureRenderTarget2D* GetWaveRenderTarget();
+
+	/** Convert world position to wave render target UV coordinates */
+	UFUNCTION(BlueprintPure, Category = "Wave|RenderTarget")
+	FVector2D WorldPositionToWaveRTUV(const FVector& WorldPos) const;
+	
+	/** Draw a wave to the render target at the specified world position (adds to active wave list) */
+	UFUNCTION(BlueprintCallable, Category = "Wave|RenderTarget")
+	void DrawWaveToRenderTarget(const FVector& WorldPosition, float WaveHeight, float WaveRadius, float WaveFalloff, float LifeTime = 1.5f);
+
 	// ------------ Walker Calibration (Public for access from BasicWalker) ------------
 	/** Whether walker calibration is currently active */
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Calibration")
@@ -693,6 +797,21 @@ protected:
 #endif
 
 private:
+	/** List of currently active waves being rendered */
+	UPROPERTY(Transient)
+	TArray<FGridWaveInstance> ActiveWaves;
+
+	/** Cached material instance for drawing waves to render target */
+	UPROPERTY(Transient)
+	UMaterialInstanceDynamic* WaveDrawMID = nullptr;
+	
+	/** Cached base material used to create WaveDrawMID (to detect changes) */
+	UPROPERTY(Transient)
+	UMaterialInterface* CachedWaveDrawBaseMaterial = nullptr;
+
+	/** Internal helper to draw a single wave stamp to the render target */
+	void InternalDrawWaveStamp(class UCanvas* Canvas, const FVector2D& Size, const FGridWaveInstance& Wave);
+
 	struct FWalkerLegCalibrationData
 	{
 		FName HipRotatorBone;
@@ -700,12 +819,12 @@ private:
 		FName KneeAxleBone;
 		FName FootAxleBone;
 		FName FootBone;
-		FQuat HipRotatorBaseRotation;
-		FQuat HipAxleBaseRotation;
-		FQuat KneeAxleBaseRotation;
-		FQuat FootAxleBaseRotation;
-		FQuat FootBoneBaseRotation;
-		FTransform FootRelativeTransform;
+		FQuat HipRotatorBaseRotation = FQuat::Identity;
+		FQuat HipAxleBaseRotation = FQuat::Identity;
+		FQuat KneeAxleBaseRotation = FQuat::Identity;
+		FQuat FootAxleBaseRotation = FQuat::Identity;
+		FQuat FootBoneBaseRotation = FQuat::Identity;
+		FTransform FootRelativeTransform = FTransform::Identity;
 		FVector HipComponentLocation = FVector::ZeroVector;
 		FVector KneeComponentLocation = FVector::ZeroVector;
 		FVector FootAxleComponentLocation = FVector::ZeroVector;
@@ -722,7 +841,7 @@ private:
 		FVector FootAxleAxisComponent = FVector::ForwardVector;
 		FVector FootAxleWorldLocation = FVector::ZeroVector;
 		FVector FootWorldLocation = FVector::ZeroVector;
-		FVector PoleVectorLocal;
+		FVector PoleVectorLocal = FVector::ZeroVector;
 		float UpperLength = 0.f;
 		float LowerLength = 0.f;
 		float BaseKneeAlong = 0.f;

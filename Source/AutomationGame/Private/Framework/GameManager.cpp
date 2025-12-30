@@ -1,4 +1,5 @@
 #include "Framework/GameManager.h"
+#include "Framework/WaveTypes.h"
 #include "Framework/GameTickManager.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/World.h"
@@ -123,8 +124,9 @@ void AGameManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Initialize ripple render target
+	// Initialize ripple and wave render targets
 	InitializeRippleRenderTarget();
+	InitializeWaveRenderTarget();
 
 	// Cancel walker calibration if active (calibration is editor-only, not for PIE)
 	// This runs when PIE starts
@@ -173,8 +175,9 @@ void AGameManager::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	
-	// Clear ripple render target at start of each frame
+	// Clear ripple and wave render targets at start of each frame
 	ClearRippleRenderTarget();
+	ClearWaveRenderTarget();
 	
 	// Auto-update RT offset to follow player camera (top-down view)
 	if (bAutoFollowPlayerCamera)
@@ -196,6 +199,26 @@ void AGameManager::Tick(float DeltaSeconds)
 		}
 	}
 	
+	// Auto-update wave RT offset to follow player camera (top-down view)
+	if (bAutoFollowPlayerCameraForWaves)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			// Find the player pawn (HexTopDownPawn)
+			for (TActorIterator<AHexTopDownPawn> It(World); It; ++It)
+			{
+				AHexTopDownPawn* PlayerPawn = *It;
+				if (PlayerPawn && PlayerPawn->IsValidLowLevel())
+				{
+					// For top-down view, use the pawn's root location (camera looks straight down)
+					FVector PlayerLoc = PlayerPawn->GetActorLocation();
+					WaveRTOffset = FVector2D(PlayerLoc.X, PlayerLoc.Y);
+					break;
+				}
+			}
+		}
+	}
+
 	// Update grid material parameters for ripple RT conversion
 	if (GridTileMID)
 	{
@@ -223,6 +246,62 @@ void AGameManager::Tick(float DeltaSeconds)
 		{
 			GridTileMID->SetTextureParameterValue(FName("RippleRenderTarget"), RT);
 		}
+		
+		// Update wave render target parameters
+		FVector2D WaveRTCenter;
+		if (WaveRTOffset.IsNearlyZero())
+		{
+			// Default: center RT at grid anchor
+			FVector AnchorLoc = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
+			WaveRTCenter = FVector2D(AnchorLoc.X, AnchorLoc.Y);
+		}
+		else
+		{
+			// Use custom offset (e.g., camera position)
+			WaveRTCenter = WaveRTOffset;
+		}
+		
+		GridTileMID->SetVectorParameterValue(FName("WaveRTAnchor"), FLinearColor(WaveRTCenter.X, WaveRTCenter.Y, 0.0f, 1.0f));
+		GridTileMID->SetScalarParameterValue(FName("WaveRTWorldSize"), WaveRenderTargetWorldSize);
+		GridTileMID->SetScalarParameterValue(FName("MaxWaveHeight"), MaxWaveHeight);
+		GridTileMID->SetScalarParameterValue(FName("WaveTime"), GetWorld()->GetTimeSeconds() * WaveAnimationSpeed);
+		
+		UTextureRenderTarget2D* WaveRT = GetWaveRenderTarget();
+		if (WaveRT)
+		{
+			GridTileMID->SetTextureParameterValue(FName("WaveRenderTarget"), WaveRT);
+		}
+	}
+	
+	// Update active waves lifecycle and redraw to RT
+	if (ActiveWaves.Num() > 0)
+	{
+		float CurrentTime = GetWorld()->GetTimeSeconds();
+		for (int32 i = ActiveWaves.Num() - 1; i >= 0; --i)
+		{
+			if (CurrentTime > ActiveWaves[i].StartTime + ActiveWaves[i].LifeTime)
+			{
+				ActiveWaves.RemoveAt(i);
+			}
+		}
+
+		// Redraw all active waves to the RT
+		// Note: ClearWaveRenderTarget() was already called at start of Tick
+		// Since we use PF_FloatRGBA and correct Additive Blending logic, this sums up all active waves for the frame.
+		UCanvas* Canvas;
+		FVector2D Size;
+		FDrawToRenderTargetContext Context;
+		UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(GetWorld(), WaveRenderTarget, Canvas, Size, Context);
+		
+		if (Canvas)
+		{
+			for (const FGridWaveInstance& Wave : ActiveWaves)
+			{
+				InternalDrawWaveStamp(Canvas, Size, Wave);
+			}
+		}
+		
+		UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
 	}
 	
 	if (!bAutoExpandAtRuntime) return;
@@ -2756,5 +2835,255 @@ void AGameManager::UpdateGridTileMID()
 			GridTileMID = nullptr;
 			CachedGridTileBaseMaterial = nullptr;
 		}
+	}
+}
+
+// ------------ Wave Render Target Implementation ------------
+
+UTextureRenderTarget2D* AGameManager::GetWaveRenderTarget()
+{
+	if (!WaveRenderTarget)
+	{
+		InitializeWaveRenderTarget();
+	}
+	return WaveRenderTarget;
+}
+
+void AGameManager::InitializeWaveRenderTarget()
+{
+	if (WaveRenderTarget && 
+		WaveRenderTarget->SizeX == WaveRenderTargetSize && 
+		WaveRenderTarget->SizeY == WaveRenderTargetSize)
+	{
+		// Already initialized with correct size
+		return;
+	}
+
+	// Create new render target
+	WaveRenderTarget = NewObject<UTextureRenderTarget2D>(this);
+	if (WaveRenderTarget)
+	{
+		// Use FloatRGBA for high precision wave accumulation
+		// This is crucial for smooth gradients and properly handling multiple additive waves
+		WaveRenderTarget->InitCustomFormat(WaveRenderTargetSize, WaveRenderTargetSize, PF_FloatRGBA, false);
+		WaveRenderTarget->UpdateResourceImmediate(true);
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Created wave render target %dx%d (FloatRGBA)"), 
+			WaveRenderTargetSize, WaveRenderTargetSize);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("GameManager: Failed to create wave render target"));
+	}
+}
+
+void AGameManager::ClearWaveRenderTarget()
+{
+	if (!WaveRenderTarget)
+	{
+		GetWaveRenderTarget();
+	}
+
+	if (WaveRenderTarget)
+	{
+		// Clear to neutral (0.5 = no displacement, stored in R channel for height)
+		// This ensures the grid doesn't sink when no waves are present
+		UKismetRenderingLibrary::ClearRenderTarget2D(this, WaveRenderTarget, FLinearColor(0.5f, 0.0f, 0.0f, 1.0f));
+	}
+}
+
+FVector2D AGameManager::WorldPositionToWaveRTUV(const FVector& WorldPos) const
+{
+	if (!WaveRenderTarget || WaveRenderTargetWorldSize <= 0.0f)
+	{
+		return FVector2D(0.5f, 0.5f); // Center if not initialized
+	}
+
+	// Get RT center position (can be offset from grid anchor to follow camera)
+	FVector2D RTCenter;
+	if (WaveRTOffset.IsNearlyZero())
+	{
+		// Default: center RT at grid anchor
+		FVector AnchorPos = GridAnchor ? GridAnchor->GetActorLocation() : GetActorLocation();
+		RTCenter = FVector2D(AnchorPos.X, AnchorPos.Y);
+	}
+	else
+	{
+		// Use custom offset (e.g., camera position)
+		RTCenter = WaveRTOffset;
+	}
+	
+	// Convert world position to local space relative to RT center
+	FVector2D LocalPos = FVector2D(WorldPos.X, WorldPos.Y) - RTCenter;
+	
+	// Convert to UV coordinates (0-1 range)
+	// RT covers a square area centered at RTCenter
+	float HalfSize = WaveRenderTargetWorldSize * 0.5f;
+	FVector2D UV;
+	UV.X = (LocalPos.X + HalfSize) / WaveRenderTargetWorldSize;
+	UV.Y = (LocalPos.Y + HalfSize) / WaveRenderTargetWorldSize;
+	
+	// Don't clamp - let values outside 0-1 be handled by the material
+	// Clamping to edges causes beams when positions are outside RT bounds
+	// The material should handle out-of-bounds by not drawing
+	
+	return UV;
+}
+
+void AGameManager::DrawWaveToRenderTarget(const FVector& WorldPosition, float WaveHeight, float WaveRadius, float WaveFalloff, float LifeTime)
+{
+	UWorld* World = GetWorld();
+	if (!World || (World->WorldType != EWorldType::Game && World->WorldType != EWorldType::PIE))
+	{
+		// In Editor, we don't simulate waves (or maybe we do, but safest to skip)
+		// Actually, if called from Blutility, we might want to.
+		// For now, allow PIE and Game.
+	}
+
+	FGridWaveInstance NewWave;
+	NewWave.WorldPosition = WorldPosition;
+	NewWave.StartTime = World->GetTimeSeconds();
+	// Scale lifetime inversely with animation speed so waves reach the same final size
+	// Faster speed = shorter life, slower speed = longer life
+	float SpeedScale = FMath::Max(0.1f, WaveAnimationSpeed); // Prevent division by zero
+	NewWave.LifeTime = LifeTime / SpeedScale;
+	NewWave.MaxHeight = WaveHeight;
+	NewWave.Radius = WaveRadius;
+	NewWave.Falloff = WaveFalloff;
+
+	ActiveWaves.Add(NewWave);
+	
+	// If needed, we could trigger an immediate update, but Tick handles it better for batching.
+}
+
+// ----------------------------------------------------------------------------------
+// CRITICAL MATERIAL SETUP INSTRUCTION:
+// To prevent "Square Artifacts", "Resetting Waves", and "Global Level Shifts", 
+// the assigned WaveDrawMaterial MUST be configured as follows:
+// 
+// 1. Blend Mode: ADDITIVE
+//    - Opaque or Translucent modes will overwrite/reset the water level, causing artifacts.
+//    - Additive mode sums the wave heights correctly.
+//
+// 2. Emissive/Base Color Output:
+//    - Must be 0.0 (Black) where there is no wave.
+//    - Must NOT output a "0.5" offset base. The C++ code now outputs pure delta values.
+//    - Only output the Ripple Height (Positive for crests).
+//
+// 3. Shading Model: Unlit (Preferred for pure data writing).
+// ----------------------------------------------------------------------------------
+void AGameManager::InternalDrawWaveStamp(class UCanvas* Canvas, const FVector2D& Size, const FGridWaveInstance& Wave)
+{
+	if (!WaveDrawMaterial || !WaveRenderTarget || !Canvas)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	// Create or get material instance for drawing
+	UMaterialInterface* BaseMat = WaveDrawMaterial;
+	if (UMaterialInstanceDynamic* ExistingMID = Cast<UMaterialInstanceDynamic>(BaseMat))
+	{
+		BaseMat = ExistingMID->Parent;
+	}
+	
+	// Recreate MID if material changed or doesn't exist
+	if (!WaveDrawMID || CachedWaveDrawBaseMaterial != BaseMat)
+	{
+		if (BaseMat && BaseMat->IsValidLowLevel())
+		{
+			WaveDrawMID = UMaterialInstanceDynamic::Create(BaseMat, this);
+			CachedWaveDrawBaseMaterial = BaseMat;
+			if (!WaveDrawMID)
+			{
+				UE_LOG(LogTemp, Error, TEXT("InternalDrawWaveStamp: Failed to create MID from material %s"), *BaseMat->GetName());
+				return;
+			}
+		}
+		else
+		{
+			WaveDrawMID = nullptr;
+			CachedWaveDrawBaseMaterial = nullptr;
+			// Only log once to avoid spam
+			static bool bLoggedInvalidMat = false;
+			if (!bLoggedInvalidMat)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("InternalDrawWaveStamp: WaveDrawMaterial is invalid"));
+				bLoggedInvalidMat = true;
+			}
+			return;
+		}
+	}
+	
+	if (WaveDrawMID && WaveDrawMID->IsValidLowLevel())
+	{
+		// Convert world position to RT UV coordinates
+		FVector2D RTUV = WorldPositionToWaveRTUV(Wave.WorldPosition);
+		
+		// Normalize parameters
+		float RTWorldSize = WaveRenderTargetWorldSize;
+		if (RTWorldSize <= 100.0f) 
+		{
+			RTWorldSize = 2000.0f;
+		}
+
+		float ElapsedTime = World->GetTimeSeconds() - Wave.StartTime;
+		float LifeFraction = FMath::Clamp(ElapsedTime / Wave.LifeTime, 0.0f, 1.0f);
+
+		// Animate Radius: Start small and expand
+		// This calculates the PHYSICAL RADIUS of the wave at this moment.
+		// Scale expansion speed by WaveAnimationSpeed to give user control.
+		float ExpansionSpeed = 150.0f * WaveAnimationSpeed; 
+		float AnimatedRadius = Wave.Radius + (ExpansionSpeed * ElapsedTime);
+		
+		// Fade Out: Use configurable exponent for fade curve
+		// Lower WaveFadeExponent = more gradual "simmer" effect
+		// Higher WaveFadeExponent = faster fade
+		float FadeAlpha = FMath::Pow(1.0f - LifeFraction, WaveFadeExponent);
+
+		// Fade In: Avoid popping (quick fade-in over first 0.1 seconds)
+		float FadeIn = FMath::Clamp(ElapsedTime / 0.1f, 0.0f, 1.0f);
+		FadeAlpha *= FadeIn;
+
+		// Calculate Normalized Height
+		// 0.5 Bias is REMOVED for Additive Blending compatibility.
+		// Output 0.0 = No Change. >0.0 = Add height.
+		float BaseHeight = FMath::Clamp(Wave.MaxHeight / MaxWaveHeight, -1.0f, 1.0f);
+		float CurrentHeightNorm = (BaseHeight * FadeAlpha) * 0.5f;
+
+		// Normalized for Material (0-1 in UV space)
+		float NormalizedRadius = AnimatedRadius / RTWorldSize;
+		
+		// Animate falloff: Ring gets thinner as it expands (like real water ripples)
+		// The ring thickness shrinks proportionally with the fade
+		float AnimatedFalloff = Wave.Falloff * FadeAlpha;
+		// Ensure minimum visible thickness
+		AnimatedFalloff = FMath::Max(AnimatedFalloff, Wave.Falloff * 0.1f);
+		float NormalizedFalloff = AnimatedFalloff / RTWorldSize;
+		
+		// Set material parameters
+		WaveDrawMID->SetVectorParameterValue(FName("WaveCenter"), FLinearColor(RTUV.X, RTUV.Y, 0.0f, 1.0f));
+		WaveDrawMID->SetScalarParameterValue(FName("WaveHeight"), CurrentHeightNorm);
+		// IMPORTANT: We pass the ANIMATED radius here. 
+		// This means the Material "WaveRadius" parameter grows over time.
+		WaveDrawMID->SetScalarParameterValue(FName("WaveRadius"), NormalizedRadius);
+		// Falloff also animates - ring gets thinner as it expands
+		WaveDrawMID->SetScalarParameterValue(FName("WaveFalloff"), NormalizedFalloff);
+
+		WaveDrawMID->SetScalarParameterValue(FName("WaveTime"), ElapsedTime * WaveAnimationSpeed);
+		
+		// Calculate localized quad bounds (2.0x radius margin)
+		float TotalRadiusUV = NormalizedRadius + NormalizedFalloff;
+		TotalRadiusUV *= 2.0f; 
+		
+		FVector2D UVTopLeft = RTUV - FVector2D(TotalRadiusUV, TotalRadiusUV);
+		FVector2D UVSize = FVector2D(TotalRadiusUV * 2.0f, TotalRadiusUV * 2.0f);
+		
+		FVector2D ScreenPos = UVTopLeft * Size;
+		FVector2D ScreenSize = UVSize * Size;
+		
+		// Draw localized quad
+		Canvas->K2_DrawMaterial(WaveDrawMID, ScreenPos, ScreenSize, UVTopLeft, UVSize);
 	}
 }

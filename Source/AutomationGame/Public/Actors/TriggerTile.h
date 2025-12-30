@@ -12,6 +12,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerSignalChanged, bool, bPosi
 // Grid visibility delegate
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerGridVisibilityChanged, bool, bIsVisible);
 
+// Owner type enum (must be at global scope)
+UENUM(BlueprintType)
+enum class ETriggerTileOwnerType : uint8
+{
+	Belt,
+	Arm
+};
+
 /**
  * TriggerTile - A placeable tile that sends signals based on orb presence.
  * 
@@ -76,6 +84,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TriggerTile")
 	bool bHasOwner = false;
 
+	// Owner type (belt or arm)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TriggerTile")
+	ETriggerTileOwnerType OwnerType = ETriggerTileOwnerType::Belt;
+
 	// Current signal state
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TriggerTile")
 	bool bCurrentSignal = false;
@@ -98,6 +110,10 @@ public:
 	// Set the owner belt tile
 	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
 	void SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR);
+
+	// Set the owner arm tile
+	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
+	void SetOwnerArm(int32 InOwnerQ, int32 InOwnerR);
 
 	// Get the owner hex
 	UFUNCTION(BlueprintPure, Category = "TriggerTile")

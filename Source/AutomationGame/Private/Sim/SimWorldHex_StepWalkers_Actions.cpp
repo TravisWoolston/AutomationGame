@@ -147,6 +147,9 @@ void USimWorldHex::TryWalkerPickUp(FWalkerState& W, FFootState& Foot, int32 Walk
 		// Track the source pickup beacon hex to keep it InProgress until delivery
 		Foot.SourcePickUpHex = FHex(PickUpBeacon->Q, PickUpBeacon->R);
 		Foot.bHasSourcePickUp = true;
+		
+		// Reset timeout counter on successful pickup
+		W.TicksSinceLastFootTargetChange = 0;
 
 		if (PickUpBeacon->PairedBeacon)
 		{

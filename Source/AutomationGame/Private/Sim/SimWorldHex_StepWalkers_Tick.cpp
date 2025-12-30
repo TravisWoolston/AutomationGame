@@ -86,18 +86,115 @@ void USimWorldHex::ProcessWalkerTick(int32 WalkerIndex, const TSet<FHex>& HeldOr
 	
 	if (W.Stance != EWalkerStance::Standing && bAllFeetPlanted) return;
 	
+	// Decrement cooldown if active
+	if (W.RequestCooldownTicks > 0)
+	{
+		W.RequestCooldownTicks--;
+	}
+	
 	// Request processing
-	if (!W.bProcessingRequest && W.Requests.Num() > 0)
+	// Allow processing return-home requests even during cooldown
+	bool bCanProcessNewRequest = (W.RequestCooldownTicks == 0 || (W.Requests.Num() > 0 && W.Requests[0].Priority < 0));
+	
+	if (!W.bProcessingRequest && W.Requests.Num() > 0 && bCanProcessNewRequest)
 	{
 		W.CurrentTargetHex = W.Requests[0].TargetHex;
 		W.Requests[0].AttemptTicks = 0;
 		W.bProcessingRequest = true;
+		W.TicksSinceLastFootTargetChange = 0; // Reset when starting new request
 	}
 	
 	bool bIsPivoting = false;
 	if (W.bProcessingRequest)
 	{
 		W.Requests[0].AttemptTicks++;
+		
+		// Check for timeout: if walker is in range of pickup beacon but feet haven't updated for 5 ticks
+		if (W.Requests.Num() > 0 && !bAnyFootHolding)
+		{
+			FHex RequestTarget = W.Requests[0].TargetHex;
+			UE_LOG(LogTemp, Warning, TEXT("Walker %d: bProcessingRequest=true, Requests.Num()=%d, bAnyFootHolding=%d, RequestTarget=(%d,%d)"), 
+				WalkerIndex, W.Requests.Num(), bAnyFootHolding ? 1 : 0, RequestTarget.Q, RequestTarget.R);
+			
+			if (ARequestBeacon* const* BeaconPtr = BeaconCache.Find(RequestTarget))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Walker %d: Beacon found, Role=%d, State=%d"), 
+					WalkerIndex, (int32)(*BeaconPtr)->BeaconRole, (int32)(*BeaconPtr)->BeaconState);
+				
+				if ((*BeaconPtr)->BeaconRole == EBeaconRole::PickUp && (*BeaconPtr)->BeaconState == EBeaconState::InProgress)
+				{
+					// Check if walker is in range of the pickup tile
+					int32 DistToTarget = HexUtil::Dist(W.BaseHex, RequestTarget);
+					bool bInRange = DistToTarget <= W.ReachDistance;
+					
+					// UE_LOG(LogTemp, Warning, TEXT("Walker %d: Processing PickUp request at (%d,%d), DistToTarget=%d, ReachDistance=%d, bInRange=%d, CurrentCounter=%d"), 
+					// 	WalkerIndex, RequestTarget.Q, RequestTarget.R, DistToTarget, W.ReachDistance, bInRange ? 1 : 0, W.TicksSinceLastFootTargetChange);
+					
+					if (bInRange)
+					{
+						// Only increment timeout counter when in range
+						// Check if this is the first tick in range by checking if counter was reset (0) when we were out of range
+						// If counter is 0 and we just entered range, start counting from 1
+						// Otherwise, increment it
+						if (W.TicksSinceLastFootTargetChange == 0)
+						{
+							// First tick in range - start counting
+							W.TicksSinceLastFootTargetChange = 1;
+						}
+						else
+						{
+							// Already counting - increment
+							W.TicksSinceLastFootTargetChange++;
+						}
+						UE_LOG(LogTemp, Warning, TEXT("Walker %d: IN RANGE - TicksSinceLastFootTargetChange: %d"), WalkerIndex, W.TicksSinceLastFootTargetChange);
+						if (W.TicksSinceLastFootTargetChange >= 20)
+						{
+							// Timeout: cancel request, return home, set cooldown
+							// UE_LOG(LogTemp, Warning, TEXT("Walker %d: Pickup request timeout - in range but feet stuck for %d ticks (threshold: 500). Canceling and returning home."), 
+							// 	WalkerIndex, W.TicksSinceLastFootTargetChange);
+							
+							// Set beacon back to Ready (or NotReady if item is gone)
+							if (ItemMap.Contains(RequestTarget))
+							{
+								(*BeaconPtr)->SetState(EBeaconState::Ready);
+							}
+							else
+							{
+								(*BeaconPtr)->SetState(EBeaconState::NotReady);
+							}
+							
+							// Clear current request
+							W.Requests.RemoveAt(0);
+							W.bProcessingRequest = false;
+							W.CurrentTargetHex = W.BaseHex;
+							W.TicksSinceLastFootTargetChange = 0;
+							
+							// Add return home request
+							if (W.BaseHex != W.HomeHex)
+							{
+								FWalkerRequest ReturnRequest;
+								ReturnRequest.TargetHex = W.HomeHex;
+								ReturnRequest.Priority = -1;
+								W.Requests.Insert(ReturnRequest, 0);
+							}
+							
+							// Set cooldown period (5 ticks) before accepting new requests
+							W.RequestCooldownTicks = 5;
+							
+							// Early return to skip rest of processing
+							return;
+						}
+					}
+					else
+					{
+						// Not in range yet - reset counter (walker is still approaching)
+						// UE_LOG(LogTemp, Warning, TEXT("Walker %d: NOT IN RANGE - Resetting counter from %d to 0"), WalkerIndex, W.TicksSinceLastFootTargetChange);
+						W.TicksSinceLastFootTargetChange = 0;
+					}
+				}
+			}
+		}
+
 		
 		// Pivot detection
 		TArray<FFootState*> AllFeet = GetAllFeet(W);

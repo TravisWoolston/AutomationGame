@@ -720,3 +720,19 @@ void ATriggerTile::Destroyed()
 	}
 }
 
+
+void ATriggerTile::SetOwnerArm(int32 InOwnerQ, int32 InOwnerR)
+{
+	OwnerQ = InOwnerQ;
+	OwnerR = InOwnerR;
+	bHasOwner = true;
+	OwnerType = ETriggerTileOwnerType::Arm;
+
+	UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) now owned by arm at (%d,%d)"), Q, R, OwnerQ, OwnerR);
+	
+	// Implementation note: Arms typically poll their trigger tile or receive signals via other means
+	// If the Sim supports Arm signals, we would update it here similar to SetOwnerBelt
+
+	// Update wire visual to show connection
+	UpdateWireVisual();
+}

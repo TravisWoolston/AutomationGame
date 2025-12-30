@@ -319,6 +319,12 @@ void USimWorldHex::HandleFootPlanted(FWalkerState& W, FFootState& Foot, int32 Wa
 
 		if (BestTile != Foot.CurrentTile)
 		{
+			// Foot target changed - reset timeout counter
+			if (Foot.TargetTile != BestTile)
+			{
+				W.TicksSinceLastFootTargetChange = 0;
+			}
+			
 			Foot.TargetTile = BestTile;
 			Foot.StepState = EFootStepState::Raising;
 			Foot.StepProgress = 0;
@@ -513,7 +519,16 @@ void USimWorldHex::UpdateFootHorizontalTarget(FWalkerState& W, FFootState& Foot,
 			if (!bTestIsTarget && IsHexOccupied(TestHex, HeldOrbHexes, ArmBaseHexes, HoldingFootHexes)) continue;
 			float Score = GetScore(TestHex);
 			if (bTestIsTarget) Score -= 100.f;
-			if (Score < BestScore - HysteresisThreshold) { BestScore = Score; Foot.TargetTile = TestHex; }
+			if (Score < BestScore - HysteresisThreshold) 
+			{ 
+				BestScore = Score; 
+				// Foot target changed - reset timeout counter
+				if (Foot.TargetTile != TestHex)
+				{
+					W.TicksSinceLastFootTargetChange = 0;
+				}
+				Foot.TargetTile = TestHex; 
+			}
 		}
 	}
 }

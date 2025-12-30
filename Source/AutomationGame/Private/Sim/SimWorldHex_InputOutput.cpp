@@ -990,6 +990,33 @@ void USimWorldHex::ProcessOutputs()
 				
 				AnimatedOrbs.Add(AnimatedOrb);
 				++OutputCount;
+				
+				// Trigger wave effect for single output
+				if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
+				{
+					if (Driver->GM)
+					{
+						FVector WorldPos = Driver->GM->GetWorldForHex(H);
+						Driver->GM->DrawWaveToRenderTarget(
+							WorldPos,
+							Driver->GM->OutputWaveHeight,
+							Driver->GM->OutputWaveRadius,
+							Driver->GM->OutputWaveFalloff
+						);
+						
+						// Also trigger wave for bonded partner if applicable
+						if (bRequiresBond && PartnerItem)
+						{
+							FVector PartnerWorldPos = Driver->GM->GetWorldForHex(PartnerOutputHex);
+							Driver->GM->DrawWaveToRenderTarget(
+								PartnerWorldPos,
+								Driver->GM->OutputWaveHeight,
+								Driver->GM->OutputWaveRadius,
+								Driver->GM->OutputWaveFalloff
+							);
+						}
+					}
+				}
 			}
 		}
 		// If type doesn't match or bond requirement not met, leave the orb on the tile (no action needed)
@@ -1338,6 +1365,21 @@ void USimWorldHex::ProcessOutputs()
 		for (const FAnimatedOrb& Anim : NewAnimations)
 		{
 			AnimatedOrbs.Add(Anim);
+
+			// Trigger wave effect for cluster output
+			if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
+			{
+				if (Driver->GM)
+				{
+					FVector WorldPos = Driver->GM->GetWorldForHex(Anim.Hex);
+					Driver->GM->DrawWaveToRenderTarget(
+						WorldPos,
+						Driver->GM->ClusterOutputWaveHeight,
+						Driver->GM->ClusterOutputWaveRadius,
+						Driver->GM->ClusterOutputWaveFalloff
+					);
+				}
+			}
 			
 			// Remove the item from the board
 			ItemMap.Remove(Anim.Hex);

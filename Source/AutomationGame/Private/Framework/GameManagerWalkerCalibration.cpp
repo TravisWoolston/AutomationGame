@@ -1,4 +1,5 @@
 #include "Framework/GameManager.h"
+#include "Framework/WaveTypes.h"
 #include "Actors/BasicWalker.h"
 #include "Actors/OrbSimDriver.h"
 #include "Components/SkeletalMeshComponent.h"

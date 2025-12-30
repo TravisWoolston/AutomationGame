@@ -103,6 +103,7 @@ void USimWorldHex::ProcessWalkerRequestAssignment(const TArray<ARequestBeacon*>&
 				FWalkerState& W = Walkers[WIdx];
 				if (W.Requests.Num() > 0 || W.bProcessingRequest) continue;
 				if (W.Stance != EWalkerStance::Standing && W.Stance != EWalkerStance::Sitting) continue;
+				if (W.RequestCooldownTicks > 0) continue; // Don't assign new requests during cooldown
 				
 				bool bAnyFootHolding = W.DFoot.bHoldingItem || W.LFoot.bHoldingItem || 
 									   W.RFoot.bHoldingItem || W.UFoot.bHoldingItem;

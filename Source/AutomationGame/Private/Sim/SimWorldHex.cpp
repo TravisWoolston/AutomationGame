@@ -2563,3 +2563,48 @@ bool USimWorldHex::IsBeltEnabled(const FHex& BeltHex) const
 	return *Signal; // Return the signal state (true = enabled/positive, false = disabled/negative)
 }
 
+void USimWorldHex::SetArmTriggerSignal(const FHex& ArmBaseHex, bool bEnabled)
+{
+	ArmTriggerSignals.Add(ArmBaseHex, bEnabled);
+	
+	// If positive signal, mark arm as activated (will continue until reset)
+	if (bEnabled)
+	{
+		ArmTriggerActivated.Add(ArmBaseHex, true);
+	}
+	// If negative signal and arm is not activated, just disable it
+	// If negative signal but arm is activated, keep it activated until reset
+}
+
+void USimWorldHex::ClearArmTriggerSignal(const FHex& ArmBaseHex)
+{
+	ArmTriggerSignals.Remove(ArmBaseHex);
+	// Don't clear activation - it persists until reset command
+}
+
+bool USimWorldHex::IsArmEnabled(const FHex& ArmBaseHex) const
+{
+	// Check if arm is activated (positive signal received, continues until reset)
+	if (const bool* Activated = ArmTriggerActivated.Find(ArmBaseHex))
+	{
+		if (*Activated)
+		{
+			return true; // Activated arms continue executing until reset
+		}
+	}
+	
+	// Check current signal state
+	const bool* Signal = ArmTriggerSignals.Find(ArmBaseHex);
+	if (!Signal)
+	{
+		return true; // No trigger = enabled
+	}
+	return *Signal; // Return the signal state (true = enabled/positive, false = disabled/negative)
+}
+
+bool USimWorldHex::IsArmActivated(const FHex& ArmBaseHex) const
+{
+	const bool* Activated = ArmTriggerActivated.Find(ArmBaseHex);
+	return Activated ? *Activated : false;
+}
+
