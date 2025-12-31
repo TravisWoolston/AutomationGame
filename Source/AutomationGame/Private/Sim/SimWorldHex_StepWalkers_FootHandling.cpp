@@ -3,6 +3,8 @@
 #include "Sim/WalkerTypes.h"
 #include "Sim/HexCoord.h"
 #include "Actors/RequestBeacon.h"
+#include "Actors/OrbSimDriver.h"
+#include "Framework/GameManager.h"
 #include "Algo/Sort.h"
 
 void USimWorldHex::HandleFootStateProcessing(FWalkerState& W, int32 WalkerIndex, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TMap<FHex, ARequestBeacon*>& BeaconCache, const TSet<FHex>& HoldingFootHexes, bool bIsPivoting)
@@ -66,6 +68,22 @@ void USimWorldHex::HandleFootStateProcessing(FWalkerState& W, int32 WalkerIndex,
 				Foot.StepState = EFootStepState::Planted;
 				Foot.StepProgress = 0;
 				Foot.HeightOffset = 0.f;
+				
+				// Trigger footstep wave (splash effect when foot lands)
+				if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
+				{
+					if (Driver->GM)
+					{
+						FVector FootWorldPos = Driver->GM->GetWorldForHex(Foot.CurrentTile);
+						Driver->GM->DrawWaveToRenderTarget(
+							FootWorldPos,
+							Driver->GM->WalkerFootWaveHeight,
+							Driver->GM->WalkerFootWaveRadius,
+							Driver->GM->WalkerFootWaveFalloff,
+							Driver->GM->WalkerFootWaveLifetime
+						);
+					}
+				}
 			}
 			break;
 		}

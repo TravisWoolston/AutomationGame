@@ -747,6 +747,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Output", meta = (ClampMin = "1.0"))
 	float ClusterOutputWaveFalloff = 60.0f;
 
+	// ---- Walker Footstep Waves ----
+	
+	/** Wave height for Walker footsteps (splash when foot lands) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Walker", meta = (ClampMin = "0.0"))
+	float WalkerFootWaveHeight = 25.0f;
+
+	/** Wave radius for Walker footsteps (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Walker", meta = (ClampMin = "1.0"))
+	float WalkerFootWaveRadius = 30.0f;
+
+	/** Wave falloff distance for Walker footsteps (in world units) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Walker", meta = (ClampMin = "1.0"))
+	float WalkerFootWaveFalloff = 40.0f;
+
+	/** Lifetime of Walker footstep waves (in seconds, before speed scaling) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|Walker", meta = (ClampMin = "0.1"))
+	float WalkerFootWaveLifetime = 1.5f;
+
 	/** Initialize or recreate the wave render target */
 	UFUNCTION(BlueprintCallable, Category = "Wave|RenderTarget")
 	void InitializeWaveRenderTarget();
