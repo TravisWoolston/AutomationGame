@@ -2028,6 +2028,61 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	UE_LOG(LogTemp, Log, TEXT("GameManager: Saved walker calibration to config file"));
 }
 
+void AGameManager::AutoInitializeWalkerCalibration()
+{
+	// Only initialize if leg calibration data is missing
+	if (WalkerLegCalibrations.Num() > 0)
+	{
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Walker leg calibrations already present (%d legs), skipping auto-init"), WalkerLegCalibrations.Num());
+		return;
+	}
+
+	if (!BasicWalkerClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Cannot auto-initialize walker calibration - BasicWalkerClass not set"));
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Auto-initializing walker calibration data..."));
+
+	// Spawn a temporary walker to gather calibration data
+	const FVector SpawnLocation = GetActorLocation() + FVector(0.f, 0.f, 5000.f); // Spawn far above to be invisible
+	const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
+
+	ABasicWalker* TempWalker = World->SpawnActorDeferred<ABasicWalker>(BasicWalkerClass, SpawnTransform, this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!TempWalker)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Failed to spawn temporary walker for calibration"));
+		return;
+	}
+
+	TempWalker->SetActorEnableCollision(false);
+	TempWalker->SetActorHiddenInGame(true);
+	TempWalker->FinishSpawning(SpawnTransform);
+
+	USkeletalMeshComponent* BodyComp = TempWalker->GetBodyComponent();
+	if (!BodyComp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Temporary walker has no skeletal mesh component"));
+		TempWalker->Destroy();
+		return;
+	}
+
+	// Gather calibration data from the mesh
+	GatherWalkerCalibrationData(BodyComp);
+
+	// Clean up the temporary walker
+	TempWalker->Destroy();
+
+	UE_LOG(LogTemp, Log, TEXT("GameManager: Auto-initialized walker calibration data (%d legs)"), WalkerLegCalibrations.Num());
+}
+
 void AGameManager::FootToOuterMostTile()
 {
 	if (!bWalkerCalibrationActive || !CalibratingWalker.IsValid())

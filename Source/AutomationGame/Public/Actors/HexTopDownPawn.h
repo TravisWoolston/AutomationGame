@@ -125,9 +125,16 @@ private:
 				FHex TargetHex = Placer->GetHoverHex();
 				ABasicArm* ArmAtLocation = FindArmAtHex(TargetHex);
 				if (ArmAtLocation) {
-					// Toggle the individual arm's timeline
-					ToggleArmTimeline(ArmAtLocation);
-					return;
+					// Don't toggle timeline if we are in the middle of a multi-step placement (like TriggerTile owner selection)
+					bool bInMultiStepPlacement = false;
+					if (Placer->PlaceKind == EPlaceKind::TriggerTile && Placer->TriggerTilePlacementStep > 0) bInMultiStepPlacement = true;
+					if (Placer->PlaceKind == EPlaceKind::RequestBeacon && Placer->BeaconPlacementStep > 0) bInMultiStepPlacement = true;
+
+					if (!bInMultiStepPlacement) {
+						// Toggle the individual arm's timeline
+						ToggleArmTimeline(ArmAtLocation);
+						return;
+					}
 				}
 			}
 			Placer->HandlePlace(true); 

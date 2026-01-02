@@ -29,6 +29,10 @@ UArmTimelineWidget::UArmTimelineWidget()
 	// Start hidden by default - visibility will be controlled by GameManager
 	SetVisibility(false);
 	
+	// Disable collision for the widget component to prevent blocking traces/clicks
+	SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SetCollisionProfileName(TEXT("NoCollision"));
+
 	// Initialize default command textures (will be set by GameManager)
 	CommandTextures.Empty();
 }

@@ -91,6 +91,7 @@ struct FTriggerTileSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EOrbType TriggerOrbType = EOrbType::BaseA;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 OwnerQ = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 OwnerR = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) ETriggerTileOwnerType OwnerType = ETriggerTileOwnerType::Belt;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Rotation = 0.f;
 	UPROPERTY(Transient) ATriggerTile* Spawned = nullptr;
 };
@@ -182,7 +183,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	bool RemoveBeaconSpec(int32 Q, int32 R);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	void UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, int32 OwnerQ, int32 OwnerR, float Rotation);
+	void UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	bool RemoveTriggerTileSpec(int32 Q, int32 R);
 

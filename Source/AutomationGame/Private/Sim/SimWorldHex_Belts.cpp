@@ -47,6 +47,7 @@ void USimWorldHex::StepBelts()
 		FHex FromHex;
 		FHex ToHex;
 		TArray<int32> ConnectedItemIds; // All items that must move together as a unit
+		bool bIsPriority = false;
 	};
 
 	// SIMPLE BELT SYSTEM - Move items every tick based on belt speed
@@ -72,6 +73,8 @@ void USimWorldHex::StepBelts()
 				const FItem* InputItem = ItemMap.Find(SourceHex);
 				if (InputItem && InputItem->Id > 0)
 				{
+					// Skip if ANY part of this item/cluster has already moved this tick
+					if (OrbsMovedThisTick.Contains(InputItem->Id)) return false;
 					// Check if this item is part of a bonded cluster
 					TSet<int32> BondedClusterIds;
 					TArray<int32> Stack;
@@ -323,6 +326,8 @@ void USimWorldHex::StepBelts()
 				if (BondItem && BondItem->Id > 0 &&
 					!RecentlyDroppedByArm.Contains(BondItem->Id))
 				{
+					// Skip if ANY part of this item/cluster has already moved this tick
+					if (OrbsMovedThisTick.Contains(BondItem->Id)) return false;
 					// For ClusterOutput, determine if we should pull
 					if (SourceTile->Kind == ETileKind::ClusterOutput)
 					{
@@ -654,6 +659,16 @@ void USimWorldHex::StepBelts()
 		MoveOp.FromHex = FromHex;
 		MoveOp.ToHex = ToHex;
 
+		// Set priority if this belt hasn't pushed this specific cluster ID yet
+		if (int32* LastId = BeltLastMovedItemId.Find(FromHex))
+		{
+			MoveOp.bIsPriority = (*LastId != Item.Id);
+		}
+		else
+		{
+			MoveOp.bIsPriority = true; // No history, assume priority
+		}
+
 		// Find all bonded items that must move together
 		TArray<int32> ToProcess;
 		TSet<int32> InCluster;
@@ -983,6 +998,14 @@ void USimWorldHex::StepBelts()
 		}
 	}
 
+	// Priority sorting: process moves from belts that are pushing a new cluster identity first.
+	// This ensures that clusters newly arriving or newly valid get the first chance to move.
+	MoveOperations.StableSort([](const FMoveOperation& A, const FMoveOperation& B) {
+		if (A.bIsPriority != B.bIsPriority)
+			return A.bIsPriority;
+		return false;
+	});
+
 	// Step 2.5: Iterative movement resolution
 	// Use an iterative approach to resolve all possible movements
 	TArray<FMoveOperation> ValidMoveOperations;
@@ -1252,6 +1275,17 @@ void USimWorldHex::StepBelts()
 				
 				// Mark this orb as having moved this tick
 				OrbsMovedThisTick.Add(ItemId);
+
+				// Update belt history if this was the source item of the move
+				if (NewHex != MoveOp.FromHex)
+				{
+					// We only update history for the specific tile that was the source of the MoveOp
+					// Note: ConnectedId == MoveOp.ItemId might be more precise for the 'seed' belt
+					if (ItemId == MoveOp.ItemId)
+					{
+						BeltLastMovedItemId.Add(MoveOp.FromHex, ItemId);
+					}
+				}
 			}
 		}
 

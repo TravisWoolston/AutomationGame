@@ -158,11 +158,6 @@ void USimWorldHex::StepArms()
 		FArmState& S = Arms[ArmIndex];
 		if (S.Tape.Num() == 0) continue;
 
-		// Check if arm is enabled by trigger signal
-		if (!IsArmEnabled(S.BaseHex))
-		{
-			continue; // Skip disabled arms
-		}
 
 		// Allow multiple operations per tick for immediate execution
 		int32 OpsExecutedThisTick = 0;
@@ -348,6 +343,19 @@ void USimWorldHex::StepArms()
 				if (S.bHolding)
 				{
 					bContinueProcessing = true; // allow next op this tick
+					break;
+				}
+
+				// Simplify: check if arm is enabled by trigger signal ONLY for Grab command
+				if (!IsArmEnabled(S.BaseHex))
+				{
+					if (bDebugLogs)
+					{
+						UE_LOG(LogTemp, Log, TEXT("Sim: Arm at (%d,%d) WAITING on Grab command due to negative signal"),
+							S.BaseHex.Q, S.BaseHex.R);
+					}
+					// Wait on this Grab instruction until signal is positive
+					bContinueProcessing = false;
 					break;
 				}
 
@@ -1321,10 +1329,6 @@ void USimWorldHex::StepArms()
 			case ECmd::PivotR:  break;
 			case ECmd::Reset:
 			{
-				// Clear activation flag when reset command is executed
-				// This allows the arm to be disabled again if signal becomes negative
-				ArmTriggerActivated.Remove(S.BaseHex);
-				
 				// Reset command implementation: Generate commands to drop and return to home position
 				// Calculate movements needed to return to home position
 				int32 CurrentReach = S.ArmLen;  // Not const, as we may update it after extend/drop
@@ -1503,7 +1507,7 @@ void USimWorldHex::StepArms()
 					S.PC = (S.PC + 1) % S.Tape.Num();
 
 					// Check if we wrapped around (looped)
-					if (S.PC == 0 && OldPC > 0)
+					if (S.PC == 0 && (OldPC > 0 || S.Tape.Num() == 1))
 					{
 						// We've looped! Check if the tape has been expanded by Reset commands
 						// If so, we need to rebuild it from the original program

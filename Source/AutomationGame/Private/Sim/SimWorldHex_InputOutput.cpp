@@ -1362,24 +1362,37 @@ void USimWorldHex::ProcessOutputs()
 		}
 		
 		// Add all animations and remove items
-		for (const FAnimatedOrb& Anim : NewAnimations)
+		// First, trigger a single combined wave for the entire cluster
+		if (NewAnimations.Num() > 0)
 		{
-			AnimatedOrbs.Add(Anim);
-
-			// Trigger wave effect for cluster output
 			if (AOrbSimDriver* Driver = Cast<AOrbSimDriver>(GetOuter()))
 			{
 				if (Driver->GM)
 				{
-					FVector WorldPos = Driver->GM->GetWorldForHex(Anim.Hex);
+					// Calculate the center of the cluster (average of all orb positions)
+					FVector ClusterCenter = FVector::ZeroVector;
+					for (const FAnimatedOrb& Anim : NewAnimations)
+					{
+						ClusterCenter += Driver->GM->GetWorldForHex(Anim.Hex);
+					}
+					ClusterCenter /= (float)NewAnimations.Num();
+					
+					// Scale wave size based on cluster size (more orbs = bigger wave)
+					float SizeScale = FMath::Sqrt((float)NewAnimations.Num());
+					
 					Driver->GM->DrawWaveToRenderTarget(
-						WorldPos,
-						Driver->GM->ClusterOutputWaveHeight,
-						Driver->GM->ClusterOutputWaveRadius,
-						Driver->GM->ClusterOutputWaveFalloff
+						ClusterCenter,
+						Driver->GM->ClusterOutputWaveHeight * SizeScale,
+						Driver->GM->ClusterOutputWaveRadius * SizeScale,
+						Driver->GM->ClusterOutputWaveFalloff * SizeScale
 					);
 				}
 			}
+		}
+		
+		for (const FAnimatedOrb& Anim : NewAnimations)
+		{
+			AnimatedOrbs.Add(Anim);
 			
 			// Remove the item from the board
 			ItemMap.Remove(Anim.Hex);

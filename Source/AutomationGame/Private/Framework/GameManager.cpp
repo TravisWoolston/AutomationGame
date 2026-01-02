@@ -138,6 +138,9 @@ void AGameManager::BeginPlay()
 
 	// Load walker calibration settings from config to ensure runtime properties are up to date
 	LoadWalkerCalibration();
+	
+	// Auto-initialize leg calibration data if not already present
+	AutoInitializeWalkerCalibration();
 
 	AutoFindRefs();
 	TryLoadInitial();

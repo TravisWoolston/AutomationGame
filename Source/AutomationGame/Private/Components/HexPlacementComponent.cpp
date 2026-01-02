@@ -229,29 +229,6 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: cannot spawn Beacon (no GameManager)."));
 			return;
 		}
-
-		// Check if we can place here (no arms)
-		// We can reuse the same check as for other tiles, but explicitly checking for arms
-		// Note: RequestBeacons can be placed on existing tiles (except arms)
-		// Check for arms at this location
-		bool bHasArm = false;
-		if (Sim)
-		{
-			for (const FArmState& ArmState : Sim->Arms)
-			{
-				if (ArmState.BaseHex.Q == A.Q && ArmState.BaseHex.R == A.R)
-				{
-					bHasArm = true;
-					break;
-				}
-			}
-		}
-		if (bHasArm)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place beacon - arm present."));
-			return;
-		}
-
 		// Calculate rotation for Pickup to match grid orientation
 		FRotator PickupRotation = FRotator::ZeroRotator;
 		if (Driver)
@@ -265,6 +242,25 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 
 		if (BeaconPlacementStep == 0) // Pickup Beacon
 		{
+			// Check if we can place here (no arms)
+			bool bHasArmAtLoc = false;
+			if (Sim)
+			{
+				for (const FArmState& ArmState : Sim->Arms)
+				{
+					if (ArmState.BaseHex.Q == A.Q && ArmState.BaseHex.R == A.R)
+					{
+						bHasArmAtLoc = true;
+						break;
+					}
+				}
+			}
+			if (bHasArmAtLoc)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place Beacon - arm present at pickup location."));
+				return;
+			}
+
 			// Spawn Pickup Beacon
 			UClass* BeaconClass = GM->RequestBeaconClass ? GM->RequestBeaconClass.Get() : ARequestBeacon::StaticClass();
 			FVector CenteredLocation = HexToWorld(Root);
@@ -372,27 +368,27 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			return;
 		}
 
-		// Check for arms at this location (can't place on arms)
-		bool bHasArm = false;
-		if (Sim)
-		{
-			for (const FArmState& ArmState : Sim->Arms)
-			{
-				if (ArmState.BaseHex.Q == A.Q && ArmState.BaseHex.R == A.R)
-				{
-					bHasArm = true;
-					break;
-				}
-			}
-		}
-		if (bHasArm)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place TriggerTile - arm present."));
-			return;
-		}
-
 		if (TriggerTilePlacementStep == 0) // TriggerTile location
 		{
+			// Check for arms at this location (can't place tile itself on arms)
+			bool bHasArmAtLoc = false;
+			if (Sim)
+			{
+				for (const FArmState& ArmState : Sim->Arms)
+				{
+					if (ArmState.BaseHex.Q == A.Q && ArmState.BaseHex.R == A.R)
+					{
+						bHasArmAtLoc = true;
+						break;
+					}
+				}
+			}
+			if (bHasArmAtLoc)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: Cannot place TriggerTile - arm present at tile location."));
+				return;
+			}
+
 			// Calculate rotation to match grid orientation
 			FRotator TileRotation = FRotator::ZeroRotator;
 			if (Driver)
@@ -417,37 +413,54 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 
 				PendingTriggerTile = TriggerTile;
 				TriggerTilePlacementStep = 1; // Move to owner selection step
-				UE_LOG(LogTemp, Log, TEXT("Placed TriggerTile at (%d,%d) with type %d. Select owner belt tile next."), 
+				UE_LOG(LogTemp, Log, TEXT("Placed TriggerTile at (%d,%d) with type %d. Select owner belt or arm next."), 
 					A.Q, A.R, (int32)TriggerTile->TriggerOrbType);
 				
 				if (GEngine)
 				{
 					GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Yellow,
-						TEXT("TriggerTile placed. Click on a belt tile to set as owner."));
+						TEXT("TriggerTile placed. Click on a belt or arm to set as owner."));
 				}
 			}
 		}
-		else if (TriggerTilePlacementStep == 1) // Owner belt selection
+		else if (TriggerTilePlacementStep == 1) // Owner selection
 		{
-			// Check if clicked tile has a belt
-			bool bHasBelt = false;
+			// Check if clicked tile has a belt or arm
+			bool bHasValidOwner = false;
+			ETriggerTileOwnerType ValidOwnerType = ETriggerTileOwnerType::Belt;
+
 			if (Sim && Sim->TileMap.Contains(Root))
 			{
 				const FTile* ClickedTile = Sim->TileMap.Find(Root);
 				if (ClickedTile && ClickedTile->Kind == ETileKind::Belt)
 				{
-					bHasBelt = true;
+					bHasValidOwner = true;
+					ValidOwnerType = ETriggerTileOwnerType::Belt;
 				}
 			}
 
-			if (!bHasBelt)
+			if (!bHasValidOwner && Sim)
 			{
-				// Cancel placement - no valid belt selected
-				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: No belt at (%d,%d) - canceling TriggerTile placement."), A.Q, A.R);
+				// Check for arms
+				for (const auto& ArmState : Sim->Arms)
+				{
+					if (ArmState.BaseHex.Q == Root.Q && ArmState.BaseHex.R == Root.R)
+					{
+						bHasValidOwner = true;
+						ValidOwnerType = ETriggerTileOwnerType::Arm;
+						break;
+					}
+				}
+			}
+
+			if (!bHasValidOwner)
+			{
+				// Cancel placement - no valid owner selected
+				UE_LOG(LogTemp, Warning, TEXT("HexPlacementComponent: No belt or arm at (%d,%d) - canceling TriggerTile placement."), A.Q, A.R);
 				if (GEngine)
 				{
 					GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red,
-						TEXT("No belt at selected location. TriggerTile placement canceled."));
+						TEXT("No belt or arm at selected location. TriggerTile placement canceled."));
 				}
 				
 				if (PendingTriggerTile && IsValid(PendingTriggerTile))
@@ -459,11 +472,20 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 				return;
 			}
 
-			// Valid belt found - set as owner
+			// Valid owner found
 			if (PendingTriggerTile && IsValid(PendingTriggerTile))
 			{
-				PendingTriggerTile->SetOwnerBelt(A.Q, A.R);
-				UE_LOG(LogTemp, Log, TEXT("TriggerTile owner set to belt at (%d,%d). Placement complete."), A.Q, A.R);
+				if (ValidOwnerType == ETriggerTileOwnerType::Belt)
+				{
+					PendingTriggerTile->SetOwnerBelt(A.Q, A.R);
+				}
+				else
+				{
+					PendingTriggerTile->SetOwnerArm(A.Q, A.R);
+				}
+
+				UE_LOG(LogTemp, Log, TEXT("TriggerTile owner set to %s at (%d,%d). Placement complete."), 
+					ValidOwnerType == ETriggerTileOwnerType::Belt ? TEXT("belt") : TEXT("arm"), A.Q, A.R);
 				
 				// Save to scenario via TestLevelDirector
 				if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
@@ -472,15 +494,18 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 					CachedTLD->UpsertTriggerTileSpec(
 						PendingTriggerTile->Q, PendingTriggerTile->R,
 						PendingTriggerTile->TriggerOrbType,
-						A.Q, A.R, // Owner belt coords
+						A.Q, A.R, 
+						ValidOwnerType,
 						PendingTriggerTile->GetActorRotation().Yaw);
 				}
 				
 				if (GEngine)
 				{
 					GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green,
-						FString::Printf(TEXT("TriggerTile at (%d,%d) now owned by belt at (%d,%d)"),
-							PendingTriggerTile->Q, PendingTriggerTile->R, A.Q, A.R));
+						FString::Printf(TEXT("TriggerTile at (%d,%d) now owned by %s at (%d,%d)"),
+							PendingTriggerTile->Q, PendingTriggerTile->R, 
+							ValidOwnerType == ETriggerTileOwnerType::Belt ? TEXT("belt") : TEXT("arm"),
+							A.Q, A.R));
 				}
 			}
 
@@ -1490,9 +1515,18 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 
 	const FVector CenterA = HexToWorld(HoverHex) + FVector(0, 0, PreviewZOffset);
 
-	if (PlaceKind != EPlaceKind::Walker && SkeletalPreviewComp)
+	if (PlaceKind != EPlaceKind::Walker)
 	{
-		SkeletalPreviewComp->SetVisibility(false);
+		// Start hidden by default - visibility will be controlled by GameManager
+		// This block seems to be misplaced from a constructor.
+		// SetVisibility(false); 
+		// SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		// SetCollisionProfileName(TEXT("NoCollision"));
+		// CommandTextures.Empty();
+		if (SkeletalPreviewComp)
+		{
+			SkeletalPreviewComp->SetVisibility(false);
+		}
 	}
 
 	// If walker placement, try to use actual walker skeletal assets for preview

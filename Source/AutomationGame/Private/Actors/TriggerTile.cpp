@@ -369,7 +369,18 @@ void ATriggerTile::CheckTriggerCondition()
 					}
 				}
 			}
+
+			if (bMatchingOrb)
+			{
+				// Log matching orb detection
+				// UE_LOG(LogTemp, Verbose, TEXT("TriggerTile at (%d,%d) detected matching orb ID:%d"), Q, R, Item->Id);
+			}
 		}
+	}
+	else
+	{
+		// No item at this location
+		// UE_LOG(LogTemp, VeryVerbose, TEXT("TriggerTile at (%d,%d) - no item found in sim"), Q, R);
 	}
 
 	// Update signal state if changed
@@ -383,15 +394,25 @@ void ATriggerTile::SetSignal(bool bNewSignal)
 		bCurrentSignal = bNewSignal;
 		OnSignalChanged.Broadcast(bCurrentSignal);
 
-		// Update the simulation's belt trigger signal
+		// Update the simulation's trigger signal
 		if (bHasOwner && Sim)
 		{
 			FHex OwnerHex(OwnerQ, OwnerR);
-			Sim->SetBeltTriggerSignal(OwnerHex, bCurrentSignal);
+			FHex TriggerHex(Q, R);
 			
-			UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) signal changed to %s - belt at (%d,%d) now %s"),
+			if (OwnerType == ETriggerTileOwnerType::Belt)
+			{
+				Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+			}
+			else
+			{
+				Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+			}
+			
+			UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) signal changed to %s - owner %s at (%d,%d) combined state updated"),
 				Q, R, bCurrentSignal ? TEXT("POSITIVE") : TEXT("NEGATIVE"),
-				OwnerQ, OwnerR, bCurrentSignal ? TEXT("ENABLED") : TEXT("DISABLED"));
+				OwnerType == ETriggerTileOwnerType::Belt ? TEXT("BELT") : TEXT("ARM"),
+				OwnerQ, OwnerR);
 		}
 
 		// Update visuals to reflect signal state
@@ -436,18 +457,40 @@ void ATriggerTile::SetIsGridVisible(bool bVisible)
 
 void ATriggerTile::SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR)
 {
+	// Ensure we have Sim reference if it wasn't found in BeginPlay yet
+	if (!Sim)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			Driver = AOrbSimDriver::Find(World);
+			if (Driver) Sim = Driver->GetSim();
+		}
+	}
+
+	// Clear old owner signal if changing
+	if (bHasOwner && Sim)
+	{
+		FHex OldOwnerHex(OwnerQ, OwnerR);
+		FHex TriggerHex(Q, R);
+		if (OwnerType == ETriggerTileOwnerType::Belt)
+			Sim->ClearBeltTriggerSignal(TriggerHex, OldOwnerHex);
+		else
+			Sim->ClearArmTriggerSignal(TriggerHex, OldOwnerHex);
+	}
+
 	OwnerQ = InOwnerQ;
 	OwnerR = InOwnerR;
 	bHasOwner = true;
+	OwnerType = ETriggerTileOwnerType::Belt;
 
 	UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) now owned by belt at (%d,%d)"), Q, R, OwnerQ, OwnerR);
 	
 	// Initialize the simulation with the current signal state
-	// Start with negative signal (no orb present yet) so belt starts disabled
 	if (Sim)
 	{
-		FHex OwnerHex(OwnerQ, OwnerR);
-		Sim->SetBeltTriggerSignal(OwnerHex, bCurrentSignal);
+		FHex TriggerHex(Q, R);
+		FHex OwnerHex(InOwnerQ, InOwnerR);
+		Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
 	}
 
 	// Update wire visual to show connection
@@ -707,12 +750,23 @@ void ATriggerTile::Destroyed()
 {
 	Super::Destroyed();
 
-	// Clean up the belt trigger signal in simulation
+	// Clean up the trigger signal in simulation
 	if (bHasOwner && Sim)
 	{
 		FHex OwnerHex(OwnerQ, OwnerR);
-		Sim->ClearBeltTriggerSignal(OwnerHex);
-		UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) destroyed - belt at (%d,%d) re-enabled"), Q, R, OwnerQ, OwnerR);
+		FHex TriggerHex(Q, R);
+		
+		if (OwnerType == ETriggerTileOwnerType::Belt)
+		{
+			Sim->ClearBeltTriggerSignal(TriggerHex, OwnerHex);
+		}
+		else
+		{
+			Sim->ClearArmTriggerSignal(TriggerHex, OwnerHex);
+		}
+		
+		UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) destroyed - cleared signal for %s at (%d,%d)"), 
+			Q, R, OwnerType == ETriggerTileOwnerType::Belt ? TEXT("belt") : TEXT("arm"), OwnerQ, OwnerR);
 	}
 	else
 	{
@@ -723,6 +777,27 @@ void ATriggerTile::Destroyed()
 
 void ATriggerTile::SetOwnerArm(int32 InOwnerQ, int32 InOwnerR)
 {
+	// Ensure we have Sim reference if it wasn't found in BeginPlay yet
+	if (!Sim)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			Driver = AOrbSimDriver::Find(World);
+			if (Driver) Sim = Driver->GetSim();
+		}
+	}
+
+	// Clear old owner signal if changing
+	if (bHasOwner && Sim)
+	{
+		FHex OldOwnerHex(OwnerQ, OwnerR);
+		FHex TriggerHex(Q, R);
+		if (OwnerType == ETriggerTileOwnerType::Belt)
+			Sim->ClearBeltTriggerSignal(TriggerHex, OldOwnerHex);
+		else
+			Sim->ClearArmTriggerSignal(TriggerHex, OldOwnerHex);
+	}
+
 	OwnerQ = InOwnerQ;
 	OwnerR = InOwnerR;
 	bHasOwner = true;
@@ -730,8 +805,16 @@ void ATriggerTile::SetOwnerArm(int32 InOwnerQ, int32 InOwnerR)
 
 	UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) now owned by arm at (%d,%d)"), Q, R, OwnerQ, OwnerR);
 	
-	// Implementation note: Arms typically poll their trigger tile or receive signals via other means
-	// If the Sim supports Arm signals, we would update it here similar to SetOwnerBelt
+	// Initialize the simulation with the current signal state (crucial for disabling owner by default)
+	if (Sim)
+	{
+		FHex TriggerHex(Q, R);
+		FHex OwnerHex(InOwnerQ, InOwnerR);
+		Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+		
+		UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) initialized SIM signal for Arm at (%d,%d) to %s"),
+			Q, R, OwnerQ, OwnerR, bCurrentSignal ? TEXT("POSITIVE") : TEXT("NEGATIVE"));
+	}
 
 	// Update wire visual to show connection
 	UpdateWireVisual();

@@ -146,7 +146,7 @@ void USimWorldHex::ProcessWalkerTick(int32 WalkerIndex, const TSet<FHex>& HeldOr
 							// Already counting - increment
 							W.TicksSinceLastFootTargetChange++;
 						}
-						UE_LOG(LogTemp, Warning, TEXT("Walker %d: IN RANGE - TicksSinceLastFootTargetChange: %d"), WalkerIndex, W.TicksSinceLastFootTargetChange);
+						// UE_LOG(LogTemp, Warning, TEXT("Walker %d: IN RANGE - TicksSinceLastFootTargetChange: %d"), WalkerIndex, W.TicksSinceLastFootTargetChange);
 						if (W.TicksSinceLastFootTargetChange >= 20)
 						{
 							// Timeout: cancel request, return home, set cooldown

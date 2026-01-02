@@ -120,15 +120,14 @@ public:
 	bool RequestWalkerMoveTo(int32 WalkerIndex, const FHex& TargetHex, int32 Priority = 0);
 	
 	// TriggerTile signal API - controls belt enable/disable based on trigger signals
-	void SetBeltTriggerSignal(const FHex& BeltOwnerHex, bool bEnabled);
-	void ClearBeltTriggerSignal(const FHex& BeltOwnerHex);
+	void SetBeltTriggerSignal(const FHex& TriggerHex, const FHex& BeltOwnerHex, bool bPositive);
+	void ClearBeltTriggerSignal(const FHex& TriggerHex, const FHex& BeltOwnerHex);
 	bool IsBeltEnabled(const FHex& BeltHex) const;
 
 	// TriggerTile signal API - controls arm enable/disable based on trigger signals
-	void SetArmTriggerSignal(const FHex& ArmBaseHex, bool bEnabled);
-	void ClearArmTriggerSignal(const FHex& ArmBaseHex);
+	void SetArmTriggerSignal(const FHex& TriggerHex, const FHex& ArmBaseHex, bool bPositive);
+	void ClearArmTriggerSignal(const FHex& TriggerHex, const FHex& ArmBaseHex);
 	bool IsArmEnabled(const FHex& ArmBaseHex) const;
-	bool IsArmActivated(const FHex& ArmBaseHex) const; // Returns true if arm was activated by positive signal and should continue until reset
 	
 	// Cluster template API (C++ only - TPair is not Blueprint-compatible)
 	// Cluster template structure (must be public for external access)
@@ -324,18 +323,19 @@ private:
 	TMap<FHex, bool> OutputTileGates;
 
 	// TriggerTile signals - tracks whether belts are enabled based on TriggerTile signals
-	// Key = belt hex location (owner), Value = true if enabled (positive signal or no trigger)
-	// If a belt has no entry, it is enabled by default
-	TMap<FHex, bool> BeltTriggerSignals;
+	// Outer Key = belt hex location (owner), Inner Key = trigger tile hex, Value = true if positive signal
+	// If a belt has no entries for any trigger, it is enabled by default
+	TMap<FHex, TMap<FHex, bool>> BeltTriggerSignals;
+
+	/** Track the ID of the last item/cluster moved by a belt at a specific location.
+	 *  Used to give priority to belts that haven't pushed their current occupant yet. */
+	TMap<FHex, int32> BeltLastMovedItemId;
 
 	// TriggerTile signals - tracks whether arms are enabled based on TriggerTile signals
-	// Key = arm base hex location, Value = true if enabled (positive signal or no trigger)
-	// If an arm has no entry, it is enabled by default
-	TMap<FHex, bool> ArmTriggerSignals;
+	// Outer Key = arm base hex location, Inner Key = trigger tile hex, Value = true if positive signal
+	// If an arm has no entries for any trigger, it is enabled by default
+	TMap<FHex, TMap<FHex, bool>> ArmTriggerSignals;
 
-	// Tracks which arms have been "activated" by a positive signal and should continue executing until reset
-	// Key = arm base hex location, Value = true if activated (should continue until reset command)
-	TMap<FHex, bool> ArmTriggerActivated;
 
 	// UI overlay
 	UPROPERTY() TMap<FHex, uint8> OrbAt;

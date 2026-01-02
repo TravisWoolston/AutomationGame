@@ -18,6 +18,17 @@ void USimWorldHex::StepArmsSecondPass()
 		const FOp& Op = S.Tape[S.PC];
 		if (Op.Cmd != ECmd::Grab || S.bHolding) continue;
 
+		// Gate on trigger signals (parity with first pass)
+		if (!IsArmEnabled(S.BaseHex))
+		{
+			if (bDebugLogs)
+			{
+				UE_LOG(LogTemp, Log, TEXT("Sim (SecondPass): Arm at (%d,%d) WAITING on Grab command due to negative signal"),
+					S.BaseHex.Q, S.BaseHex.R);
+			}
+			continue;
+		}
+
 		// Gate on committed sim state (delayed facing/length)
 		const uint8 SimFace = SimFacingByArm.Contains(ArmIndex)
 			? SimFacingByArm[ArmIndex]
@@ -358,6 +369,17 @@ void USimWorldHex::StepArmsSecondPass()
 			case ECmd::Grab:
 			{
 				if (S.bHolding) { S.PC = (S.PC + 1) % S.Tape.Num(); return true; }
+
+				// Gate on trigger signals (parity with first pass)
+				if (!IsArmEnabled(S.BaseHex))
+				{
+					if (bDebugLogs)
+					{
+						UE_LOG(LogTemp, Log, TEXT("Sim (FastOp): Arm at (%d,%d) WAITING on Grab command due to negative signal"),
+							S.BaseHex.Q, S.BaseHex.R);
+					}
+					return false;
+				}
 
 				FHex Target = ComputeGripHex(S);
 				FItem* Found = ItemMap.Find(Target);

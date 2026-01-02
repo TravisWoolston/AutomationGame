@@ -900,6 +900,7 @@ private:
 	void ClearWalkerDebugMeshes();
 	void LoadWalkerCalibration();
 	void SaveWalkerCalibrationToConfig();
+	void AutoInitializeWalkerCalibration(); // Automatically gather calibration data from walker mesh if not already present
 	void ApplyCalibrationValuesToAllWalkers(); // Apply all calibration values (StepHeight, ReachDistance, StartingFootDistance, etc.) to walkers in simulation
 	void AutoFindRefs();
 	void TryLoadInitial();
