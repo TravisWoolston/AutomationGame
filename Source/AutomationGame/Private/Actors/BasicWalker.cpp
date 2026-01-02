@@ -548,7 +548,7 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		UFootHeldItem = SimState.UFoot.HeldItem;
 
 		// Calculate visual delay based on step duration (wait for move animation to complete)
-		const int32 VisualDelay = SimState.StepMoveTicks;
+		// We'll calculate this per-foot below when holding state changes
 		
 		// Detect sim tick boundaries BEFORE prev variables are updated (for visual delay system)
 		// This must happen here because the foot processing loops update Prev variables
@@ -584,14 +584,14 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			{
 				// Transitioning to holding - set delay counter for pickup visual
 				bDFootHeldVisualReady = false;
-				DFootPickupVisualDelay = VisualDelay;
+				DFootPickupVisualDelay = (int32)FMath::CeilToFloat(SimState.DFoot.CurrentMoveDurationTicks);
 			}
 			else if (!bDFootHoldingItem && bPrevDHolding)
 			{
 				// Transitioning to NOT holding - set delay counter for drop visual
 				bDFootPendingDropVisual = true;
 				bDFootHeldVisualReady = false;
-				DFootDropVisualDelay = VisualDelay;
+				DFootDropVisualDelay = (int32)FMath::CeilToFloat(SimState.DFoot.CurrentMoveDurationTicks);
 				DFootCachedDropItem = DFootHeldItem; // Cache the item for continued rendering
 			}
 		}
@@ -601,13 +601,13 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			if (bLFootHoldingItem && !bPrevLHolding)
 			{
 				bLFootHeldVisualReady = false;
-				LFootPickupVisualDelay = VisualDelay;
+				LFootPickupVisualDelay = (int32)FMath::CeilToFloat(SimState.LFoot.CurrentMoveDurationTicks);
 			}
 			else if (!bLFootHoldingItem && bPrevLHolding)
 			{
 				bLFootPendingDropVisual = true;
 				bLFootHeldVisualReady = false;
-				LFootDropVisualDelay = VisualDelay;
+				LFootDropVisualDelay = (int32)FMath::CeilToFloat(SimState.LFoot.CurrentMoveDurationTicks);
 				LFootCachedDropItem = LFootHeldItem;
 			}
 		}
@@ -617,13 +617,13 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			if (bRFootHoldingItem && !bPrevRHolding)
 			{
 				bRFootHeldVisualReady = false;
-				RFootPickupVisualDelay = VisualDelay;
+				RFootPickupVisualDelay = (int32)FMath::CeilToFloat(SimState.RFoot.CurrentMoveDurationTicks);
 			}
 			else if (!bRFootHoldingItem && bPrevRHolding)
 			{
 				bRFootPendingDropVisual = true;
 				bRFootHeldVisualReady = false;
-				RFootDropVisualDelay = VisualDelay;
+				RFootDropVisualDelay = (int32)FMath::CeilToFloat(SimState.RFoot.CurrentMoveDurationTicks);
 				RFootCachedDropItem = RFootHeldItem;
 			}
 		}
@@ -633,13 +633,13 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			if (bUFootHoldingItem && !bPrevUHolding)
 			{
 				bUFootHeldVisualReady = false;
-				UFootPickupVisualDelay = VisualDelay;
+				UFootPickupVisualDelay = (int32)FMath::CeilToFloat(SimState.UFoot.CurrentMoveDurationTicks);
 			}
 			else if (!bUFootHoldingItem && bPrevUHolding)
 			{
 				bUFootPendingDropVisual = true;
 				bUFootHeldVisualReady = false;
-				UFootDropVisualDelay = VisualDelay;
+				UFootDropVisualDelay = (int32)FMath::CeilToFloat(SimState.UFoot.CurrentMoveDurationTicks);
 				UFootCachedDropItem = UFootHeldItem;
 			}
 		}
@@ -657,7 +657,8 @@ void ABasicWalker::Tick(float DeltaSeconds)
 				return TPair<float, EFootVisualState>(0.5f, EFootVisualState::Holding);
 			}
 			
-			float TotalTicks = (float)(SimState.StepRaiseTicks + SimState.StepMoveTicks + SimState.StepLowerTicks);
+			float MoveDuration = (float)FMath::CeilToInt(FootState.CurrentMoveDurationTicks);
+			float TotalTicks = (float)(SimState.StepRaiseTicks) + MoveDuration + (float)(SimState.StepLowerTicks);
 			if (TotalTicks <= 0.f || FootState.StepState == EFootStepState::Planted)
 			{
 				return TPair<float, EFootVisualState>(1.0f, EFootVisualState::Planted);
@@ -677,7 +678,7 @@ void ABasicWalker::Tick(float DeltaSeconds)
 				VisState = EFootVisualState::Moving;
 				break;
 			case EFootStepState::Lowering:
-				CurrentTick = (float)SimState.StepRaiseTicks + (float)SimState.StepMoveTicks + (float)FootState.StepProgress;
+				CurrentTick = (float)SimState.StepRaiseTicks + (float)FMath::CeilToInt(FootState.CurrentMoveDurationTicks) + (float)FootState.StepProgress;
 				VisState = EFootVisualState::Lowering;
 				break;
 			}
@@ -927,7 +928,8 @@ void ABasicWalker::Tick(float DeltaSeconds)
 				{
 					// Moving: lerps from CurrentTile to TargetTile, stays at StepHeight
 					const int32 NextProgress = FootState.StepProgress + 1;
-					const float MoveAlpha = (float)NextProgress / (float)SimState.StepMoveTicks;
+					float MoveDuration = (float)FMath::CeilToInt(FootState.CurrentMoveDurationTicks);
+					const float MoveAlpha = (MoveDuration > 0.f) ? (float)NextProgress / MoveDuration : 1.0f;
 					const FVector CurrentWorld = HexToWorld(CurrentHex);
 					const FVector TargetWorld = HexToWorld(TargetHex);
 					EndWorld = FMath::Lerp(CurrentWorld, TargetWorld, FMath::Clamp(MoveAlpha, 0.f, 1.f));

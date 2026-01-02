@@ -60,7 +60,7 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	int32 StepRaiseTicks = 3;
 	
 	UPROPERTY()
-	int32 StepMoveTicks = 3;
+	float TilesPerStep = 0.5f;
 	
 	UPROPERTY()
 	int32 StepLowerTicks = 3;
@@ -201,8 +201,8 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Ticks for raising foot"))
 	int32 StepRaiseTicks = 3;
 	
-	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Ticks for moving foot horizontally"))
-	int32 StepMoveTicks = 3;
+	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Amount of tiles the foot will traverse per GTM tick"))
+	float TilesPerStep = 0.5f;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "Ticks for lowering foot"))
 	int32 StepLowerTicks = 3;

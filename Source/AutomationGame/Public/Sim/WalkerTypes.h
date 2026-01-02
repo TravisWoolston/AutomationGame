@@ -96,6 +96,10 @@ struct AUTOMATIONGAME_API FFootState
 	// Whether there's a source pickup beacon to track
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bHasSourcePickUp = false;
+
+	// NEW: Dynamic move duration based on TilesPerStep
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	float CurrentMoveDurationTicks = 0.f;
 };
 
 // Legacy instruction system (kept for backward compatibility with scenario saving)
@@ -167,7 +171,7 @@ struct AUTOMATIONGAME_API FWalkerState
 	// --- Walking parameters ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float StepHeight = 50.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StepRaiseTicks = 3;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StepMoveTicks = 3;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float TilesPerStep = 0.5f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 StepLowerTicks = 3;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 ReachDistance = 2; // Tiles each leg can reach
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float MinimumReachDistance = 0.f; // Minimum tile distance from body for foot placement

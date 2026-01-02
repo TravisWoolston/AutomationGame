@@ -135,9 +135,9 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
 	int32 StepRaiseTicks = 3;
 
-	/** Ticks for moving foot during step - assigned by GameManager */
+	/** Amount of tiles the foot will traverse per GTM tick during horizontal move - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	int32 StepMoveTicks = 3;
+	float TilesPerStep = 0.5f;
 
 	/** Ticks for lowering foot during step - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
@@ -510,7 +510,7 @@ private:
 	bool bUFootPendingDropVisual = false;
 	
 	// Sim-tick-based delay counters for pickup/drop visual timing
-	// When pickup/drop occurs, set to StepMoveTicks; decrement each sim tick; show/hide when <= 0
+	// When pickup/drop occurs, set to CurrentMoveDurationTicks; decrement each sim tick; show/hide when <= 0
 	int32 DFootPickupVisualDelay = 0;
 	int32 LFootPickupVisualDelay = 0;
 	int32 RFootPickupVisualDelay = 0;

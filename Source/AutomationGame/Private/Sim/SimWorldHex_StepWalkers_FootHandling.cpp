@@ -117,7 +117,8 @@ void USimWorldHex::HandleFootPlanted(FWalkerState& W, FFootState& Foot, int32 Wa
 			// Ready to place! Start a step toward the same tile to trigger TryWalkerDropOff
 			Foot.TargetTile = Foot.CurrentTile;
 			Foot.StepState = EFootStepState::Moving;
-			Foot.StepProgress = W.StepMoveTicks; // Start at max so TryWalkerDropOff is called immediately
+			Foot.StepProgress = 0;
+			Foot.CurrentMoveDurationTicks = 0.f; // Finish immediately
 			RaisedCount++; RaisedIndices.Add(FootIndex);
 			return;
 		}
@@ -148,7 +149,8 @@ void USimWorldHex::HandleFootPlanted(FWalkerState& W, FFootState& Foot, int32 Wa
 					// Ready to pick up! Start a step toward the same tile to trigger TryWalkerPickUp
 					Foot.TargetTile = Foot.CurrentTile;
 					Foot.StepState = EFootStepState::Moving;
-					Foot.StepProgress = W.StepMoveTicks; // Start at max so TryWalkerPickUp is called immediately
+					Foot.StepProgress = 0;
+					Foot.CurrentMoveDurationTicks = 0.f; // Finish immediately
 					RaisedCount++; RaisedIndices.Add(FootIndex);
 					return;
 				}
@@ -346,6 +348,11 @@ void USimWorldHex::HandleFootPlanted(FWalkerState& W, FFootState& Foot, int32 Wa
 			Foot.TargetTile = BestTile;
 			Foot.StepState = EFootStepState::Raising;
 			Foot.StepProgress = 0;
+			
+			// Calculate initial move duration
+			float MoveDist = (float)HexUtil::Dist(Foot.CurrentTile, Foot.TargetTile);
+			Foot.CurrentMoveDurationTicks = (W.TilesPerStep > 0.001f) ? (MoveDist / W.TilesPerStep) : 1.0f;
+			
 			RaisedCount++; RaisedIndices.Add(FootIndex);
 		}
 	}
@@ -354,7 +361,7 @@ void USimWorldHex::HandleFootPlanted(FWalkerState& W, FFootState& Foot, int32 Wa
 void USimWorldHex::HandleFootMoving(FWalkerState& W, FFootState& Foot, int32 WalkerIndex, int32 FootIndex, const TSet<FHex>& HeldOrbHexes, const TSet<FHex>& ArmBaseHexes, const TSet<FHex>& HoldingFootHexes, const TMap<FHex, ARequestBeacon*>& BeaconCache, bool bIsPivoting)
 {
 	Foot.StepProgress++;
-	if (Foot.StepProgress >= W.StepMoveTicks)
+	if (Foot.StepProgress >= (int32)FMath::CeilToFloat(Foot.CurrentMoveDurationTicks))
 	{
 		if (!Foot.bHoldingItem)
 		{
@@ -369,12 +376,12 @@ void USimWorldHex::HandleFootMoving(FWalkerState& W, FFootState& Foot, int32 Wal
 			else
 			{
 				// Blocked
-				Foot.StepProgress = W.StepMoveTicks; 
+				// Keep searching for a valid spot or wait
 				return;
 			}
 		}
 
-		if (Foot.StepProgress >= W.StepMoveTicks)
+		if (Foot.StepProgress >= (int32)FMath::CeilToFloat(Foot.CurrentMoveDurationTicks))
 		{
 			Foot.CurrentTile = Foot.TargetTile;
 			if (Foot.bHoldingItem)
@@ -546,6 +553,10 @@ void USimWorldHex::UpdateFootHorizontalTarget(FWalkerState& W, FFootState& Foot,
 					W.TicksSinceLastFootTargetChange = 0;
 				}
 				Foot.TargetTile = TestHex; 
+				
+				// Update dynamic move duration when target changes mid-flight
+				float MoveDist = (float)HexUtil::Dist(Foot.CurrentTile, Foot.TargetTile);
+				Foot.CurrentMoveDurationTicks = (W.TilesPerStep > 0.001f) ? (MoveDist / W.TilesPerStep) : 1.0f;
 			}
 		}
 	}

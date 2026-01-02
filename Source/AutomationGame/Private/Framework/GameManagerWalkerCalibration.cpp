@@ -380,7 +380,7 @@ void AGameManager::SaveWalkerCalibration()
 	UE_LOG(LogTemp, Log, TEXT("  - StartingFootDistance: %.2f"), StartingFootDistance);
 	UE_LOG(LogTemp, Log, TEXT("  - StepHeight: %.2f"), StepHeight);
 	UE_LOG(LogTemp, Log, TEXT("  - StepRaiseTicks: %d"), StepRaiseTicks);
-	UE_LOG(LogTemp, Log, TEXT("  - StepMoveTicks: %d"), StepMoveTicks);
+	UE_LOG(LogTemp, Log, TEXT("  - TilesPerStep: %.4f"), TilesPerStep);
 	UE_LOG(LogTemp, Log, TEXT("  - StepLowerTicks: %d"), StepLowerTicks);
 	UE_LOG(LogTemp, Log, TEXT("  - ReachDistance: %d"), ReachDistance);
 	UE_LOG(LogTemp, Log, TEXT("  - MinimumReachDistance: %.2f"), MinimumReachDistance);
@@ -1967,7 +1967,7 @@ void AGameManager::LoadWalkerCalibration()
 		StartingFootOrientation = SavedWalkerCalibration.StartingFootOrientation;
 		StepHeight = SavedWalkerCalibration.StepHeight;
 		StepRaiseTicks = SavedWalkerCalibration.StepRaiseTicks;
-		StepMoveTicks = SavedWalkerCalibration.StepMoveTicks;
+		TilesPerStep = SavedWalkerCalibration.TilesPerStep;
 		StepLowerTicks = SavedWalkerCalibration.StepLowerTicks;
 		ReachDistance = SavedWalkerCalibration.ReachDistance;
 		MinimumReachDistance = SavedWalkerCalibration.MinimumReachDistance;
@@ -2006,7 +2006,7 @@ void AGameManager::SaveWalkerCalibrationToConfig()
 	SavedWalkerCalibration.StartingFootOrientation = StartingFootOrientation;
 	SavedWalkerCalibration.StepHeight = StepHeight;
 	SavedWalkerCalibration.StepRaiseTicks = StepRaiseTicks;
-	SavedWalkerCalibration.StepMoveTicks = StepMoveTicks;
+	SavedWalkerCalibration.TilesPerStep = TilesPerStep;
 	SavedWalkerCalibration.StepLowerTicks = StepLowerTicks;
 	SavedWalkerCalibration.ReachDistance = ReachDistance;
 	SavedWalkerCalibration.MinimumReachDistance = MinimumReachDistance;

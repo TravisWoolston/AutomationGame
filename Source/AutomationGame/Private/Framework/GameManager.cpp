@@ -394,7 +394,7 @@ void AGameManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChanged
 		}
 		else if (PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepHeight) ||
 			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepRaiseTicks) ||
-			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepMoveTicks) ||
+			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, TilesPerStep) ||
 			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StepLowerTicks) ||
 			PropName == GET_MEMBER_NAME_CHECKED(AGameManager, StandHeight))
 		{
@@ -795,7 +795,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 	// Set GameManager-assigned values on BasicWalker for runtime verification/editing
 	Walker->StepHeight = StepHeight;
 	Walker->StepRaiseTicks = StepRaiseTicks;
-	Walker->StepMoveTicks = StepMoveTicks;
+	Walker->TilesPerStep = TilesPerStep;
 	Walker->StepLowerTicks = StepLowerTicks;
 	Walker->ReachDistance = ReachDistance;
 	Walker->MinimumReachDistance = SavedWalkerCalibration.MinimumReachDistance;
@@ -820,7 +820,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		// Apply calibration settings from GameManager
 		WalkerState.StepHeight = StepHeight;
 		WalkerState.StepRaiseTicks = StepRaiseTicks;
-		WalkerState.StepMoveTicks = StepMoveTicks;
+		WalkerState.TilesPerStep = TilesPerStep;
 		WalkerState.StepLowerTicks = StepLowerTicks;
 		WalkerState.ReachDistance = ReachDistance;
 		WalkerState.MinimumReachDistance = SavedWalkerCalibration.MinimumReachDistance; // Apply saved minimum reach distance
@@ -980,8 +980,8 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 		Walker->SetProgram(Program, bLoop);
 		Walker->Start();
 
-		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered walker at Hex(%d,%d) SimIndex=%d ProgramLen=%d, StepHeight=%.1f, ReachDist=%d, Ticks=(%d,%d,%d), StartingFootDist=%.1f"),
-			Hex.Q, Hex.R, WalkerIndex, Program.Num(), StepHeight, ReachDistance, StepRaiseTicks, StepMoveTicks, StepLowerTicks, SavedWalkerCalibration.StartingFootDistance);
+		UE_LOG(LogTemp, Warning, TEXT("GameManager: Spawned + registered walker at Hex(%d,%d) SimIndex=%d ProgramLen=%d, StepHeight=%.1f, ReachDist=%d, TilesPerStep=(%d,%.2f,%d), StartingFootDist=%.1f"),
+			Hex.Q, Hex.R, WalkerIndex, Program.Num(), StepHeight, ReachDistance, StepRaiseTicks, TilesPerStep, StepLowerTicks, SavedWalkerCalibration.StartingFootDistance);
 	}
 	else
 	{
@@ -2254,7 +2254,7 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 				{
 					Walker->StepHeight = StepHeight;
 					Walker->StepRaiseTicks = StepRaiseTicks;
-					Walker->StepMoveTicks = StepMoveTicks;
+					Walker->TilesPerStep = TilesPerStep;
 					Walker->StepLowerTicks = StepLowerTicks;
 					Walker->ReachDistance = ReachDistance;
 					Walker->MinimumReachDistance = MinimumReachDistance;
@@ -2277,7 +2277,7 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 		// Apply walking parameters
 		WalkerState.StepHeight = StepHeight;
 		WalkerState.StepRaiseTicks = StepRaiseTicks;
-		WalkerState.StepMoveTicks = StepMoveTicks;
+		WalkerState.TilesPerStep = TilesPerStep;
 		WalkerState.StepLowerTicks = StepLowerTicks;
 		WalkerState.ReachDistance = ReachDistance;
 		WalkerState.MinimumReachDistance = MinimumReachDistance;
@@ -2425,7 +2425,7 @@ void AGameManager::ApplyCalibrationValuesToAllWalkers()
 			{
 				Walker->StepHeight = StepHeight;
 				Walker->StepRaiseTicks = StepRaiseTicks;
-				Walker->StepMoveTicks = StepMoveTicks;
+				Walker->TilesPerStep = TilesPerStep;
 				Walker->StepLowerTicks = StepLowerTicks;
 				Walker->ReachDistance = ReachDistance;
 				Walker->MinimumReachDistance = MinimumReachDistance;
@@ -2733,26 +2733,23 @@ UTextureRenderTarget2D* AGameManager::GetRippleRenderTarget()
 
 void AGameManager::InitializeRippleRenderTarget()
 {
-	if (RippleRenderTarget && 
-		RippleRenderTarget->SizeX == RippleRenderTargetSize && 
-		RippleRenderTarget->SizeY == RippleRenderTargetSize)
+	if (!RippleRenderTarget)
 	{
-		// Already initialized with correct size
-		return;
+		RippleRenderTarget = NewObject<UTextureRenderTarget2D>(this);
 	}
 
-	// Create new render target
-	RippleRenderTarget = NewObject<UTextureRenderTarget2D>(this);
-	if (RippleRenderTarget)
+	if (RippleRenderTarget->SizeX != RippleRenderTargetSize || 
+		RippleRenderTarget->SizeY != RippleRenderTargetSize ||
+		RippleRenderTarget->AddressX != TA_Clamp)
 	{
-		RippleRenderTarget->InitAutoFormat(RippleRenderTargetSize, RippleRenderTargetSize);
+		// Use PF_B8G8R8A8 for standard compatibility
+		RippleRenderTarget->InitCustomFormat(RippleRenderTargetSize, RippleRenderTargetSize, PF_B8G8R8A8, false);
+		RippleRenderTarget->AddressX = TA_Clamp;
+		RippleRenderTarget->AddressY = TA_Clamp;
 		RippleRenderTarget->UpdateResourceImmediate(true);
-		UE_LOG(LogTemp, Log, TEXT("GameManager: Created ripple render target %dx%d"), 
+		
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Initialized ripple render target %dx%d (Address: Clamp)"), 
 			RippleRenderTargetSize, RippleRenderTargetSize);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("GameManager: Failed to create ripple render target"));
 	}
 }
 
@@ -2854,28 +2851,23 @@ UTextureRenderTarget2D* AGameManager::GetWaveRenderTarget()
 
 void AGameManager::InitializeWaveRenderTarget()
 {
-	if (WaveRenderTarget && 
-		WaveRenderTarget->SizeX == WaveRenderTargetSize && 
-		WaveRenderTarget->SizeY == WaveRenderTargetSize)
+	if (!WaveRenderTarget)
 	{
-		// Already initialized with correct size
-		return;
+		WaveRenderTarget = NewObject<UTextureRenderTarget2D>(this);
 	}
 
-	// Create new render target
-	WaveRenderTarget = NewObject<UTextureRenderTarget2D>(this);
-	if (WaveRenderTarget)
+	if (WaveRenderTarget->SizeX != WaveRenderTargetSize || 
+		WaveRenderTarget->SizeY != WaveRenderTargetSize ||
+		WaveRenderTarget->AddressX != TA_Clamp)
 	{
 		// Use FloatRGBA for high precision wave accumulation
-		// This is crucial for smooth gradients and properly handling multiple additive waves
 		WaveRenderTarget->InitCustomFormat(WaveRenderTargetSize, WaveRenderTargetSize, PF_FloatRGBA, false);
+		WaveRenderTarget->AddressX = TA_Clamp;
+		WaveRenderTarget->AddressY = TA_Clamp;
 		WaveRenderTarget->UpdateResourceImmediate(true);
-		UE_LOG(LogTemp, Log, TEXT("GameManager: Created wave render target %dx%d (FloatRGBA)"), 
+
+		UE_LOG(LogTemp, Log, TEXT("GameManager: Initialized wave render target %dx%d (FloatRGBA, Address: Clamp)"), 
 			WaveRenderTargetSize, WaveRenderTargetSize);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("GameManager: Failed to create wave render target"));
 	}
 }
 
