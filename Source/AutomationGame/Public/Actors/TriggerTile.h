@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "Sim/OrbTypes.h"
 #include "Sim/HexTypes.h"
+#include "Sim/TriggerTypes.h"
 #include "TriggerTile.generated.h"
 
 // Signal state delegate
@@ -12,13 +13,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerSignalChanged, bool, bPosi
 // Grid visibility delegate
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerGridVisibilityChanged, bool, bIsVisible);
 
-// Owner type enum (must be at global scope)
-UENUM(BlueprintType)
-enum class ETriggerTileOwnerType : uint8
-{
-	Belt,
-	Arm
-};
 
 /**
  * TriggerTile - A placeable tile that sends signals based on orb presence.
@@ -68,6 +62,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
 	int32 R = 0;
+
+	// The variant of this trigger (Positive or Negative logic)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
+	ETriggerVariant Variant = ETriggerVariant::Positive;
 
 	// The orb type this trigger responds to
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
@@ -128,6 +126,12 @@ public:
 	void UpdateVisuals();
 
 	// Visuals - these can be set in a Blueprint child class
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+	UStaticMesh* PositiveMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+	UStaticMesh* NegativeMesh;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
 	UMaterialInterface* PositiveSignalMaterial;
 

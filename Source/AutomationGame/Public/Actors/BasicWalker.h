@@ -129,7 +129,7 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	
 	/** Step height (how high feet raise when stepping) - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	float StepHeight = 50.f;
+	float StepHeight = 100.f;
 
 	/** Ticks for raising foot during step - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
@@ -137,27 +137,27 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 
 	/** Amount of tiles the foot will traverse per GTM tick during horizontal move - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	float TilesPerStep = 0.5f;
+	float TilesPerStep = 3.0f;
 
 	/** Ticks for lowering foot during step - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	int32 StepLowerTicks = 3;
+	int32 StepLowerTicks = 1;
 
 	/** Maximum reach distance in tiles - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	int32 ReachDistance = 2;
+	int32 ReachDistance = 7;
 
 	/** Minimum reach distance in tiles (feet cannot be placed closer than this) - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	float MinimumReachDistance = 0.f;
+	float MinimumReachDistance = 2.f;
 
 	/** Stand height (body height offset when standing) - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	float StandHeight = 0.f;
+	float StandHeight = 350.f;
 
 	/** Starting foot distance (initial foot placement distance from body) - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	float StartingFootDistance = 0.f;
+	float StartingFootDistance = 5.f;
 
 	/** Rotation offset for quadrant boundaries (degrees) - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
@@ -175,7 +175,7 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	
 	/** If true, QuadrantRotationOffset will automatically update based on body Z rotation */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Body Rotation")
-	bool bDynamicBodyRotation = false;
+	bool bDynamicBodyRotation = true;
 
 	// --- Bone Names (configurable for different skeletons) ---
 	

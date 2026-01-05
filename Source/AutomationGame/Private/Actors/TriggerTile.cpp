@@ -41,6 +41,9 @@ ATriggerTile::ATriggerTile()
 	WavePulseComp->SetMobility(EComponentMobility::Movable);
 	WavePulseComp->SetVisibility(false); // Hidden until owner is set
 	WavePulseComp->SetCastShadow(false);
+
+	PositiveMesh = nullptr;
+	NegativeMesh = nullptr;
 }
 
 void ATriggerTile::BeginPlay()
@@ -384,7 +387,12 @@ void ATriggerTile::CheckTriggerCondition()
 	}
 
 	// Update signal state if changed
-	SetSignal(bMatchingOrb);
+	bool bFinalSignal = bMatchingOrb;
+	if (Variant == ETriggerVariant::Negative)
+	{
+		bFinalSignal = !bMatchingOrb;
+	}
+	SetSignal(bFinalSignal);
 }
 
 void ATriggerTile::SetSignal(bool bNewSignal)
@@ -501,8 +509,11 @@ void ATriggerTile::UpdateVisuals()
 {
 	if (!MeshComp) return;
 
-	// Ensure mesh is set before applying materials
-	if (!MeshComp->GetStaticMesh())
+	// Set the correct mesh based on variant
+	UStaticMesh* DesiredMesh = (Variant == ETriggerVariant::Positive) ? PositiveMesh : NegativeMesh;
+	
+	// If specific variant mesh is not available, try to get from GameManager (for PositiveMesh)
+	if (!DesiredMesh)
 	{
 		if (UWorld* World = GetWorld())
 		{
@@ -511,11 +522,23 @@ void ATriggerTile::UpdateVisuals()
 				AGameManager* GM = *It;
 				if (GM && GM->TileMesh)
 				{
-					MeshComp->SetStaticMesh(GM->TileMesh);
+					if (Variant == ETriggerVariant::Positive)
+					{
+						DesiredMesh = GM->TileMesh;
+					}
+					// If we're on Negative variant and no NegativeMesh is provided, 
+					// we could fallback to the same mesh or something else.
+					// For now let's just use GM->TileMesh as a fallback for both if DesiredMesh is null.
+					if (!DesiredMesh) DesiredMesh = GM->TileMesh;
 					break;
 				}
 			}
 		}
+	}
+
+	if (DesiredMesh && MeshComp->GetStaticMesh() != DesiredMesh)
+	{
+		MeshComp->SetStaticMesh(DesiredMesh);
 	}
 
 	// Priority 1: Use explicit signal state materials if provided

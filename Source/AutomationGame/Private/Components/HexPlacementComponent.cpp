@@ -409,6 +409,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 				TriggerTile->Q = A.Q;
 				TriggerTile->R = A.R;
 				TriggerTile->TriggerOrbType = GetCurrentTriggerOrbType();
+				TriggerTile->Variant = CurrentTriggerVariant;
 				TriggerTile->UpdateVisuals();
 
 				PendingTriggerTile = TriggerTile;
@@ -494,6 +495,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 					CachedTLD->UpsertTriggerTileSpec(
 						PendingTriggerTile->Q, PendingTriggerTile->R,
 						PendingTriggerTile->TriggerOrbType,
+						PendingTriggerTile->Variant,
 						A.Q, A.R, 
 						ValidOwnerType,
 						PendingTriggerTile->GetActorRotation().Yaw);
@@ -816,6 +818,25 @@ void UHexPlacementComponent::CycleNextType()
 	}
 }
 
+void UHexPlacementComponent::CycleTriggerVariant()
+{
+	if (CurrentTriggerVariant == ETriggerVariant::Positive)
+	{
+		CurrentTriggerVariant = ETriggerVariant::Negative;
+	}
+	else
+	{
+		CurrentTriggerVariant = ETriggerVariant::Positive;
+	}
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan,
+			FString::Printf(TEXT("Trigger Variant: %s"), 
+				CurrentTriggerVariant == ETriggerVariant::Positive ? TEXT("Positive") : TEXT("Negative")));
+	}
+}
+
 void UHexPlacementComponent::CyclePreviousType()
 {
 	// Get the list of valid orb types (those with assigned materials)
@@ -862,6 +883,10 @@ void UHexPlacementComponent::CycleGlyphType()
 	else if (PlaceKind == EPlaceKind::Unbond)
 	{
 		PlaceKind = EPlaceKind::Belt;
+	}
+	else if (PlaceKind == EPlaceKind::TriggerTile)
+	{
+		CycleTriggerVariant();
 	}
 }
 
@@ -1200,9 +1225,15 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 				if (GameManager && GameManager->TriggerTileClass)
 				{
 					ATriggerTile* DefaultTrigger = GameManager->TriggerTileClass->GetDefaultObject<ATriggerTile>();
-					if (DefaultTrigger && DefaultTrigger->MeshComp && DefaultTrigger->MeshComp->GetStaticMesh())
+					if (DefaultTrigger)
 					{
-						return DefaultTrigger->MeshComp->GetStaticMesh();
+						UStaticMesh* DesiredMesh = (CurrentTriggerVariant == ETriggerVariant::Positive) ? DefaultTrigger->PositiveMesh : DefaultTrigger->NegativeMesh;
+						if (DesiredMesh) return DesiredMesh;
+
+						if (DefaultTrigger->MeshComp && DefaultTrigger->MeshComp->GetStaticMesh())
+						{
+							return DefaultTrigger->MeshComp->GetStaticMesh();
+						}
 					}
 				}
 				break;

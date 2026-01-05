@@ -600,7 +600,20 @@ void AHexTopDownPawn::SetInputMode5() { if (Placer) Placer->SetPlaceKind(EPlaceK
 void AHexTopDownPawn::SetInputMode6() { if (Placer) Placer->SetPlaceKind(EPlaceKind::Unbond); }
 void AHexTopDownPawn::SetInputMode7() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterOutput); }
 void AHexTopDownPawn::SetInputMode9() { if (Placer) Placer->SetPlaceKind(EPlaceKind::RequestBeacon); }
-void AHexTopDownPawn::SetInputMode10() { if (Placer) Placer->SetPlaceKind(EPlaceKind::TriggerTile); }
+void AHexTopDownPawn::SetInputMode10() 
+{ 
+	if (Placer) 
+	{
+		if (Placer->PlaceKind == EPlaceKind::TriggerTile)
+		{
+			Placer->CycleTriggerVariant();
+		}
+		else
+		{
+			Placer->SetPlaceKind(EPlaceKind::TriggerTile);
+		}
+	}
+}
 void AHexTopDownPawn::RequestMoveToTile()
 {
 	if (!Placer || !Placer->IsHoverValid())

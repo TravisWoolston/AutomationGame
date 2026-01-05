@@ -535,6 +535,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			TriggerSpec.Spawned->Q = TriggerSpec.Q;
 			TriggerSpec.Spawned->R = TriggerSpec.R;
 			TriggerSpec.Spawned->TriggerOrbType = TriggerSpec.TriggerOrbType;
+			TriggerSpec.Spawned->Variant = TriggerSpec.Variant;
 			if (TriggerSpec.OwnerType == ETriggerTileOwnerType::Belt)
 				TriggerSpec.Spawned->SetOwnerBelt(TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
 			else
@@ -1134,7 +1135,7 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 	return bRemovedAny;
 }
 
-void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation)
+void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, ETriggerVariant Variant, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
@@ -1157,6 +1158,7 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType Trigge
 		if (T.Q == Q && T.R == R)
 		{
 			T.TriggerOrbType = TriggerOrbType;
+			T.Variant = Variant;
 			T.OwnerQ = OwnerQ;
 			T.OwnerR = OwnerR;
 			T.OwnerType = OwnerType;
@@ -1174,6 +1176,7 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType Trigge
 	NewT.Q = Q;
 	NewT.R = R;
 	NewT.TriggerOrbType = TriggerOrbType;
+	NewT.Variant = Variant;
 	NewT.OwnerQ = OwnerQ;
 	NewT.OwnerR = OwnerR;
 	NewT.OwnerType = OwnerType;
@@ -1560,6 +1563,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Sce
 			NewTriggerSpec.Q = TriggerTile->Q;
 			NewTriggerSpec.R = TriggerTile->R;
 			NewTriggerSpec.TriggerOrbType = TriggerTile->TriggerOrbType;
+			NewTriggerSpec.Variant = TriggerTile->Variant;
 			NewTriggerSpec.OwnerQ = TriggerTile->OwnerQ;
 			NewTriggerSpec.OwnerR = TriggerTile->OwnerR;
 			NewTriggerSpec.OwnerType = TriggerTile->OwnerType;

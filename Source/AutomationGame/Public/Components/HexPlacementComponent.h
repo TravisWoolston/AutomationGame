@@ -4,6 +4,7 @@
 #include "Components/PoseableMeshComponent.h"
 #include "Sim/HexTypes.h"  // for FHex
 #include "Sim/OrbTypes.h"  // for EOrbType
+#include "Sim/TriggerTypes.h"
 #include "HexPlacementComponent.generated.h"
 
 class USimWorldHex; class APlayerController; class AActor; class AOrbSimDriver; class ATestLevelDirector;
@@ -146,6 +147,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CycleNextType();
 	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CyclePreviousType();
 	
+	/** Cycle between Positive and Negative trigger variants */
+	UFUNCTION(BlueprintCallable, Category = "Place|TriggerTile") void CycleTriggerVariant();
+	
 	// Blueprint mode support
 	UFUNCTION(BlueprintCallable, Category = "Place|Blueprint") void SetBlueprintMode(bool bInBlueprintMode) { bDisablePreview = bInBlueprintMode; }
 	
@@ -259,6 +263,10 @@ public:
 	// Current orb type for TriggerTile placement
 	UPROPERTY(EditAnywhere, Category = "TriggerTile", meta = (ClampMin = "0", ClampMax = "6"))
 	int32 CurrentTriggerOrbTypeIndex = 0;
+	
+	// Current variant for TriggerTile placement
+	UPROPERTY(EditAnywhere, Category = "TriggerTile")
+	ETriggerVariant CurrentTriggerVariant = ETriggerVariant::Positive;
 	
 	/** Get the current orb type for TriggerTile placement */
 	UFUNCTION(BlueprintPure, Category = "Place|TriggerTile")

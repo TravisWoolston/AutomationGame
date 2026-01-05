@@ -8,8 +8,10 @@
 #include "Actors/BasicWalker.h"
 #include "Sim/WalkerTypes.h"
 #include "Actors/RequestBeacon.h"
-#include "Actors/TriggerTile.h"
+#include "Sim/TriggerTypes.h"
 #include "TestLevelDirector.generated.h"
+
+class ATriggerTile;
 
 class AGameTickManager;
 class AOrbSimDriver;
@@ -89,6 +91,7 @@ struct FTriggerTileSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Q = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 R = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EOrbType TriggerOrbType = EOrbType::BaseA;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) ETriggerVariant Variant = ETriggerVariant::Positive;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 OwnerQ = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 OwnerR = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) ETriggerTileOwnerType OwnerType = ETriggerTileOwnerType::Belt;
@@ -183,7 +186,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	bool RemoveBeaconSpec(int32 Q, int32 R);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	void UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation);
+	void UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, ETriggerVariant Variant, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	bool RemoveTriggerTileSpec(int32 Q, int32 R);
 
