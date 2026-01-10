@@ -487,7 +487,17 @@ void ABasicArm::RefreshPose(float InAlpha)
 	}
 	
 	float EasedAlpha = InAlpha;
-	const FVector BaseWorld = HexToWorld(FHex(Q, R, Level)) + FVector(0, 0, BaseZ);
+
+	// Calculate display level based on flip state
+	int32 DisplayLevel = Level;
+	if (Driver)
+	{
+		DisplayLevel = Driver->IsDisplayFlipped() ? (1 - Level) : Level;
+	}
+
+	const float EffectiveBaseZ = (DisplayLevel == 0) ? BaseZ : -BaseZ;
+	const FVector BaseWorld = HexToWorld(FHex(Q, R, Level)) + FVector(0, 0, EffectiveBaseZ);
+	
 	const float StartYaw = NormDeg(LastYawDeg);
 	const float TargetYaw = NormDeg(CurrYawDeg);
 	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
@@ -499,7 +509,9 @@ void ABasicArm::RefreshPose(float InAlpha)
 
 	// For skeletal mesh, we only set the world location and base rotation
 	// Individual bone rotations are handled in UpdateBoneRotations
-	FRotator BaseRot(0.f, BaseYawOffsetDeg + OriOffset, 0.f);
+	const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
+	const float DisplayYawOffset = (DisplayLevel == 0) ? 0.f : 180.f;
+	FRotator BaseRot(Pitch, BaseYawOffsetDeg + OriOffset + DisplayYawOffset, 0.f);
 	const bool bSphere = (Driver && Driver->IsSphereEnabled());
 	if (bSphere)
 	{

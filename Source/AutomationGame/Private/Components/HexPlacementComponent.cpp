@@ -271,6 +271,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 				Beacon->Q = A.Q;
 				Beacon->R = A.R;
 				Beacon->Level = ActiveLevel;
+				Beacon->SyncWorldLocation();
 				Beacon->BeaconType = EBeaconType::Relocate;
 				Beacon->BeaconRole = EBeaconRole::PickUp;
 				Beacon->SetState(EBeaconState::NotReady); // Not ready until pair is complete
@@ -312,6 +313,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 				Beacon->Q = A.Q;
 				Beacon->R = A.R;
 				Beacon->Level = ActiveLevel;
+				Beacon->SyncWorldLocation();
 				Beacon->BeaconType = EBeaconType::Relocate;
 				Beacon->BeaconRole = EBeaconRole::DropOff;
 				Beacon->SetState(EBeaconState::Ready); // Ready now
@@ -411,6 +413,8 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			{
 				TriggerTile->Q = A.Q;
 				TriggerTile->R = A.R;
+				TriggerTile->Level = ActiveLevel;
+				TriggerTile->SyncWorldLocation();
 				TriggerTile->TriggerOrbType = GetCurrentTriggerOrbType();
 				TriggerTile->Variant = CurrentTriggerVariant;
 				TriggerTile->UpdateVisuals();
@@ -1455,46 +1459,25 @@ bool UHexPlacementComponent::CanPlaceAt(const FHex& Hex) const
 
 FVector UHexPlacementComponent::HexToWorld(const FHex& H) const
 {
-	if (!Driver && !Sim)
+	if (Driver)
+	{
+		return Driver->MapHexToWorld(H);
+	}
+
+	if (!Sim)
 	{
 		return LastHoverWorld;
 	}
 
-	const float Tile = Driver ? Driver->GetTileSize() : (Sim ? Sim->TileSizeUU : 100.f);
-	const float PlaneZ = Driver ? Driver->GetGridPlaneZ(GetOwner()) :
-		(GetOwner() ? GetOwner()->GetActorLocation().Z : 0.f);
-	const float YawDeg = Driver ? Driver->GetGridYaw() : 0.f;
-	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
-
-	const float q = (float)H.Q;
-	const float r = (float)H.R;
-
-	FVector2D Local(0, 0);
-	const float Sqrt3 = 1.7320508075688772f;
-
-	if (Ori == EHexOrientation::PointyTop)
-	{
-		Local.X = Tile * (Sqrt3 * q + (Sqrt3 * 0.5f) * r);
-		Local.Y = Tile * (1.5f * r);
-	}
-	else
-	{
-		Local.X = Tile * (1.5f * q);
-		Local.Y = Tile * (Sqrt3 * r + (Sqrt3 * 0.5f) * q);
-	}
-
-	const float YawRad = FMath::DegreesToRadians(YawDeg);
-	const float CosA = FMath::Cos(YawRad);
-	const float SinA = FMath::Sin(YawRad);
-	const float RX = Local.X * CosA - Local.Y * SinA;
-	const float RY = Local.X * SinA + Local.Y * CosA;
-
+	const float Tile = Sim->TileSizeUU;
 	const AActor* Anchor = GetAnchor();
-	const FVector2D OriginXY = Anchor
-		? FVector2D(Anchor->GetActorLocation().X, Anchor->GetActorLocation().Y)
-		: FVector2D::ZeroVector;
-
-	return FVector(OriginXY.X + RX, OriginXY.Y + RY, PlaneZ);
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+	
+	const FHexAxial A(H.Q, H.R);
+	const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, EHexOrientation::PointyTop);
+	const float Z = (H.Level == 0) ? Sim->OrbZOffset : -Sim->OrbZOffset;
+	
+	return AnchorV + FVector(LocalXY.X, LocalXY.Y, Z);
 }
 
 void UHexPlacementComponent::UpdateHoverHex()
@@ -1566,6 +1549,10 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 	const bool bPlaceOK = CanPlaceAt(HoverHex);
 	const float Tile = Driver ? Driver->GetTileSize() : (Sim ? Sim->TileSizeUU : 100.f);
 
+	// Calculate the effective level for display (swapped if display is flipped)
+	const bool bDisplayFlipped = Driver ? Driver->IsDisplayFlipped() : false;
+	const int32 DisplayLevel = bDisplayFlipped ? (1 - ActiveLevel) : ActiveLevel;
+
 	const FVector CenterA = HexToWorld(HoverHex) + FVector(0, 0, PreviewZOffset);
 
 	if (PlaceKind != EPlaceKind::Walker)
@@ -1600,7 +1587,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 
 				// Smoothing
 				FVector TargetLoc = CenterA;
-				FRotator TargetRot = FRotator(ActiveLevel == 0 ? 0.f : 180.f, Driver ? Driver->GetGridYaw() : 0.f, 0.f);
+				FRotator TargetRot = FRotator(DisplayLevel == 0 ? 0.f : 180.f, Driver ? Driver->GetGridYaw() : 0.f, 0.f);
 				if (!bSmoothingInitialized)
 				{
 					SmoothedLocation = TargetLoc;
@@ -1700,7 +1687,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 
 			// Smoothing
 			FVector TargetLoc = UseLoc;
-			FRotator TargetRot = FRotator(ActiveLevel == 0 ? 0.f : 180.f, FixedYaw, 0.f);
+			FRotator TargetRot = FRotator(DisplayLevel == 0 ? 0.f : 180.f, FixedYaw, 0.f);
 			if (!bSmoothingInitialized)
 			{
 				SmoothedLocation = TargetLoc;

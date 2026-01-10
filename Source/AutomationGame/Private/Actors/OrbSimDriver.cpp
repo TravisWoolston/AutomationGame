@@ -8,6 +8,10 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "DrawDebugHelpers.h"
+#include "Rendering/OrbRenderer.h"
+#include "Actors/HexFactoryActor.h"
+#include "Actors/TriggerTile.h"
+#include "Actors/RequestBeacon.h"
 
 AOrbSimDriver::AOrbSimDriver()
 {
@@ -211,12 +215,13 @@ void AOrbSimDriver::PostEditChangeProperty(FPropertyChangedEvent& PropertyChange
 
 	const FName PropName = PropertyChangedEvent.Property ? PropertyChangedEvent.Property->GetFName() : NAME_None;
 
-	// Check if any debug settings changed
+	// Check if any debug or display settings changed
 	if (PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugLogs) ||
 		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugSpheres) ||
 		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugLines) ||
 		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDebugBonds) ||
-		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, DebugCollision))
+		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, DebugCollision) ||
+		PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDisplayFlipped))
 	{
 		// Sync to sim
 		if (Sim)
@@ -230,8 +235,28 @@ void AOrbSimDriver::PostEditChangeProperty(FPropertyChangedEvent& PropertyChange
 		// Sync to all arms
 		SyncDebugSettingsToArms();
 
-		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Debug settings changed - Logs=%d Spheres=%d Lines=%d Bonds=%d"),
-			bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDebugLines ? 1 : 0, bDebugBonds ? 1 : 0);
+		// Trigger visual rebuild if display flipped changed
+		if (PropName == GET_MEMBER_NAME_CHECKED(AOrbSimDriver, bDisplayFlipped))
+		{
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<AHexFactoryActor> It(World); It; ++It) It->Rebuild();
+				for (TActorIterator<ATriggerTile> It(World); It; ++It) It->SyncWorldLocation();
+				for (TActorIterator<ARequestBeacon> It(World); It; ++It) It->SyncWorldLocation();
+
+				// Rebuild all orb renderers
+				for (TActorIterator<AActor> It(World); It; ++It)
+				{
+					if (UOrbRenderer* OrbRenderer = It->FindComponentByClass<UOrbRenderer>())
+					{
+						OrbRenderer->RebuildCurrPos();
+					}
+				}
+			}
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("OrbSimDriver: Settings changed - Logs=%d Spheres=%d Flip=%d"),
+			bDebugLogs ? 1 : 0, bDebugSpheres ? 1 : 0, bDisplayFlipped ? 1 : 0);
 	}
 }
 #endif
@@ -540,7 +565,11 @@ FVector AOrbSimDriver::MapHexToWorld(const FHex& H) const
 	float Z = 0.f;
 	if (Sim)
 	{
-		Z = (H.Level == 0) ? Sim->OrbZOffset : -Sim->OrbZOffset;
+		// When display is flipped, swap the Z positions of Level 0 and Level 1
+		// This allows viewing the "underside" grid without moving the camera
+		// The actual simulation Level remains unchanged
+		int32 DisplayLevel = bDisplayFlipped ? (1 - H.Level) : H.Level;
+		Z = (DisplayLevel == 0) ? Sim->OrbZOffset : -Sim->OrbZOffset;
 	}
 	return AnchorLoc + FVector(RotXY.X, RotXY.Y, Z);
 }

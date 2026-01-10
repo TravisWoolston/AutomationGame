@@ -1015,6 +1015,14 @@ void ABasicWalker::Tick(float DeltaSeconds)
 		}
 		}
 
+		// Calculate display level based on flip state
+		int32 DisplayLevel = Level;
+		if (Driver)
+		{
+			DisplayLevel = Driver->IsDisplayFlipped() ? (1 - Level) : Level;
+		}
+		float ZOffset = (DisplayLevel == 0) ? SimState.StandHeight : -SimState.StandHeight;
+
 		// Calculate body position: lerp X/Y from foot positions, add StandHeight to ground Z
 		FVector BodyEndWorld;
 		if (PlantedFootPositions.Num() > 0)
@@ -1026,14 +1034,16 @@ void ABasicWalker::Tick(float DeltaSeconds)
 				Sum += FootPos;
 			}
 			FVector Avg = Sum / PlantedFootPositions.Num();
-			// Add StandHeight to the average ground Z (not BodyHeightOffset which includes transition lerping)
-			BodyEndWorld = FVector(Avg.X, Avg.Y, Avg.Z + SimState.StandHeight);
+			// Add StandHeight to the average ground Z
+			// Use ZOffset to handle upside-down grids
+			BodyEndWorld = FVector(Avg.X, Avg.Y, Avg.Z + ZOffset);
 		}
 		else
 		{
 			// No feet planted, use hex position as base and add StandHeight to ground Z
 			FVector HexWorld = HexToWorld(CurrentHex);
-			BodyEndWorld = FVector(HexWorld.X, HexWorld.Y, HexWorld.Z + SimState.StandHeight);
+			// Use ZOffset to handle upside-down grids
+			BodyEndWorld = FVector(HexWorld.X, HexWorld.Y, HexWorld.Z + ZOffset);
 		}
 
 		// Update IK Rig goals via animation blueprint with end-of-tick values (no interpolation - handled in event graph)
@@ -1796,7 +1806,16 @@ void ABasicWalker::UpdateBodyRotationFromFeet()
 			AvgYaw = FRotator::NormalizeAxis(AvgYaw + DeltaYaw * SmoothFactor);
 		}
 		
-		BodyGoalRotation = FRotator(90.f, 0.f, AvgYaw);
+		// Calculate display level based on flip state
+		int32 DisplayLevel = Level;
+		if (Driver)
+		{
+			DisplayLevel = Driver->IsDisplayFlipped() ? (1 - Level) : Level;
+		}
+
+		float Pitch = (DisplayLevel == 0) ? 90.f : -90.f;
+		float DisplayYawOffset = (DisplayLevel == 0) ? 0.f : 180.f;
+		BodyGoalRotation = FRotator(Pitch, 0.f, AvgYaw + DisplayYawOffset);
 		QuadrantRotationOffset = AvgYaw;
 	}
 }

@@ -92,6 +92,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Beacon")
 	void SetIsGridVisible(bool bVisible);
 
+	// Sync world location from Q, R, Level using Driver
+	UFUNCTION(BlueprintCallable, Category = "Grid")
+	void SyncWorldLocation();
+
 	// Visuals
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
 	UMaterialInterface* ReadyMaterial;

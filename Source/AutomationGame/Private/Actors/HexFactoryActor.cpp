@@ -527,6 +527,7 @@ void AHexFactoryActor::RebuildTiles()
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 
+
 	// Helper function to add tile instance to appropriate ISM
 	auto AddTileInstance = [&](const FHex& H, ETileKind TileKind)
 	{
@@ -534,7 +535,8 @@ void AHexFactoryActor::RebuildTiles()
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
 		const float Z = 0.f; // Tiles stay at Z=0 but flip
 		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, Z);
-		const float Pitch = (H.Level == 0) ? 0.f : 180.f;
+		const int32 DisplayLevel = GetDisplayLevel(H.Level);
+		const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
 		const FTransform Transform(FRotator(Pitch, 0.f, 0.f), Loc, FVector(1.f));
 		
 		switch (TileKind)
@@ -609,6 +611,7 @@ void AHexFactoryActor::RebuildBelts()
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
 	
 	int32 BeltCount = 0;
 	int32 ReadyCount = 0;
@@ -709,11 +712,12 @@ void AHexFactoryActor::RebuildBelts()
 		BeltCount++;
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		const float ZOffset = (H.Level == 0) ? BeltZOffset : -BeltZOffset;
+		const int32 DisplayLevel = GetDisplayLevel(H.Level);
+		const float ZOffset = (DisplayLevel == 0) ? BeltZOffset : -BeltZOffset;
 		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, ZOffset);
 		// Yaw needs 180° offset on upside-down grid to compensate for pitch flip
-		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF)) + (H.Level == 1 ? 180.f : 0.f);
-		const float Pitch = (H.Level == 0) ? 0.f : 180.f;
+		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF)) + (DisplayLevel == 1 ? 180.f : 0.f);
+		const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
 
 		if (BeltMesh)
 		{
@@ -780,6 +784,7 @@ void AHexFactoryActor::UpdateBeltMaterials()
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
 	
 	int32 EmptyCount = 0;
 	int32 ReadyCount = 0;
@@ -878,11 +883,12 @@ void AHexFactoryActor::UpdateBeltMaterials()
 
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		const float ZOffset = (H.Level == 0) ? BeltZOffset : -BeltZOffset;
+		const int32 DisplayLevel = GetDisplayLevel(H.Level);
+		const float ZOffset = (DisplayLevel == 0) ? BeltZOffset : -BeltZOffset;
 		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, ZOffset);
 		// Yaw needs 180° offset on upside-down grid to compensate for pitch flip
-		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF)) + (H.Level == 1 ? 180.f : 0.f);
-		const float Pitch = (H.Level == 0) ? 0.f : 180.f;
+		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF)) + (DisplayLevel == 1 ? 180.f : 0.f);
+		const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
 
 		const uint8 BeltDir = (uint8)(T.Arg & 0xFF);
 		EBeltState State = GetBeltState(H, BeltDir);
@@ -941,7 +947,8 @@ void AHexFactoryActor::RebuildBonds()
 		const FVector2D BxyLocal = HexCoord::AxialToXY(FHexAxial(N.Q, N.R), Tile, Ori);
 		const FVector2D Axy = HexCoord::Rotate2D(AxyLocal, GridYaw);
 		const FVector2D Bxy = HexCoord::Rotate2D(BxyLocal, GridYaw);
-		const float ZOffset = (H.Level == 0) ? (T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset) : -(T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset);
+		const int32 DisplayLevel = GetDisplayLevel(H.Level);
+		const float ZOffset = (DisplayLevel == 0) ? (T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset) : -(T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset);
 		const FVector WorldA = AnchorV + FVector(Axy.X, Axy.Y, ZOffset);
 		const FVector WorldB = AnchorV + FVector(Bxy.X, Bxy.Y, ZOffset);
 		const FVector Mid = (WorldA + WorldB) * 0.5f;
@@ -950,7 +957,7 @@ void AHexFactoryActor::RebuildBonds()
 			? 0.f
 			: FMath::RadiansToDegrees(FMath::Atan2(Delta2D.Y, Delta2D.X));
 
-		const float Pitch = (H.Level == 0) ? 0.f : 180.f;
+		const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
 		if (T.Kind == ETileKind::Bond)
 		{
 			if (BondMesh)
@@ -1000,6 +1007,13 @@ void AHexFactoryActor::RebuildOutputs()
 		UE_LOG(LogTemp, Warning, TEXT("HexFactoryActor::RebuildOutputs: No OrbMaterialManager found in world. Please add an OrbMaterialManagerActor to the level."));
 		return;
 	}
+
+	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
+	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+	const AActor* Anchor = GetAnchor();
+	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
 	
 	// Note: Debug logging removed for performance
 	
@@ -1036,12 +1050,6 @@ void AHexFactoryActor::RebuildOutputs()
 	}
 	
 	// UE_LOG(LogTemp, Log, TEXT("HexFactoryActor::RebuildOutputs: Using tile mesh for outputs"));
-	
-	const float Tile = Driver ? Driver->GetTileSize() : 100.f;
-	const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
-	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
-	const AActor* Anchor = GetAnchor();
-	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 	
 	// Set up all output ISM components with the tile mesh and type-specific materials
 	TArray<EOrbType> AllOrbTypes = {
@@ -1123,7 +1131,8 @@ void AHexFactoryActor::RebuildOutputs()
 			
 			// ClusterOutput tiles are scaled larger than regular Output tiles
 			float Scale = (T.Kind == ETileKind::ClusterOutput) ? ClusterScale : 1.0f;
-			const FTransform Transform(FRotator(H.Level == 0 ? 0.f : 180.f, 0.f, 0.f), Loc, FVector(Scale));
+			const int32 DisplayLevel = GetDisplayLevel(H.Level);
+			const FTransform Transform(FRotator(DisplayLevel == 0 ? 0.f : 180.f, 0.f, 0.f), Loc, FVector(Scale));
 
 			// Get orb type - for Output it's in Arg, for ClusterOutput it's also in Arg
 			EOrbType OutputType = (EOrbType)T.Arg;
@@ -1449,6 +1458,7 @@ void AHexFactoryActor::RebuildInputTiles()
 	const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 	const AActor* Anchor = GetAnchor();
 	const FVector AnchorV = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
 	
 	// Set up all input ISM components with the custom input tile mesh and type-specific materials
 	TArray<EOrbType> AllOrbTypes = {
@@ -1511,9 +1521,18 @@ void AHexFactoryActor::RebuildInputTiles()
 			UInstancedStaticMeshComponent* InputISM = GetInputISMForType(OrbType);
 			if (InputISM)
 			{
-				InputISM->AddInstance(FTransform(FRotator(H.Level == 0 ? 0.f : 180.f, 0.f, 0.f), Loc, FVector(1.f)));
+				const int32 DisplayLevel = GetDisplayLevel(H.Level);
+				InputISM->AddInstance(FTransform(FRotator(DisplayLevel == 0 ? 0.f : 180.f, 0.f, 0.f), Loc, FVector(1.f)));
 			}
 		}
 	}
 }
 
+int32 AHexFactoryActor::GetDisplayLevel(int32 Level) const
+{
+	if (Driver && Driver->IsDisplayFlipped())
+	{
+		return 1 - Level;
+	}
+	return Level;
+}

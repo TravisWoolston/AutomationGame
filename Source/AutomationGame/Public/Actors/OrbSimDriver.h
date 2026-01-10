@@ -84,6 +84,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Framework")
 	AGameManager* GM = nullptr;
 
+	/** When true, Level 0 objects are displayed at Level 1's Z position and vice versa.
+	 * This allows viewing the "underside" grid without moving the camera.
+	 * The simulation Level values remain unchanged - only display positions swap. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	bool bDisplayFlipped = false;
+
+	/** Set the display flip state (swaps Level 0 and Level 1 display positions) */
+	UFUNCTION(BlueprintCallable, Category = "Grid")
+	void SetDisplayFlipped(bool bFlipped) { bDisplayFlipped = bFlipped; }
+
+	/** Get whether display is currently flipped */
+	UFUNCTION(BlueprintPure, Category = "Grid")
+	bool IsDisplayFlipped() const { return bDisplayFlipped; }
+
 	// ---------------------------------------------------------------------
 	// Accessors used across the project (kept public so other systems compile)
 	// ---------------------------------------------------------------------

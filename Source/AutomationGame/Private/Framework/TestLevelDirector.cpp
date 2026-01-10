@@ -164,7 +164,9 @@ void ATestLevelDirector::ResetSimForActiveScenario()
 	if (Driver && Driver->GetSim() && Scenarios.IsValidIndex(ActiveScenarioIndex))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Saving current simulation state to scenario %d before reset"), ActiveScenarioIndex);
+#if WITH_EDITOR
 		SyncAllRuntimeArmEdits();  // Capture any program/facing changes from visual arms
+#endif
 		SyncPreviewEditsIntoScenarioFiltered(Scenarios[ActiveScenarioIndex]); // Capture tiles and arm positions
 	}
 
@@ -479,6 +481,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			// DropOff beacons start as Ready, Pickup beacons start as NotReady (CheckReadiness will update)
 			EBeaconState InitialState = (BeaconSpec.BeaconRole == EBeaconRole::DropOff) ? EBeaconState::Ready : EBeaconState::NotReady;
 			BeaconSpec.Spawned->SetState(InitialState);
+			BeaconSpec.Spawned->SyncWorldLocation();
 			
 			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Spawned beacon at (%d,%d) Role=%d State=%d"),
 				BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole, (int32)InitialState);
@@ -545,6 +548,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 				TriggerSpec.Spawned->SetOwnerBelt(TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
 			else
 				TriggerSpec.Spawned->SetOwnerArm(TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
+			TriggerSpec.Spawned->SyncWorldLocation();
 			TriggerSpec.Spawned->UpdateVisuals();
 			
 			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Spawned TriggerTile at (%d,%d) Type=%s Owner=(%d,%d)"),
@@ -1280,12 +1284,15 @@ void ATestLevelDirector::HandleEndPIE(bool /*bIsSimulating*/)
 	if (!GetWorld() || !GetWorld()->IsPlayInEditor()) return;
 
 	// First harvest any runtime arm changes (program edits etc.)
+#if WITH_EDITOR
 	SyncAllRuntimeArmEdits();
+#endif
 
 	// Mirror one last time to editor world
 	MirrorScenarioEditsToEditor();
 }
 
+#if WITH_EDITOR
 void ATestLevelDirector::SyncAllRuntimeArmEdits()
 {
 	// Only sync the active scenario - other scenarios should not be overwritten
@@ -1294,6 +1301,7 @@ void ATestLevelDirector::SyncAllRuntimeArmEdits()
 		SyncPreviewEditsIntoScenarioFiltered(Scenarios[ActiveScenarioIndex]);
 	}
 }
+#endif
 
 void ATestLevelDirector::MirrorScenarioEditsToEditor()
 {

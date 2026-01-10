@@ -150,6 +150,9 @@ protected:
 	// Update the grid collision plane position to match the grid Z level
 	void UpdateGridCollisionPlane();
 
+	/** Helper to swap display level when bDisplayFlipped is enabled */
+	int32 GetDisplayLevel(int32 Level) const;
+
 private:
 	FVector HexToWorld(const FHex& H) const;
 };

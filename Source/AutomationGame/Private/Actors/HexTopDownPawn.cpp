@@ -28,6 +28,7 @@
 #include "Blueprints/PlayerBlueprintLibrarySave.h"
 #include "Kismet/GameplayStatics.h"
 #include "Engine/DirectionalLight.h"
+#include "Rendering/OrbRenderer.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
 {
@@ -630,42 +631,56 @@ void AHexTopDownPawn::SwitchGrid()
 		Placer->ActiveLevel = CurrentLevel;
 	}
 	
-	// Adjust camera direction to face the active grid level
-	if (SpringArm)
+	// Toggle display flip on OrbSimDriver - this swaps the Z positions of Level 0 and Level 1 objects
+	// without changing the camera position. The simulation levels remain unchanged.
+	AOrbSimDriver* Driver = CachedOrbSimDriver;
+	if (!Driver && GetWorld())
 	{
-		// Level 0: Look down from top (Pitch -90, Yaw 0)
-		// Level 1: Look up from bottom (Pitch 90, Yaw 180)
-		// Yaw 180 on Level 1 keeps World X as "Up" on screen.
-		float TargetPitch = (CurrentLevel == 0) ? -90.f : 90.f;
-		float TargetYaw = (CurrentLevel == 0) ? 0.f : 0.f;
-		SpringArm->SetRelativeRotation(FRotator(TargetPitch, TargetYaw, 0.f));
+		Driver = AOrbSimDriver::Find(GetWorld());
+		CachedOrbSimDriver = Driver;
 	}
 	
-	// Flip directional lights to illuminate the active grid side
+	if (Driver)
+	{
+		Driver->SetDisplayFlipped(CurrentLevel == 1);
+	}
+
+	// Tell the factory actor to rebuild everything to reflect the new display positions
 	if (UWorld* World = GetWorld())
 	{
-		for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+		for (TActorIterator<AHexFactoryActor> It(World); It; ++It)
 		{
-			ADirectionalLight* DirLight = *It;
-			if (DirLight)
+			if (AHexFactoryActor* Factory = *It)
 			{
-				FRotator CurrentRot = DirLight->GetActorRotation();
-				// Flip the pitch by 180 degrees to light from opposite side
-				float NewPitch = (CurrentLevel == 0) ? FMath::Abs(CurrentRot.Pitch) : -FMath::Abs(CurrentRot.Pitch);
-				if (CurrentRot.Pitch > 0.f && CurrentLevel == 0)
-				{
-					NewPitch = -CurrentRot.Pitch;
-				}
-				else if (CurrentRot.Pitch < 0.f && CurrentLevel == 1)
-				{
-					NewPitch = -CurrentRot.Pitch;
-				}
-				DirLight->SetActorRotation(FRotator(NewPitch, CurrentRot.Yaw, CurrentRot.Roll));
+				Factory->Rebuild();
+			}
+		}
+
+		// Sync locations for actors that don't depend solely on OrbRenderer
+		// BasicArm and BasicWalker update themselves in Tick using MapHexToWorld, 
+		// so they will move automatically on the next frame.
+		// TriggerTiles and Beacons might need an explicit update if they don't move in Tick.
+		for (TActorIterator<ATriggerTile> It(World); It; ++It)
+		{
+			It->SyncWorldLocation();
+		}
+		for (TActorIterator<ARequestBeacon> It(World); It; ++It)
+		{
+			It->SyncWorldLocation();
+		}
+
+		// Rebuild all orb renderers to pick up new world positions
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (UOrbRenderer* OrbRenderer = It->FindComponentByClass<UOrbRenderer>())
+			{
+				OrbRenderer->RebuildCurrPos();
 			}
 		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("AHexTopDownPawn::SwitchGrid - Switched to Level %d"), CurrentLevel);
+	UE_LOG(LogTemp, Log, TEXT("AHexTopDownPawn::SwitchGrid - Switched to Level %d (DisplayFlipped: %s)"), 
+		CurrentLevel, Driver && Driver->IsDisplayFlipped() ? TEXT("true") : TEXT("false"));
 }
 
 void AHexTopDownPawn::RequestMoveToTile()

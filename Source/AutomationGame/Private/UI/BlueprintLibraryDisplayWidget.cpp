@@ -450,9 +450,11 @@ UTexture2D* UBlueprintLibraryDisplayWidget::GenerateBlueprintIcon(const TArray<F
 		// Configure texture to preserve alpha channel - use uncompressed format for best alpha preservation
 		Texture->CompressionSettings = TC_EditorIcon; // Best for UI icons with alpha
 		Texture->SRGB = false; // Disable SRGB for better alpha handling
-		Texture->CompressionNoAlpha = false; // Ensure alpha is not compressed away
 		Texture->LODGroup = TEXTUREGROUP_UI; // Use UI group for better alpha handling
+#if WITH_EDITORONLY_DATA
+		Texture->CompressionNoAlpha = false; // Ensure alpha is preserved
 		Texture->MipGenSettings = TMGS_NoMipmaps; // No mipmaps for UI icons
+#endif
 		
 		// Ensure the texture never has alpha compression
 		Texture->bNoTiling = true;

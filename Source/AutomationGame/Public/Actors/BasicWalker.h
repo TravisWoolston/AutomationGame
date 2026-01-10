@@ -156,7 +156,7 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 
 	/** Stand height (body height offset when standing) - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")
-	float StandHeight = 350.f;
+	float StandHeight = 0.f;
 
 	/** Starting foot distance (initial foot placement distance from body) - assigned by GameManager */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|GameManager Values")

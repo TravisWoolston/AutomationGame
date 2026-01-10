@@ -128,6 +128,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
 	void UpdateVisuals();
 
+	// Sync world location from Q, R, Level using Driver
+	UFUNCTION(BlueprintCallable, Category = "Grid")
+	void SyncWorldLocation();
+
 	// Visuals - these can be set in a Blueprint child class
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
 	UStaticMesh* PositiveMesh;

@@ -51,6 +51,7 @@ void ARequestBeacon::BeginPlay()
 			}
 		}
 	}
+	SyncWorldLocation();
 	UpdateVisuals();
 }
 
@@ -116,6 +117,7 @@ void ARequestBeacon::CheckReadiness()
 void ARequestBeacon::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	SyncWorldLocation();
 	UpdateVisuals();
 }
 
@@ -185,6 +187,23 @@ void ARequestBeacon::UpdateVisuals()
 		{
 			DecalComp->SetDecalMaterial(DecalMat);
 		}
+	}
+}
+
+void ARequestBeacon::SyncWorldLocation()
+{
+	if (!Driver)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			Driver = AOrbSimDriver::Find(World);
+		}
+	}
+
+	if (Driver)
+	{
+		FVector Location = Driver->MapHexToWorld(FHex(Q, R, Level));
+		SetActorLocation(Location);
 	}
 }
 

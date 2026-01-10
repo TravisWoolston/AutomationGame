@@ -1321,7 +1321,9 @@ void AGameManager::CreateWalkerDebugMeshes(ABasicWalker* Walker, USkeletalMeshCo
 			FootComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			FootComp->SetMobility(EComponentMobility::Movable);
 			FootComp->SetCastShadow(false);
+#if WITH_EDITOR
 			FootComp->SetIsVisualizationComponent(true);
+#endif
 			if (FootMaterial)
 			{
 				FootComp->SetMaterial(0, FootMaterial);
@@ -1341,7 +1343,9 @@ void AGameManager::CreateWalkerDebugMeshes(ABasicWalker* Walker, USkeletalMeshCo
 			KneeComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			KneeComp->SetMobility(EComponentMobility::Movable);
 			KneeComp->SetCastShadow(false);
+#if WITH_EDITOR
 			KneeComp->SetIsVisualizationComponent(true);
+#endif
 			if (KneeMaterial)
 			{
 				KneeComp->SetMaterial(0, KneeMaterial);
@@ -1772,7 +1776,9 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 				MarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 				MarkerComp->SetMobility(EComponentMobility::Movable);
 				MarkerComp->SetCastShadow(false);
+#if WITH_EDITOR
 				MarkerComp->SetIsVisualizationComponent(true);
+#endif
 				
 				// Use the assigned leg's material
 				MarkerComp->SetMaterial(0, *LegMaterialPtr);
@@ -1883,7 +1889,9 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 						FootMarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 						FootMarkerComp->SetMobility(EComponentMobility::Movable);
 						FootMarkerComp->SetCastShadow(false);
+#if WITH_EDITOR
 						FootMarkerComp->SetIsVisualizationComponent(true);
+#endif
 
 						FootMarkerComp->SetMaterial(0, FootHighlightMaterial);
 
@@ -1926,7 +1934,9 @@ void AGameManager::UpdateLegTileQuadrantVisualization()
 			KneeMarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			KneeMarkerComp->SetMobility(EComponentMobility::Movable);
 			KneeMarkerComp->SetCastShadow(false);
+#if WITH_EDITOR
 			KneeMarkerComp->SetIsVisualizationComponent(true);
+#endif
 			
 			// Use the leg's quadrant color (after offset applied)
 			KneeMarkerComp->SetMaterial(0, *LegMaterialPtr);

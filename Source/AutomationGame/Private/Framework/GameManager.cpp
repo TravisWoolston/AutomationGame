@@ -2637,7 +2637,9 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 			MarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			MarkerComp->SetMobility(EComponentMobility::Movable);
 			MarkerComp->SetCastShadow(false);
+#if WITH_EDITOR
 			MarkerComp->SetIsVisualizationComponent(true);
+#endif
 			MarkerComp->SetMaterial(0, *QuadrantMaterialPtr);
 			MarkerComp->RegisterComponent();
 			MarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
@@ -2679,7 +2681,9 @@ void AGameManager::UpdateWalkerQuadrantVisualization(ABasicWalker* Walker)
 					FootMarkerComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 					FootMarkerComp->SetMobility(EComponentMobility::Movable);
 					FootMarkerComp->SetCastShadow(false);
+#if WITH_EDITOR
 					FootMarkerComp->SetIsVisualizationComponent(true);
+#endif
 					FootMarkerComp->SetMaterial(0, FootHighlightMaterial);
 					FootMarkerComp->RegisterComponent();
 					FootMarkerComp->AttachToComponent(Walker->GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);

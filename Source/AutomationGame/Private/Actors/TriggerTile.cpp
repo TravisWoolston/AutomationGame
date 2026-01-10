@@ -83,6 +83,7 @@ void ATriggerTile::BeginPlay()
 		TickManager = AGameTickManager::Get(this);
 	}
 
+	SyncWorldLocation();
 	UpdateVisuals();
 	UpdateWireVisual();
 }
@@ -450,6 +451,7 @@ void ATriggerTile::OnConstruction(const FTransform& Transform)
 		}
 	}
 	
+	SyncWorldLocation();
 	UpdateVisuals();
 	UpdateWireVisual();
 }
@@ -841,4 +843,21 @@ void ATriggerTile::SetOwnerArm(int32 InOwnerQ, int32 InOwnerR)
 
 	// Update wire visual to show connection
 	UpdateWireVisual();
+}
+
+void ATriggerTile::SyncWorldLocation()
+{
+	if (!Driver)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			Driver = AOrbSimDriver::Find(World);
+		}
+	}
+
+	if (Driver)
+	{
+		FVector Location = Driver->MapHexToWorld(FHex(Q, R, Level));
+		SetActorLocation(Location);
+	}
 }
