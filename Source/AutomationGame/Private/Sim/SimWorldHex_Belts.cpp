@@ -141,7 +141,7 @@ void USimWorldHex::StepBelts()
 						}
 						
 						// Calculate destination
-						FHex DestPos(CurrentPos.Q + MoveOffset.Q, CurrentPos.R + MoveOffset.R);
+						FHex DestPos(CurrentPos.Q + MoveOffset.Q, CurrentPos.R + MoveOffset.R, CurrentPos.Level);
 						ClusterDestinations.Add(BondedId, DestPos);
 						
 						// Check if destination is blocked by non-cluster items
@@ -421,7 +421,7 @@ void USimWorldHex::StepBelts()
 							if (BoardKV.Value.Id == ConnectedId)
 							{
 								FHex CurrentPos = BoardKV.Key;
-								FHex DestPos(CurrentPos.Q + ClusterMoveOffset.Q, CurrentPos.R + ClusterMoveOffset.R);
+								FHex DestPos(CurrentPos.Q + ClusterMoveOffset.Q, CurrentPos.R + ClusterMoveOffset.R, CurrentPos.Level);
 
 								ClusterPositions.Add(ConnectedId, CurrentPos);
 								ClusterDestinations.Add(ConnectedId, DestPos);
@@ -743,7 +743,7 @@ void USimWorldHex::StepBelts()
 			}
 
 			FHex ConnectedToHex(ConnectedCurrentHex.Q + ClusterMoveOffset.Q,
-				ConnectedCurrentHex.R + ClusterMoveOffset.R);
+				ConnectedCurrentHex.R + ClusterMoveOffset.R, ConnectedCurrentHex.Level);
 
 			if (HeldOrbHexes.Contains(ConnectedToHex) || WalkerFootTiles.Contains(ConnectedToHex))
 			{
@@ -903,7 +903,7 @@ void USimWorldHex::StepBelts()
 					}
 					
 					FHex ConnectedToHex(ConnectedCurrentHex.Q + PullClusterMoveOffset.Q,
-						ConnectedCurrentHex.R + PullClusterMoveOffset.R);
+						ConnectedCurrentHex.R + PullClusterMoveOffset.R, ConnectedCurrentHex.Level);
 					
 					// The destination should be where the pushing item is leaving from
 					// We need to make sure the entire pull cluster can fit
@@ -941,7 +941,7 @@ void USimWorldHex::StepBelts()
 							if (BoardKV.Value.Id == ConnectedId)
 							{
 								FHex DestHex(BoardKV.Key.Q + PullClusterMoveOffset.Q,
-									BoardKV.Key.R + PullClusterMoveOffset.R);
+									BoardKV.Key.R + PullClusterMoveOffset.R, BoardKV.Key.Level);
 								PendingDestinations.Add(DestHex, ConnectedId);
 								break;
 							}
@@ -988,7 +988,7 @@ void USimWorldHex::StepBelts()
 				{
 					if (BoardKV.Value.Id == ConnectedId)
 					{
-						FHex DestHex(BoardKV.Key.Q + ClusterMoveOffset.Q, BoardKV.Key.R + ClusterMoveOffset.R);
+						FHex DestHex(BoardKV.Key.Q + ClusterMoveOffset.Q, BoardKV.Key.R + ClusterMoveOffset.R, BoardKV.Key.Level);
 						PendingDestinations.Add(DestHex, ConnectedId);
 						break;
 					}
@@ -1077,7 +1077,7 @@ void USimWorldHex::StepBelts()
 				}
 				
 				// Calculate destination
-				FHex DestPos(CurrentPos.Q + MoveOffset.Q, CurrentPos.R + MoveOffset.R);
+				FHex DestPos(CurrentPos.Q + MoveOffset.Q, CurrentPos.R + MoveOffset.R, CurrentPos.Level);
 				
 				// Check if destination is blocked
 				if (HeldOrbHexes.Contains(DestPos) || WalkerFootTiles.Contains(DestPos))
@@ -1141,7 +1141,7 @@ void USimWorldHex::StepBelts()
 				{
 					if (PosKV.Value == ItemId)
 					{
-						FHex NewPos(PosKV.Key.Q + MoveOffset.Q, PosKV.Key.R + MoveOffset.R);
+						FHex NewPos(PosKV.Key.Q + MoveOffset.Q, PosKV.Key.R + MoveOffset.R, PosKV.Key.Level);
 						Updates.Add(TPair<FHex, int32>(NewPos, ItemId));
 								break;
 							}
@@ -1229,7 +1229,7 @@ void USimWorldHex::StepBelts()
 				{
 					MovingItems.Add(ItemId, KV.Value);
 					OldPositions.Add(ItemId, KV.Key);
-					NewPositions.Add(ItemId, FHex(KV.Key.Q + MoveOffset.Q, KV.Key.R + MoveOffset.R));
+					NewPositions.Add(ItemId, FHex(KV.Key.Q + MoveOffset.Q, KV.Key.R + MoveOffset.R, KV.Key.Level));
 					break;
 				}
 			}

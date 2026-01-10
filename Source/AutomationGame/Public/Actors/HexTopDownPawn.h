@@ -107,6 +107,7 @@ private:
 	TArray<FBlueprintTile> BlueprintTiles;
 	FHex BlueprintPlacementOffset;
 	uint8 BlueprintRotation = 0;
+	int32 CurrentLevel = 0;
 	
 	void MoveX(float V) { AxisX = V; }
 	void MoveY(float V) { AxisY = V; }
@@ -214,6 +215,10 @@ private:
 	void SetInputMode9();
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode10(); // TriggerTile
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	void SetInputMode11(); // ClusterSend
+	UFUNCTION(BlueprintCallable, Category = "Input")
+	void SwitchGrid();
 	void RotCW() { 
 		if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0) {
 			RotateBlueprintCW();

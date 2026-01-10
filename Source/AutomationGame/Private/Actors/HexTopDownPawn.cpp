@@ -27,6 +27,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Blueprints/PlayerBlueprintLibrarySave.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/DirectionalLight.h"
 
 AHexTopDownPawn::AHexTopDownPawn()
 {
@@ -544,6 +545,7 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 	IC->BindAction("Kind8", IE_Pressed, this, &AHexTopDownPawn::SetInputMode8);
 	IC->BindAction("Kind9", IE_Pressed, this, &AHexTopDownPawn::SetInputMode9);
 	IC->BindAction("Kind10", IE_Pressed, this, &AHexTopDownPawn::SetInputMode10);
+	IC->BindAction("Kind11", IE_Pressed, this, &AHexTopDownPawn::SetInputMode11);
 	// Type cycling (works for both Input and Output based on current placement mode)
 	IC->BindAction("CycleNextType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypeNext);
 	IC->BindAction("CyclePreviousType", IE_Pressed, this, &AHexTopDownPawn::CycleInputTypePrevious);
@@ -573,6 +575,9 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent* IC)
 
 	// Grid visibility toggle
 	IC->BindAction("ToggleGridVisibility", IE_Pressed, this, &AHexTopDownPawn::ToggleGridVisibility);
+	
+	// Switch active grid level
+	IC->BindAction("SwitchGrid", IE_Pressed, this, &AHexTopDownPawn::SwitchGrid);
 	
 	// Walker debug visualization toggle
 	IC->BindAction("ToggleDebugWalkers", IE_Pressed, this, &AHexTopDownPawn::ToggleDebugWalkers);
@@ -614,6 +619,55 @@ void AHexTopDownPawn::SetInputMode10()
 		}
 	}
 }
+void AHexTopDownPawn::SetInputMode11() { if (Placer) Placer->SetPlaceKind(EPlaceKind::ClusterSend); }
+
+void AHexTopDownPawn::SwitchGrid()
+{
+	CurrentLevel = 1 - CurrentLevel;
+	
+	if (Placer)
+	{
+		Placer->ActiveLevel = CurrentLevel;
+	}
+	
+	// Adjust camera direction to face the active grid level
+	if (SpringArm)
+	{
+		// Level 0: Look down from top (Pitch -90, Yaw 0)
+		// Level 1: Look up from bottom (Pitch 90, Yaw 180)
+		// Yaw 180 on Level 1 keeps World X as "Up" on screen.
+		float TargetPitch = (CurrentLevel == 0) ? -90.f : 90.f;
+		float TargetYaw = (CurrentLevel == 0) ? 0.f : 0.f;
+		SpringArm->SetRelativeRotation(FRotator(TargetPitch, TargetYaw, 0.f));
+	}
+	
+	// Flip directional lights to illuminate the active grid side
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<ADirectionalLight> It(World); It; ++It)
+		{
+			ADirectionalLight* DirLight = *It;
+			if (DirLight)
+			{
+				FRotator CurrentRot = DirLight->GetActorRotation();
+				// Flip the pitch by 180 degrees to light from opposite side
+				float NewPitch = (CurrentLevel == 0) ? FMath::Abs(CurrentRot.Pitch) : -FMath::Abs(CurrentRot.Pitch);
+				if (CurrentRot.Pitch > 0.f && CurrentLevel == 0)
+				{
+					NewPitch = -CurrentRot.Pitch;
+				}
+				else if (CurrentRot.Pitch < 0.f && CurrentLevel == 1)
+				{
+					NewPitch = -CurrentRot.Pitch;
+				}
+				DirLight->SetActorRotation(FRotator(NewPitch, CurrentRot.Yaw, CurrentRot.Roll));
+			}
+		}
+	}
+	
+	UE_LOG(LogTemp, Log, TEXT("AHexTopDownPawn::SwitchGrid - Switched to Level %d"), CurrentLevel);
+}
+
 void AHexTopDownPawn::RequestMoveToTile()
 {
 	if (!Placer || !Placer->IsHoverValid())
@@ -1958,7 +2012,7 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 						ATestLevelDirector* TLD = *TLDIt;
 						if (TLD)
 						{
-							TLD->RemoveBeaconSpec(Hex.Q, Hex.R);
+							TLD->RemoveBeaconSpec(Hex.Q, Hex.R, Hex.Level);
 							break;
 						}
 					}
@@ -1982,7 +2036,7 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 						ATestLevelDirector* TLD = *TLDIt;
 						if (TLD)
 						{
-							TLD->RemoveTriggerTileSpec(Hex.Q, Hex.R);
+							TLD->RemoveTriggerTileSpec(Hex.Q, Hex.R, Hex.Level);
 							break;
 						}
 					}
@@ -2111,7 +2165,7 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 			ATestLevelDirector* TLD = *It;
 			if (TLD)
 			{
-				TLD->RemoveWalkerSpec(Hex.Q, Hex.R);
+				TLD->RemoveWalkerSpec(Hex.Q, Hex.R, Hex.Level);
 			}
 			break;
 		}

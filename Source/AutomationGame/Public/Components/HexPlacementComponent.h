@@ -24,7 +24,8 @@ enum class EPlaceKind : uint8
 	ClusterOutput, // place a ClusterOutput tile (cycles through registered templates)
 	ClusterInput,  // place a ClusterInput tile (spawns clusters from storage)
 	RequestBeacon, // place a RequestBeacon (e.g. Relocate)
-	TriggerTile    // place a TriggerTile (sends signals based on orb presence)
+	TriggerTile,   // place a TriggerTile (sends signals based on orb presence)
+	ClusterSend    // place a ClusterSend tile
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of truth). */
@@ -40,7 +41,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Place") EPlaceKind PlaceKind = EPlaceKind::Input;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Place") uint8 BeltDir = 0;
 
-	/** Optional anchor override to NOT use driver. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	int32 ActiveLevel = 0;
+
+	/** Number of clockwise 60-degree rotations (0-5). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid") bool bOverrideAnchor = false;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (EditCondition = "bOverrideAnchor")) AActor* AnchorOverride = nullptr;
 

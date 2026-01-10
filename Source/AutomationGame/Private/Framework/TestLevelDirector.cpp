@@ -369,7 +369,8 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		if (!A.Spawned) continue;
 
 		// Basic spatial init - use StartingRotation for initial facing
-		A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.StartingRotation);
+		A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.Level, A.Facing % 6);
+		A.Spawned->FacingDir = A.Facing % 6;
 
 		// Set starting rotation and reach for Reset command
 		A.Spawned->StartingRotation = A.StartingRotation;
@@ -380,8 +381,8 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		{
 			// Build initial sim-side arm state (tape comes from scenario program)
 			FArmState ArmState;
-			ArmState.BaseHex = FHex(A.Q, A.R);
-			ArmState.Facing = (EHexDir)(A.StartingRotation % 6);  // Use StartingRotation for initial facing
+			ArmState.BaseHex = FHex(A.Q, A.R, A.Level);
+			ArmState.Facing = (EHexDir)(A.Facing % 6);  // Use saved Facing for initial facing
 			ArmState.HomeFacing = (EHexDir)(A.StartingRotation % 6);
 			ArmState.HomeArmLen = A.StartingReach;
 			ArmState.HomeTrackIdx = 0;
@@ -434,7 +435,9 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			{
 				FWalkerState& WalkerState = Sim->Walkers[WalkerSpec.Spawned->SimWalkerIndex];
 				WalkerState.HomeHex = WalkerSpec.StartingLocation;
+				WalkerState.HomeHex.Level = WalkerSpec.Level; // Ensure level is set
 				WalkerSpec.Spawned->HomeHex = WalkerSpec.StartingLocation;
+				WalkerSpec.Spawned->HomeHex.Level = WalkerSpec.Level;
 			}
 		}
 	}
@@ -460,7 +463,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			continue;
 		}
 
-		FHex BeaconHex(BeaconSpec.Q, BeaconSpec.R);
+		FHex BeaconHex(BeaconSpec.Q, BeaconSpec.R, BeaconSpec.Level);
 		FVector Location = Driver->MapHexToWorld(BeaconHex);
 		FRotator Rotation(0.f, BeaconSpec.Rotation, 0.f);
 		
@@ -469,6 +472,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		{
 			BeaconSpec.Spawned->Q = BeaconSpec.Q;
 			BeaconSpec.Spawned->R = BeaconSpec.R;
+			BeaconSpec.Spawned->Level = BeaconSpec.Level;
 			BeaconSpec.Spawned->BeaconType = BeaconSpec.BeaconType;
 			BeaconSpec.Spawned->BeaconRole = BeaconSpec.BeaconRole;
 			
@@ -525,7 +529,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 			continue;
 		}
 
-		FHex TriggerHex(TriggerSpec.Q, TriggerSpec.R);
+		FHex TriggerHex(TriggerSpec.Q, TriggerSpec.R, TriggerSpec.Level);
 		FVector Location = Driver->MapHexToWorld(TriggerHex);
 		FRotator Rotation(0.f, TriggerSpec.Rotation, 0.f);
 		
@@ -534,6 +538,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
 		{
 			TriggerSpec.Spawned->Q = TriggerSpec.Q;
 			TriggerSpec.Spawned->R = TriggerSpec.R;
+			TriggerSpec.Spawned->Level = TriggerSpec.Level;
 			TriggerSpec.Spawned->TriggerOrbType = TriggerSpec.TriggerOrbType;
 			TriggerSpec.Spawned->Variant = TriggerSpec.Variant;
 			if (TriggerSpec.OwnerType == ETriggerTileOwnerType::Belt)
@@ -599,7 +604,7 @@ void ATestLevelDirector::RefreshSpawnedArmsFromScenario(int32 ScenarioIndex)
 
 		bool bPlacementChanged = (Arm->Q != ArmSpec.Q) || (Arm->R != ArmSpec.R) || (Arm->FacingDir != ArmSpec.Facing);
 		if (bPlacementChanged)
-			Arm->InitializeOnGrid(Driver, ArmSpec.Q, ArmSpec.R, ArmSpec.Facing % 6);
+			Arm->InitializeOnGrid(Driver, ArmSpec.Q, ArmSpec.R, ArmSpec.Level, ArmSpec.Facing % 6);
 	}
 }
 
@@ -641,7 +646,7 @@ void ATestLevelDirector::UpsertTileSpec(const FHex& Hex, ETileKind Kind, uint8 D
 
 	for (FPlacedTileSpec& T : Sc.Tiles)
 	{
-		if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R)
+		if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R && T.Hex.Level == Hex.Level)
 		{
 			T.Kind = Kind;
 			T.Dir = Dir;
@@ -670,7 +675,7 @@ void ATestLevelDirector::UpsertClusterOutputTileSpec(const FHex& Hex, uint8 Temp
 
 	for (FPlacedTileSpec& T : Sc.Tiles)
 	{
-		if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R)
+		if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R && T.Hex.Level == Hex.Level)
 		{
 			T.Kind = ETileKind::ClusterOutput;
 			T.Dir = TemplateId;
@@ -786,7 +791,7 @@ bool ATestLevelDirector::RemoveTileSpec(const FHex& Hex)
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
 	for (int32 i = 0; i < Sc.Tiles.Num(); ++i)
 	{
-		if (Sc.Tiles[i].Hex.Q == Hex.Q && Sc.Tiles[i].Hex.R == Hex.R)
+		if (Sc.Tiles[i].Hex.Q == Hex.Q && Sc.Tiles[i].Hex.R == Hex.R && Sc.Tiles[i].Hex.Level == Hex.Level)
 		{
 			Sc.Tiles.RemoveAt(i);
 			MarkActiveScenarioDirty();
@@ -799,32 +804,32 @@ bool ATestLevelDirector::RemoveTileSpec(const FHex& Hex)
 	return false;
 }
 
-void ATestLevelDirector::UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop)
+void ATestLevelDirector::UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop, int32 Level)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-
-	auto FindRuntimeArmAt = [&](int32 InQ, int32 InR) -> ABasicArm*
+	
+	auto FindRuntimeArmAt = [&](int32 InQ, int32 InR, int32 InLevel) -> ABasicArm*
 		{
 			if (!GetWorld()) return nullptr;
 			for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It)
 			{
-				if (It->Q == InQ && It->R == InR)
+				if (It->Q == InQ && It->R == InR && It->Level == InLevel)
 				{
 					return *It;
 				}
 			}
 			return nullptr;
 		};
-
+	
 	for (FArmSpawnSpec& A : Sc.Arms)
 	{
-		if (A.Q == Q && A.R == R)
+		if (A.Q == Q && A.R == R && A.Level == Level)
 		{
 			A.Facing = Facing % 6;
 			A.Program = Program;
 			A.bLoopProgram = bLoop;
-			if (!A.Spawned) A.Spawned = FindRuntimeArmAt(Q, R);
+			if (!A.Spawned) A.Spawned = FindRuntimeArmAt(Q, R, Level);
 			MarkActiveScenarioDirty();
 #if WITH_EDITOR
 			MirrorScenarioEditsToEditor();
@@ -832,16 +837,17 @@ void ATestLevelDirector::UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TAr
 			return;
 		}
 	}
-
+	
 	FArmSpawnSpec NewA;
 	NewA.Q = Q;
 	NewA.R = R;
+	NewA.Level = Level;
 	NewA.Facing = Facing % 6;
 	NewA.StartingRotation = Facing % 6;  // Initialize to placement direction
 	NewA.StartingReach = 1;              // Default reach
 	NewA.Program = Program;
 	NewA.bLoopProgram = bLoop;
-	NewA.Spawned = FindRuntimeArmAt(Q, R);   // capture runtime actor if already spawned
+	NewA.Spawned = FindRuntimeArmAt(Q, R, Level);   // capture runtime actor if already spawned
 	Sc.Arms.Add(NewA);
 	MarkActiveScenarioDirty();
 #if WITH_EDITOR
@@ -849,14 +855,14 @@ void ATestLevelDirector::UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TAr
 #endif
 }
 
-bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R)
+bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R, int32 Level)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-
+	
 	for (int32 i = 0; i < Sc.Arms.Num(); ++i)
 	{
-		if (Sc.Arms[i].Q == Q && Sc.Arms[i].R == R)
+		if (Sc.Arms[i].Q == Q && Sc.Arms[i].R == R && Sc.Arms[i].Level == Level)
 		{
 			if (Sc.Arms[i].Spawned)
 			{
@@ -867,14 +873,14 @@ bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R)
 			{
 				for (TActorIterator<ABasicArm> It(W); It; ++It)
 				{
-					if (It->Q == Q && It->R == R)
+					if (It->Q == Q && It->R == R && It->Level == Level)
 					{
 						DestroyActorNow(*It);
 						break;
 					}
 				}
 			}
-
+			
 			Sc.Arms.RemoveAt(i);
 			MarkActiveScenarioDirty();
 #if WITH_EDITOR
@@ -883,12 +889,12 @@ bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R)
 			return true;
 		}
 	}
-
+	
 	if (UWorld* W = GetWorld())
 	{
 		for (TActorIterator<ABasicArm> It(W); It; ++It)
 		{
-			if (It->Q == Q && It->R == R)
+			if (It->Q == Q && It->R == R && It->Level == Level)
 			{
 				DestroyActorNow(*It);
 				MarkActiveScenarioDirty();
@@ -902,32 +908,32 @@ bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R)
 	return false;
 }
 
-void ATestLevelDirector::UpsertWalkerSpec(int32 Q, int32 R, const FHex& StartingLocation, const TArray<FWalkerInstr>& Program, bool bLoop)
+void ATestLevelDirector::UpsertWalkerSpec(int32 Q, int32 R, const FHex& StartingLocation, const TArray<FWalkerInstr>& Program, bool bLoop, int32 Level)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-
-	auto FindRuntimeWalkerAt = [&](int32 InQ, int32 InR) -> ABasicWalker*
+	
+	auto FindRuntimeWalkerAt = [&](int32 InQ, int32 InR, int32 InLevel) -> ABasicWalker*
 		{
 			if (!GetWorld()) return nullptr;
 			for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It)
 			{
-				if (It->Q == InQ && It->R == InR)
+				if (It->Q == InQ && It->R == InR && It->Level == InLevel)
 				{
 					return *It;
 				}
 			}
 			return nullptr;
 		};
-
+	
 	for (FWalkerSpawnSpec& W : Sc.Walkers)
 	{
-		if (W.Q == Q && W.R == R)
+		if (W.Q == Q && W.R == R && W.Level == Level)
 		{
 			W.StartingLocation = StartingLocation;
 			W.Program = Program;
 			W.bLoopProgram = bLoop;
-			if (!W.Spawned) W.Spawned = FindRuntimeWalkerAt(Q, R);
+			if (!W.Spawned) W.Spawned = FindRuntimeWalkerAt(Q, R, Level);
 			MarkActiveScenarioDirty();
 #if WITH_EDITOR
 			MirrorScenarioEditsToEditor();
@@ -935,14 +941,15 @@ void ATestLevelDirector::UpsertWalkerSpec(int32 Q, int32 R, const FHex& Starting
 			return;
 		}
 	}
-
+	
 	FWalkerSpawnSpec NewW;
 	NewW.Q = Q;
 	NewW.R = R;
+	NewW.Level = Level;
 	NewW.StartingLocation = StartingLocation;
 	NewW.Program = Program;
 	NewW.bLoopProgram = bLoop;
-	NewW.Spawned = FindRuntimeWalkerAt(Q, R);   // capture runtime actor if already spawned
+	NewW.Spawned = FindRuntimeWalkerAt(Q, R, Level);   // capture runtime actor if already spawned
 	Sc.Walkers.Add(NewW);
 	MarkActiveScenarioDirty();
 #if WITH_EDITOR
@@ -950,14 +957,14 @@ void ATestLevelDirector::UpsertWalkerSpec(int32 Q, int32 R, const FHex& Starting
 #endif
 }
 
-bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R)
+bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R, int32 Level)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-
+	
 	for (int32 i = 0; i < Sc.Walkers.Num(); ++i)
 	{
-		if (Sc.Walkers[i].Q == Q && Sc.Walkers[i].R == R)
+		if (Sc.Walkers[i].Q == Q && Sc.Walkers[i].R == R && Sc.Walkers[i].Level == Level)
 		{
 			if (Sc.Walkers[i].Spawned)
 			{
@@ -968,14 +975,14 @@ bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R)
 			{
 				for (TActorIterator<ABasicWalker> It(W); It; ++It)
 				{
-					if (It->Q == Q && It->R == R)
+					if (It->Q == Q && It->R == R && It->Level == Level)
 					{
 						DestroyActorNow(*It);
 						break;
 					}
 				}
 			}
-
+			
 			Sc.Walkers.RemoveAt(i);
 			MarkActiveScenarioDirty();
 #if WITH_EDITOR
@@ -984,12 +991,12 @@ bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R)
 			return true;
 		}
 	}
-
+	
 	if (UWorld* W = GetWorld())
 	{
 		for (TActorIterator<ABasicWalker> It(W); It; ++It)
 		{
-			if (It->Q == Q && It->R == R)
+			if (It->Q == Q && It->R == R && It->Level == Level)
 			{
 				DestroyActorNow(*It);
 				MarkActiveScenarioDirty();
@@ -1003,31 +1010,31 @@ bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R)
 	return false;
 }
 
-void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconType, EBeaconRole BeaconRole, float Rotation)
+void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconType, EBeaconRole BeaconRole, float Rotation, int32 Level)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-
-	auto FindRuntimeBeaconAt = [&](int32 InQ, int32 InR, EBeaconRole InRole) -> ARequestBeacon*
+	
+	auto FindRuntimeBeaconAt = [&](int32 InQ, int32 InR, EBeaconRole InRole, int32 InLevel) -> ARequestBeacon*
 		{
 			if (!GetWorld()) return nullptr;
 			for (TActorIterator<ARequestBeacon> It(GetWorld()); It; ++It)
 			{
-				if (It->Q == InQ && It->R == InR && It->BeaconRole == InRole)
+				if (It->Q == InQ && It->R == InR && It->BeaconRole == InRole && It->Level == InLevel)
 				{
 					return *It;
 				}
 			}
 			return nullptr;
 		};
-
+	
 	for (FRequestBeaconSpec& B : Sc.Beacons)
 	{
-		if (B.Q == Q && B.R == R && B.BeaconRole == BeaconRole)
+		if (B.Q == Q && B.R == R && B.BeaconRole == BeaconRole && B.Level == Level)
 		{
 			B.BeaconType = BeaconType;
 			B.Rotation = Rotation;
-			if (!B.Spawned) B.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole);
+			if (!B.Spawned) B.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole, Level);
 			
 			// Update paired beacon info from runtime
 			if (B.Spawned && B.Spawned->PairedBeacon && IsValid(B.Spawned->PairedBeacon))
@@ -1044,14 +1051,15 @@ void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconTy
 			return;
 		}
 	}
-
+	
 	FRequestBeaconSpec NewB;
 	NewB.Q = Q;
 	NewB.R = R;
+	NewB.Level = Level;
 	NewB.BeaconType = BeaconType;
 	NewB.BeaconRole = BeaconRole;
 	NewB.Rotation = Rotation;
-	NewB.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole);
+	NewB.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole, Level);
 	
 	// Save paired beacon info from runtime
 	if (NewB.Spawned && NewB.Spawned->PairedBeacon && IsValid(NewB.Spawned->PairedBeacon))
@@ -1068,17 +1076,17 @@ void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconTy
 #endif
 }
 
-bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
+bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R, int32 Level)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-
+	
 	bool bRemovedAny = false;
 	
 	// Remove all beacons at this hex (both Pickup and DropOff if at same location)
 	for (int32 i = Sc.Beacons.Num() - 1; i >= 0; --i)
 	{
-		if (Sc.Beacons[i].Q == Q && Sc.Beacons[i].R == R)
+		if (Sc.Beacons[i].Q == Q && Sc.Beacons[i].R == R && Sc.Beacons[i].Level == Level)
 		{
 			if (Sc.Beacons[i].Spawned)
 			{
@@ -1089,19 +1097,19 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 			{
 				for (TActorIterator<ARequestBeacon> It(W); It; ++It)
 				{
-					if (It->Q == Q && It->R == R && It->BeaconRole == Sc.Beacons[i].BeaconRole)
+					if (It->Q == Q && It->R == R && It->BeaconRole == Sc.Beacons[i].BeaconRole && It->Level == Level)
 					{
 						DestroyActorNow(*It);
 						break;
 					}
 				}
 			}
-
+			
 			Sc.Beacons.RemoveAt(i);
 			bRemovedAny = true;
 		}
 	}
-
+	
 	if (bRemovedAny)
 	{
 		MarkActiveScenarioDirty();
@@ -1110,13 +1118,13 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 #endif
 		return true;
 	}
-
+	
 	// Fallback: remove any runtime beacons not in specs
 	if (UWorld* W = GetWorld())
 	{
 		for (TActorIterator<ARequestBeacon> It(W); It; ++It)
 		{
-			if (It->Q == Q && It->R == R)
+			if (It->Q == Q && It->R == R && It->Level == Level)
 			{
 				DestroyActorNow(*It);
 				bRemovedAny = true;
@@ -1135,27 +1143,27 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R)
 	return bRemovedAny;
 }
 
-void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, ETriggerVariant Variant, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation)
+void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, ETriggerVariant Variant, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation, int32 Level)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-
-	auto FindRuntimeTriggerTileAt = [&](int32 InQ, int32 InR) -> ATriggerTile*
+	
+	auto FindRuntimeTriggerTileAt = [&](int32 InQ, int32 InR, int32 InLevel) -> ATriggerTile*
 		{
 			if (!GetWorld()) return nullptr;
 			for (TActorIterator<ATriggerTile> It(GetWorld()); It; ++It)
 			{
-				if (It->Q == InQ && It->R == InR)
+				if (It->Q == InQ && It->R == InR && It->Level == InLevel)
 				{
 					return *It;
 				}
 			}
 			return nullptr;
 		};
-
+	
 	for (FTriggerTileSpec& T : Sc.TriggerTiles)
 	{
-		if (T.Q == Q && T.R == R)
+		if (T.Q == Q && T.R == R && T.Level == Level)
 		{
 			T.TriggerOrbType = TriggerOrbType;
 			T.Variant = Variant;
@@ -1163,7 +1171,7 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType Trigge
 			T.OwnerR = OwnerR;
 			T.OwnerType = OwnerType;
 			T.Rotation = Rotation;
-			if (!T.Spawned) T.Spawned = FindRuntimeTriggerTileAt(Q, R);
+			if (!T.Spawned) T.Spawned = FindRuntimeTriggerTileAt(Q, R, Level);
 			MarkActiveScenarioDirty();
 #if WITH_EDITOR
 			MirrorScenarioEditsToEditor();
@@ -1171,17 +1179,18 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType Trigge
 			return;
 		}
 	}
-
+	
 	FTriggerTileSpec NewT;
 	NewT.Q = Q;
 	NewT.R = R;
+	NewT.Level = Level;
 	NewT.TriggerOrbType = TriggerOrbType;
 	NewT.Variant = Variant;
 	NewT.OwnerQ = OwnerQ;
 	NewT.OwnerR = OwnerR;
 	NewT.OwnerType = OwnerType;
 	NewT.Rotation = Rotation;
-	NewT.Spawned = FindRuntimeTriggerTileAt(Q, R);
+	NewT.Spawned = FindRuntimeTriggerTileAt(Q, R, Level);
 	
 	Sc.TriggerTiles.Add(NewT);
 	MarkActiveScenarioDirty();
@@ -1190,17 +1199,17 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType Trigge
 #endif
 }
 
-bool ATestLevelDirector::RemoveTriggerTileSpec(int32 Q, int32 R)
+bool ATestLevelDirector::RemoveTriggerTileSpec(int32 Q, int32 R, int32 Level)
 {
 	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
 	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-
+	
 	bool bRemovedAny = false;
 	
 	// Remove all trigger tiles at this hex
 	for (int32 i = Sc.TriggerTiles.Num() - 1; i >= 0; --i)
 	{
-		if (Sc.TriggerTiles[i].Q == Q && Sc.TriggerTiles[i].R == R)
+		if (Sc.TriggerTiles[i].Q == Q && Sc.TriggerTiles[i].R == R && Sc.TriggerTiles[i].Level == Level)
 		{
 			if (Sc.TriggerTiles[i].Spawned)
 			{
@@ -1211,19 +1220,19 @@ bool ATestLevelDirector::RemoveTriggerTileSpec(int32 Q, int32 R)
 			{
 				for (TActorIterator<ATriggerTile> It(W); It; ++It)
 				{
-					if (It->Q == Q && It->R == R)
+					if (It->Q == Q && It->R == R && It->Level == Level)
 					{
 						DestroyActorNow(*It);
 						break;
 					}
 				}
 			}
-
+			
 			Sc.TriggerTiles.RemoveAt(i);
 			bRemovedAny = true;
 		}
 	}
-
+	
 	if (bRemovedAny)
 	{
 		MarkActiveScenarioDirty();
@@ -1232,13 +1241,13 @@ bool ATestLevelDirector::RemoveTriggerTileSpec(int32 Q, int32 R)
 #endif
 		return true;
 	}
-
+	
 	// Fallback: remove any runtime trigger tiles not in specs
 	if (UWorld* W = GetWorld())
 	{
 		for (TActorIterator<ATriggerTile> It(W); It; ++It)
 		{
-			if (It->Q == Q && It->R == R)
+			if (It->Q == Q && It->R == R && It->Level == Level)
 			{
 				DestroyActorNow(*It);
 				bRemovedAny = true;

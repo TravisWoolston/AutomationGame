@@ -487,7 +487,7 @@ void ABasicArm::RefreshPose(float InAlpha)
 	}
 	
 	float EasedAlpha = InAlpha;
-	const FVector BaseWorld = HexToWorld(FHex(Q, R)) + FVector(0, 0, BaseZ);
+	const FVector BaseWorld = HexToWorld(FHex(Q, R, Level)) + FVector(0, 0, BaseZ);
 	const float StartYaw = NormDeg(LastYawDeg);
 	const float TargetYaw = NormDeg(CurrYawDeg);
 	const float Delta = FMath::FindDeltaAngleDegrees(StartYaw, TargetYaw);
@@ -1088,7 +1088,7 @@ FHex ABasicArm::DirStep(uint8 Dir) const
 // ABasicArm.cpp
 FHex ABasicArm::ComputeTargetHex() const
 {
-	FHex T(Q, R);
+	FHex T(Q, R, Level);
 	const int32 N = FMath::Max(1, ReachTiles);
 	for (int32 i = 0; i < N; ++i)
 		T = HexUtil::Neighbor(T, static_cast<EHexDir>(FacingDir));
@@ -1231,11 +1231,12 @@ void ABasicArm::ShowHeldOrb(bool bShow)
 	}
 }
 
-void ABasicArm::InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, uint8 InFacing)
+void ABasicArm::InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, int32 InLevel, uint8 InFacing)
 {
 	Driver = InDriver;
 	Q = InQ;
 	R = InR;
+	Level = InLevel;
 	FacingDir = InFacing % 6;
 	StartFacingDir = FacingDir;
 
@@ -2065,5 +2066,5 @@ void ABasicArm::SetTimelineVisible(bool bVisible)
 FVector ABasicArm::GetArmWorldPosition() const
 {
 	// Get the arm's world position based on its hex coordinates
-	return HexToWorld(FHex(Q, R)) + FVector(0, 0, BaseZ);
+	return HexToWorld(FHex(Q, R, Level)) + FVector(0, 0, BaseZ);
 }

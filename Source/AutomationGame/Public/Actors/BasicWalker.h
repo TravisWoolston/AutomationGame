@@ -61,9 +61,12 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
 	int32 R = 0;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	int32 Level = 0;
+
 	/** Convenience: set grid placement & driver in one call. */
 	UFUNCTION(BlueprintCallable, Category = "Grid")
-	void InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR);
+	void InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, int32 InLevel);
 
 	// --- Visuals ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
@@ -167,7 +170,7 @@ FVector WorldToComponentSpace(const FVector& WorldLocation) const;
 	
 	/** Target rotation for the body (Z axis) - set in Event Graph or derived from foot positions */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Body Rotation")
-	FRotator BodyGoalRotation = FRotator(90.f, 0.f, 0.f);
+	FRotator BodyGoalRotation = FRotator(90.f, 0.f, 90.f);
 	
 	/** Calculated dynamic yaw for the body (only updated if bDynamicBodyRotation is true) */
 	UPROPERTY(BlueprintReadOnly, Category = "Walker|Body Rotation")

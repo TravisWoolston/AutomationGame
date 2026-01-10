@@ -52,7 +52,7 @@ void USimWorldHex::StepBonds()
 					{
 						HeldIds.Add(Sub.ItemId);
 						// Reconstruct world position for bond validation
-						FHex WorldPos(Anchor.Q + Sub.dQ, Anchor.R + Sub.dR);
+						FHex WorldPos(Anchor.Q + Sub.dQ, Anchor.R + Sub.dR, Anchor.Level);
 						HeldItemLastHex.Add(Sub.ItemId, WorldPos);
 					}
 				}
@@ -164,7 +164,7 @@ void USimWorldHex::StepBonds()
 				{
 					if (Sub.ItemId <= 0) continue;
 					const FHex Rot = Rot60(FHex(Sub.dQ, Sub.dR), ccw);
-					const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+					const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R, GripHex.Level);
 					VirtualHeldItemAt.FindOrAdd(World, Sub.ItemId);
 					HeldItemToArmIndex.FindOrAdd(Sub.ItemId, ArmIndex);
 				}
@@ -331,7 +331,7 @@ void USimWorldHex::StepBonds()
 			{
 				if (SubA.ItemId <= 0) continue;
 				const FHex RotA = Rot60(FHex(SubA.dQ, SubA.dR), ccw);
-				const FHex WorldA(GripHex.Q + RotA.Q, GripHex.R + RotA.R);
+				const FHex WorldA(GripHex.Q + RotA.Q, GripHex.R + RotA.R, GripHex.Level);
 				if (WorldA != BondHex) continue;
 
 				for (const FOrbData& SubB : A.Held.Orbs)
@@ -339,7 +339,7 @@ void USimWorldHex::StepBonds()
 					if (SubB.ItemId <= 0 || SubB.ItemId == SubA.ItemId) continue;
 
 					const FHex RotB = Rot60(FHex(SubB.dQ, SubB.dR), ccw);
-					const FHex WorldB(GripHex.Q + RotB.Q, GripHex.R + RotB.R);
+					const FHex WorldB(GripHex.Q + RotB.Q, GripHex.R + RotB.R, GripHex.Level);
 					if (WorldB != BondTargetHex) continue;
 
 					// Avoid duplicate
@@ -476,7 +476,7 @@ void USimWorldHex::StepBondsSecondPass()
 			{
 				if (Sub.ItemId <= 0) continue;
 				const FHex Rot = Rot60CCW(FHex(Sub.dQ, Sub.dR), ccw);
-				const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+				const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R, GripHex.Level);
 				VirtualHeldItemAt.FindOrAdd(World, Sub.ItemId);
 				HeldItemToArmIndex.FindOrAdd(Sub.ItemId, ArmIndex);
 			}
@@ -585,7 +585,7 @@ TMap<FHex, int32> USimWorldHex::GetPredictedBondFormations() const
 			{
 				if (Sub.ItemId <= 0) continue;
 				const FHex Rot = Rot60(FHex(Sub.dQ, Sub.dR), ccw);
-				const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+				const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R, GripHex.Level);
 				VirtualHeldItemAt.FindOrAdd(World, Sub.ItemId);
 				HeldItemToArmIndex.FindOrAdd(Sub.ItemId, ArmIndex);
 			}

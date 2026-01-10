@@ -627,7 +627,7 @@ void USimWorldHex::StepArms()
 							const uint8 CCWSteps = (uint8)((6 - FacingDelta) % 6);
 							FHex RotLocal = RotateAxial60Fn(Local, CCWSteps);
 
-							FHex WorldHex(GripTarget.Q + RotLocal.Q, GripTarget.R + RotLocal.R);
+							FHex WorldHex(GripTarget.Q + RotLocal.Q, GripTarget.R + RotLocal.R, GripTarget.Level);
 							if (ItemMap.Contains(WorldHex)) { bBlocked = true; break; }
 							TargetHexes.Add(WorldHex);
 						}
@@ -800,7 +800,7 @@ void USimWorldHex::StepArms()
 							
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = Rot60(Local, ccw);
-							OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R));
+							OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R, OHand.Level));
 						}
 					}
 					// Don't add single held orbs to OtherHeldOcc since they're at the hand position
@@ -831,7 +831,7 @@ void USimWorldHex::StepArms()
 						{
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = Rot60(Local, ccw);
-							OutLocals.Add(FHex(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R));
+							OutLocals.Add(FHex(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R, Grip.Level));
 						}
 					};
 
@@ -859,7 +859,7 @@ void USimWorldHex::StepArms()
 						{
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = Rot60(Local, ccwOld);
-							MidTranslateLocals.Add(FHex(NewHand.Q + RotLocal.Q, NewHand.R + RotLocal.R));
+							MidTranslateLocals.Add(FHex(NewHand.Q + RotLocal.Q, NewHand.R + RotLocal.R, NewHand.Level));
 						}
 					}
 				}
@@ -883,7 +883,7 @@ void USimWorldHex::StepArms()
 						{
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = Rot60(Local, ccwNew);
-							MidRotateLocals.Add(FHex(OldHand.Q + RotLocal.Q, OldHand.R + RotLocal.R));
+							MidRotateLocals.Add(FHex(OldHand.Q + RotLocal.Q, OldHand.R + RotLocal.R, OldHand.Level));
 						}
 					}
 				}
@@ -957,7 +957,7 @@ void USimWorldHex::StepArms()
 								: curStart;
 							const uint8 ccwStart = (uint8)((6 - facingDeltaStart) % 6);
 							FHex RotLocalStart = Rot60(Local, ccwStart);
-							FHex StartPos(OldHand.Q + RotLocalStart.Q, OldHand.R + RotLocalStart.R);
+							FHex StartPos(OldHand.Q + RotLocalStart.Q, OldHand.R + RotLocalStart.R, OldHand.Level);
 							
 							const uint8 curEnd = (uint8)NewFacing % 6;
 							const uint8 facingDeltaEnd = (grab >= 0)
@@ -965,7 +965,7 @@ void USimWorldHex::StepArms()
 								: curEnd;
 							const uint8 ccwEnd = (uint8)((6 - facingDeltaEnd) % 6);
 							FHex RotLocalEnd = Rot60(Local, ccwEnd);
-							FHex EndPos(NewHand.Q + RotLocalEnd.Q, NewHand.R + RotLocalEnd.R);
+							FHex EndPos(NewHand.Q + RotLocalEnd.Q, NewHand.R + RotLocalEnd.R, NewHand.Level);
 							
 							// Check if any hex along the path from StartPos to EndPos is occupied
 							// For now, we'll check a few intermediate points along the path
@@ -978,7 +978,8 @@ void USimWorldHex::StepArms()
 								const float t = float(i) / 4.0f; // 0.25, 0.5, 0.75
 								FHex IntermediatePos(
 									StartPos.Q + FMath::RoundToInt(subOrbDq * t),
-									StartPos.R + FMath::RoundToInt(subOrbDr * t)
+									StartPos.R + FMath::RoundToInt(subOrbDr * t),
+									StartPos.Level
 								);
 								
 								if (OverlapsAny(IntermediatePos))
@@ -1003,7 +1004,8 @@ void USimWorldHex::StepArms()
 							const float t = float(i) / 4.0f; // 0.25, 0.5, 0.75
 							FHex IntermediatePos(
 								OldHand.Q + FMath::RoundToInt(handDq * t),
-								OldHand.R + FMath::RoundToInt(handDr * t)
+								OldHand.R + FMath::RoundToInt(handDr * t),
+								OldHand.Level
 							);
 							
 							if (OverlapsAny(IntermediatePos))
@@ -1194,7 +1196,7 @@ void USimWorldHex::StepArms()
 							
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = Rot60(Local, ccw);
-							OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R));
+							OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R, OHand.Level));
 						}
 					}
 					// Don't add single held orbs to OtherHeldOcc since they're at the hand position
@@ -1241,7 +1243,7 @@ void USimWorldHex::StepArms()
 							
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = Rot60(Local, ccw);
-							FHex WorldPos(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R);
+							FHex WorldPos(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R, Grip.Level);
 							
 							if (OverlapsAny(WorldPos))
 							{
@@ -1276,7 +1278,7 @@ void USimWorldHex::StepArms()
 							if (Sub.dQ == 0 && Sub.dR == 0) continue;
 							FHex Local(Sub.dQ, Sub.dR);
 							FHex RotLocal = Rot60(Local, ccw);
-							FHex WorldPos(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R);
+							FHex WorldPos(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R, Grip.Level);
 							
 							if (OverlapsAny(WorldPos))
 							{

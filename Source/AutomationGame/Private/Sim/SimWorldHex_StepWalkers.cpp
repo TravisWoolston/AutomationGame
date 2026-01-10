@@ -30,7 +30,7 @@ void USimWorldHex::StepWalkers()
 		{
 			if (ARequestBeacon* Beacon = *It)
 			{
-				BeaconCache.Add(FHex(Beacon->Q, Beacon->R), Beacon);
+				BeaconCache.Add(FHex(Beacon->Q, Beacon->R, Beacon->Level), Beacon);
 				AllBeacons.Add(Beacon);
 			}
 		}
@@ -77,7 +77,7 @@ void USimWorldHex::StepWalkers()
 	{
 		if (Beacon->BeaconState == EBeaconState::InProgress)
 		{
-			FHex BHex(Beacon->Q, Beacon->R);
+			FHex BHex(Beacon->Q, Beacon->R, Beacon->Level);
 			if (!ActiveTargetHexes.Contains(BHex))
 			{
 				Beacon->SetState(EBeaconState::NotReady); // Will be set back to Ready by Tick() if it's a PickUp avec item
@@ -92,7 +92,7 @@ void USimWorldHex::ProcessWalkerRequestAssignment(const TArray<ARequestBeacon*>&
 	{
 		if (Beacon->BeaconRole == EBeaconRole::PickUp && Beacon->BeaconState == EBeaconState::Ready)
 		{
-			FHex BeaconHex(Beacon->Q, Beacon->R);
+			FHex BeaconHex(Beacon->Q, Beacon->R, Beacon->Level);
 			if (!ItemMap.Contains(BeaconHex)) continue;
 
 			int32 BestWalkerIdx = -1;

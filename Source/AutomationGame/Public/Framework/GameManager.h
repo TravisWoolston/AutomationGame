@@ -100,7 +100,7 @@ struct AUTOMATIONGAME_API FWalkerCalibrationSettings
 	float QuadrantRotationOffset = 0.f;
 
 	UPROPERTY()
-	bool bDynamicBodyRotation = false;
+	bool bDynamicBodyRotation = true;
 
 	UPROPERTY()
 	int32 StartingFootOrientation = 0;
@@ -181,7 +181,7 @@ public:
 	void FootToOuterMostTile();
 
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (ClampMin = "-200.0", ClampMax = "1000.0", Tooltip = "Target stand height - changes are applied automatically"))
-	float DesiredStandHeight = 0.f;
+	float DesiredStandHeight = 350.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Calibration", meta = (Tooltip = "Current actual stand height after leg reach constraints"))
 	float StandHeight = 0.f;
@@ -247,7 +247,7 @@ public:
 	float QuadrantRotationOffset = 0.f;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Calibration", meta = (Tooltip = "If true, QuadrantRotationOffset will automatically update based on body Z rotation"))
-	bool bDynamicBodyRotation = false;
+	bool bDynamicBodyRotation = true;
 	
 	UPROPERTY(EditAnywhere, Category = "Walker|Debug")
 	bool bDebugWalkers = false;
@@ -299,6 +299,10 @@ public:
 	/** Center-to-center spacing for hexes (was TileSizeUU). */
 	UPROPERTY(EditAnywhere, Category = "Grid", meta = (ClampMin = "1.0"))
 	float TileSizeUU = 120.f; // Legacy name kept for serialization
+
+	/** Vertical offset for orbs on different grid levels. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	float OrbZOffset = 50.f;
 
 	/** Alias for TileSizeUU for clarity when working in sphere mode. */
 	UFUNCTION(BlueprintPure, Category = "Grid") FORCEINLINE float GetTileSpacing() const { return TileSizeUU; }

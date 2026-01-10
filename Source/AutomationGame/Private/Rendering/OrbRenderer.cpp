@@ -480,11 +480,12 @@ void UOrbRenderer::RebuildCurrPos()
 		const FHex H = KV.Key;
 		
 		// Calculate base tile center position
-		FVector TileWorld = bSphere ? Driver->MapHexToWorld(H) : [&]() {
+		FVector TileWorld = Driver ? Driver->MapHexToWorld(H) : [&]() {
 			const FHexAxial A(H.Q, H.R);
 			const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
 			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
-			return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+			const float Z = (H.Level == 0) ? (Sim ? Sim->OrbZOffset : 50.f) : -(Sim ? Sim->OrbZOffset : 50.f);
+			return AnchorV + FVector(RotXY.X, RotXY.Y, Z);
 		}();
 		
 		// Position is just the tile center - interpolation happens in RebuildInstances() using Alpha
@@ -692,11 +693,12 @@ void UOrbRenderer::RebuildInstances()
 						const EHexOrientation Ori = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
 						const bool bSphere = (Driver && Driver->IsSphereEnabled());
 						
-						FVector NextTileWorld = bSphere ? Driver->MapHexToWorld(NextHex) : [&]() {
+						FVector NextTileWorld = Driver ? Driver->MapHexToWorld(NextHex) : [&]() {
 							const FHexAxial NextA(NextHex.Q, NextHex.R);
 							const FVector2D NextLocalXY = HexCoord::AxialToXY(NextA, Tile, Ori);
 							const FVector2D NextRotXY = HexCoord::Rotate2D(NextLocalXY, Yaw);
-							return AnchorV + FVector(NextRotXY.X, NextRotXY.Y, 0.f);
+							const float Z = (NextHex.Level == 0) ? (Sim ? Sim->OrbZOffset : 50.f) : -(Sim ? Sim->OrbZOffset : 50.f);
+							return AnchorV + FVector(NextRotXY.X, NextRotXY.Y, Z);
 						}();
 						
 						// Apply belt offset to the interpolated position

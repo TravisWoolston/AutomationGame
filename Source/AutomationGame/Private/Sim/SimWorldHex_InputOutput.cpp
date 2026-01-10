@@ -832,7 +832,7 @@ void USimWorldHex::ProcessOutputs()
 	{
 		const FHex& H = KV.Key;
 		const FTile& T = KV.Value;
-		if (T.Kind != ETileKind::Output && T.Kind != ETileKind::ClusterOutput) continue;
+		if (T.Kind != ETileKind::Output && T.Kind != ETileKind::ClusterOutput && T.Kind != ETileKind::ClusterSend) continue;
 		if (OrbsNewlyMovedToOutput.Contains(H)) continue; // Skip orbs just moved by belts this tick
 		if (ProcessedOutputs.Contains(H)) continue; // Skip if already processed as part of a bonded pair
 
@@ -1407,7 +1407,240 @@ void USimWorldHex::ProcessOutputs()
 
 	}
 	// If not all tiles are ready, leave all orbs on their tiles
-}
+	}
+	// Handle cluster send tiles
+	else if (T.Kind == ETileKind::ClusterSend)
+	{
+		// Find all tiles that are part of this cluster send (connected adjacent ClusterSend tiles)
+		TArray<FHex> ClusterTiles;
+		TArray<uint8> ExpectedTypes;
+
+		// Expected type is stored directly in Tile.Arg
+		uint8 CurrentExpectedType = T.Arg;
+
+		// Add the current tile
+		ClusterTiles.Add(H);
+		ExpectedTypes.Add(CurrentExpectedType);
+
+		// Find all adjacent ClusterSend tiles recursively (forming a connected cluster)
+		TSet<FHex> VisitedTiles;
+		VisitedTiles.Add(H);
+		TArray<FHex> ToVisit;
+		ToVisit.Add(H);
+
+		while (ToVisit.Num() > 0)
+		{
+			FHex CurrentHex = ToVisit.Pop();
+
+			// Check all 6 neighbors
+			for (int32 Dir = 0; Dir < 6; Dir++)
+			{
+				FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
+
+				// Skip if already visited
+				if (VisitedTiles.Contains(NeighborHex))
+					continue;
+
+				// Check if neighbor is a ClusterSend tile
+				const FTile* NeighborTile = TileMap.Find(NeighborHex);
+				if (NeighborTile && NeighborTile->Kind == ETileKind::ClusterSend)
+				{
+					VisitedTiles.Add(NeighborHex);
+					ClusterTiles.Add(NeighborHex);
+					ToVisit.Add(NeighborHex);
+
+					// Expected type for this neighbor is in its Arg
+					uint8 NeighborExpectedType = NeighborTile->Arg;
+					ExpectedTypes.Add(NeighborExpectedType);
+				}
+			}
+		}
+
+		// Check if ALL tiles in the cluster have orbs of the correct type AND are bonded together
+		bool bAllTilesReady = true;
+		TArray<int32> OrbItemIds; // Store item IDs to check bonds later
+		TArray<int32> ItemsOnChain;
+
+		for (int32 i = 0; i < ClusterTiles.Num(); i++)
+		{
+			const FHex& TileHex = ClusterTiles[i];
+			const uint8 ExpectedType = ExpectedTypes[i];
+
+			const FItem* TileItem = ItemMap.Find(TileHex);
+			if (!TileItem)
+			{
+				bAllTilesReady = false;
+				continue;
+			}
+
+			if (TileItem->Id > 0)
+			{
+				ItemsOnChain.Add(TileItem->Id);
+			}
+
+			// ClusterSend tiles expect single orbs, not clusters
+			if (TileItem->bIsCluster)
+			{
+				bAllTilesReady = false;
+			}
+
+			// Single orb - check type from the Single field
+			uint8 ActualType = (uint8)TileItem->Single.Type;
+			// Allow mismatch if expected type is Void (wildcard)
+			if (ActualType != ExpectedType && ExpectedType != (uint8)EOrbType::Void)
+			{
+				bAllTilesReady = false;
+			}
+
+			// Add the item ID to the list for bond checking
+			if (TileItem->Id > 0)
+			{
+				OrbItemIds.Add(TileItem->Id);
+			}
+		}
+
+		// Check connectivity if it's a multi-tile cluster
+		if (bAllTilesReady && ClusterTiles.Num() > 1)
+		{
+			TSet<int32> AllConnectedOrbs;
+			TArray<int32> ToVisitItems;
+
+			// Start with the first orb
+			AllConnectedOrbs.Add(OrbItemIds[0]);
+			ToVisitItems.Add(OrbItemIds[0]);
+
+			while (ToVisitItems.Num() > 0)
+			{
+				int32 CurrentItemId = ToVisitItems.Pop();
+
+				// Check all bonds involving this orb
+				if (const TArray<int32>* BondList = ItemToBonds.Find(CurrentItemId))
+				{
+					for (int32 BondIdx : *BondList)
+					{
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						const FBond& Bond = Bonds[BondIdx];
+						if (!Bond.bActive) continue;
+
+						// Find the other orb in this bond
+						int32 OtherItemId = (Bond.ItemA == CurrentItemId) ? Bond.ItemB : Bond.ItemA;
+
+						// Add to connected set if not already visited
+						if (!AllConnectedOrbs.Contains(OtherItemId))
+						{
+							AllConnectedOrbs.Add(OtherItemId);
+							ToVisitItems.Add(OtherItemId);
+						}
+					}
+				}
+			}
+
+			TSet<int32> OrbsOnClusterTiles;
+			for (int32 Id : OrbItemIds) OrbsOnClusterTiles.Add(Id);
+
+			for (int32 Id : OrbItemIds)
+			{
+				if (!AllConnectedOrbs.Contains(Id))
+				{
+					bAllTilesReady = false;
+					break;
+				}
+			}
+
+			if (bAllTilesReady)
+			{
+				for (int32 ConnectedId : AllConnectedOrbs)
+				{
+					if (!OrbsOnClusterTiles.Contains(ConnectedId))
+					{
+						bAllTilesReady = false;
+						break;
+					}
+				}
+			}
+		}
+
+		// Check if destination is clear (flipped levels)
+		if (bAllTilesReady)
+		{
+			for (const FHex& TileHex : ClusterTiles)
+			{
+				FHex DestHex = TileHex;
+				DestHex.Level = 1 - TileHex.Level;
+				if (ItemMap.Contains(DestHex))
+				{
+					bAllTilesReady = false;
+					break;
+				}
+			}
+		}
+
+		// ClusterSend requires at least 2 connected tiles to function
+		// Single tiles should not send orbs prematurely
+		if (ClusterTiles.Num() < 2)
+		{
+			bAllTilesReady = false;
+		}
+
+		// If ready, move levels!
+		if (bAllTilesReady)
+		{
+			TMap<int32, FItem> MovingItems;
+			TMap<int32, FHex> OldPositions;
+			TMap<int32, FHex> NewPositions;
+
+			for (const FHex& TileHex : ClusterTiles)
+			{
+				if (FItem* FoundItem = ItemMap.Find(TileHex))
+				{
+					int32 ItemId = FoundItem->Id;
+					MovingItems.Add(ItemId, *FoundItem);
+					OldPositions.Add(ItemId, TileHex);
+
+					FHex NewHex = TileHex;
+					NewHex.Level = 1 - TileHex.Level;
+					NewPositions.Add(ItemId, NewHex);
+				}
+			}
+
+			// Execute move
+			for (const auto& OldKV : OldPositions)
+			{
+				ItemMap.Remove(OldKV.Value);
+				OrbAt.Remove(OldKV.Value);
+			}
+
+			for (const auto& NewKV : NewPositions)
+			{
+				int32 ItemId = NewKV.Key;
+				FHex NewHex = NewKV.Value;
+				FItem& MovingItem = MovingItems[ItemId];
+
+				ItemMap.Add(NewHex, MovingItem);
+				OrbAt.Add(NewHex, KindFromItem(MovingItem));
+				
+				ItemsMovedLastStep.Add(ItemId);
+				ProcessedOutputs.Add(OldPositions[ItemId]);
+			}
+
+			// Update bonds Root level
+			for (int32 ItemId : OrbItemIds)
+			{
+				if (const TArray<int32>* BondIndices = ItemToBonds.Find(ItemId))
+				{
+					for (int32 BondIdx : *BondIndices)
+					{
+						if (!Bonds.IsValidIndex(BondIdx)) continue;
+						FBond& Bond = Bonds[BondIdx];
+						if (Bond.ItemA == ItemId || Bond.ItemB == ItemId)
+						{
+							Bond.Root.Level = 1 - Bond.Root.Level;
+						}
+					}
+				}
+			}
+		}
+	}
 	}
 }
 

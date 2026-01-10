@@ -83,13 +83,16 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
 	int32 R = 0;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	int32 Level = 0;
+
 	/** Facing dir (0..5), where +1 means +60° CW. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid", meta = (ClampMin = 0, ClampMax = 5))
 	uint8 FacingDir = 0;
 
 	/** Convenience: set grid placement & driver in one call. */
 	UFUNCTION(BlueprintCallable, Category = "Grid")
-	void InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, uint8 InFacing);
+	void InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, int32 InLevel, uint8 InFacing);
 
 	// --- Visuals ---
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")

@@ -145,7 +145,7 @@ void USimWorldHex::TryWalkerPickUp(FWalkerState& W, FFootState& Foot, int32 Walk
 		Foot.HeightOffset = W.StepHeight;
 		
 		// Track the source pickup beacon hex to keep it InProgress until delivery
-		Foot.SourcePickUpHex = FHex(PickUpBeacon->Q, PickUpBeacon->R);
+		Foot.SourcePickUpHex = FHex(PickUpBeacon->Q, PickUpBeacon->R, PickUpBeacon->Level);
 		Foot.bHasSourcePickUp = true;
 		
 		// Reset timeout counter on successful pickup
@@ -153,7 +153,7 @@ void USimWorldHex::TryWalkerPickUp(FWalkerState& W, FFootState& Foot, int32 Walk
 
 		if (PickUpBeacon->PairedBeacon)
 		{
-			FHex DropOffHex(PickUpBeacon->PairedBeacon->Q, PickUpBeacon->PairedBeacon->R);
+			FHex DropOffHex(PickUpBeacon->PairedBeacon->Q, PickUpBeacon->PairedBeacon->R, PickUpBeacon->PairedBeacon->Level);
 			Foot.DesignatedDropOffHex = DropOffHex;
 			Foot.bHasDesignatedDropOff = true;
 
@@ -175,7 +175,7 @@ void USimWorldHex::TryWalkerPickUp(FWalkerState& W, FFootState& Foot, int32 Walk
 			float OffsetDistance = (float)W.ReachDistance * 0.7f;
 			int32 TargetQ = DropOffHex.Q + FMath::RoundToInt(OffsetDQ * OffsetDistance);
 			int32 TargetR = DropOffHex.R + FMath::RoundToInt(OffsetDR * OffsetDistance);
-			FHex WalkerTarget(TargetQ, TargetR);
+			FHex WalkerTarget(TargetQ, TargetR, DropOffHex.Level);
 
 			W.Requests.Empty();
 			FWalkerRequest DropReq;
@@ -282,7 +282,7 @@ bool USimWorldHex::TryWalkerDropOff(FWalkerState& W, FFootState& Foot, int32 Wal
 				{
 					FHex Local(OrbData.dQ, OrbData.dR);
 					for (int32 r = 0; r < RotDiff; ++r) { int32 OldQ = Local.Q; int32 OldR = Local.R; Local.Q = -OldR; Local.R = OldQ + OldR; }
-					FHex WorldHex(Foot.TargetTile.Q + Local.Q, Foot.TargetTile.R + Local.R);
+					FHex WorldHex(Foot.TargetTile.Q + Local.Q, Foot.TargetTile.R + Local.R, Foot.TargetTile.Level);
 					if (ItemMap.Contains(WorldHex)) { bBlocked = true; break; }
 					TargetHexes.Add(WorldHex);
 				}
@@ -340,7 +340,7 @@ bool USimWorldHex::TryWalkerDropOff(FWalkerState& W, FFootState& Foot, int32 Wal
 							{
 								for (int32 r = -W.ReachDistance; r <= W.ReachDistance; ++r)
 								{
-									FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r);
+									FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r, W.BaseHex.Level);
 									int32 dist = HexUtil::Dist(W.BaseHex, TestHex);
 									if (dist == 0 || dist > W.ReachDistance || (float)dist < W.MinimumReachDistance) continue;
 									if (ClusterTargetHexSet.Contains(TestHex)) continue;
@@ -472,7 +472,8 @@ bool USimWorldHex::TryWalkerDropOff(FWalkerState& W, FFootState& Foot, int32 Wal
 
 		FHex BodyTarget(
 			ActualDropOffHex.Q - FMath::RoundToInt(QuadAX * TargetDist),
-			ActualDropOffHex.R - FMath::RoundToInt(QuadAY * TargetDist)
+			ActualDropOffHex.R - FMath::RoundToInt(QuadAY * TargetDist),
+			ActualDropOffHex.Level
 		);
 		
 		if (W.CurrentTargetHex != BodyTarget || !W.bProcessingRequest)

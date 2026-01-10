@@ -143,7 +143,7 @@ void AGameManager::CalibrateWalker()
 	// Use a default position (0,0) for calibration - the walker doesn't need to be in simulation
 	if (OrbSimDriver)
 	{
-		Walker->InitializeOnGrid(OrbSimDriver, 0, 0);
+		Walker->InitializeOnGrid(OrbSimDriver, 0, 0, 0);
 		UE_LOG(LogTemp, Log, TEXT("CalibrateWalker: Initialized walker on grid with Driver"));
 	}
 	else

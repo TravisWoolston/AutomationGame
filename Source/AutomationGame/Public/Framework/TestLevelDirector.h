@@ -51,6 +51,7 @@ struct FArmSpawnSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 0, ClampMax = 5)) uint8 StartingRotation = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FArmInstr> Program;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bLoopProgram = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Level = 0;
 	UPROPERTY(Transient) ABasicArm* Spawned = nullptr;
 };
 
@@ -64,6 +65,7 @@ struct FWalkerSpawnSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex StartingLocation;  // Set when placed
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerInstr> Program;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bLoopProgram = true;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Level = 0;
 	UPROPERTY(Transient) ABasicWalker* Spawned = nullptr;
 };
 
@@ -80,6 +82,7 @@ struct FRequestBeaconSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 PairedBeaconQ = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 PairedBeaconR = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) EBeaconRole PairedBeaconRole = EBeaconRole::None;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Level = 0;
 	UPROPERTY(Transient) ARequestBeacon* Spawned = nullptr;
 };
 
@@ -96,6 +99,7 @@ struct FTriggerTileSpec
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 OwnerR = 0;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) ETriggerTileOwnerType OwnerType = ETriggerTileOwnerType::Belt;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Rotation = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Level = 0;
 	UPROPERTY(Transient) ATriggerTile* Spawned = nullptr;
 };
 
@@ -174,21 +178,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
 	bool RemoveTileSpec(const FHex& Hex);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	void UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop);
+	void UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop, int32 Level);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	bool RemoveArmSpec(int32 Q, int32 R);
+	bool RemoveArmSpec(int32 Q, int32 R, int32 Level);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	void UpsertWalkerSpec(int32 Q, int32 R, const FHex& StartingLocation, const TArray<FWalkerInstr>& Program, bool bLoop);
+	void UpsertWalkerSpec(int32 Q, int32 R, const FHex& StartingLocation, const TArray<FWalkerInstr>& Program, bool bLoop, int32 Level);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	bool RemoveWalkerSpec(int32 Q, int32 R);
+	bool RemoveWalkerSpec(int32 Q, int32 R, int32 Level);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	void UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconType, EBeaconRole BeaconRole, float Rotation);
+	void UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconType, EBeaconRole BeaconRole, float Rotation, int32 Level);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	bool RemoveBeaconSpec(int32 Q, int32 R);
+	bool RemoveBeaconSpec(int32 Q, int32 R, int32 Level);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	void UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, ETriggerVariant Variant, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation);
+	void UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, ETriggerVariant Variant, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation, int32 Level);
 	UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
-	bool RemoveTriggerTileSpec(int32 Q, int32 R);
+	bool RemoveTriggerTileSpec(int32 Q, int32 R, int32 Level);
 
 	// Control what runtime edits get written back into scenario specs.
 	UPROPERTY(EditAnywhere, Category = "Scenarios|Runtime Capture")

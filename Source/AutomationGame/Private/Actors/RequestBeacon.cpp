@@ -65,9 +65,6 @@ void ARequestBeacon::CheckReadiness()
 	// Only check for Pickup beacons
 	if (BeaconRole != EBeaconRole::PickUp) return;
 
-	// If in progress, don't override (assume walker handling it)
-	if (BeaconState == EBeaconState::InProgress) return;
-
 	// Need Sim
 	if (!Sim && !Driver)
 	{
@@ -81,8 +78,8 @@ void ARequestBeacon::CheckReadiness()
 
 	if (!Sim) return;
 
-	// Check tile content at Q, R
-	FHex Location(Q, R);
+	// Check tile content at Q, R, Level
+	FHex Location(Q, R, Level);
 	bool bOccupied = false;
 
 	// Check Sim Grid for ItemId
@@ -99,6 +96,16 @@ void ARequestBeacon::CheckReadiness()
 	}
 
 	// Update State
+	// If InProgress and still occupied, stay InProgress (walker is handling it)
+	// If InProgress and no longer occupied, the walker picked it up - stay InProgress until delivery completes
+	// The state will be set to NotReady/Ready by walker logic after delivery
+	if (BeaconState == EBeaconState::InProgress)
+	{
+		// Don't override InProgress state from here
+		// The walker system manages the transition from InProgress
+		return;
+	}
+
 	EBeaconState DesiredState = bOccupied ? EBeaconState::Ready : EBeaconState::NotReady;
 	if (BeaconState != DesiredState)
 	{

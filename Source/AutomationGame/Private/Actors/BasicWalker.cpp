@@ -46,7 +46,7 @@ void ABasicWalker::BeginPlay()
 	EnsureComps();
 	RefreshMeshes();
 
-	HomeHex = FHex(Q, R);
+	HomeHex = FHex(Q, R, Level);
 	CurrentHex = HomeHex;
 	TargetHex = HomeHex;
 
@@ -452,6 +452,7 @@ void ABasicWalker::Tick(float DeltaSeconds)
 			FHex TargetHexFromWorld;
 			if (Driver->WorldToHex(BodyTargetWorldPosition, TargetHexFromWorld))
 			{
+				TargetHexFromWorld.Level = Level;
 				// Check if the target has changed
 				if (SimState.CurrentTargetHex != TargetHexFromWorld)
 				{
@@ -1479,12 +1480,13 @@ void ABasicWalker::ExpandResetAtPC()
 	// Reset expansion is handled in PushProgramToSim
 }
 
-void ABasicWalker::InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR)
+void ABasicWalker::InitializeOnGrid(AOrbSimDriver* InDriver, int32 InQ, int32 InR, int32 InLevel)
 {
 	Driver = InDriver;
 	Q = InQ;
 	R = InR;
-	HomeHex = FHex(Q, R);
+	Level = InLevel;
+	HomeHex = FHex(Q, R, Level);
 	CurrentHex = HomeHex;
 	TargetHex = HomeHex;
 }

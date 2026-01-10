@@ -315,7 +315,7 @@ void USimWorldHex::HandleFootPlanted(FWalkerState& W, FFootState& Foot, int32 Wa
 		{
 			for (int32 r = -W.ReachDistance; r <= W.ReachDistance; ++r)
 			{
-				FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r);
+				FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r, W.BaseHex.Level);
 				if (TestHex == Foot.CurrentTile) continue;
 				int32 dist = HexUtil::Dist(W.BaseHex, TestHex);
 				if (dist == 0 || dist > W.ReachDistance || (float)dist < W.MinimumReachDistance) continue;
@@ -527,7 +527,7 @@ void USimWorldHex::UpdateFootHorizontalTarget(FWalkerState& W, FFootState& Foot,
 	{
 		for (int32 r = -W.ReachDistance; r <= W.ReachDistance; ++r)
 		{
-			FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r);
+			FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r, W.BaseHex.Level);
 			int32 dist = HexUtil::Dist(W.BaseHex, TestHex);
 			if (dist == 0 || dist > W.ReachDistance || (float)dist < W.MinimumReachDistance) continue;
 				

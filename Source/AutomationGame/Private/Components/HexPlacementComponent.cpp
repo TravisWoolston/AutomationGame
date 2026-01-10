@@ -143,7 +143,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	FVector2D P(World.X - OriginXY.X, World.Y - OriginXY.Y);
 	const FVector2D Local = HexCoord::Rotate2D(P, -Yaw);
 	const FHexAxial A = HexCoord::XYToAxialRound(Local, Tile, Ori);
-	const FHex Root{ A.Q, A.R };
+	const FHex Root{ A.Q, A.R, ActiveLevel };
 
 	FTile T{};
 	switch (PlaceKind)
@@ -152,6 +152,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 	case EPlaceKind::Output: T = FTile{ ETileKind::Output, (uint8)GetCurrentOutputOrbType() }; break;
 	case EPlaceKind::ClusterOutput: T = FTile{ ETileKind::ClusterOutput, (uint8)GetCurrentOutputOrbType() }; break;
 	case EPlaceKind::ClusterInput: T = FTile{ ETileKind::ClusterInput, (uint8)GetCurrentInputOrbType() }; break;
+	case EPlaceKind::ClusterSend: T = FTile{ ETileKind::ClusterSend, (uint8)GetCurrentOutputOrbType() }; break;
 	case EPlaceKind::Belt:   T = FTile{ ETileKind::Belt,   (uint8)BeltDir }; break;
 	case EPlaceKind::Bond:   T = FTile{ ETileKind::Bond,   (uint8)BeltDir }; break;
 	case EPlaceKind::Unbond: T = FTile{ ETileKind::Unbond, (uint8)BeltDir }; break;
@@ -163,7 +164,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 
 		if (AGameManager* GM = Cast<AGameManager>(GMActor))
 		{
-			GM->SpawnBasicArmAt(FHex{ A.Q, A.R }, BeltDir % 6, TArray<FArmInstr>(), true);
+			GM->SpawnBasicArmAt(FHex{ A.Q, A.R, ActiveLevel }, BeltDir % 6, TArray<FArmInstr>(), true);
 		}
 		else
 		{
@@ -176,7 +177,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
 			if (CachedTLD)
 			{
-				CachedTLD->UpsertArmSpec(A.Q, A.R, BeltDir % 6, TArray<FArmInstr>(), true);
+				CachedTLD->UpsertArmSpec(A.Q, A.R, BeltDir % 6, TArray<FArmInstr>(), true, ActiveLevel);
 			}
 		}
 		return;
@@ -189,9 +190,9 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 
 		if (AGameManager* GM = Cast<AGameManager>(GMActor))
 		{
-			FHex StartingLocation(A.Q, A.R);
+			FHex StartingLocation(A.Q, A.R, ActiveLevel);
 			TArray<FWalkerInstr> WalkerProgram = GM->DefaultWalkerProgram;
-			ABasicWalker* Walker = GM->SpawnBasicWalkerAt(FHex{ A.Q, A.R }, WalkerProgram, true);
+			ABasicWalker* Walker = GM->SpawnBasicWalkerAt(FHex{ A.Q, A.R, ActiveLevel }, WalkerProgram, true);
 			if (Walker)
 			{
 				Walker->HomeHex = StartingLocation;
@@ -204,7 +205,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 				if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
 				if (CachedTLD)
 				{
-					CachedTLD->UpsertWalkerSpec(A.Q, A.R, StartingLocation, WalkerProgram, Walker ? Walker->bLoopProgram : true);
+					CachedTLD->UpsertWalkerSpec(A.Q, A.R, StartingLocation, WalkerProgram, Walker ? Walker->bLoopProgram : true, ActiveLevel);
 				}
 			}
 		}
@@ -269,6 +270,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			{
 				Beacon->Q = A.Q;
 				Beacon->R = A.R;
+				Beacon->Level = ActiveLevel;
 				Beacon->BeaconType = EBeaconType::Relocate;
 				Beacon->BeaconRole = EBeaconRole::PickUp;
 				Beacon->SetState(EBeaconState::NotReady); // Not ready until pair is complete
@@ -279,7 +281,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 					if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
 					if (CachedTLD)
 					{
-						CachedTLD->UpsertBeaconSpec(A.Q, A.R, EBeaconType::Relocate, EBeaconRole::PickUp, PickupRotation.Yaw);
+						CachedTLD->UpsertBeaconSpec(A.Q, A.R, EBeaconType::Relocate, EBeaconRole::PickUp, PickupRotation.Yaw, ActiveLevel);
 					}
 				}
 
@@ -309,6 +311,7 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 			{
 				Beacon->Q = A.Q;
 				Beacon->R = A.R;
+				Beacon->Level = ActiveLevel;
 				Beacon->BeaconType = EBeaconType::Relocate;
 				Beacon->BeaconRole = EBeaconRole::DropOff;
 				Beacon->SetState(EBeaconState::Ready); // Ready now
@@ -334,13 +337,13 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 					if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
 					if (CachedTLD)
 					{
-						CachedTLD->UpsertBeaconSpec(A.Q, A.R, EBeaconType::Relocate, EBeaconRole::DropOff, Rotation.Yaw);
+						CachedTLD->UpsertBeaconSpec(A.Q, A.R, EBeaconType::Relocate, EBeaconRole::DropOff, Rotation.Yaw, ActiveLevel);
 						
 						// Update Pickup beacon spec to save its pair relationship
 						if (PendingPickupBeacon && IsValid(PendingPickupBeacon))
 						{
 							CachedTLD->UpsertBeaconSpec(PendingPickupBeacon->Q, PendingPickupBeacon->R, 
-								EBeaconType::Relocate, EBeaconRole::PickUp, PickupRotation.Yaw);
+								EBeaconType::Relocate, EBeaconRole::PickUp, PickupRotation.Yaw, ActiveLevel);
 						}
 					}
 				}
@@ -498,7 +501,8 @@ void UHexPlacementComponent::DoPlaceAt(const FVector& World)
 						PendingTriggerTile->Variant,
 						A.Q, A.R, 
 						ValidOwnerType,
-						PendingTriggerTile->GetActorRotation().Yaw);
+						PendingTriggerTile->GetActorRotation().Yaw,
+						ActiveLevel);
 				}
 				
 				if (GEngine)
@@ -659,7 +663,8 @@ void UHexPlacementComponent::DoRemoveAt(const FVector& World)
 	const FVector2D Local = HexCoord::Rotate2D(P, -Yaw);
 	const FHexAxial A = HexCoord::XYToAxialRound(Local, Tile, Ori);
 
-	Sim->PlaceTile(FHex{ A.Q, A.R }, FTile{ ETileKind::Empty, 0 });
+	const FHex Root{ A.Q, A.R, ActiveLevel };
+	Sim->PlaceTile(Root, FTile{ ETileKind::Empty, 0 });
 	if (bDebug)
 	{
 		UE_LOG(LogTemp, Log, TEXT("HexPlacementComponent: Removed tile at Hex(%d,%d)"), A.Q, A.R);
@@ -729,9 +734,9 @@ void UHexPlacementComponent::DoRemoveAt(const FVector& World)
 		if (!CachedTLD) CachedTLD = FindTLD(GetWorld());
 		if (CachedTLD)
 		{
-			CachedTLD->RemoveTileSpec(FHex{ A.Q, A.R });
-			CachedTLD->RemoveArmSpec(A.Q, A.R); // in case an arm spec was there
-			CachedTLD->RemoveWalkerSpec(A.Q, A.R); // in case a walker spec was there
+			CachedTLD->RemoveTileSpec(FHex{ A.Q, A.R, ActiveLevel });
+			CachedTLD->RemoveArmSpec(A.Q, A.R, ActiveLevel); // in case an arm spec was there
+			CachedTLD->RemoveWalkerSpec(A.Q, A.R, ActiveLevel); // in case a walker spec was there
 		}
 	}
 }
@@ -752,12 +757,28 @@ void UHexPlacementComponent::HandleRemove(bool bPressed)
 
 void UHexPlacementComponent::RotateCW()
 {
-	BeltDir = (BeltDir + 5) % 6;
+	// When on upside-down grid (Level 1), invert rotation direction
+	if (ActiveLevel == 1)
+	{
+		BeltDir = (BeltDir + 1) % 6;
+	}
+	else
+	{
+		BeltDir = (BeltDir + 5) % 6;
+	}
 }
 
 void UHexPlacementComponent::RotateCCW()
 {
-	BeltDir = (BeltDir + 1) % 6;
+	// When on upside-down grid (Level 1), invert rotation direction
+	if (ActiveLevel == 1)
+	{
+		BeltDir = (BeltDir + 5) % 6;
+	}
+	else
+	{
+		BeltDir = (BeltDir + 1) % 6;
+	}
 }
 
 void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) 
@@ -797,7 +818,7 @@ void UHexPlacementComponent::CycleNextType()
 	{
 		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
-	else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
+	else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterSend)
 	{
 		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex + 1) % ValidTypes.Num();
 	}
@@ -848,7 +869,7 @@ void UHexPlacementComponent::CyclePreviousType()
 	{
 		CurrentInputOrbTypeIndex = (CurrentInputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
 	}
-	else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
+	else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterSend)
 	{
 		CurrentOutputOrbTypeIndex = (CurrentOutputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
 	}
@@ -1139,8 +1160,9 @@ UStaticMesh* UHexPlacementComponent::SelectPreviewMesh() const
 	{
 	case EPlaceKind::Input:
 	case EPlaceKind::ClusterInput:
+	case EPlaceKind::ClusterSend:
 	{
-		// For Input/ClusterInput, use the actual tile mesh from GameManager
+		// For Input/ClusterInput/ClusterSend, use the actual tile mesh from GameManager
 		if (UWorld* World = GetWorld())
 		{
 			for (TActorIterator<AGameManager> It(World); It; ++It)
@@ -1519,7 +1541,7 @@ void UHexPlacementComponent::UpdateHoverHex()
 	const FVector2D Local = HexCoord::Rotate2D(P, -Yaw);
 	const FHexAxial A = HexCoord::XYToAxialRound(Local, Tile, Ori);
 
-	HoverHex = FHex{ A.Q, A.R };
+	HoverHex = FHex{ A.Q, A.R, ActiveLevel };
 	bHoverValid = true;
 }
 
@@ -1578,7 +1600,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 
 				// Smoothing
 				FVector TargetLoc = CenterA;
-				FRotator TargetRot = FRotator(0.f, Driver ? Driver->GetGridYaw() : 0.f, 0.f);
+				FRotator TargetRot = FRotator(ActiveLevel == 0 ? 0.f : 180.f, Driver ? Driver->GetGridYaw() : 0.f, 0.f);
 				if (!bSmoothingInitialized)
 				{
 					SmoothedLocation = TargetLoc;
@@ -1638,7 +1660,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 	}
 
 	// Mesh preview (for all placeable tiles)
-	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Walker || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond || PlaceKind == EPlaceKind::RequestBeacon || PlaceKind == EPlaceKind::TriggerTile)
+	if (PlaceKind == EPlaceKind::Input || PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterInput || PlaceKind == EPlaceKind::Belt || PlaceKind == EPlaceKind::Arm || PlaceKind == EPlaceKind::Walker || PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond || PlaceKind == EPlaceKind::RequestBeacon || PlaceKind == EPlaceKind::TriggerTile || PlaceKind == EPlaceKind::ClusterSend)
 	{
 
 		// For now, use static mesh preview for arms (ArmBasePreviewMesh)
@@ -1678,7 +1700,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 
 			// Smoothing
 			FVector TargetLoc = UseLoc;
-			FRotator TargetRot = FRotator(0.f, FixedYaw, 0.f);
+			FRotator TargetRot = FRotator(ActiveLevel == 0 ? 0.f : 180.f, FixedYaw, 0.f);
 			if (!bSmoothingInitialized)
 			{
 				SmoothedLocation = TargetLoc;
@@ -1737,7 +1759,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 			{
 				FixedYaw = FMath::UnwindDegrees(FixedYaw + ArmPreviewFacingFixDeg);
 			}
-			else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
+			else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterSend)
 			{
 				// For output tiles, we need to match the grid orientation
 				// If the grid is using FlatTop orientation, rotate the tile mesh 30 degrees
@@ -1771,7 +1793,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 			FVector UseScale(PreviewScale);
 
 			// ClusterOutput tiles use larger scale
-			if (PlaceKind == EPlaceKind::ClusterOutput)
+			if (PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterSend)
 			{
 				// Get ClusterOutputScale from GameManager
 				float ClusterScale = 1.3f; // Default
@@ -1854,9 +1876,9 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 					PreviewComp->SetMaterial(0, OrbMaterial);
 				}
 			}
-			else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput)
+			else if (PlaceKind == EPlaceKind::Output || PlaceKind == EPlaceKind::ClusterOutput || PlaceKind == EPlaceKind::ClusterSend)
 			{
-				// For output/cluster tiles, use the actual orb material with half opacity
+				// For output/cluster/send tiles, use the actual orb material with half opacity
 				EOrbType CurrentType = GetCurrentOutputOrbType();
 				UMaterialInterface* OrbMaterial = GetActualOutputOrbMaterial();
 

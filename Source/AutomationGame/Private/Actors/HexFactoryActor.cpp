@@ -394,6 +394,8 @@ FVector AHexFactoryActor::HexToWorld(const FHex& H) const
 
 	const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 	const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+	const float Z = (Sim && H.Level != 0) ? -0.0f : 0.f; // Tiles are currently at 0
+	// Wait, if I'm placing an orb, it should have offset. But HexFactoryActor places tiles.
 	return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
 }
 
@@ -530,17 +532,21 @@ void AHexFactoryActor::RebuildTiles()
 	{
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
-		const FTransform Transform(FRotator::ZeroRotator, Loc, FVector(1.f));
+		const float Z = 0.f; // Tiles stay at Z=0 but flip
+		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, Z);
+		const float Pitch = (H.Level == 0) ? 0.f : 180.f;
+		const FTransform Transform(FRotator(Pitch, 0.f, 0.f), Loc, FVector(1.f));
 		
 		switch (TileKind)
 		{
 		case ETileKind::Input:
 		case ETileKind::ClusterInput:
-			// Input and ClusterInput tiles are rendered via procedural mesh (with cutout)
+		case ETileKind::ClusterSend:
+			// Input/ClusterInput/ClusterSend tiles are rendered via procedural mesh or specific ISM
 			// Skip ISM rendering for these - they're handled in RebuildInputTiles()
 			break;
 		case ETileKind::Output:
+		case ETileKind::ClusterOutput:
 			// Output tiles are handled by RebuildOutputs() with type-specific materials
 			break;
 		case ETileKind::Belt:
@@ -559,14 +565,7 @@ void AHexFactoryActor::RebuildTiles()
 	// Render tiles from the simulation
 	for (const auto& KV : Sim->TileMap)
 	{
-		const FHex& H = KV.Key;
-		const FTile& T = KV.Value;
-		
-		// Skip output tiles - they're handled by RebuildOutputs()
-		if (T.Kind != ETileKind::Output)
-		{
-			AddTileInstance(H, T.Kind);
-		}
+		AddTileInstance(KV.Key, KV.Value.Kind);
 	}
 
 	// Also render empty tiles from the board if it exists
@@ -710,12 +709,15 @@ void AHexFactoryActor::RebuildBelts()
 		BeltCount++;
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, BeltZOffset);
-		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF));
+		const float ZOffset = (H.Level == 0) ? BeltZOffset : -BeltZOffset;
+		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, ZOffset);
+		// Yaw needs 180° offset on upside-down grid to compensate for pitch flip
+		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF)) + (H.Level == 1 ? 180.f : 0.f);
+		const float Pitch = (H.Level == 0) ? 0.f : 180.f;
 
 		if (BeltMesh)
 		{
-			const FTransform Transform(FRotator(0.f, Yaw, 0.f), Loc, BeltScale);
+			const FTransform Transform(FRotator(Pitch, Yaw, 0.f), Loc, BeltScale);
 			
 			// Use new material system if materials are set, otherwise fall back to legacy
 			if (BeltReadyMaterial && BeltWaitingMaterial)
@@ -876,13 +878,16 @@ void AHexFactoryActor::UpdateBeltMaterials()
 
 		const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, BeltZOffset);
-		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF));
+		const float ZOffset = (H.Level == 0) ? BeltZOffset : -BeltZOffset;
+		const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, ZOffset);
+		// Yaw needs 180° offset on upside-down grid to compensate for pitch flip
+		const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF)) + (H.Level == 1 ? 180.f : 0.f);
+		const float Pitch = (H.Level == 0) ? 0.f : 180.f;
 
 		const uint8 BeltDir = (uint8)(T.Arg & 0xFF);
 		EBeltState State = GetBeltState(H, BeltDir);
 		
-		const FTransform Transform(FRotator(0.f, Yaw, 0.f), Loc, BeltScale);
+		const FTransform Transform(FRotator(Pitch, Yaw, 0.f), Loc, BeltScale);
 		
 		switch (State)
 		{
@@ -936,19 +941,21 @@ void AHexFactoryActor::RebuildBonds()
 		const FVector2D BxyLocal = HexCoord::AxialToXY(FHexAxial(N.Q, N.R), Tile, Ori);
 		const FVector2D Axy = HexCoord::Rotate2D(AxyLocal, GridYaw);
 		const FVector2D Bxy = HexCoord::Rotate2D(BxyLocal, GridYaw);
-		const FVector WorldA = AnchorV + FVector(Axy.X, Axy.Y, T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset);
-		const FVector WorldB = AnchorV + FVector(Bxy.X, Bxy.Y, T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset);
+		const float ZOffset = (H.Level == 0) ? (T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset) : -(T.Kind == ETileKind::Bond ? BondZOffset : UnbondZOffset);
+		const FVector WorldA = AnchorV + FVector(Axy.X, Axy.Y, ZOffset);
+		const FVector WorldB = AnchorV + FVector(Bxy.X, Bxy.Y, ZOffset);
 		const FVector Mid = (WorldA + WorldB) * 0.5f;
 		const FVector2D Delta2D(Bxy - Axy);
 		const float Yaw = Delta2D.IsNearlyZero()
 			? 0.f
 			: FMath::RadiansToDegrees(FMath::Atan2(Delta2D.Y, Delta2D.X));
 
+		const float Pitch = (H.Level == 0) ? 0.f : 180.f;
 		if (T.Kind == ETileKind::Bond)
 		{
 			if (BondMesh)
 			{
-				BondISM->AddInstance(FTransform(FRotator(0.f, Yaw, 0.f), Mid, BondScale));
+				BondISM->AddInstance(FTransform(FRotator(Pitch, Yaw, 0.f), Mid, BondScale));
 				if (bDrawBondDebugArrows)
 					DrawBondArrow(WorldA, WorldB);
 			}
@@ -963,7 +970,7 @@ void AHexFactoryActor::RebuildBonds()
 			UStaticMesh* MeshToUse = UnbondMesh ? UnbondMesh : BondMesh;
 			if (MeshToUse)
 			{
-				UnbondISM->AddInstance(FTransform(FRotator(0.f, Yaw, 0.f), Mid, UnbondScale));
+				UnbondISM->AddInstance(FTransform(FRotator(Pitch, Yaw, 0.f), Mid, UnbondScale));
 				if (bDrawBondDebugArrows)
 					DrawBondArrow(WorldA, WorldB);
 			}
@@ -1116,7 +1123,7 @@ void AHexFactoryActor::RebuildOutputs()
 			
 			// ClusterOutput tiles are scaled larger than regular Output tiles
 			float Scale = (T.Kind == ETileKind::ClusterOutput) ? ClusterScale : 1.0f;
-			const FTransform Transform(FRotator::ZeroRotator, Loc, FVector(Scale));
+			const FTransform Transform(FRotator(H.Level == 0 ? 0.f : 180.f, 0.f, 0.f), Loc, FVector(Scale));
 
 			// Get orb type - for Output it's in Arg, for ClusterOutput it's also in Arg
 			EOrbType OutputType = (EOrbType)T.Arg;
@@ -1491,7 +1498,7 @@ void AHexFactoryActor::RebuildInputTiles()
 		const FHex& H = KV.Key;
 		const FTile& T = KV.Value;
 		
-		if (T.Kind == ETileKind::Input || T.Kind == ETileKind::ClusterInput)
+		if (T.Kind == ETileKind::Input || T.Kind == ETileKind::ClusterInput || T.Kind == ETileKind::ClusterSend)
 		{
 			const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
 			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
@@ -1504,7 +1511,7 @@ void AHexFactoryActor::RebuildInputTiles()
 			UInstancedStaticMeshComponent* InputISM = GetInputISMForType(OrbType);
 			if (InputISM)
 			{
-				InputISM->AddInstance(FTransform(FRotator::ZeroRotator, Loc, FVector(1.f)));
+				InputISM->AddInstance(FTransform(FRotator(H.Level == 0 ? 0.f : 180.f, 0.f, 0.f), Loc, FVector(1.f)));
 			}
 		}
 	}

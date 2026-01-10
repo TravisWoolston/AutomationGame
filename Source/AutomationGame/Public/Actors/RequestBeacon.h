@@ -75,6 +75,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
 	int32 R = 0;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+	int32 Level = 0;
+
 	UPROPERTY(BlueprintAssignable, Category = "Beacon")
 	FOnGridVisibilityChanged OnGridVisibilityChanged;
 

@@ -280,10 +280,7 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 		if (Item.Id == 0) continue; // Skip invalid items
 
 		// Calculate world position for this hex
-		const FHexAxial A(Hex.Q, Hex.R);
-		const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
-		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		const FVector HexWorld = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		const FVector HexWorld = MapHexToWorld(Hex);
 
 		if (!Item.bIsCluster)
 		{
@@ -306,10 +303,7 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 
 				// Calculate offset from cluster center using hex coordinates
 				const FHex SubHex(Hex.Q + Sub.dQ, Hex.R + Sub.dR);
-				const FHexAxial SubA(SubHex.Q, SubHex.R);
-				const FVector2D SubLocalXY = HexCoord::AxialToXY(SubA, Tile, Ori);
-				const FVector2D SubRotXY = HexCoord::Rotate2D(SubLocalXY, GridYaw);
-				const FVector SubWorld = AnchorV + FVector(SubRotXY.X, SubRotXY.Y, 0.f);
+				const FVector SubWorld = MapHexToWorld(SubHex);
 
 				// Color code: grabbed orb (dQ=0, dR=0) in green, others based on type
 				FColor DebugColor;
@@ -347,10 +341,7 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 			GripHex = HexUtil::Neighbor(GripHex, ArmState.Facing);
 		}
 
-		const FHexAxial GA(GripHex.Q, GripHex.R);
-		const FVector2D LocalXY = HexCoord::AxialToXY(GA, Tile, Ori);
-		const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-		const FVector GripWorld = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+		const FVector GripWorld = MapHexToWorld(GripHex);
 
 		// Apply arm rotation for held items
 		const float ArmYawDeg = GridYaw - 60.f * static_cast<uint8>(ArmState.Facing);
@@ -401,10 +392,7 @@ void AOrbSimDriver::DrawAllOrbDebugSpheres()
 			FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
 
 			// Convert to world coordinates
-			const FHexAxial SubA(WorldPos.Q, WorldPos.R);
-			const FVector2D SubLocalXY = HexCoord::AxialToXY(SubA, Tile, Ori);
-			const FVector2D SubRotXY = HexCoord::Rotate2D(SubLocalXY, GridYaw);
-			const FVector SubWorld = AnchorV + FVector(SubRotXY.X, SubRotXY.Y, 0.f);
+			const FVector SubWorld = MapHexToWorld(WorldPos);
 
 			// Color code: grabbed orb in bright yellow, others in orange
 			FColor DebugColor;
@@ -473,16 +461,10 @@ void AOrbSimDriver::DrawCollisionDebugSpheres()
 	for (const USimWorldHex::FCollisionDebugInfo& CollisionInfo : CollisionData)
 	{
 		// Convert blocked hex to world coordinates
-		const FHexAxial BlockedA(CollisionInfo.BlockedHex.Q, CollisionInfo.BlockedHex.R);
-		const FVector2D BlockedLocalXY = HexCoord::AxialToXY(BlockedA, Tile, Ori);
-		const FVector2D BlockedRotXY = HexCoord::Rotate2D(BlockedLocalXY, GridYaw);
-		const FVector BlockedWorld = AnchorV + FVector(BlockedRotXY.X, BlockedRotXY.Y, 0.f);
+		const FVector BlockedWorld = MapHexToWorld(CollisionInfo.BlockedHex);
 		
 		// Convert arm base hex to world coordinates for line drawing
-		const FHexAxial BaseA(CollisionInfo.ArmBaseHex.Q, CollisionInfo.ArmBaseHex.R);
-		const FVector2D BaseLocalXY = HexCoord::AxialToXY(BaseA, Tile, Ori);
-		const FVector2D BaseRotXY = HexCoord::Rotate2D(BaseLocalXY, GridYaw);
-		const FVector BaseWorld = AnchorV + FVector(BaseRotXY.X, BaseRotXY.Y, 0.f);
+		const FVector BaseWorld = MapHexToWorld(CollisionInfo.ArmBaseHex);
 		
 		// Draw the collision sphere and line
 		DrawDebugSphere(GetWorld(), BlockedWorld, DebugSphereSize * 1.2f, 12, FColor::Red, false, DebugLifetime, 0, 2.f);
@@ -498,10 +480,7 @@ void AOrbSimDriver::DrawCollisionDebugSpheres()
 	for (const USimWorldHex::FPredictiveCollisionInfo& PredictiveInfo : PredictiveCollisionData)
 	{
 		// Convert collision hex to world coordinates
-		const FHexAxial CollisionA(PredictiveInfo.CollisionHex.Q, PredictiveInfo.CollisionHex.R);
-		const FVector2D CollisionLocalXY = HexCoord::AxialToXY(CollisionA, Tile, Ori);
-		const FVector2D CollisionRotXY = HexCoord::Rotate2D(CollisionLocalXY, GridYaw);
-		const FVector CollisionWorld = AnchorV + FVector(CollisionRotXY.X, CollisionRotXY.Y, 0.f);
+		const FVector CollisionWorld = MapHexToWorld(PredictiveInfo.CollisionHex);
 		
 		// Draw predictive collision sphere in orange
 		DrawDebugSphere(GetWorld(), CollisionWorld, DebugSphereSize * 1.5f, 12, FColor::Orange, false, DebugLifetime, 0, 2.f);
@@ -558,7 +537,12 @@ FVector AOrbSimDriver::MapHexToWorld(const FHex& H) const
 	// Planar mode
 	const FVector2D XY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), TileSizeUU, GridOrientation);
 	const FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
-	return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
+	float Z = 0.f;
+	if (Sim)
+	{
+		Z = (H.Level == 0) ? Sim->OrbZOffset : -Sim->OrbZOffset;
+	}
+	return AnchorLoc + FVector(RotXY.X, RotXY.Y, Z);
 }
 
 bool AOrbSimDriver::WorldToHex(const FVector& World, FHex& OutHex) const

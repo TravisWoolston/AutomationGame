@@ -177,10 +177,10 @@ int32 USimWorldHex::AddWalker(const FWalkerState& Walker)
 	// R (East): Q + ReachDist, R unchanged
 	// U (North): Q unchanged, R - ReachDist
 	FHex OuterTiles[4] = {
-		FHex(S.HomeHex.Q, S.HomeHex.R + ReachDist),      // D -> S (South)
-		FHex(S.HomeHex.Q - ReachDist, S.HomeHex.R),      // L -> W (West)
-		FHex(S.HomeHex.Q + ReachDist, S.HomeHex.R),      // R -> E (East)
-		FHex(S.HomeHex.Q, S.HomeHex.R - ReachDist)       // U -> N (North)
+		FHex(S.HomeHex.Q, S.HomeHex.R + ReachDist, S.HomeHex.Level),      // D -> S (South)
+		FHex(S.HomeHex.Q - ReachDist, S.HomeHex.R, S.HomeHex.Level),      // L -> W (West)
+		FHex(S.HomeHex.Q + ReachDist, S.HomeHex.R, S.HomeHex.Level),      // R -> E (East)
+		FHex(S.HomeHex.Q, S.HomeHex.R - ReachDist, S.HomeHex.Level)       // U -> N (North)
 	};
 	
 	// Set foot positions to outer tiles
@@ -583,7 +583,7 @@ bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 										FHex OrbHex;
 										OrbHex.Q = NewBaseHex.Q + OrbData.dQ;
 										OrbHex.R = NewBaseHex.R + OrbData.dR;
-										
+										OrbHex.Level = NewBaseHex.Level;
 										if (OrbHex == TileHex)
 											OrbType1 = OrbData.Type;
 										if (OrbHex == PartnerHex)
@@ -766,7 +766,7 @@ bool USimWorldHex::PlaceTile(const FHex& H, const FTile& T)
 										FHex OrbHex;
 										OrbHex.Q = NewBaseHex.Q + OrbData.dQ;
 										OrbHex.R = NewBaseHex.R + OrbData.dR;
-										
+										OrbHex.Level = NewBaseHex.Level;
 										if (OrbHex == TileHex)
 											OrbType1 = OrbData.Type;
 										if (OrbHex == PartnerHex)
@@ -1503,7 +1503,7 @@ void USimWorldHex::UpdateHeldOrbCache()
 			{
 				FHex Local(Sub.dQ, Sub.dR);
 				FHex Rot = Rot60(Local, ccw);
-				FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+				FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R, GripHex.Level);
 				CachedHeldOrbHexes.Add(WorldPos);
 			}
 		}
@@ -1734,7 +1734,8 @@ FVector USimWorldHex::HexCenterToWorld(const FHex& H) const
 	const float SinA = FMath::Sin(Rad);
 	const float RX = Local.X * CosA - Local.Y * SinA;
 	const float RY = Local.X * SinA + Local.Y * CosA;
-	return WorldAnchor + FVector(RX, RY, 0.f);
+	const float Z = (H.Level == 0) ? OrbZOffset : -OrbZOffset;
+	return WorldAnchor + FVector(RX, RY, Z);
 }
 
 bool USimWorldHex::GetItemVisualLocation(int32 ItemId, FVector& OutWorld) const
@@ -1886,8 +1887,9 @@ void USimWorldHex::DrawBondDebugLines()
 	auto HexToWorld = [&](const FHex& H) -> FVector
 		{
 			const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, DriverGridOrientation);
-			const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-			return AnchorLoc + FVector(RotXY.X, RotXY.Y, 0.f);
+			const FVector2D Rotated = HexCoord::Rotate2D(LocalXY, GridYaw);
+			const float Z = (H.Level == 0) ? OrbZOffset : -OrbZOffset;
+			return AnchorLoc + FVector(Rotated.X, Rotated.Y, Z);
 		};
 
 	// Build lookup map for board items once

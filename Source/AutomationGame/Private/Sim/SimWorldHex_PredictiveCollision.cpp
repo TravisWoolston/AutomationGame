@@ -232,7 +232,7 @@ bool USimWorldHex::WouldHeldClustersOverlap(const FPredictiveArmState& ArmA, con
 		{
 			for (const FHex& PosB : PositionsB)
 			{
-				if (PosA.Q == PosB.Q && PosA.R == PosB.R)
+				if (PosA == PosB)
 				{
 					return true;
 				}
@@ -249,7 +249,7 @@ bool USimWorldHex::WouldHeldClustersOverlap(const FPredictiveArmState& ArmA, con
 		{
 			for (const FHex& PosB : PositionsB)
 			{
-				if (PosA.Q == PosB.Q && PosA.R == PosB.R)
+				if (PosA == PosB)
 				{
 					return true;
 				}
@@ -295,7 +295,7 @@ TArray<FHex> USimWorldHex::GetHeldClusterPositions(const FPredictiveArmState& Ar
 		{
 			FHex Local(Sub.dQ, Sub.dR);
 			FHex RotLocal = Rot60CCW(Local, ccw);
-			Positions.Add(FHex(GripHex.Q + RotLocal.Q, GripHex.R + RotLocal.R));
+			Positions.Add(FHex(GripHex.Q + RotLocal.Q, GripHex.R + RotLocal.R, GripHex.Level));
 		}
 	}
 	
@@ -336,7 +336,7 @@ bool USimWorldHex::WouldRotationSweepsOverlap(const FArmState& ArmA, const FArmS
 		{
 			FHex Local(Sub.dQ, Sub.dR);
 			FHex RotLocal = Rot60CCW(Local, ccw);
-			Positions.Add(FHex(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R));
+			Positions.Add(FHex(Grip.Q + RotLocal.Q, Grip.R + RotLocal.R, Grip.Level));
 		}
 		return Positions;
 	};
@@ -355,7 +355,7 @@ bool USimWorldHex::WouldRotationSweepsOverlap(const FArmState& ArmA, const FArmS
 	TArray<FHex> A_MidTranslate;
 	for (const FHex& Pos : A_Start)
 	{
-		A_MidTranslate.Add(FHex(Pos.Q + dQA, Pos.R + dRA));
+		A_MidTranslate.Add(FHex(Pos.Q + dQA, Pos.R + dRA, Pos.Level));
 	}
 	TArray<FHex> A_MidRotate = BuildHeldPositions(ArmA.BaseHex, PredictedA.Facing, ArmA.ArmLen, ArmA.Held);
 
@@ -372,7 +372,7 @@ bool USimWorldHex::WouldRotationSweepsOverlap(const FArmState& ArmA, const FArmS
 	TArray<FHex> B_MidTranslate;
 	for (const FHex& Pos : B_Start)
 	{
-		B_MidTranslate.Add(FHex(Pos.Q + dQB, Pos.R + dRB));
+		B_MidTranslate.Add(FHex(Pos.Q + dQB, Pos.R + dRB, Pos.Level));
 	}
 	TArray<FHex> B_MidRotate = BuildHeldPositions(ArmB.BaseHex, PredictedB.Facing, ArmB.ArmLen, ArmB.Held);
 
@@ -388,7 +388,7 @@ bool USimWorldHex::WouldRotationSweepsOverlap(const FArmState& ArmA, const FArmS
 			{
 				for (const FHex& PosB : *B_Phase)
 				{
-					if (PosA.Q == PosB.Q && PosA.R == PosB.R)
+					if (PosA == PosB)
 					{
 						return true; // Collision detected during sweep
 					}
@@ -456,7 +456,7 @@ bool USimWorldHex::WouldRotationSweepOverlapStatic(const FArmState& RotatingArm,
 	TArray<FHex> Rot_MidTranslate;
 	for (const FHex& Pos : Rot_Start)
 	{
-		Rot_MidTranslate.Add(FHex(Pos.Q + dQ, Pos.R + dR));
+		Rot_MidTranslate.Add(FHex(Pos.Q + dQ, Pos.R + dR, Pos.Level));
 	}
 	TArray<FHex> Rot_MidRotate = BuildHeldPositions(RotatingArm.BaseHex, PredictedRotating.Facing, RotatingArm.ArmLen, RotatingArm.Held);
 
@@ -527,7 +527,7 @@ bool USimWorldHex::DoesArmSweepOverlapTiles(const FArmState& Arm, const FPredict
 		TArray<FHex> MidTranslate;
 		for (const FHex& Pos : Start)
 		{
-			MidTranslate.Add(FHex(Pos.Q + dQ, Pos.R + dR));
+			MidTranslate.Add(FHex(Pos.Q + dQ, Pos.R + dR, Pos.Level));
 		}
 		TArray<FHex> MidRotate = BuildHeldPositions(Arm.BaseHex, Predicted.Facing, Arm.ArmLen, Arm.Held);
 

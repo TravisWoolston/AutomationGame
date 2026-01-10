@@ -14,7 +14,8 @@ enum class ETileKind : uint8
     InputBond,  // NEW: bond between input tiles - orbs spawn pre-bonded
     OutputBond,  // NEW: bond between output tiles - requires bonded orbs
     ClusterInput,  // NEW: spawns pre-defined clusters based on template
-    ClusterOutput  // NEW: accepts specific cluster patterns
+    ClusterOutput, // NEW: accepts specific cluster patterns
+    ClusterSend    // NEW: sends cluster to the other grid level
 };
 
 USTRUCT(BlueprintType)

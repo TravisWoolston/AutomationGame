@@ -175,5 +175,5 @@ FHex USimWorldHex::GetQuadrantCenterHex(const FHex& BodyHex, int32 FootIndex, in
 	float IdealQ = (float)BodyHex.Q + QuadDQ * CenterDistanceCartesian;
 	float IdealR = (float)BodyHex.R + QuadDR * CenterDistanceCartesian;
 	
-	return FHex(FMath::RoundToInt(IdealQ), FMath::RoundToInt(IdealR));
+	return FHex(FMath::RoundToInt(IdealQ), FMath::RoundToInt(IdealR), BodyHex.Level);
 }

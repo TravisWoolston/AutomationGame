@@ -63,6 +63,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
 	int32 R = 0;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
+	int32 Level = 0;
+
 	// The variant of this trigger (Positive or Negative logic)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
 	ETriggerVariant Variant = ETriggerVariant::Positive;

@@ -588,29 +588,34 @@ void AGameManager::BuildGridInstances()
 	}
 
 	// Planar grid path
-	const auto ToWorld = [S, Origin, this](int32 Q, int32 R)
+	const auto ToWorld = [S, Origin, this](int32 Q, int32 R, int32 Level)
 	{
 		FVector2D XY = HexCoord::AxialToXY(FHexAxial(Q, R), S, GridOrientation);
 		FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
+		// For background grid, both sides are at Z=0 but flipped
 		return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
 	};
 	
-	for (int r = -Radius; r <= Radius; ++r)
+	for (int level = 0; level <= 1; ++level)
 	{
-		for (int q = -Radius; q <= Radius; ++q)
+		for (int r = -Radius; r <= Radius; ++r)
 		{
-			int s = -q - r;
-			if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue;
-			
-			if (Sim && Sim->TileMap.Contains(FHex(q, r)))
+			for (int q = -Radius; q <= Radius; ++q)
 			{
-				const FTile& PT = Sim->TileMap[FHex(q, r)];
-				if (PT.Kind == ETileKind::Output) continue;
+				int s = -q - r;
+				if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius) continue;
+				
+				if (Sim && Sim->TileMap.Contains(FHex(q, r, level)))
+				{
+					const FTile& PT = Sim->TileMap[FHex(q, r, level)];
+					if (PT.Kind == ETileKind::Output) continue;
+				}
+				
+				FVector P = ToWorld(q, r, level);
+				float Pitch = (level == 0) ? 0.f : 180.f;
+				FRotator RotR(Pitch, GridYawDeg + OriYawOffsetDegPlanar, 0.f);
+				ISM->AddInstance(FTransform(RotR, P, FVector(1)));
 			}
-			
-			FVector P = ToWorld(q, r);
-			FRotator RotR(0.f, GridYawDeg + OriYawOffsetDegPlanar, 0.f);
-			ISM->AddInstance(FTransform(RotR, P, FVector(1)));
 		}
 	}
 }
@@ -717,6 +722,7 @@ ABasicArm* AGameManager::SpawnBasicArmAt(const FHex& Hex, uint8 Facing, const TA
 	Arm->Driver = OrbSimDriver;
 	Arm->Q = Hex.Q;
 	Arm->R = Hex.R;
+	Arm->Level = Hex.Level;
 	Arm->FacingDir = Facing % 6;
 	Arm->StartingRotation = Facing % 6;
 	Arm->StartingReach = Arm->ReachTiles; // Use current ReachTiles as starting reach
@@ -802,6 +808,9 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 	Walker->StandHeight = SavedWalkerCalibration.StandHeight;
 	Walker->StartingFootDistance = SavedWalkerCalibration.StartingFootDistance;
 	Walker->bDynamicBodyRotation = SavedWalkerCalibration.bDynamicBodyRotation;
+	Walker->Q = Hex.Q;
+	Walker->R = Hex.R;
+	Walker->Level = Hex.Level;
 	
 	// Don't call SetProgram yet - need SimWalkerIndex first
 
@@ -920,7 +929,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 
 				for (const FHex& OffsetH : Ring)
 				{
-					FHex AbsH(Hex.Q + OffsetH.Q, Hex.R + OffsetH.R);
+					FHex AbsH(Hex.Q + OffsetH.Q, Hex.R + OffsetH.R, Hex.Level);
 					FVector WorldPos = OrbSimDriver->MapHexToWorld(AbsH);
 					float DistSq = FVector::DistSquared2D(WorldPos, IdealPos);
 					if (DistSq < BestDistSq)
@@ -943,7 +952,7 @@ ABasicWalker* AGameManager::SpawnBasicWalkerAt(const FHex& Hex, const TArray<FWa
 				}
 
 				// Set new foot position
-				FHex NewFootHex(Hex.Q + BestOffsetHex.Q, Hex.R + BestOffsetHex.R);
+				FHex NewFootHex(Hex.Q + BestOffsetHex.Q, Hex.R + BestOffsetHex.R, Hex.Level);
 				
 				// Validate distance
 				const int32 dq = NewFootHex.Q - Hex.Q;

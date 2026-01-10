@@ -26,7 +26,7 @@ void USimWorldHex::UpdateWalkerBodyPosition(FWalkerState& W, int32 WalkerIndex)
 			}
 			int32 AvgQ = FMath::RoundToInt((float)SumQ / EffectiveFootHexes.Num());
 			int32 AvgR = FMath::RoundToInt((float)SumR / EffectiveFootHexes.Num());
-			FHex ProposedBodyHex(AvgQ, AvgR);
+			FHex ProposedBodyHex(AvgQ, AvgR, W.BaseHex.Level);
 			
 			bool bValidBodyPosition = true;
 			for (FFootState* Foot : CenteringFeet)
@@ -170,7 +170,7 @@ void USimWorldHex::ProcessWalkerInstructions(FWalkerState& W, int32 WalkerIndex)
 		{
 		case EWalkerCmd::MoveTo:
 			{
-				W.TargetHex = FHex(Inst.Arg1, Inst.Arg2);
+				W.TargetHex = FHex(Inst.Arg1, Inst.Arg2, W.BaseHex.Level);
 				W.bMoving = true;
 				W.MovementProgress = 0.0f;
 				W.PC = (W.PC + 1) % W.Program.Num();

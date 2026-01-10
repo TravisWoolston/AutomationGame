@@ -299,7 +299,7 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 			{
 				FHex Local(Sub.dQ, Sub.dR);
 				FHex Rot = Rot60(Local, ccw);
-				FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R);
+				FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R, GripHex.Level);
 
 				FItem DisconnectedOrb;
 				DisconnectedOrb.bIsCluster = false;

@@ -33,8 +33,15 @@ public:
 	USimWorldHex();
 	virtual ~USimWorldHex();
 	// Config
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float TileSizeUU = 120.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim") float FixedStepSec = 0.20f; // 5 Hz
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
+	float TileSizeUU = 120.f;
+
+	/** Vertical offset for orbs on different grid levels. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
+	float OrbZOffset = 50.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
+ float FixedStepSec = 0.20f; // 5 Hz
 
 	void StepBonds(); // Made public for BondResolver
 	
