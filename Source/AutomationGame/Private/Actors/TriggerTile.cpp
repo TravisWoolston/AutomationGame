@@ -93,21 +93,20 @@ void ATriggerTile::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 
 	// Force wire update for first few frames to catch late Blueprint property initialization
-	if (bWireNeedsInitialUpdate && WireUpdateRetryCount < 5)
+	if (bWireNeedsInitialUpdate && WireUpdateRetryCount < 10)
 	{
 		WireUpdateRetryCount++;
 		
-		// Check if WireMaterial is now set (from Blueprint)
-		if (WireMaterial && WireMaterial != LastWireMaterialUsed)
+		// Check if WireMaterial is now set (from Blueprint) or if we just need to refresh the geometry
+		if ((WireMaterial && WireMaterial != LastWireMaterialUsed) || WireUpdateRetryCount == 10)
 		{
-			UE_LOG(LogTemp, Log, TEXT("TriggerTile: Late wire material detected (%s), updating wire"), *WireMaterial->GetName());
-			CachedWireMID = nullptr; // Force recreation
+			if (WireMaterial && WireMaterial != LastWireMaterialUsed)
+			{
+				UE_LOG(LogTemp, Log, TEXT("TriggerTile: Late wire material detected (%s), updating wire"), *WireMaterial->GetName());
+				CachedWireMID = nullptr; // Force recreation
+			}
+			
 			UpdateWireVisual();
-			bWireNeedsInitialUpdate = false;
-		}
-		else if (WireUpdateRetryCount >= 5)
-		{
-			// Stop retrying after 5 frames
 			bWireNeedsInitialUpdate = false;
 		}
 	}
@@ -637,9 +636,14 @@ void ATriggerTile::UpdateWireVisual()
 	FVector EndPos = StartPos; // Default to same position
 
 	// Calculate owner world position
+	if (!Driver)
+	{
+		Driver = AOrbSimDriver::Find(GetWorld());
+	}
+
 	if (Driver)
 	{
-		FHex OwnerHex(OwnerQ, OwnerR);
+		FHex OwnerHex(OwnerQ, OwnerR, Level);
 		EndPos = Driver->MapHexToWorld(OwnerHex);
 	}
 
@@ -857,7 +861,8 @@ void ATriggerTile::SyncWorldLocation()
 
 	if (Driver)
 	{
-		FVector Location = Driver->MapHexToWorld(FHex(Q, R, Level));
-		SetActorLocation(Location);
+		FVector NewLocation = Driver->MapHexToWorld(FHex(Q, R, Level));
+		SetActorLocation(NewLocation);
+		UpdateWireVisual();
 	}
 }

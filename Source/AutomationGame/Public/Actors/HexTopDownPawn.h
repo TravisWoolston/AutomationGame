@@ -194,7 +194,7 @@ private:
 	TArray<FArmInstr> ConvertOpsToProgram(const TArray<FOp>& Ops);
 	
 	// Helper function to get hexes within a selection area
-	void GetHexesInSelectionArea(const FHex& HexStart, const FHex& HexEnd, const FVector& WorldStart, const FVector& WorldEnd, TArray<FHex>& OutHexes);
+	void GetHexesInSelectionArea(const FHex& HexStart, const FHex& HexEnd, const FVector& WorldStart, const FVector& WorldEnd, int32 Level, TArray<FHex>& OutHexes);
 
 	UFUNCTION(BlueprintCallable, Category = "Input")
 	void SetInputMode1();

@@ -142,11 +142,23 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds)
 
 float AOrbSimDriver::GetGridPlaneZ(const AActor* FallbackOwner) const
 {
+	float BaseZ = 0.f;
 	if (bUseAnchorZForPicking && GridAnchor)
 	{
-		return GridAnchor->GetActorLocation().Z;
+		BaseZ = GridAnchor->GetActorLocation().Z;
 	}
-	return FallbackOwner ? FallbackOwner->GetActorLocation().Z : 0.f;
+	else if (FallbackOwner)
+	{
+		BaseZ = FallbackOwner->GetActorLocation().Z;
+	}
+
+	// Add OrbZOffset from Sim if available, because the active level is always pushed up to OrbZOffset
+	if (Sim)
+	{
+		BaseZ += Sim->OrbZOffset;
+	}
+
+	return BaseZ;
 }
 
 AOrbSimDriver* AOrbSimDriver::Find(UWorld* World)

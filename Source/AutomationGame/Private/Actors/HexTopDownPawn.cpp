@@ -315,7 +315,7 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds)
 	for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It)
 	{
 		ABasicWalker* Walker = *It;
-		if (Walker && Walker->Q == HoverHex.Q && Walker->R == HoverHex.R)
+		if (Walker && Walker->Q == HoverHex.Q && Walker->R == HoverHex.R && Walker->Level == HoverHex.Level)
 		{
 			TArray<UPrimitiveComponent*> Comps;
 			Walker->GetComponents(Comps);
@@ -1081,7 +1081,7 @@ ABasicArm* AHexTopDownPawn::FindArmAtHex(const FHex& Hex)
 		for (TActorIterator<ABasicArm> It(World); It; ++It)
 		{
 			ABasicArm* Arm = *It;
-			if (Arm && Arm->Q == Hex.Q && Arm->R == Hex.R)
+			if (Arm && Arm->Q == Hex.Q && Arm->R == Hex.R && Arm->Level == Hex.Level)
 			{
 				return Arm;
 			}
@@ -1316,6 +1316,8 @@ void AHexTopDownPawn::UpdateSelection()
 		}
 		float TileSize = Driver ? Driver->GetTileSize() : 100.f;
 		EHexOrientation Orientation = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+		
+		// Updated: GridPlaneZ now accurately reflects the active level's visual Z
 		float GridPlaneZ = Driver ? Driver->GetGridPlaneZ(this) : 0.f;
 
 		// Convert screen coordinates to world coordinates by projecting rays to the grid plane
@@ -1343,17 +1345,17 @@ void AHexTopDownPawn::UpdateSelection()
 		// Convert world coordinates to hex coordinates
 		FHexAxial HexStartAxial = HexCoord::XYToAxialRound(FVector2D(WorldStart.X, WorldStart.Y), TileSize, Orientation);
 		FHexAxial HexEndAxial = HexCoord::XYToAxialRound(FVector2D(WorldEnd.X, WorldEnd.Y), TileSize, Orientation);
-		FHex HexStart(HexStartAxial.Q, HexStartAxial.R);
-		FHex HexEnd(HexEndAxial.Q, HexEndAxial.R);
+		FHex HexStart(HexStartAxial.Q, HexStartAxial.R, CurrentLevel);
+		FHex HexEnd(HexEndAxial.Q, HexEndAxial.R, CurrentLevel);
 
 		// Debug: Log the selection area with grid plane info
-		UE_LOG(LogTemp, Warning, TEXT("Selection area: Screen(%f,%f) to (%f,%f) -> World(%f,%f,%.1f) to (%f,%f,%.1f) -> Hex(%d,%d) to (%d,%d) [GridZ=%.1f]"),
+		UE_LOG(LogTemp, Warning, TEXT("Selection area: Screen(%f,%f) to (%f,%f) -> World(%f,%f,%.1f) to (%f,%f,%.1f) -> Hex(%d,%d,%d) to (%d,%d,%d) [GridZ=%.1f]"),
 			SelectionStart.X, SelectionStart.Y, SelectionEnd.X, SelectionEnd.Y,
 			WorldStart.X, WorldStart.Y, WorldStart.Z, WorldEnd.X, WorldEnd.Y, WorldEnd.Z,
-			HexStart.Q, HexStart.R, HexEnd.Q, HexEnd.R, GridPlaneZ);
+			HexStart.Q, HexStart.R, HexStart.Level, HexEnd.Q, HexEnd.R, HexEnd.Level, GridPlaneZ);
 
 		// Use improved hexagonal selection algorithm with actual world positions
-		GetHexesInSelectionArea(HexStart, HexEnd, WorldStart, WorldEnd, SelectedTiles);
+		GetHexesInSelectionArea(HexStart, HexEnd, WorldStart, WorldEnd, CurrentLevel, SelectedTiles);
 
 		UE_LOG(LogTemp, Warning, TEXT("Blueprint selection: %d tiles selected"), SelectedTiles.Num());
 	}
@@ -1457,7 +1459,7 @@ void AHexTopDownPawn::CreateBlueprint()
 		for (int32 ArmIndex = 0; ArmIndex < Sim->Arms.Num(); ArmIndex++)
 		{
 			const FArmState& ArmState = Sim->Arms[ArmIndex];
-			if (ArmState.BaseHex.Q == Hex.Q && ArmState.BaseHex.R == Hex.R)
+			if (ArmState.BaseHex == Hex)
 			{
 				// Found the arm - capture its program and HOME facing/reach (reset position)
 				// Get the starting values from the arm actor
@@ -1636,15 +1638,15 @@ void AHexTopDownPawn::PlaceBlueprint()
 
 	// Convert world coordinates to hex coordinates
 	FHexAxial TargetHexAxial = HexCoord::XYToAxialRound(FVector2D(WorldPosition.X, WorldPosition.Y), TileSize, Orientation);
-	FHex TargetHex(TargetHexAxial.Q, TargetHexAxial.R);
+	FHex TargetHex(TargetHexAxial.Q, TargetHexAxial.R, CurrentLevel);
 
 	// Calculate the center of the blueprint to center it at the mouse position
-	FHex BlueprintCenter(0, 0);
+	FHex BlueprintCenter(0, 0, 0);
 	if (BlueprintTiles.Num() > 0)
 	{
 		// Find the bounds of the blueprint
-		FHex MinHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
-		FHex MaxHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R);
+		FHex MinHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R, 0);
+		FHex MaxHex(BlueprintTiles[0].LocalHex.Q, BlueprintTiles[0].LocalHex.R, 0);
 
 		for (const FBlueprintTile& Tile : BlueprintTiles)
 		{
@@ -1676,7 +1678,8 @@ void AHexTopDownPawn::PlaceBlueprint()
 		// Calculate the offset of this tile from the blueprint center
 		FHex OffsetFromCenter = FHex(
 			BlueprintTile.LocalHex.Q - BlueprintCenter.Q,
-			BlueprintTile.LocalHex.R - BlueprintCenter.R
+			BlueprintTile.LocalHex.R - BlueprintCenter.R,
+			0
 		);
 
 		// Rotate the offset by BlueprintRotation * 60 degrees
@@ -1690,7 +1693,7 @@ void AHexTopDownPawn::PlaceBlueprint()
 			{
 				int32 NewQ = RotatedTileOffset.Q + RotatedTileOffset.R;
 				int32 NewR = -RotatedTileOffset.Q;
-				RotatedTileOffset = FHex(NewQ, NewR);
+				RotatedTileOffset = FHex(NewQ, NewR, 0);
 			}
 		}
 
@@ -1720,8 +1723,8 @@ void AHexTopDownPawn::PlaceBlueprint()
 				uint8 RotatedArmFacing = (BlueprintTile.ArmFacing + BlueprintRotation) % 6;
 				uint8 RotatedStartingRotation = (BlueprintTile.StartingRotation + BlueprintRotation) % 6;
 
-				UE_LOG(LogTemp, Warning, TEXT("Blueprint: Placing arm at (%d,%d) with facing=%d startRot=%d (rotated from facing=%d startRot=%d)"),
-					FinalHex.Q, FinalHex.R, RotatedArmFacing, RotatedStartingRotation, BlueprintTile.ArmFacing, BlueprintTile.StartingRotation);
+				UE_LOG(LogTemp, Warning, TEXT("Blueprint: Placing arm at (%d,%d,%d) with facing=%d startRot=%d (rotated from facing=%d startRot=%d)"),
+					FinalHex.Q, FinalHex.R, FinalHex.Level, RotatedArmFacing, RotatedStartingRotation, BlueprintTile.ArmFacing, BlueprintTile.StartingRotation);
 
 				// Use GameManager to spawn the arm with the rotated arm facing (home position)
 				ABasicArm* SpawnedArm = GameManager->SpawnBasicArmAt(
@@ -2017,9 +2020,9 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 			for (TActorIterator<ARequestBeacon> It(World); It; ++It)
 			{
 				ARequestBeacon* Beacon = *It;
-				if (Beacon && Beacon->Q == Hex.Q && Beacon->R == Hex.R)
+				if (Beacon && Beacon->Q == Hex.Q && Beacon->R == Hex.R && Beacon->Level == Hex.Level)
 				{
-					UE_LOG(LogTemp, Log, TEXT("Destroying RequestBeacon at (%d,%d)"), Hex.Q, Hex.R);
+					UE_LOG(LogTemp, Log, TEXT("Destroying RequestBeacon at (%d,%d,%d)"), Hex.Q, Hex.R, Hex.Level);
 					
 					// Scenario capture for beacon removal
 					for (TActorIterator<ATestLevelDirector> TLDIt(World); TLDIt; ++TLDIt)
@@ -2041,9 +2044,9 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 			for (TActorIterator<ATriggerTile> It(World); It; ++It)
 			{
 				ATriggerTile* TriggerTile = *It;
-				if (TriggerTile && TriggerTile->Q == Hex.Q && TriggerTile->R == Hex.R)
+				if (TriggerTile && TriggerTile->Q == Hex.Q && TriggerTile->R == Hex.R && TriggerTile->Level == Hex.Level)
 				{
-					UE_LOG(LogTemp, Log, TEXT("Destroying TriggerTile at (%d,%d)"), Hex.Q, Hex.R);
+					UE_LOG(LogTemp, Log, TEXT("Destroying TriggerTile at (%d,%d,%d)"), Hex.Q, Hex.R, Hex.Level);
 					
 					// Capture removal in scenario via TestLevelDirector
 					for (TActorIterator<ATestLevelDirector> TLDIt(World); TLDIt; ++TLDIt)
@@ -2083,10 +2086,10 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 	for (int32 ArmIndex = Sim->Arms.Num() - 1; ArmIndex >= 0; ArmIndex--)
 	{
 		const FArmState& ArmState = Sim->Arms[ArmIndex];
-		if (ArmState.BaseHex.Q == Hex.Q && ArmState.BaseHex.R == Hex.R)
+		if (ArmState.BaseHex == Hex)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Removing arm from simulation at (%d,%d) SimIndex=%d (total arms before: %d)"),
-				Hex.Q, Hex.R, ArmIndex, Sim->Arms.Num());
+			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Removing arm from simulation at (%d,%d,%d) SimIndex=%d (total arms before: %d)"),
+				Hex.Q, Hex.R, Hex.Level, ArmIndex, Sim->Arms.Num());
 			RemovedArmIndex = ArmIndex;
 			Sim->Arms.RemoveAt(ArmIndex);
 			
@@ -2116,9 +2119,9 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 		for (TActorIterator<ABasicArm> It(World); It; ++It)
 		{
 			ABasicArm* Arm = *It;
-			if (Arm && Arm->Q == Hex.Q && Arm->R == Hex.R)
+			if (Arm && Arm->Q == Hex.Q && Arm->R == Hex.R && Arm->Level == Hex.Level)
 			{
-				UE_LOG(LogTemp, Log, TEXT("Destroying arm actor at (%d,%d)"), Hex.Q, Hex.R);
+				UE_LOG(LogTemp, Log, TEXT("Destroying arm actor at (%d,%d,%d)"), Hex.Q, Hex.R, Hex.Level);
 				Arm->Destroy();
 				break;
 			}
@@ -2130,10 +2133,10 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 	for (int32 WalkerIndex = Sim->Walkers.Num() - 1; WalkerIndex >= 0; WalkerIndex--)
 	{
 		const FWalkerState& WalkerState = Sim->Walkers[WalkerIndex];
-		if (WalkerState.BaseHex.Q == Hex.Q && WalkerState.BaseHex.R == Hex.R)
+		if (WalkerState.BaseHex == Hex)
 		{
-			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Removing walker from simulation at (%d,%d) SimIndex=%d (total walkers before: %d)"),
-				Hex.Q, Hex.R, WalkerIndex, Sim->Walkers.Num());
+			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - Removing walker from simulation at (%d,%d,%d) SimIndex=%d (total walkers before: %d)"),
+				Hex.Q, Hex.R, Hex.Level, WalkerIndex, Sim->Walkers.Num());
 			RemovedWalkerIndex = WalkerIndex;
 			Sim->Walkers.RemoveAt(WalkerIndex);
 			UE_LOG(LogTemp, Warning, TEXT("HexTopDownPawn::DeleteTileAndOrbs - After removal, total walkers: %d"), Sim->Walkers.Num());
@@ -2162,11 +2165,11 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 	{
 		for (TActorIterator<ABasicWalker> It(World); It; ++It)
 		{
-			ABasicWalker* WalkerActor = *It;
-			if (WalkerActor && WalkerActor->Q == Hex.Q && WalkerActor->R == Hex.R)
+			ABasicWalker* Walker = *It;
+			if (Walker && Walker->Q == Hex.Q && Walker->R == Hex.R && Walker->Level == Hex.Level)
 			{
-				UE_LOG(LogTemp, Log, TEXT("Destroying walker actor at (%d,%d)"), Hex.Q, Hex.R);
-				WalkerActor->Destroy();
+				UE_LOG(LogTemp, Log, TEXT("Destroying walker actor at (%d,%d,%d)"), Hex.Q, Hex.R, Hex.Level);
+				Walker->Destroy();
 				break;
 			}
 		}
@@ -2226,13 +2229,13 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex& Hex)
 				UE_LOG(LogTemp, Log, TEXT("Removed MergedClusterOutputs entry for (%d,%d)"), MergedHex.Q, MergedHex.R);
 			}
 
-			UE_LOG(LogTemp, Log, TEXT("Cleaned up ClusterOutput partnerships for (%d,%d)"), Hex.Q, Hex.R);
+			UE_LOG(LogTemp, Log, TEXT("Cleaned up ClusterOutput partnerships for (%d,%d,%d)"), Hex.Q, Hex.R, Hex.Level);
 		}
 	}
 
 	if (Sim->TileMap.Remove(Hex) > 0)
 	{
-		UE_LOG(LogTemp, Log, TEXT("Removed tile at (%d,%d)"), Hex.Q, Hex.R);
+		UE_LOG(LogTemp, Log, TEXT("Removed tile at (%d,%d,%d)"), Hex.Q, Hex.R, Hex.Level);
 		Sim->TileRevision++; // Increment revision to trigger visual updates
 	}
 }
@@ -2255,7 +2258,7 @@ void AHexTopDownPawn::RemoveTileAndOrbsAtCursor()
 	if (Placer->IsHoverValid())
 	{
 		FHex CursorHex = Placer->GetHoverHex();
-		UE_LOG(LogTemp, Log, TEXT("Removing tile and orbs at cursor position (%d,%d)"), CursorHex.Q, CursorHex.R);
+		UE_LOG(LogTemp, Log, TEXT("Removing tile and orbs at cursor position (%d,%d,%d)"), CursorHex.Q, CursorHex.R, CursorHex.Level);
 		DeleteTileAndOrbs(CursorHex);
 	}
 	else
@@ -2351,6 +2354,8 @@ void AHexTopDownPawn::UpdateDeletionSelection()
 		}
 		float TileSize = Driver ? Driver->GetTileSize() : 100.f;
 		EHexOrientation Orientation = Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+		
+		// Updated: GridPlaneZ now accurately reflects the active level's visual Z
 		float GridPlaneZ = Driver ? Driver->GetGridPlaneZ(this) : 0.f;
 
 		// Convert screen coordinates to world coordinates by projecting rays to the grid plane
@@ -2378,17 +2383,17 @@ void AHexTopDownPawn::UpdateDeletionSelection()
 		// Convert world coordinates to hex coordinates
 		FHexAxial HexStartAxial = HexCoord::XYToAxialRound(FVector2D(WorldStart.X, WorldStart.Y), TileSize, Orientation);
 		FHexAxial HexEndAxial = HexCoord::XYToAxialRound(FVector2D(WorldEnd.X, WorldEnd.Y), TileSize, Orientation);
-		FHex HexStart(HexStartAxial.Q, HexStartAxial.R);
-		FHex HexEnd(HexEndAxial.Q, HexEndAxial.R);
+		FHex HexStart(HexStartAxial.Q, HexStartAxial.R, CurrentLevel);
+		FHex HexEnd(HexEndAxial.Q, HexEndAxial.R, CurrentLevel);
 
 		// Use improved hexagonal selection algorithm with actual world positions
-		GetHexesInSelectionArea(HexStart, HexEnd, WorldStart, WorldEnd, SelectedTiles);
+		GetHexesInSelectionArea(HexStart, HexEnd, WorldStart, WorldEnd, CurrentLevel, SelectedTiles);
 
 		UE_LOG(LogTemp, Warning, TEXT("Deletion selection: %d tiles selected"), SelectedTiles.Num());
 	}
 }
 
-void AHexTopDownPawn::GetHexesInSelectionArea(const FHex& HexStart, const FHex& HexEnd, const FVector& WorldStart, const FVector& WorldEnd, TArray<FHex>& OutHexes)
+void AHexTopDownPawn::GetHexesInSelectionArea(const FHex& HexStart, const FHex& HexEnd, const FVector& WorldStart, const FVector& WorldEnd, int32 Level, TArray<FHex>& OutHexes)
 {
 	OutHexes.Empty();
 
@@ -2426,8 +2431,8 @@ void AHexTopDownPawn::GetHexesInSelectionArea(const FHex& HexStart, const FHex& 
 	int32 MinR = CenterR - SearchRadius;
 	int32 MaxR = CenterR + SearchRadius;
 
-	UE_LOG(LogTemp, Warning, TEXT("GetHexesInSelectionArea: World bounds (%.1f,%.1f) to (%.1f,%.1f), Search radius %d, Hex bounds Q(%d-%d) R(%d-%d)"),
-		MinWorld.X, MinWorld.Y, MaxWorld.X, MaxWorld.Y, SearchRadius, MinQ, MaxQ, MinR, MaxR);
+	UE_LOG(LogTemp, Warning, TEXT("GetHexesInSelectionArea: World bounds (%.1f,%.1f) to (%.1f,%.1f), Search radius %d, Hex bounds Q(%d-%d) R(%d-%d) Level %d"),
+		MinWorld.X, MinWorld.Y, MaxWorld.X, MaxWorld.Y, SearchRadius, MinQ, MaxQ, MinR, MaxR, Level);
 
 	int32 TilesChecked = 0;
 	int32 TilesAdded = 0;
@@ -2437,7 +2442,7 @@ void AHexTopDownPawn::GetHexesInSelectionArea(const FHex& HexStart, const FHex& 
 	{
 		for (int32 r = MinR; r <= MaxR; r++)
 		{
-			FHex TestHex(q, r);
+			FHex TestHex(q, r, Level);
 			TilesChecked++;
 
 			// Convert this hex to world position using the same method as the selection
@@ -2451,7 +2456,7 @@ void AHexTopDownPawn::GetHexesInSelectionArea(const FHex& HexStart, const FHex& 
 			{
 				OutHexes.Add(TestHex);
 				TilesAdded++;
-				UE_LOG(LogTemp, Log, TEXT("  Added hex (%d,%d) at world (%.1f,%.1f)"), q, r, HexWorld.X, HexWorld.Y);
+				UE_LOG(LogTemp, Log, TEXT("  Added hex (%d,%d,%d) at world (%.1f,%.1f)"), q, r, Level, HexWorld.X, HexWorld.Y);
 			}
 		}
 	}
@@ -2529,7 +2534,7 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds)
 
 	// Convert world coordinates to hex coordinates
 	FHexAxial TargetHexAxial = HexCoord::XYToAxialRound(FVector2D(WorldPosition.X, WorldPosition.Y), TileSize, Orientation);
-	FHex TargetHex(TargetHexAxial.Q, TargetHexAxial.R);
+	FHex TargetHex(TargetHexAxial.Q, TargetHexAxial.R, CurrentLevel);
 
 	// Calculate the center of the blueprint
 	FHex BlueprintCenter(0, 0);

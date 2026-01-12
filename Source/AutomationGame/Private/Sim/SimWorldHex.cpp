@@ -1533,16 +1533,21 @@ void USimWorldHex::StepSim()
 	OrbsNewlyMovedToOutput.Reset();
 	OrbsNewlyMovedByBelts.Reset();
 
-	// SpawnInputs();          // pass 1 (empty at start)
+	// pass 1 (empty at start)
 	StepArms();
 	
 	// Update occupancy cache after StepArms - HeldOrbHexes and ArmBaseHexes are 
 	// now valid for use by StepWalkers and StepBelts
 	UpdateHeldOrbCache();
+
+	// Interaction pass 1: bond things sitting from last tick (including ClusterSend arrivals)
+	StepBonds();
 	
 	StepWalkers();
 	StepBelts();
 	SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
+	
+	// Interaction pass 2: bond things that just arrived (Inputs, moved items)
 	StepBonds();
 	CheckAndRemoveDisconnectedOrbsFromHeldClusters();
 	// Second pass for arms - allows immediate grab after unbonding
