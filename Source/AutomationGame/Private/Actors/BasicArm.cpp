@@ -905,6 +905,49 @@ void ABasicArm::RebuildTapeFromProgram()
 	PushProgramToSim();
 }
 
+void ABasicArm::SetStartingReach(int32 NewReach)
+{
+	StartingReach = FMath::Clamp(NewReach, 1, 6);
+	ReachTiles = StartingReach;
+
+	// Reset program and sync to sim
+	if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
+	{
+		FArmState& S = Sim->Arms[SimArmIndex];
+		S.PC = 0;
+		S.WaitCounter = 0;
+		S.ArmLen = StartingReach;
+		S.HomeArmLen = StartingReach;
+	}
+
+	PushRuntimePropertiesToSim();
+	RefreshPose(1.f);
+	
+	UE_LOG(LogAGArm, Log, TEXT("Arm '%s': SetStartingReach %d"), *GetName(), StartingReach);
+}
+
+void ABasicArm::SetStartingRotation(int32 NewRotation)
+{
+	StartingRotation = static_cast<uint8>(NewRotation % 6);
+	FacingDir = StartingRotation;
+	CurrYawDeg = DirToYaw(FacingDir);
+
+	// Reset program and sync to sim
+	if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num())
+	{
+		FArmState& S = Sim->Arms[SimArmIndex];
+		S.PC = 0;
+		S.WaitCounter = 0;
+		S.Facing = static_cast<EHexDir>(StartingRotation);
+		S.HomeFacing = static_cast<EHexDir>(StartingRotation);
+	}
+
+	PushRuntimePropertiesToSim();
+	RefreshPose(1.f);
+
+	UE_LOG(LogAGArm, Log, TEXT("Arm '%s': SetStartingRotation %d"), *GetName(), StartingRotation);
+}
+
 #if WITH_EDITOR
 void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent& Event)
 {

@@ -8,6 +8,7 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Components/Button.h"
+#include "Components/EditableTextBox.h"
 #include "Components/PanelWidget.h"
 #include "Sim/ArmTypes.h"
 #include "Actors/BasicArm.h"
@@ -16,6 +17,8 @@
 #include "AGLogChannels.h"
 #include "UMG.h"
 #include "Components/ActorComponent.h"
+#include "Components/SizeBox.h"
+#include "Styling/CoreStyle.h"
 #include "EngineUtils.h"
 
 UArmTimelineUMGWidget::UArmTimelineUMGWidget(const FObjectInitializer& ObjectInitializer)
@@ -31,6 +34,8 @@ UArmTimelineUMGWidget::UArmTimelineUMGWidget(const FObjectInitializer& ObjectIni
 	ListBorderColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
 	ListBorderThickness = 2.0f;
 	bPulseCurrentCommand = true;
+	LastCommandIndex = -1;
+	LastProgress = 0.0f;
 }
 
 void UArmTimelineUMGWidget::NativeConstruct()
@@ -52,6 +57,37 @@ void UArmTimelineUMGWidget::NativeConstruct()
 	
 	InitializeWidget();
 	
+	// Ensure cursor is in front
+	if (CursorIndicator)
+	{
+		if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(CursorIndicator->Slot))
+		{
+			CanvasSlot->SetZOrder(100);
+		}
+	}
+}
+
+void UArmTimelineUMGWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+
+	// Lerp scroll position
+	if (!FMath::IsNearlyEqual(CurrentScrollIndex, TargetScrollIndex, 0.001f))
+	{
+		CurrentScrollIndex = FMath::FInterpTo(CurrentScrollIndex, TargetScrollIndex, InDeltaTime, 10.0f);
+		
+		if (IconScrollContainer)
+		{
+			// Calculate the visual offset based on the fractional part of the scroll index
+			float Fraction = CurrentScrollIndex - (float)VisibleStartIndex;
+			float OffsetX = -Fraction * GetUnitWidth();
+			
+			IconScrollContainer->SetRenderTranslation(FVector2D(OffsetX, 0.0f));
+		}
+
+		// Keep cursor aligned during smooth scroll
+		SetCursorIndicatorPosition();
+	}
 }
 
 void UArmTimelineUMGWidget::NativeDestruct()
@@ -103,15 +139,9 @@ void UArmTimelineUMGWidget::SetCurrentCommand(int32 CommandIndex, float Progress
 	CurrentCommandIndex = FMath::Clamp(CommandIndex, -1, ArmProgram.Num() - 1);
 	CurrentCommandProgress = FMath::Clamp(Progress, 0.0f, 1.0f);
 	
-	// UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: SetCurrentCommand - Index %d, Progress %.2f"), 
-	// 	CurrentCommandIndex, CurrentCommandProgress);
-	
 	// Only update if the command index actually changed or progress changed significantly
-	static int32 LastCommandIndex = -1;
-	static float LastProgress = 0.0f;
-	
 	bool bCommandChanged = (CurrentCommandIndex != LastCommandIndex);
-	bool bProgressChanged = FMath::Abs(CurrentCommandProgress - LastProgress) > 0.1f; // Only update if progress changed by more than 10%
+	bool bProgressChanged = FMath::Abs(CurrentCommandProgress - LastProgress) > 0.05f; // More frequent progress updates (5%)
 	
 	if (bCommandChanged || bProgressChanged)
 	{
@@ -268,6 +298,19 @@ void UArmTimelineUMGWidget::UpdateWidgetContent()
 		// Icons exist and program is stable, just update them
 		UpdateCommandIcons();
 	}
+
+	// Update property input values if arm exists
+	if (ABasicArm* Arm = GetAssociatedArm())
+	{
+		if (ReachInput && !ReachInput->HasKeyboardFocus())
+		{
+			ReachInput->SetText(FText::AsNumber(Arm->StartingReach));
+		}
+		if (RotationInput && !RotationInput->HasKeyboardFocus())
+		{
+			RotationInput->SetText(FText::AsNumber(Arm->StartingRotation));
+		}
+	}
 	
 	// UE_LOG(LogTemp, Verbose, TEXT("ArmTimelineUMGWidget: UpdateWidgetContent - %d commands, current %d"), 
 	//	ArmProgram.Num(), CurrentCommandIndex);
@@ -346,28 +389,27 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 		UHorizontalBox* InnerHorizontalBox = NewObject<UHorizontalBox>(this);
 		if (InnerHorizontalBox)
 		{
+			
 			// Add the horizontal box to the border
 			CommandListBorder->AddChild(InnerHorizontalBox);
+			IconScrollContainer = InnerHorizontalBox;
 			
 			// Add the border to the command icons box
 			CommandIconsBox->AddChild(CommandListBorder);
 			
-			// Create icons for the displayed commands using sliding window around current command
-            int32 NumCommandsToShow = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
-            int32 StartIndex = 0;
+			// Update target scroll first to determine window
+			UpdateScrollTarget();
 			
-			// Show a window around the current command
-			if (CurrentCommandIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
-			{
-				// Center the window around the current command
-				StartIndex = FMath::Max(0, CurrentCommandIndex - MaxDisplayedCommands / 2);
-				StartIndex = FMath::Min(StartIndex, ArmProgram.Num() - MaxDisplayedCommands);
-			}
+			// Discrete start index for the sliding window
+			int32 StartIndex = FMath::FloorToInt(TargetScrollIndex);
 			
-            // Cache metrics for cursor math
-            CommandListLeftPadding = 8.0f; // border padding set above
-            VisibleStartIndex = StartIndex;
+			// Cache metrics for cursor math
+			CommandListLeftPadding = 8.0f; // border padding set above
+			VisibleStartIndex = StartIndex;
 
+			// Create icons for the displayed commands
+			int32 NumCommandsToShow = FMath::Min(ArmProgram.Num() - StartIndex, MaxDisplayedCommands);
+            
             for (int32 i = 0; i < NumCommandsToShow; ++i)
 			{
 				int32 CommandIndex = StartIndex + i;
@@ -430,17 +472,29 @@ void UArmTimelineUMGWidget::CreateCommandIcons()
 
 	// Create reset button beneath CommandIconsBox
 	CreateResetButton();
+
+	// Create property inputs beneath reset button
+	CreatePropertyInputs();
+
+	bIconsCreated = true;
 }
 
 void UArmTimelineUMGWidget::UpdateCommandIcons()
 {
-	// Calculate the sliding window start index around the current command
-    int32 StartIndex = 0;
-	if (CurrentCommandIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
+	// Update scrolling target based on cursor or execution
+	UpdateScrollTarget();
+	
+	// Discrete start index for the sliding window
+	int32 StartIndex = FMath::FloorToInt(TargetScrollIndex);
+	
+	// If the window shifted discretely, we might need to recreate icons 
+	// (or we can just update them if they already exist in the correct count)
+	if (StartIndex != VisibleStartIndex)
 	{
-		// Center the window around the current command
-		StartIndex = FMath::Max(0, CurrentCommandIndex - MaxDisplayedCommands / 2);
-		StartIndex = FMath::Min(StartIndex, ArmProgram.Num() - MaxDisplayedCommands);
+		// Force recreation if start index changed to ensure icons match instructions
+		bIconsCreated = false;
+		CreateCommandIcons();
+		return;
 	}
 	
     // Cache metrics for cursor math
@@ -458,7 +512,14 @@ void UArmTimelineUMGWidget::UpdateCommandIcons()
 				bool bIsCompleted = (CommandIndex < CurrentCommandIndex);
 				float Progress = (bIsCurrent) ? CurrentCommandProgress : (bIsCompleted ? 1.0f : 0.0f);
 				
-				UpdateCommandIcon(CommandIconWidgets[i], ArmProgram[CommandIndex].Cmd, CommandIndex, bIsCurrent, bIsCompleted, Progress);
+				// Handle the SizeBox wrapper if present
+				UWidget* TargetWidget = CommandIconWidgets[i];
+				if (USizeBox* SB = Cast<USizeBox>(TargetWidget))
+				{
+					TargetWidget = SB->GetContent();
+				}
+
+				UpdateCommandIcon(TargetWidget, ArmProgram[CommandIndex].Cmd, CommandIndex, bIsCurrent, bIsCompleted, Progress);
 			}
 		}
 	}
@@ -466,6 +527,15 @@ void UArmTimelineUMGWidget::UpdateCommandIcons()
 
 UWidget* UArmTimelineUMGWidget::CreateCommandIcon(EArmCmd Command, int32 Index)
 {
+	// Create a SizeBox to keep the layout slot fixed size and prevent "bouncing"
+	USizeBox* IconContainerBox = NewObject<USizeBox>(this);
+	if (!IconContainerBox) return nullptr;
+
+	// Set a fixed size for the slot that can accommodate the pulsed/expanded icon
+	float MaxExpectedSize = IconSize * 1.5f;
+	IconContainerBox->SetWidthOverride(MaxExpectedSize);
+	IconContainerBox->SetHeightOverride(MaxExpectedSize);
+
 	// Create a border widget to wrap the icon
 	UBorder* BorderWidget = NewObject<UBorder>(this);
 	if (!BorderWidget)
@@ -504,15 +574,16 @@ UWidget* UArmTimelineUMGWidget::CreateCommandIcon(EArmCmd Command, int32 Index)
 	// Add the image widget to the border
 	BorderWidget->AddChild(ImageWidget);
 	
-	// Set initial state
+	// Set border initial state
 	bool bIsCurrent = (Index == CurrentCommandIndex);
 	bool bIsCompleted = (Index < CurrentCommandIndex);
 	float Progress = (bIsCurrent) ? CurrentCommandProgress : (bIsCompleted ? 1.0f : 0.0f);
 	
-	// Call Blueprint implementation or use C++ fallback
 	UpdateCommandIcon(BorderWidget, Command, Index, bIsCurrent, bIsCompleted, Progress);
 	
-	return BorderWidget;
+	// Add the border to the size box and return the box
+	IconContainerBox->AddChild(BorderWidget);
+	return IconContainerBox;
 }
 
 void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget* IconWidget, EArmCmd Command, int32 Index, bool bIsCurrent, bool bIsCompleted, float Progress)
@@ -758,8 +829,63 @@ void UArmTimelineUMGWidget::UpdateCursorIndicator()
 	// Clamp cursor position to valid range
 	CursorPosition = FMath::Clamp(CursorPosition, 0, ArmProgram.Num());
 	
-	// Notify Blueprint to update the cursor visual
+	// Update scroll target to follow cursor
+	UpdateScrollTarget();
+
+	// Apply visual position
+	SetCursorIndicatorPosition();
+
+	// Notify Blueprint to update the cursor visual (if needed for additional effects)
 	OnCursorPositionChanged(CursorPosition);
+}
+
+void UArmTimelineUMGWidget::SetCursorIndicatorPosition()
+{
+	if (!CursorIndicator) return;
+
+	// Position index relative to the CURRENTLY instantiated sliding window
+	// If StartIndex changed, icons will be recreated, but if we are just scrolling fractional,
+	// we use VisibleStartIndex as our anchor.
+	float RelativePos = (float)CursorPosition - (float)VisibleStartIndex;
+
+	// Base X position: Border Padding + (RelativeIndex * UnitWidth) - HalfSpacing
+	// We subtract half spacing because the cursor sits BETWEEN icons
+	float BaseX = CommandListLeftPadding + RelativePos * GetUnitWidth() - (IconSpacing * 0.5f);
+
+	// Apply smooth scroll offset
+	float Fraction = CurrentScrollIndex - (float)VisibleStartIndex;
+	float ScrollShift = -Fraction * GetUnitWidth();
+
+	CursorIndicator->SetRenderTranslation(FVector2D(BaseX + ScrollShift, 0.0f));
+	
+	// Show cursor only in editing mode
+	CursorIndicator->SetVisibility(bIsEditingMode ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+}
+
+void UArmTimelineUMGWidget::UpdateScrollTarget()
+{
+	int32 FocusIndex = -1;
+	
+	// Prioritize CursorPosition if in editing mode
+	if (bIsEditingMode)
+	{
+		FocusIndex = CursorPosition;
+	}
+	else if (CurrentCommandIndex >= 0)
+	{
+		FocusIndex = CurrentCommandIndex;
+	}
+
+	if (FocusIndex >= 0 && ArmProgram.Num() > MaxDisplayedCommands)
+	{
+		// Center the FocusIndex in the display window
+		float NewTargetScroll = (float)FocusIndex - (float)MaxDisplayedCommands / 2.0f;
+		TargetScrollIndex = FMath::Clamp(NewTargetScroll, 0.0f, (float)ArmProgram.Num() - (float)MaxDisplayedCommands);
+	}
+	else
+	{
+		TargetScrollIndex = 0.0f;
+	}
 }
 
 ABasicArm* UArmTimelineUMGWidget::GetAssociatedArm() const
@@ -962,7 +1088,7 @@ void UArmTimelineUMGWidget::CreateResetButton()
 		
 		// Set font size
 		FSlateFontInfo FontInfo = ButtonText->GetFont();
-		FontInfo.Size = 14;
+		FontInfo.Size = 18;
 		ButtonText->SetFont(FontInfo);
 		
 		ResetButton->AddChild(ButtonText);
@@ -1048,3 +1174,127 @@ void UArmTimelineUMGWidget::SyncProgramToArm()
 	
 	UE_LOG(LogTemp, Log, TEXT("SyncProgramToArm: After SetProgram, arm Program has %d commands"), AssociatedArm->Program.Num());
 }
+
+void UArmTimelineUMGWidget::CreatePropertyInputs()
+{
+	if (!CommandIconsBox) return;
+
+	// Find the VerticalBox created by CreateResetButton
+	UVerticalBox* ParentVerticalBox = nullptr;
+	UWidget* ParentWidget = CommandIconsBox->GetParent();
+	while (ParentWidget)
+	{
+		ParentVerticalBox = Cast<UVerticalBox>(ParentWidget);
+		if (ParentVerticalBox) break;
+		ParentWidget = ParentWidget->GetParent();
+	}
+
+	if (!ParentVerticalBox) return;
+
+	// Create a horizontal box for the inputs
+	UHorizontalBox* InputHBox = NewObject<UHorizontalBox>(this);
+	if (!InputHBox) return;
+
+	// Common label font
+	FSlateFontInfo LabelFont;
+	const ISlateStyle& CoreStyle = FCoreStyle::Get();
+	const FTextBlockStyle& DefaultStyle = CoreStyle.GetWidgetStyle<FTextBlockStyle>("NormalText");
+	LabelFont = DefaultStyle.Font;
+	LabelFont.Size = 16;
+
+	// Reach Input
+	UVerticalBox* ReachVBox = NewObject<UVerticalBox>(this);
+	UTextBlock* ReachLabel = NewObject<UTextBlock>(this);
+	ReachLabel->SetText(FText::FromString(TEXT("Start Reach")));
+	ReachLabel->SetFont(LabelFont);
+	ReachVBox->AddChildToVerticalBox(ReachLabel);
+
+	ReachInput = NewObject<UEditableTextBox>(this);
+	ReachInput->SetToolTipText(FText::FromString(TEXT("Starting Reach (1-6)")));
+	ReachInput->OnTextCommitted.AddDynamic(this, &UArmTimelineUMGWidget::OnReachCommitted);
+	
+	// Constrain width of input boxes
+	ReachInput->SetMinimumDesiredWidth(60.0f);
+	
+	UVerticalBoxSlot* ReachInputSlot = ReachVBox->AddChildToVerticalBox(ReachInput);
+	if (ReachInputSlot)
+	{
+		ReachInputSlot->SetPadding(FMargin(0, 2, 0, 0));
+		ReachInputSlot->SetHorizontalAlignment(HAlign_Center);
+	}
+	
+	UHorizontalBoxSlot* ReachHSlot = InputHBox->AddChildToHorizontalBox(ReachVBox);
+	if (ReachHSlot)
+	{
+		ReachHSlot->SetPadding(FMargin(10, 0, 10, 0));
+		ReachHSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
+	}
+
+	// Rotation Input
+	UVerticalBox* RotationVBox = NewObject<UVerticalBox>(this);
+	UTextBlock* RotationLabel = NewObject<UTextBlock>(this);
+	RotationLabel->SetText(FText::FromString(TEXT("Start Rot")));
+	RotationLabel->SetFont(LabelFont);
+	RotationVBox->AddChildToVerticalBox(RotationLabel);
+
+	RotationInput = NewObject<UEditableTextBox>(this);
+	RotationInput->SetToolTipText(FText::FromString(TEXT("Starting Rotation (0-5)")));
+	RotationInput->OnTextCommitted.AddDynamic(this, &UArmTimelineUMGWidget::OnRotationCommitted);
+	
+	// Constrain width of input boxes
+	RotationInput->SetMinimumDesiredWidth(60.0f);
+	
+	UVerticalBoxSlot* RotInputSlot = RotationVBox->AddChildToVerticalBox(RotationInput);
+	if (RotInputSlot)
+	{
+		RotInputSlot->SetPadding(FMargin(0, 2, 0, 0));
+		RotInputSlot->SetHorizontalAlignment(HAlign_Center);
+	}
+
+	UHorizontalBoxSlot* RotationHSlot = InputHBox->AddChildToHorizontalBox(RotationVBox);
+	if (RotationHSlot)
+	{
+		RotationHSlot->SetPadding(FMargin(10, 0, 10, 0));
+		RotationHSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
+	}
+
+	// Add the horizontal box to the VerticalBox
+	UVerticalBoxSlot* InputSlot = ParentVerticalBox->AddChildToVerticalBox(InputHBox);
+	if (InputSlot)
+	{
+		InputSlot->SetPadding(FMargin(12.0f, 12.0f, 12.0f, 16.0f));
+		InputSlot->SetHorizontalAlignment(HAlign_Center);
+	}
+
+	// Initialize values
+	if (ABasicArm* Arm = GetAssociatedArm())
+	{
+		ReachInput->SetText(FText::AsNumber(Arm->StartingReach));
+		RotationInput->SetText(FText::AsNumber(Arm->StartingRotation));
+	}
+}
+
+void UArmTimelineUMGWidget::OnReachCommitted(const FText& Text, ETextCommit::Type CommitMethod)
+{
+	if (CommitMethod == ETextCommit::OnEnter || CommitMethod == ETextCommit::OnUserMovedFocus)
+	{
+		int32 NewReach = FCString::Atoi(*Text.ToString());
+		if (ABasicArm* Arm = GetAssociatedArm())
+		{
+			Arm->SetStartingReach(NewReach);
+		}
+	}
+}
+
+void UArmTimelineUMGWidget::OnRotationCommitted(const FText& Text, ETextCommit::Type CommitMethod)
+{
+	if (CommitMethod == ETextCommit::OnEnter || CommitMethod == ETextCommit::OnUserMovedFocus)
+	{
+		int32 NewRotation = FCString::Atoi(*Text.ToString());
+		if (ABasicArm* Arm = GetAssociatedArm())
+		{
+			Arm->SetStartingRotation(NewRotation);
+		}
+	}
+}
+

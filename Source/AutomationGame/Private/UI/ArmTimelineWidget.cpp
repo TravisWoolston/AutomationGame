@@ -29,9 +29,15 @@ UArmTimelineWidget::UArmTimelineWidget()
 	// Start hidden by default - visibility will be controlled by GameManager
 	SetVisibility(false);
 	
-	// Disable collision for the widget component to prevent blocking traces/clicks
-	SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	SetCollisionProfileName(TEXT("NoCollision"));
+	// Enable interaction for world-space widgets
+	bReceiveHardwareInput = true;
+	SetWindowFocusable(true);
+
+	// Precisely configure collision to catch mouse traces while avoiding physics interference
+	SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	SetCollisionResponseToAllChannels(ECR_Ignore);
+	SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	SetCollisionResponseToChannel(ECC_Camera, ECR_Block);
 
 	// Initialize default command textures (will be set by GameManager)
 	CommandTextures.Empty();

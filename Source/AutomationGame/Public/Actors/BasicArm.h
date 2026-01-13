@@ -281,6 +281,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Program")
 	void RebuildTapeFromProgram();          // runtime/editor safe manual push
 
+	/** Update StartingReach and sync to sim/visuals */
+	UFUNCTION(BlueprintCallable, Category = "Program")
+	void SetStartingReach(int32 NewReach);
+
+	/** Update StartingRotation and sync to sim/visuals */
+	UFUNCTION(BlueprintCallable, Category = "Program")
+	void SetStartingRotation(int32 NewRotation);
+
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override;
 #endif

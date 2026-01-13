@@ -25,6 +25,7 @@ public:
 
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 
 	/** Set the arm program to display */
 	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
@@ -251,6 +252,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	void SetAssociatedArm(class ABasicArm* Arm);
 
+	/** Update target scroll index based on current execution or cursor position */
+	void UpdateScrollTarget();
+
 	/** Cursor position in the command list (where commands will be inserted) */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Timeline Editor")
 	int32 CursorPosition = 0;
@@ -283,9 +287,25 @@ public:
 	UPROPERTY()
 	class UButton* ResetButton = nullptr;
 
+	/** Input for starting reach distance */
+	UPROPERTY()
+	class UEditableTextBox* ReachInput = nullptr;
+
+	/** Input for starting rotation */
+	UPROPERTY()
+	class UEditableTextBox* RotationInput = nullptr;
+
 	/** Trigger an immediate reset command for the associated arm */
 	UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
 	void TriggerImmediateReset();
+
+	/** Handle starting reach change */
+	UFUNCTION()
+	void OnReachCommitted(const FText& Text, ETextCommit::Type CommitMethod);
+
+	/** Handle starting rotation change */
+	UFUNCTION()
+	void OnRotationCommitted(const FText& Text, ETextCommit::Type CommitMethod);
 
 private:
 	/** Array of command icon widgets */
@@ -316,14 +336,32 @@ private:
 	/** Update command icon widgets */
 	void UpdateCommandIcons();
 
-	/** Update the cursor indicator position */
+	/** Update the cursor indicator position (including smooth scrolling offset) */
 	void UpdateCursorIndicator();
+
+	/** Update the cursor indicator position */
+	void SetCursorIndicatorPosition();
 
 	/** Create the reset button programmatically */
 	void CreateResetButton();
+
+	/** Create property inputs (reach/rotation) programmatically */
+	void CreatePropertyInputs();
 
 private:
 	/** Pointer to the arm this timeline is associated with */
 	UPROPERTY()
 	class ABasicArm* AssociatedArm = nullptr;
+
+	/** Visual scroll interpolation */
+	float CurrentScrollIndex = 0.0f;
+	float TargetScrollIndex = 0.0f;
+
+	/** Last seen command index/progress for throttling updates */
+	int32 LastCommandIndex = -1;
+	float LastProgress = 0.0f;
+
+	/** The container that holds the icons and gets shifted for smooth scrolling */
+	UPROPERTY()
+	UWidget* IconScrollContainer = nullptr;
 };
