@@ -147,6 +147,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Place") void RotateCCW();
 	UFUNCTION(BlueprintCallable, Category = "Place") void SetPlaceKind(EPlaceKind NewKind);
 	
+	/** Cancel any active multi-step placement and reset state */
+	UFUNCTION(BlueprintCallable, Category = "Place") void CancelPlacement();
+	
 	// Type cycling (works for both Input and Output based on current placement mode)
 	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CycleNextType();
 	UFUNCTION(BlueprintCallable, Category = "Place|Type") void CyclePreviousType();
@@ -175,6 +178,7 @@ public:
 	
 	/** Get the current cluster template ID for ClusterOutput placement */
 	UFUNCTION(BlueprintPure, Category = "Place|ClusterOutput") uint8 GetCurrentClusterTemplateId() const;
+	
 	
 	FVector HexToWorld(const FHex& H) const;
 protected:

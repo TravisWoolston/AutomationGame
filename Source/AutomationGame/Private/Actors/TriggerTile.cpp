@@ -417,10 +417,10 @@ void ATriggerTile::SetSignal(bool bNewSignal)
 				Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
 			}
 			
-			UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) signal changed to %s - owner %s at (%d,%d) combined state updated"),
-				Q, R, bCurrentSignal ? TEXT("POSITIVE") : TEXT("NEGATIVE"),
-				OwnerType == ETriggerTileOwnerType::Belt ? TEXT("BELT") : TEXT("ARM"),
-				OwnerQ, OwnerR);
+			// UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) signal changed to %s - owner %s at (%d,%d) combined state updated"),
+			// 	Q, R, bCurrentSignal ? TEXT("POSITIVE") : TEXT("NEGATIVE"),
+			// 	OwnerType == ETriggerTileOwnerType::Belt ? TEXT("BELT") : TEXT("ARM"),
+			// 	OwnerQ, OwnerR);
 		}
 
 		// Update visuals to reflect signal state

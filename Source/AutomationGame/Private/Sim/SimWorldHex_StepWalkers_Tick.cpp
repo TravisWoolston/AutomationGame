@@ -113,13 +113,13 @@ void USimWorldHex::ProcessWalkerTick(int32 WalkerIndex, const TSet<FHex>& HeldOr
 		if (W.Requests.Num() > 0 && !bAnyFootHolding)
 		{
 			FHex RequestTarget = W.Requests[0].TargetHex;
-			UE_LOG(LogTemp, Warning, TEXT("Walker %d: bProcessingRequest=true, Requests.Num()=%d, bAnyFootHolding=%d, RequestTarget=(%d,%d)"), 
-				WalkerIndex, W.Requests.Num(), bAnyFootHolding ? 1 : 0, RequestTarget.Q, RequestTarget.R);
+			// UE_LOG(LogTemp, Warning, TEXT("Walker %d: bProcessingRequest=true, Requests.Num()=%d, bAnyFootHolding=%d, RequestTarget=(%d,%d)"), 
+			// 	WalkerIndex, W.Requests.Num(), bAnyFootHolding ? 1 : 0, RequestTarget.Q, RequestTarget.R);
 			
 			if (ARequestBeacon* const* BeaconPtr = BeaconCache.Find(RequestTarget))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("Walker %d: Beacon found, Role=%d, State=%d"), 
-					WalkerIndex, (int32)(*BeaconPtr)->BeaconRole, (int32)(*BeaconPtr)->BeaconState);
+				// UE_LOG(LogTemp, Warning, TEXT("Walker %d: Beacon found, Role=%d, State=%d"), 
+				// 	WalkerIndex, (int32)(*BeaconPtr)->BeaconRole, (int32)(*BeaconPtr)->BeaconState);
 				
 				if ((*BeaconPtr)->BeaconRole == EBeaconRole::PickUp && (*BeaconPtr)->BeaconState == EBeaconState::InProgress)
 				{

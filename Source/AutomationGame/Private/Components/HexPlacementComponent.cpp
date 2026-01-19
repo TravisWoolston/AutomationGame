@@ -1454,6 +1454,25 @@ UMaterialInterface* UHexPlacementComponent::GetActualOrbMaterial() const
 bool UHexPlacementComponent::CanPlaceAt(const FHex& Hex) const
 {
 	if (!Sim) return true;
+
+	// Discovery Mode radius check
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AGameManager> It(World); It; ++It)
+		{
+			AGameManager* GM = *It;
+			if (GM && GM->IsDiscoveryMode())
+			{
+				int32 Dist = (FMath::Abs(Hex.Q) + FMath::Abs(Hex.Q + Hex.R) + FMath::Abs(Hex.R)) / 2;
+				if (Dist > GM->UnlockedRadius)
+				{
+					return false;
+				}
+			}
+			break;
+		}
+	}
+
 	return true;
 }
 
@@ -1945,6 +1964,7 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime)
 						? FLinearColor(1.0f, 0.8f, 0.f, 0.6f)   // Yellow-ish for placement
 						: FLinearColor(0.f, 0.8f, 1.0f, 0.6f);  // Cyan for owner selection
 					PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
+
 				}
 			}
 			else if (PreviewMID)
@@ -2085,4 +2105,15 @@ void UHexPlacementComponent::UpdateArmPreviewBoneRotations(float Yaw)
 	}
 
 	// Base1 remains stationary (no rotation applied)
+}
+
+void UHexPlacementComponent::CancelPlacement()
+{
+	// Reset RequestBeacon state
+	BeaconPlacementStep = 0;
+	PendingPickupBeacon = nullptr;
+
+	// Reset TriggerTile state
+	TriggerTilePlacementStep = 0;
+	PendingTriggerTile = nullptr;
 }

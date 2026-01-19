@@ -287,6 +287,10 @@ public:
 	UPROPERTY(Transient)
 	TSet<int32> ItemsRejectedByClusterOutput;
 
+	/** Per-tile orb types for Discovery tiles (since FTile only stores TemplateId in Arg) */
+	UPROPERTY(Transient)
+	TMap<FHex, uint8> DiscoveryTileOrbTypes;
+
 private:
 	/** Helper function to check if an item matches an output's expected orb type */
 	bool DoesItemMatchOutputType(const FItem& Item, const FTile& OutputTile) const;

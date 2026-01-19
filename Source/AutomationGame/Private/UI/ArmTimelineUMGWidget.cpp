@@ -1214,9 +1214,11 @@ void UArmTimelineUMGWidget::CreatePropertyInputs()
 	ReachInput->OnTextCommitted.AddDynamic(this, &UArmTimelineUMGWidget::OnReachCommitted);
 	
 	// Constrain width of input boxes
-	ReachInput->SetMinimumDesiredWidth(60.0f);
+	USizeBox* ReachSizeBox = NewObject<USizeBox>(this);
+	ReachSizeBox->SetWidthOverride(60.0f);
+	ReachSizeBox->SetContent(ReachInput);
 	
-	UVerticalBoxSlot* ReachInputSlot = ReachVBox->AddChildToVerticalBox(ReachInput);
+	UVerticalBoxSlot* ReachInputSlot = ReachVBox->AddChildToVerticalBox(ReachSizeBox);
 	if (ReachInputSlot)
 	{
 		ReachInputSlot->SetPadding(FMargin(0, 2, 0, 0));
@@ -1242,9 +1244,11 @@ void UArmTimelineUMGWidget::CreatePropertyInputs()
 	RotationInput->OnTextCommitted.AddDynamic(this, &UArmTimelineUMGWidget::OnRotationCommitted);
 	
 	// Constrain width of input boxes
-	RotationInput->SetMinimumDesiredWidth(60.0f);
+	USizeBox* RotationSizeBox = NewObject<USizeBox>(this);
+	RotationSizeBox->SetWidthOverride(60.0f);
+	RotationSizeBox->SetContent(RotationInput);
 	
-	UVerticalBoxSlot* RotInputSlot = RotationVBox->AddChildToVerticalBox(RotationInput);
+	UVerticalBoxSlot* RotInputSlot = RotationVBox->AddChildToVerticalBox(RotationSizeBox);
 	if (RotInputSlot)
 	{
 		RotInputSlot->SetPadding(FMargin(0, 2, 0, 0));

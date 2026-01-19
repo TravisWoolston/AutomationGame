@@ -109,8 +109,7 @@ struct FScenarioSpec
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) FName Name = "Scenario";
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 8)) float TileSizeUU = 120.f;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = 1)) int32 GridRadius = 8;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bIsDiscovery = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FPlacedTileSpec> Tiles;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FArmSpawnSpec> Arms;
@@ -141,6 +140,32 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Scenarios") TArray<FScenarioSpec> Scenarios;
 	UPROPERTY(EditAnywhere, Category = "Scenarios", meta = (ClampMin = 0)) int32 ActiveScenarioIndex = 0;
+
+	// --- Discovery Mode Settings ---
+	UPROPERTY(EditAnywhere, Category = "Discovery Mode")
+	int32 StartingGridRadius = 40;
+
+	UPROPERTY(EditAnywhere, Category = "Discovery Mode")
+	int32 StartingDifficulty = 4;
+
+	UPROPERTY(EditAnywhere, Category = "Discovery Mode")
+	int32 DifficultyScale = 1;
+
+	UPROPERTY(EditAnywhere, Category = "Discovery Mode")
+	int32 GeneratedRadius = 400;
+
+	UPROPERTY(EditAnywhere, Category = "Discovery Mode")
+	int32 MinimumUnlockRadiusPerOutput = 10;
+
+	UPROPERTY(EditAnywhere, Category = "Discovery Mode")
+	float GeneratedInputPerOutputRatio = 0.25f;
+
+	/** Controls how much spacing increases with distance from center. Higher = more spread out at edges. */
+	UPROPERTY(EditAnywhere, Category = "Discovery Mode", meta = (ClampMin = "0.1", ClampMax = "5.0"))
+	float GeneratedInputOutputSpacingScale = 1.0f;
+
+	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Discovery Mode")
+	void GenerateDiscoveryScenario();
 
 	UFUNCTION(CallInEditor, BlueprintCallable, Category = "Scenarios")
 	void BuildActiveScenario();
@@ -214,7 +239,7 @@ private:
 	void ApplyScenario(const FScenarioSpec& S);
 	void RefreshSpawnedArmsFromScenario(int32 ScenarioIndex);
 	void MarkActiveScenarioDirty();
-	void ResetSimForActiveScenario();          // NEW: clears sim before applying scenario
+	void ResetSimForActiveScenario(bool bSyncFromWorld = true);          // NEW: clears sim before applying scenario
 	void DelayedScenarioApplication();         // NEW: applies scenarios after GameManager initialization
 
 	void SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Scenario); // filtered version

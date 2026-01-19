@@ -15,7 +15,9 @@ enum class ETileKind : uint8
     OutputBond,  // NEW: bond between output tiles - requires bonded orbs
     ClusterInput,  // NEW: spawns pre-defined clusters based on template
     ClusterOutput, // NEW: accepts specific cluster patterns
-    ClusterSend    // NEW: sends cluster to the other grid level
+    ClusterSend,    // NEW: sends cluster to the other grid level
+    DiscoveryClusterInput,  // NEW: Spawns clusters for discovery mode (no storage required)
+    DiscoveryClusterOutput  // NEW: Unlocks grid radius and removes itself once complete
 };
 
 USTRUCT(BlueprintType)

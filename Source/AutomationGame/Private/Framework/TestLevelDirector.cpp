@@ -1,16 +1,17 @@
 #include "Framework/TestLevelDirector.h"
-#include "Framework/GameTickManager.h"
-#include "Framework/GameManager.h"
-#include "Actors/OrbSimDriver.h"
-#include "Actors/HexFactoryActor.h"
-#include "Actors/RequestBeacon.h"
-#include "Actors/TriggerTile.h"
-#include "Sim/SimWorldHex.h"
-#include "Geometry/GoldbergGrid.h"
-#include "Engine/World.h"
-#include "EngineUtils.h"
 #include "AGLogChannels.h"
 #include "Actors/BasicArm.h"
+#include "Actors/HexFactoryActor.h"
+#include "Actors/OrbSimDriver.h"
+#include "Actors/RequestBeacon.h"
+#include "Actors/TriggerTile.h"
+#include "DrawDebugHelpers.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "Framework/GameManager.h"
+#include "Framework/GameTickManager.h"
+#include "Geometry/GoldbergGrid.h"
+#include "Sim/SimWorldHex.h"
 
 #if WITH_EDITOR
 #include "Editor.h"
@@ -18,1576 +19,1988 @@
 #include "Editor/UnrealEdEngine.h"
 #endif
 
-// Destroy an actor immediately in editor/PIE, otherwise defer to runtime Destroy().
-static void DestroyActorNow(AActor* Actor)
-{
-	if (!Actor) return;
+// Destroy an actor immediately in editor/PIE, otherwise defer to runtime
+// Destroy().
+static void DestroyActorNow(AActor *Actor) {
+  if (!Actor)
+    return;
 #if WITH_EDITOR
-	if (UWorld* W = Actor->GetWorld())
-	{
-		if (W->IsEditorWorld() || W->IsPlayInEditor())
-		{
-			W->EditorDestroyActor(Actor, /*bShouldModifyLevel*/true);
-			return;
-		}
-	}
+  if (UWorld *W = Actor->GetWorld()) {
+    if (W->IsEditorWorld() || W->IsPlayInEditor()) {
+      W->EditorDestroyActor(Actor, /*bShouldModifyLevel*/ true);
+      return;
+    }
+  }
 #endif
-	Actor->Destroy();
+  Actor->Destroy();
 }
 
-static TArray<FOp> ConvertProgramToOps_TLD(const TArray<FArmInstr>& Program)
-{
-	TArray<FOp> Out;
-	for (const FArmInstr& I : Program)
-	{
-		switch (I.Cmd)
-		{
-		case EArmCmd::NoOp:      Out.Add({ ECmd::Wait, 1 }); break;
-		case EArmCmd::Grab:      Out.Add({ ECmd::Grab, 0 }); break;
-		case EArmCmd::Drop:      Out.Add({ ECmd::Drop, 0 }); break;
-		case EArmCmd::RotateCW:  Out.Add({ ECmd::RotateR, (uint8)FMath::Max(1, I.Arg) }); break;
-		case EArmCmd::RotateCCW: Out.Add({ ECmd::RotateL, (uint8)FMath::Max(1, I.Arg) }); break;
-		case EArmCmd::Wait:      Out.Add({ ECmd::Wait,    (uint8)FMath::Clamp(I.Arg, 0, 255) }); break;
-		case EArmCmd::Reset:     Out.Add({ ECmd::Reset, 0 }); break;
-		case EArmCmd::Extend:    Out.Add({ ECmd::Extend,  (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
-		case EArmCmd::Retract:   Out.Add({ ECmd::Retract, (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255) }); break;   // NEW
-		default:                 Out.Add({ ECmd::Wait, 1 }); break;
-		}
-	}
-	return Out;
+static TArray<FOp> ConvertProgramToOps_TLD(const TArray<FArmInstr> &Program) {
+  TArray<FOp> Out;
+  for (const FArmInstr &I : Program) {
+    switch (I.Cmd) {
+    case EArmCmd::NoOp:
+      Out.Add({ECmd::Wait, 1});
+      break;
+    case EArmCmd::Grab:
+      Out.Add({ECmd::Grab, 0});
+      break;
+    case EArmCmd::Drop:
+      Out.Add({ECmd::Drop, 0});
+      break;
+    case EArmCmd::RotateCW:
+      Out.Add({ECmd::RotateR, (uint8)FMath::Max(1, I.Arg)});
+      break;
+    case EArmCmd::RotateCCW:
+      Out.Add({ECmd::RotateL, (uint8)FMath::Max(1, I.Arg)});
+      break;
+    case EArmCmd::Wait:
+      Out.Add({ECmd::Wait, (uint8)FMath::Clamp(I.Arg, 0, 255)});
+      break;
+    case EArmCmd::Reset:
+      Out.Add({ECmd::Reset, 0});
+      break;
+    case EArmCmd::Extend:
+      Out.Add(
+          {ECmd::Extend, (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255)});
+      break; // NEW
+    case EArmCmd::Retract:
+      Out.Add(
+          {ECmd::Retract, (uint8)FMath::Clamp(I.Arg == 0 ? 1 : I.Arg, 0, 255)});
+      break; // NEW
+    default:
+      Out.Add({ECmd::Wait, 1});
+      break;
+    }
+  }
+  return Out;
 }
 
-ATestLevelDirector::ATestLevelDirector()
-{
-	PrimaryActorTick.bCanEverTick = false;
+ATestLevelDirector::ATestLevelDirector() {
+  PrimaryActorTick.bCanEverTick = false;
 #if WITH_EDITOR
-	if (GIsEditor)
-	{
-		FEditorDelegates::PreBeginPIE.AddUObject(this, &ATestLevelDirector::HandlePreBeginPIE);
-		FEditorDelegates::EndPIE.AddUObject(this, &ATestLevelDirector::HandleEndPIE);
-	}
+  if (GIsEditor) {
+    FEditorDelegates::PreBeginPIE.AddUObject(
+        this, &ATestLevelDirector::HandlePreBeginPIE);
+    FEditorDelegates::EndPIE.AddUObject(this,
+                                        &ATestLevelDirector::HandleEndPIE);
+  }
 #endif
 }
 
-void ATestLevelDirector::BeginDestroy()
-{
-	Super::BeginDestroy();
+void ATestLevelDirector::BeginDestroy() {
+  Super::BeginDestroy();
 #if WITH_EDITOR
-	if (GIsEditor)
-	{
-		FEditorDelegates::PreBeginPIE.RemoveAll(this);
-		FEditorDelegates::EndPIE.RemoveAll(this);
-	}
+  if (GIsEditor) {
+    FEditorDelegates::PreBeginPIE.RemoveAll(this);
+    FEditorDelegates::EndPIE.RemoveAll(this);
+  }
 #endif
 }
 
-void ATestLevelDirector::BeginPlay()
-{
-	Super::BeginPlay();
-	AutoFindOrSpawn();
+void ATestLevelDirector::BeginPlay() {
+  Super::BeginPlay();
+  AutoFindOrSpawn();
 
-	// Wait one frame to ensure GameManager has completed its initialization and synced parameters
-	GetWorld()->GetTimerManager().SetTimerForNextTick(this, &ATestLevelDirector::DelayedScenarioApplication);
+  // Wait one frame to ensure GameManager has completed its initialization and
+  // synced parameters
+  GetWorld()->GetTimerManager().SetTimerForNextTick(
+      this, &ATestLevelDirector::DelayedScenarioApplication);
 }
 
-void ATestLevelDirector::DelayedScenarioApplication()
-{
-	if (Scenarios.IsValidIndex(ActiveScenarioIndex))
-	{
-		ApplyScenario(Scenarios[ActiveScenarioIndex]);
-	}
-	if (Driver && Driver->GetSim())
-	{
-		Driver->GetSim()->StepSim();
-	}
+void ATestLevelDirector::DelayedScenarioApplication() {
+  if (Scenarios.IsValidIndex(ActiveScenarioIndex)) {
+    ApplyScenario(Scenarios[ActiveScenarioIndex]);
+  }
+  if (Driver && Driver->GetSim()) {
+    Driver->GetSim()->StepSim();
+  }
 
-	// Force any HexFactoryActor instances to rebuild their visuals
-	if (UWorld* W = GetWorld())
-	{
-		for (TActorIterator<AHexFactoryActor> It(W); It; ++It)
-		{
-			AHexFactoryActor* Factory = *It;
-			if (Factory)
-			{
-				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Forcing HexFactoryActor rebuild"));
-				Factory->Rebuild();
-			}
-		}
+  // Force any HexFactoryActor instances to rebuild their visuals
+  if (UWorld *W = GetWorld()) {
+    for (TActorIterator<AHexFactoryActor> It(W); It; ++It) {
+      AHexFactoryActor *Factory = *It;
+      if (Factory) {
+        UE_LOG(LogTemp, Log,
+               TEXT("TestLevelDirector: Forcing HexFactoryActor rebuild"));
+        Factory->Rebuild();
+      }
+    }
 
-		// Force GameManager to rebuild grid to reflect scenario tiles
-		for (TActorIterator<AGameManager> It(W); It; ++It)
-		{
-			AGameManager* GameManager = *It;
-			if (GameManager)
-			{
-				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Forcing GameManager rebuild"));
-				GameManager->Rebuild();
-				break;
-			}
-		}
-	}
+    // Force GameManager to rebuild grid to reflect scenario tiles
+    for (TActorIterator<AGameManager> It(W); It; ++It) {
+      AGameManager *GameManager = *It;
+      if (GameManager) {
+        UE_LOG(LogTemp, Log,
+               TEXT("TestLevelDirector: Forcing GameManager rebuild"));
+        GameManager->Rebuild();
+        break;
+      }
+    }
+  }
 }
 
-void ATestLevelDirector::AutoFindOrSpawn()
-{
-	UWorld* W = GetWorld();
-	if (!W) return;
+void ATestLevelDirector::AutoFindOrSpawn() {
+  UWorld *W = GetWorld();
+  if (!W)
+    return;
 
-	if (!TickManager)
-	{
-		for (TActorIterator<AGameTickManager> It(W); It; ++It) { TickManager = *It; break; }
-		if (!TickManager && TickManagerClass)
-			TickManager = W->SpawnActor<AGameTickManager>(TickManagerClass, FTransform::Identity);
-	}
+  if (!TickManager) {
+    for (TActorIterator<AGameTickManager> It(W); It; ++It) {
+      TickManager = *It;
+      break;
+    }
+    if (!TickManager && TickManagerClass)
+      TickManager = W->SpawnActor<AGameTickManager>(TickManagerClass,
+                                                    FTransform::Identity);
+  }
 
-	if (!Driver)
-	{
-		for (TActorIterator<AOrbSimDriver> It(W); It; ++It) { Driver = *It; break; }
-		if (!Driver && DriverClass)
-			Driver = W->SpawnActor<AOrbSimDriver>(DriverClass, FTransform::Identity);
-	}
+  if (!Driver) {
+    for (TActorIterator<AOrbSimDriver> It(W); It; ++It) {
+      Driver = *It;
+      break;
+    }
+    if (!Driver && DriverClass)
+      Driver = W->SpawnActor<AOrbSimDriver>(DriverClass, FTransform::Identity);
+  }
 }
 
-void ATestLevelDirector::BuildActiveScenario()
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	ResetSimForActiveScenario();
-	ApplyScenario(Scenarios[ActiveScenarioIndex]);
+void ATestLevelDirector::BuildActiveScenario() {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+
+  const FScenarioSpec &S = Scenarios[ActiveScenarioIndex];
+  // Programmatic scenarios (like Discovery) shouldn't sync from world because
+  // they ARE the truth
+  bool bSyncFromWorld = !S.bIsDiscovery;
+
+  ResetSimForActiveScenario(bSyncFromWorld);
+  ApplyScenario(S);
 }
 
-void ATestLevelDirector::ResetSimForActiveScenario()
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
+void ATestLevelDirector::ResetSimForActiveScenario(bool bSyncFromWorld) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
 
-	// FIRST: Save current simulation state (including manual arms/tiles) to the active scenario
-	// This preserves any manually placed content as part of the scenario
-	if (Driver && Driver->GetSim() && Scenarios.IsValidIndex(ActiveScenarioIndex))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Saving current simulation state to scenario %d before reset"), ActiveScenarioIndex);
+  // FIRST: Save current simulation state (including manual arms/tiles) to the
+  // active scenario This preserves any manually placed content as part of the
+  // scenario
+  if (bSyncFromWorld && Driver && Driver->GetSim() &&
+      Scenarios.IsValidIndex(ActiveScenarioIndex)) {
+    UE_LOG(LogTemp, Warning,
+           TEXT("TestLevelDirector: Saving current simulation state to "
+                "scenario %d before reset"),
+           ActiveScenarioIndex);
 #if WITH_EDITOR
-		SyncAllRuntimeArmEdits();  // Capture any program/facing changes from visual arms
+    SyncAllRuntimeArmEdits(); // Capture any program/facing changes from visual
+                              // arms
 #endif
-		SyncPreviewEditsIntoScenarioFiltered(Scenarios[ActiveScenarioIndex]); // Capture tiles and arm positions
-	}
+    SyncPreviewEditsIntoScenarioFiltered(
+        Scenarios[ActiveScenarioIndex]); // Capture tiles and arm positions
+  }
 
-	// Stop ticking while we rebuild (optional safeguard)
-	if (TickManager)
-	{
-		// If you have an explicit Stop() function, call it; otherwise ignore.
-		// TickManager->Stop();
-	}
+  // Update Discovery Mode on GM based on scenario
+  AGameManager *GM = nullptr;
+  if (UWorld *W = GetWorld()) {
+    for (TActorIterator<AGameManager> It(W); It; ++It) {
+      GM = *It;
+      break;
+    }
+  }
 
-	// Destroy any spawned arms across scenarios (ApplyScenario will spawn fresh)
-	ClearArms();
+  if (GM) {
+    GM->SetDiscoveryMode(Scenarios[ActiveScenarioIndex].bIsDiscovery);
+  }
 
-	// Hard purge: destroy any residual arms not tracked in specs (runtime placed, etc.)
-	{
-		UWorld* W = GetWorld();
-		if (W)
-		{
-			TArray<ABasicArm*> ToDestroy;
-			for (TActorIterator<ABasicArm> It(W); It; ++It)
-			{
-				ToDestroy.Add(*It);
-			}
-			for (ABasicArm* Arm : ToDestroy)
-			{
-				if (Arm)
-				{
-					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying arm at (%d,%d) SimIndex=%d during scenario reset"),
-						Arm->Q, Arm->R, Arm->SimArmIndex);
-					DestroyActorNow(Arm);
-				}
-			}
-			
-			// Also destroy any residual walkers
-			TArray<ABasicWalker*> WalkersToDestroy;
-			for (TActorIterator<ABasicWalker> It(W); It; ++It)
-			{
-				WalkersToDestroy.Add(*It);
-			}
-			for (ABasicWalker* Walker : WalkersToDestroy)
-			{
-				if (Walker)
-				{
-					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying walker at (%d,%d) SimIndex=%d during scenario reset"),
-						Walker->Q, Walker->R, Walker->SimWalkerIndex);
-					DestroyActorNow(Walker);
-				}
-			}
-			
-			// Also destroy any residual beacons
-			TArray<ARequestBeacon*> BeaconsToDestroy;
-			for (TActorIterator<ARequestBeacon> It(W); It; ++It)
-			{
-				BeaconsToDestroy.Add(*It);
-			}
-			for (ARequestBeacon* Beacon : BeaconsToDestroy)
-			{
-				if (Beacon)
-				{
-					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying beacon at (%d,%d) during scenario reset"),
-						Beacon->Q, Beacon->R);
-					DestroyActorNow(Beacon);
-				}
-			}
-			
-			// Also destroy any residual trigger tiles
-			TArray<ATriggerTile*> TriggerTilesToDestroy;
-			for (TActorIterator<ATriggerTile> It(W); It; ++It)
-			{
-				TriggerTilesToDestroy.Add(*It);
-			}
-			for (ATriggerTile* TriggerTile : TriggerTilesToDestroy)
-			{
-				if (TriggerTile)
-				{
-					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Destroying TriggerTile at (%d,%d) during scenario reset"),
-						TriggerTile->Q, TriggerTile->R);
-					DestroyActorNow(TriggerTile);
-				}
-			}
-		}
-	}
+  // Stop ticking while we rebuild (optional safeguard)
+  if (TickManager) {
+    // If you have an explicit Stop() function, call it; otherwise ignore.
+    // TickManager->Stop();
+  }
 
-	if (Driver && Driver->GetSim())
-	{
-		USimWorldHex* Sim = Driver->GetSim();
-		const FScenarioSpec& Spec = Scenarios[ActiveScenarioIndex];
+  // Destroy any spawned arms across scenarios (ApplyScenario will spawn fresh)
+  ClearArms();
 
-		// Reinitialize simulation (clears tiles, items, arms, walkers, bonds, etc.)
-		Sim->Initialize(Spec.GridRadius);
-		Sim->TileSizeUU = Spec.TileSizeUU;
-		// Walkers array is cleared by Initialize
+  // Hard purge: destroy any residual arms not tracked in specs (runtime placed,
+  // etc.)
+  {
+    UWorld *W = GetWorld();
+    if (W) {
+      TArray<ABasicArm *> ToDestroy;
+      for (TActorIterator<ABasicArm> It(W); It; ++It) {
+        ToDestroy.Add(*It);
+      }
+      for (ABasicArm *Arm : ToDestroy) {
+        if (Arm) {
+          UE_LOG(LogTemp, Warning,
+                 TEXT("TestLevelDirector: Destroying arm at (%d,%d) "
+                      "SimIndex=%d during scenario reset"),
+                 Arm->Q, Arm->R, Arm->SimArmIndex);
+          DestroyActorNow(Arm);
+        }
+      }
 
-		// Ensure sim gets the correct grid parameters from OrbSimDriver
-		const FVector AnchorLoc = Driver->GetGridAnchor() ? Driver->GetGridAnchor()->GetActorLocation() : FVector::ZeroVector;
-		Sim->SetWorldTransform(AnchorLoc, Driver->GetGridYaw(), Driver->GetGridOrientation());
-	}
+      // Also destroy any residual walkers
+      TArray<ABasicWalker *> WalkersToDestroy;
+      for (TActorIterator<ABasicWalker> It(W); It; ++It) {
+        WalkersToDestroy.Add(*It);
+      }
+      for (ABasicWalker *Walker : WalkersToDestroy) {
+        if (Walker) {
+          UE_LOG(LogTemp, Warning,
+                 TEXT("TestLevelDirector: Destroying walker at (%d,%d) "
+                      "SimIndex=%d during scenario reset"),
+                 Walker->Q, Walker->R, Walker->SimWalkerIndex);
+          DestroyActorNow(Walker);
+        }
+      }
+
+      // Also destroy any residual beacons
+      TArray<ARequestBeacon *> BeaconsToDestroy;
+      for (TActorIterator<ARequestBeacon> It(W); It; ++It) {
+        BeaconsToDestroy.Add(*It);
+      }
+      for (ARequestBeacon *Beacon : BeaconsToDestroy) {
+        if (Beacon) {
+          UE_LOG(LogTemp, Warning,
+                 TEXT("TestLevelDirector: Destroying beacon at (%d,%d) during "
+                      "scenario reset"),
+                 Beacon->Q, Beacon->R);
+          DestroyActorNow(Beacon);
+        }
+      }
+
+      // Also destroy any residual trigger tiles
+      TArray<ATriggerTile *> TriggerTilesToDestroy;
+      for (TActorIterator<ATriggerTile> It(W); It; ++It) {
+        TriggerTilesToDestroy.Add(*It);
+      }
+      for (ATriggerTile *TriggerTile : TriggerTilesToDestroy) {
+        if (TriggerTile) {
+          UE_LOG(LogTemp, Warning,
+                 TEXT("TestLevelDirector: Destroying TriggerTile at (%d,%d) "
+                      "during scenario reset"),
+                 TriggerTile->Q, TriggerTile->R);
+          DestroyActorNow(TriggerTile);
+        }
+      }
+    }
+  }
+
+  if (Driver && Driver->GetSim()) {
+    USimWorldHex *Sim = Driver->GetSim();
+
+    // Get Radius from GameManager as it's now the source of truth
+    // Get Radius from GameManager as it's now the source of truth
+    int32 EffectiveRadius = 8;
+
+    if (GM) {
+      EffectiveRadius = GM->GetGridRadius();
+      Sim->TileSizeUU = GM->TileSizeUU;
+    }
+
+    // Reinitialize simulation (clears tiles, items, arms, walkers, bonds, etc.)
+    Sim->Initialize(EffectiveRadius);
+    // Walkers array is cleared by Initialize
+
+    // Ensure sim gets the correct grid parameters from OrbSimDriver
+    const FVector AnchorLoc = Driver->GetGridAnchor()
+                                  ? Driver->GetGridAnchor()->GetActorLocation()
+                                  : FVector::ZeroVector;
+    Sim->SetWorldTransform(AnchorLoc, Driver->GetGridYaw(),
+                           Driver->GetGridOrientation());
+  }
 }
 
-void ATestLevelDirector::ClearArms()
-{
-	if (!GetWorld()) return;
-	for (FScenarioSpec& Sc : Scenarios)
-	{
-		for (FArmSpawnSpec& S : Sc.Arms)
-			if (S.Spawned)
-			{
-				DestroyActorNow(S.Spawned);
-				S.Spawned = nullptr;
-			}
-		for (FWalkerSpawnSpec& W : Sc.Walkers)
-			if (W.Spawned)
-			{
-				DestroyActorNow(W.Spawned);
-				W.Spawned = nullptr;
-			}
-		for (FRequestBeaconSpec& B : Sc.Beacons)
-			if (B.Spawned)
-			{
-				DestroyActorNow(B.Spawned);
-				B.Spawned = nullptr;
-			}
-		for (FTriggerTileSpec& T : Sc.TriggerTiles)
-			if (T.Spawned)
-			{
-				DestroyActorNow(T.Spawned);
-				T.Spawned = nullptr;
-			}
-	}
+void ATestLevelDirector::ClearArms() {
+  if (!GetWorld())
+    return;
+  for (FScenarioSpec &Sc : Scenarios) {
+    for (FArmSpawnSpec &S : Sc.Arms)
+      if (S.Spawned) {
+        DestroyActorNow(S.Spawned);
+        S.Spawned = nullptr;
+      }
+    for (FWalkerSpawnSpec &W : Sc.Walkers)
+      if (W.Spawned) {
+        DestroyActorNow(W.Spawned);
+        W.Spawned = nullptr;
+      }
+    for (FRequestBeaconSpec &B : Sc.Beacons)
+      if (B.Spawned) {
+        DestroyActorNow(B.Spawned);
+        B.Spawned = nullptr;
+      }
+    for (FTriggerTileSpec &T : Sc.TriggerTiles)
+      if (T.Spawned) {
+        DestroyActorNow(T.Spawned);
+        T.Spawned = nullptr;
+      }
+  }
 }
 
-void ATestLevelDirector::ApplyScenario(const FScenarioSpec& S)
-{
-	// Note: We already synced current state to scenario in ResetSimForActiveScenario()
-	// Don't sync here as it would overwrite the scenario we're trying to load
-	ClearArms();
+void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
+  // Note: We already synced current state to scenario in
+  // ResetSimForActiveScenario() Don't sync here as it would overwrite the
+  // scenario we're trying to load
+  ClearArms();
 
-	UWorld* W = GetWorld();
-	if (!W || !Driver) return;
+  UWorld *W = GetWorld();
+  if (!W || !Driver)
+    return;
 
-	// Find GameManager for Goldberg mode check
-	AGameManager* GM = nullptr;
-	for (TActorIterator<AGameManager> It(W); It; ++It)
-	{
-		GM = *It;
-		break;
-	}
-	const bool bGoldbergMode = GM && GM->IsGoldbergMode();
-	UGoldbergGrid* GoldbergGrid = bGoldbergMode ? GM->GetGoldbergGrid() : nullptr;
+  // Find GameManager for Goldberg mode check
+  AGameManager *GM = nullptr;
+  for (TActorIterator<AGameManager> It(W); It; ++It) {
+    GM = *It;
+    break;
+  }
+  const bool bGoldbergMode = GM && GM->IsGoldbergMode();
+  UGoldbergGrid *GoldbergGrid = bGoldbergMode ? GM->GetGoldbergGrid() : nullptr;
 
-	if (USimWorldHex* Sim = Driver->GetSim())
-	{
-		// Build a map of hex -> orb type for ClusterOutput tiles from the saved specs
-		TMap<FHex, uint8> ClusterOutputOrbTypes;
-		for (const FPlacedTileSpec& P : S.Tiles)
-		{
-			if (P.Kind == ETileKind::ClusterOutput)
-			{
-				ClusterOutputOrbTypes.Add(P.Hex, P.OrbType);
-			}
-		}
-		
-		for (const FPlacedTileSpec& P : S.Tiles)
-		{
-			// In Goldberg mode, validate that the hex has a corresponding cell
-			if (bGoldbergMode && GoldbergGrid)
-			{
-				int32 CellIndex = GoldbergGrid->GetCellIndexForHex(P.Hex);
-				if (CellIndex == INDEX_NONE)
-				{
-					// Invalid hex (out of range or pentagon) - skip tile
-					UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: Skipping tile at (%d,%d) - no valid Goldberg cell"), 
-						P.Hex.Q, P.Hex.R);
-					continue;
-				}
-			}
-			
-			FTile T; T.Kind = P.Kind; T.Arg = P.Dir;
-			Sim->PlaceTile(P.Hex, T);
-		}
-		
-		// Rebuild cluster output relationships after loading all tiles, using saved orb types
-		Sim->RebuildClusterOutputRelationships(ClusterOutputOrbTypes);
-	}
+  if (USimWorldHex *Sim = Driver->GetSim()) {
+    // Build a map of hex -> orb type for ClusterOutput tiles from the saved
+    // specs
+    TMap<FHex, uint8> ClusterOutputOrbTypes;
+    for (const FPlacedTileSpec &P : S.Tiles) {
+      if (P.Kind == ETileKind::ClusterOutput ||
+          P.Kind == ETileKind::DiscoveryClusterOutput ||
+          P.Kind == ETileKind::DiscoveryClusterInput) {
+        ClusterOutputOrbTypes.Add(P.Hex, P.OrbType);
+      }
+    }
 
-	for (FArmSpawnSpec& A : const_cast<TArray<FArmSpawnSpec>&>(S.Arms))
-	{
-		if (!ArmClass) continue;
-		
-		// Skip if this arm is already spawned (shouldn't happen, but prevents duplicates)
-		if (A.Spawned && IsValid(A.Spawned))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: Arm at (%d,%d) already spawned, skipping"), A.Q, A.R);
-			continue;
-		}
+    for (const FPlacedTileSpec &P : S.Tiles) {
+      // In Goldberg mode, validate that the hex has a corresponding cell
+      if (bGoldbergMode && GoldbergGrid) {
+        int32 CellIndex = GoldbergGrid->GetCellIndexForHex(P.Hex);
+        if (CellIndex == INDEX_NONE) {
+          // Invalid hex (out of range or pentagon) - skip tile
+          UE_LOG(LogTemp, Warning,
+                 TEXT("ApplyScenario: Skipping tile at (%d,%d) - no valid "
+                      "Goldberg cell"),
+                 P.Hex.Q, P.Hex.R);
+          continue;
+        }
+      }
 
-		// Spawn deferred so we can finish configuration before BeginPlay-style logic
-		FTransform Tm;
-		Tm.SetLocation(Driver->GetGridAnchor() ? Driver->GetGridAnchor()->GetActorLocation() : FVector::ZeroVector);
+      FTile T;
+      T.Kind = P.Kind;
+      T.Arg = P.Dir;
+      Sim->PlaceTile(P.Hex, T);
 
-		A.Spawned = W->SpawnActorDeferred<ABasicArm>(ArmClass, Tm, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-		if (!A.Spawned) continue;
+      // Store per-tile OrbType for Discovery tiles (since FTile only has Arg
+      // for TemplateId)
+      if (P.Kind == ETileKind::DiscoveryClusterOutput ||
+          P.Kind == ETileKind::DiscoveryClusterInput) {
+        Sim->DiscoveryTileOrbTypes.Add(P.Hex, P.OrbType);
+      }
+    }
 
-		// Basic spatial init - use StartingRotation for initial facing
-		A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.Level, A.Facing % 6);
-		A.Spawned->FacingDir = A.Facing % 6;
+    // Rebuild cluster output relationships after loading all tiles, using saved
+    // orb types
+    Sim->RebuildClusterOutputRelationships(ClusterOutputOrbTypes);
+  }
 
-		// Set starting rotation and reach for Reset command
-		A.Spawned->StartingRotation = A.StartingRotation;
-		A.Spawned->StartingReach = A.StartingReach;
+  for (FArmSpawnSpec &A : const_cast<TArray<FArmSpawnSpec> &>(S.Arms)) {
+    if (!ArmClass)
+      continue;
 
-		int32 ArmIndex = INDEX_NONE;
-		if (USimWorldHex* Sim = Driver->GetSim())
-		{
-			// Build initial sim-side arm state (tape comes from scenario program)
-			FArmState ArmState;
-			ArmState.BaseHex = FHex(A.Q, A.R, A.Level);
-			ArmState.Facing = (EHexDir)(A.Facing % 6);  // Use saved Facing for initial facing
-			ArmState.HomeFacing = (EHexDir)(A.StartingRotation % 6);
-			ArmState.HomeArmLen = A.StartingReach;
-			ArmState.HomeTrackIdx = 0;
-			ArmState.ArmLen = A.StartingReach;
-			ArmState.TrackIdx = 0;
-			ArmState.PC = 0;
-			ArmState.bHolding = false;
-			ArmState.Tape = ConvertProgramToOps_TLD(A.Program);
+    // Skip if this arm is already spawned (shouldn't happen, but prevents
+    // duplicates)
+    if (A.Spawned && IsValid(A.Spawned)) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("ApplyScenario: Arm at (%d,%d) already spawned, skipping"),
+             A.Q, A.R);
+      continue;
+    }
 
-			ArmIndex = Sim->AddArm(ArmState);
-			A.Spawned->SimArmIndex = ArmIndex;
+    // Spawn deferred so we can finish configuration before BeginPlay-style
+    // logic
+    FTransform Tm;
+    Tm.SetLocation(Driver->GetGridAnchor()
+                       ? Driver->GetGridAnchor()->GetActorLocation()
+                       : FVector::ZeroVector);
 
-		}
+    A.Spawned = W->SpawnActorDeferred<ABasicArm>(
+        ArmClass, Tm, nullptr, nullptr,
+        ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+    if (!A.Spawned)
+      continue;
 
-		// Finish spawn now that SimArmIndex is valid
-		A.Spawned->FinishSpawning(Tm);
+    // Basic spatial init - use StartingRotation for initial facing
+    A.Spawned->InitializeOnGrid(Driver, A.Q, A.R, A.Level, A.Facing % 6);
+    A.Spawned->FacingDir = A.Facing % 6;
 
-		// Apply program AFTER SimArmIndex is assigned so SetProgram can push immediately
-		A.Spawned->SetProgram(A.Program, A.bLoopProgram);
+    // Set starting rotation and reach for Reset command
+    A.Spawned->StartingRotation = A.StartingRotation;
+    A.Spawned->StartingReach = A.StartingReach;
 
-		// Now start execution
-		A.Spawned->Start();
+    int32 ArmIndex = INDEX_NONE;
+    if (USimWorldHex *Sim = Driver->GetSim()) {
+      // Build initial sim-side arm state (tape comes from scenario program)
+      FArmState ArmState;
+      ArmState.BaseHex = FHex(A.Q, A.R, A.Level);
+      ArmState.Facing =
+          (EHexDir)(A.Facing % 6); // Use saved Facing for initial facing
+      ArmState.HomeFacing = (EHexDir)(A.StartingRotation % 6);
+      ArmState.HomeArmLen = A.StartingReach;
+      ArmState.HomeTrackIdx = 0;
+      ArmState.ArmLen = A.StartingReach;
+      ArmState.TrackIdx = 0;
+      ArmState.PC = 0;
+      ArmState.bHolding = false;
+      ArmState.Tape = ConvertProgramToOps_TLD(A.Program);
 
-		// If your SetProgram implementation does NOT push to sim, uncomment:
-		// A.Spawned->PushProgramToSim();
-	}
+      ArmIndex = Sim->AddArm(ArmState);
+      A.Spawned->SimArmIndex = ArmIndex;
+    }
 
-	// Spawn walkers from scenario (GM already found above)
+    // Finish spawn now that SimArmIndex is valid
+    A.Spawned->FinishSpawning(Tm);
 
-	for (FWalkerSpawnSpec& WalkerSpec : const_cast<TArray<FWalkerSpawnSpec>&>(S.Walkers))
-	{
-		if (!GM || !GM->BasicWalkerClass) continue;
-		
-		// Skip if this walker is already spawned
-		if (WalkerSpec.Spawned && IsValid(WalkerSpec.Spawned))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: Walker at (%d,%d) already spawned, skipping"), WalkerSpec.Q, WalkerSpec.R);
-			continue;
-		}
+    // Apply program AFTER SimArmIndex is assigned so SetProgram can push
+    // immediately
+    A.Spawned->SetProgram(A.Program, A.bLoopProgram);
 
-		// Spawn walker using GameManager
-		FHex WalkerHex(WalkerSpec.Q, WalkerSpec.R);
-		WalkerSpec.Spawned = GM->SpawnBasicWalkerAt(WalkerHex, WalkerSpec.Program, WalkerSpec.bLoopProgram);
-		
-		if (WalkerSpec.Spawned && Driver && Driver->GetSim())
-		{
-			USimWorldHex* Sim = Driver->GetSim();
-			// Update the walker's home hex to match StartingLocation
-			if (WalkerSpec.Spawned->SimWalkerIndex >= 0 && WalkerSpec.Spawned->SimWalkerIndex < Sim->Walkers.Num())
-			{
-				FWalkerState& WalkerState = Sim->Walkers[WalkerSpec.Spawned->SimWalkerIndex];
-				WalkerState.HomeHex = WalkerSpec.StartingLocation;
-				WalkerState.HomeHex.Level = WalkerSpec.Level; // Ensure level is set
-				WalkerSpec.Spawned->HomeHex = WalkerSpec.StartingLocation;
-				WalkerSpec.Spawned->HomeHex.Level = WalkerSpec.Level;
-			}
-		}
-	}
+    // Now start execution
+    A.Spawned->Start();
 
-	// Spawn beacons from scenario
-	if (!BeaconClass)
-	{
-		// Try to get from GameManager
-		if (GM && GM->RequestBeaconClass)
-		{
-			BeaconClass = GM->RequestBeaconClass;
-		}
-	}
+    // If your SetProgram implementation does NOT push to sim, uncomment:
+    // A.Spawned->PushProgramToSim();
+  }
 
-	for (FRequestBeaconSpec& BeaconSpec : const_cast<TArray<FRequestBeaconSpec>&>(S.Beacons))
-	{
-		if (!BeaconClass) continue;
-		
-		// Skip if already spawned
-		if (BeaconSpec.Spawned && IsValid(BeaconSpec.Spawned))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: Beacon at (%d,%d) already spawned, skipping"), BeaconSpec.Q, BeaconSpec.R);
-			continue;
-		}
+  // Spawn walkers from scenario (GM already found above)
 
-		FHex BeaconHex(BeaconSpec.Q, BeaconSpec.R, BeaconSpec.Level);
-		FVector Location = Driver->MapHexToWorld(BeaconHex);
-		FRotator Rotation(0.f, BeaconSpec.Rotation, 0.f);
-		
-		BeaconSpec.Spawned = W->SpawnActor<ARequestBeacon>(BeaconClass, Location, Rotation);
-		if (BeaconSpec.Spawned)
-		{
-			BeaconSpec.Spawned->Q = BeaconSpec.Q;
-			BeaconSpec.Spawned->R = BeaconSpec.R;
-			BeaconSpec.Spawned->Level = BeaconSpec.Level;
-			BeaconSpec.Spawned->BeaconType = BeaconSpec.BeaconType;
-			BeaconSpec.Spawned->BeaconRole = BeaconSpec.BeaconRole;
-			
-			// DropOff beacons start as Ready, Pickup beacons start as NotReady (CheckReadiness will update)
-			EBeaconState InitialState = (BeaconSpec.BeaconRole == EBeaconRole::DropOff) ? EBeaconState::Ready : EBeaconState::NotReady;
-			BeaconSpec.Spawned->SetState(InitialState);
-			BeaconSpec.Spawned->SyncWorldLocation();
-			
-			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Spawned beacon at (%d,%d) Role=%d State=%d"),
-				BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole, (int32)InitialState);
-		}
-	}
+  for (FWalkerSpawnSpec &WalkerSpec :
+       const_cast<TArray<FWalkerSpawnSpec> &>(S.Walkers)) {
+    if (!GM || !GM->BasicWalkerClass)
+      continue;
 
-	// Re-link beacon pairs after all beacons are spawned
-	for (FRequestBeaconSpec& BeaconSpec : const_cast<TArray<FRequestBeaconSpec>&>(S.Beacons))
-	{
-		if (!BeaconSpec.Spawned) continue;
-		if (BeaconSpec.PairedBeaconRole == EBeaconRole::None) continue; // No pair
+    // Skip if this walker is already spawned
+    if (WalkerSpec.Spawned && IsValid(WalkerSpec.Spawned)) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("ApplyScenario: Walker at (%d,%d) already spawned, skipping"),
+             WalkerSpec.Q, WalkerSpec.R);
+      continue;
+    }
 
-		// Find paired beacon
-		for (FRequestBeaconSpec& OtherSpec : const_cast<TArray<FRequestBeaconSpec>&>(S.Beacons))
-		{
-			if (!OtherSpec.Spawned) continue;
-			if (OtherSpec.Q == BeaconSpec.PairedBeaconQ && 
-				OtherSpec.R == BeaconSpec.PairedBeaconR && 
-				OtherSpec.BeaconRole == BeaconSpec.PairedBeaconRole)
-			{
-				// Set bidirectional pairing
-				BeaconSpec.Spawned->PairedBeacon = OtherSpec.Spawned;
-				OtherSpec.Spawned->PairedBeacon = BeaconSpec.Spawned;
-				
-				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Linked beacon at (%d,%d) Role=%d to paired beacon at (%d,%d) Role=%d"),
-					BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole,
-					OtherSpec.Q, OtherSpec.R, (int32)OtherSpec.BeaconRole);
-				break;
-			}
-		}
-	}
+    // Spawn walker using GameManager
+    FHex WalkerHex(WalkerSpec.Q, WalkerSpec.R);
+    WalkerSpec.Spawned = GM->SpawnBasicWalkerAt(WalkerHex, WalkerSpec.Program,
+                                                WalkerSpec.bLoopProgram);
 
-	// Spawn trigger tiles from scenario
-	UClass* TriggerTileClassToUse = TriggerTileClass ? TriggerTileClass.Get() : nullptr;
-	if (!TriggerTileClassToUse && GM && GM->TriggerTileClass)
-	{
-		TriggerTileClassToUse = GM->TriggerTileClass.Get();
-	}
+    if (WalkerSpec.Spawned && Driver && Driver->GetSim()) {
+      USimWorldHex *Sim = Driver->GetSim();
+      // Update the walker's home hex to match StartingLocation
+      if (WalkerSpec.Spawned->SimWalkerIndex >= 0 &&
+          WalkerSpec.Spawned->SimWalkerIndex < Sim->Walkers.Num()) {
+        FWalkerState &WalkerState =
+            Sim->Walkers[WalkerSpec.Spawned->SimWalkerIndex];
+        WalkerState.HomeHex = WalkerSpec.StartingLocation;
+        WalkerState.HomeHex.Level = WalkerSpec.Level; // Ensure level is set
+        WalkerSpec.Spawned->HomeHex = WalkerSpec.StartingLocation;
+        WalkerSpec.Spawned->HomeHex.Level = WalkerSpec.Level;
+      }
+    }
+  }
 
-	for (FTriggerTileSpec& TriggerSpec : const_cast<TArray<FTriggerTileSpec>&>(S.TriggerTiles))
-	{
-		if (!TriggerTileClassToUse) continue;
-		
-		// Skip if already spawned
-		if (TriggerSpec.Spawned && IsValid(TriggerSpec.Spawned))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("ApplyScenario: TriggerTile at (%d,%d) already spawned, skipping"), TriggerSpec.Q, TriggerSpec.R);
-			continue;
-		}
+  // Spawn beacons from scenario
+  if (!BeaconClass) {
+    // Try to get from GameManager
+    if (GM && GM->RequestBeaconClass) {
+      BeaconClass = GM->RequestBeaconClass;
+    }
+  }
 
-		FHex TriggerHex(TriggerSpec.Q, TriggerSpec.R, TriggerSpec.Level);
-		FVector Location = Driver->MapHexToWorld(TriggerHex);
-		FRotator Rotation(0.f, TriggerSpec.Rotation, 0.f);
-		
-		TriggerSpec.Spawned = W->SpawnActor<ATriggerTile>(TriggerTileClassToUse, Location, Rotation);
-		if (TriggerSpec.Spawned)
-		{
-			TriggerSpec.Spawned->Q = TriggerSpec.Q;
-			TriggerSpec.Spawned->R = TriggerSpec.R;
-			TriggerSpec.Spawned->Level = TriggerSpec.Level;
-			TriggerSpec.Spawned->TriggerOrbType = TriggerSpec.TriggerOrbType;
-			TriggerSpec.Spawned->Variant = TriggerSpec.Variant;
-			if (TriggerSpec.OwnerType == ETriggerTileOwnerType::Belt)
-				TriggerSpec.Spawned->SetOwnerBelt(TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
-			else
-				TriggerSpec.Spawned->SetOwnerArm(TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
-			TriggerSpec.Spawned->SyncWorldLocation();
-			TriggerSpec.Spawned->UpdateVisuals();
-			
-			UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Spawned TriggerTile at (%d,%d) Type=%s Owner=(%d,%d)"),
-				TriggerSpec.Q, TriggerSpec.R, *UEnum::GetValueAsString(TriggerSpec.TriggerOrbType),
-				TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
-		}
-	}
+  for (FRequestBeaconSpec &BeaconSpec :
+       const_cast<TArray<FRequestBeaconSpec> &>(S.Beacons)) {
+    if (!BeaconClass)
+      continue;
 
-	if (TickManager && S.bAutoPlay)
-	{
-		TickManager->Play();
-	}
+    // Skip if already spawned
+    if (BeaconSpec.Spawned && IsValid(BeaconSpec.Spawned)) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("ApplyScenario: Beacon at (%d,%d) already spawned, skipping"),
+             BeaconSpec.Q, BeaconSpec.R);
+      continue;
+    }
+
+    FHex BeaconHex(BeaconSpec.Q, BeaconSpec.R, BeaconSpec.Level);
+    FVector Location = Driver->MapHexToWorld(BeaconHex);
+    FRotator Rotation(0.f, BeaconSpec.Rotation, 0.f);
+
+    BeaconSpec.Spawned =
+        W->SpawnActor<ARequestBeacon>(BeaconClass, Location, Rotation);
+    if (BeaconSpec.Spawned) {
+      BeaconSpec.Spawned->Q = BeaconSpec.Q;
+      BeaconSpec.Spawned->R = BeaconSpec.R;
+      BeaconSpec.Spawned->Level = BeaconSpec.Level;
+      BeaconSpec.Spawned->BeaconType = BeaconSpec.BeaconType;
+      BeaconSpec.Spawned->BeaconRole = BeaconSpec.BeaconRole;
+
+      // DropOff beacons start as Ready, Pickup beacons start as NotReady
+      // (CheckReadiness will update)
+      EBeaconState InitialState =
+          (BeaconSpec.BeaconRole == EBeaconRole::DropOff)
+              ? EBeaconState::Ready
+              : EBeaconState::NotReady;
+      BeaconSpec.Spawned->SetState(InitialState);
+      BeaconSpec.Spawned->SyncWorldLocation();
+
+      UE_LOG(
+          LogTemp, Log,
+          TEXT("TestLevelDirector: Spawned beacon at (%d,%d) Role=%d State=%d"),
+          BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole,
+          (int32)InitialState);
+    }
+  }
+
+  // Re-link beacon pairs after all beacons are spawned
+  for (FRequestBeaconSpec &BeaconSpec :
+       const_cast<TArray<FRequestBeaconSpec> &>(S.Beacons)) {
+    if (!BeaconSpec.Spawned)
+      continue;
+    if (BeaconSpec.PairedBeaconRole == EBeaconRole::None)
+      continue; // No pair
+
+    // Find paired beacon
+    for (FRequestBeaconSpec &OtherSpec :
+         const_cast<TArray<FRequestBeaconSpec> &>(S.Beacons)) {
+      if (!OtherSpec.Spawned)
+        continue;
+      if (OtherSpec.Q == BeaconSpec.PairedBeaconQ &&
+          OtherSpec.R == BeaconSpec.PairedBeaconR &&
+          OtherSpec.BeaconRole == BeaconSpec.PairedBeaconRole) {
+        // Set bidirectional pairing
+        BeaconSpec.Spawned->PairedBeacon = OtherSpec.Spawned;
+        OtherSpec.Spawned->PairedBeacon = BeaconSpec.Spawned;
+
+        UE_LOG(LogTemp, Log,
+               TEXT("TestLevelDirector: Linked beacon at (%d,%d) Role=%d to "
+                    "paired beacon at (%d,%d) Role=%d"),
+               BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole,
+               OtherSpec.Q, OtherSpec.R, (int32)OtherSpec.BeaconRole);
+        break;
+      }
+    }
+  }
+
+  // Spawn trigger tiles from scenario
+  UClass *TriggerTileClassToUse =
+      TriggerTileClass ? TriggerTileClass.Get() : nullptr;
+  if (!TriggerTileClassToUse && GM && GM->TriggerTileClass) {
+    TriggerTileClassToUse = GM->TriggerTileClass.Get();
+  }
+
+  for (FTriggerTileSpec &TriggerSpec :
+       const_cast<TArray<FTriggerTileSpec> &>(S.TriggerTiles)) {
+    if (!TriggerTileClassToUse)
+      continue;
+
+    // Skip if already spawned
+    if (TriggerSpec.Spawned && IsValid(TriggerSpec.Spawned)) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("ApplyScenario: TriggerTile at (%d,%d) already spawned, "
+                  "skipping"),
+             TriggerSpec.Q, TriggerSpec.R);
+      continue;
+    }
+
+    FHex TriggerHex(TriggerSpec.Q, TriggerSpec.R, TriggerSpec.Level);
+    FVector Location = Driver->MapHexToWorld(TriggerHex);
+    FRotator Rotation(0.f, TriggerSpec.Rotation, 0.f);
+
+    TriggerSpec.Spawned =
+        W->SpawnActor<ATriggerTile>(TriggerTileClassToUse, Location, Rotation);
+    if (TriggerSpec.Spawned) {
+      TriggerSpec.Spawned->Q = TriggerSpec.Q;
+      TriggerSpec.Spawned->R = TriggerSpec.R;
+      TriggerSpec.Spawned->Level = TriggerSpec.Level;
+      TriggerSpec.Spawned->TriggerOrbType = TriggerSpec.TriggerOrbType;
+      TriggerSpec.Spawned->Variant = TriggerSpec.Variant;
+      if (TriggerSpec.OwnerType == ETriggerTileOwnerType::Belt)
+        TriggerSpec.Spawned->SetOwnerBelt(TriggerSpec.OwnerQ,
+                                          TriggerSpec.OwnerR);
+      else
+        TriggerSpec.Spawned->SetOwnerArm(TriggerSpec.OwnerQ,
+                                         TriggerSpec.OwnerR);
+      TriggerSpec.Spawned->SyncWorldLocation();
+      TriggerSpec.Spawned->UpdateVisuals();
+
+      UE_LOG(LogTemp, Log,
+             TEXT("TestLevelDirector: Spawned TriggerTile at (%d,%d) Type=%s "
+                  "Owner=(%d,%d)"),
+             TriggerSpec.Q, TriggerSpec.R,
+             *UEnum::GetValueAsString(TriggerSpec.TriggerOrbType),
+             TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
+    }
+  }
+
+  if (TickManager && S.bAutoPlay) {
+    TickManager->Play();
+  }
 }
 
-void ATestLevelDirector::SpawnScenarioPreview()
-{
-	// DEPRECATED: This function caused duplicate arm spawning issues
-	// Arms are now only spawned through ApplyScenario during PIE
-	// Keeping this stub in case it's called from blueprints
-	UE_LOG(LogTemp, Warning, TEXT("SpawnScenarioPreview called but is deprecated - use BuildActiveScenario instead"));
+void ATestLevelDirector::SpawnScenarioPreview() {
+  // DEPRECATED: This function caused duplicate arm spawning issues
+  // Arms are now only spawned through ApplyScenario during PIE
+  // Keeping this stub in case it's called from blueprints
+  UE_LOG(LogTemp, Warning,
+         TEXT("SpawnScenarioPreview called but is deprecated - use "
+              "BuildActiveScenario instead"));
 }
 
-FVector ATestLevelDirector::GetWorldPositionForHex(int32 Q, int32 R) const
-{
-	if (!Driver) return FVector::ZeroVector;
-	const AActor* Anchor = Driver->GetGridAnchor();
-	const FVector Origin = Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
-	const float TileSize = Driver->GetTileSize();
-	const EHexOrientation Orientation = Driver->GetGridOrientation();
-	const float GridYaw = Driver->GetGridYaw();
+FVector ATestLevelDirector::GetWorldPositionForHex(int32 Q, int32 R) const {
+  if (!Driver)
+    return FVector::ZeroVector;
+  const AActor *Anchor = Driver->GetGridAnchor();
+  const FVector Origin =
+      Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+  const float TileSize = Driver->GetTileSize();
+  const EHexOrientation Orientation = Driver->GetGridOrientation();
+  const float GridYaw = Driver->GetGridYaw();
 
-	const FVector2D LocalXY = HexCoord::AxialToXY(FHexAxial(Q, R), TileSize, Orientation);
-	const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-	return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
+  const FVector2D LocalXY =
+      HexCoord::AxialToXY(FHexAxial(Q, R), TileSize, Orientation);
+  const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+  return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
 }
 
-void ATestLevelDirector::CommitPreviewEdits()
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	FScenarioSpec& Scenario = Scenarios[ActiveScenarioIndex];
-	SyncPreviewEditsIntoScenarioFiltered(Scenario);
-	if (UPackage* Pkg = GetOutermost())
-		Pkg->SetDirtyFlag(true);
+void ATestLevelDirector::CommitPreviewEdits() {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Scenario = Scenarios[ActiveScenarioIndex];
+  SyncPreviewEditsIntoScenarioFiltered(Scenario);
+  if (UPackage *Pkg = GetOutermost())
+    Pkg->SetDirtyFlag(true);
 }
 
-void ATestLevelDirector::RefreshSpawnedArmsFromScenario(int32 ScenarioIndex)
-{
-	if (!Scenarios.IsValidIndex(ScenarioIndex) || !bAutoPatchSpawnedArms) return;
-	FScenarioSpec& Spec = Scenarios[ScenarioIndex];
-	for (FArmSpawnSpec& ArmSpec : Spec.Arms)
-	{
-		if (!ArmSpec.Spawned) continue;
-		ABasicArm* Arm = ArmSpec.Spawned;
+void ATestLevelDirector::RefreshSpawnedArmsFromScenario(int32 ScenarioIndex) {
+  if (!Scenarios.IsValidIndex(ScenarioIndex) || !bAutoPatchSpawnedArms)
+    return;
+  FScenarioSpec &Spec = Scenarios[ScenarioIndex];
+  for (FArmSpawnSpec &ArmSpec : Spec.Arms) {
+    if (!ArmSpec.Spawned)
+      continue;
+    ABasicArm *Arm = ArmSpec.Spawned;
 
-		if (Arm->Program != ArmSpec.Program || Arm->bLoopProgram != ArmSpec.bLoopProgram)
-			Arm->SetProgram(ArmSpec.Program, ArmSpec.bLoopProgram);
+    if (Arm->Program != ArmSpec.Program ||
+        Arm->bLoopProgram != ArmSpec.bLoopProgram)
+      Arm->SetProgram(ArmSpec.Program, ArmSpec.bLoopProgram);
 
-		bool bPlacementChanged = (Arm->Q != ArmSpec.Q) || (Arm->R != ArmSpec.R) || (Arm->FacingDir != ArmSpec.Facing);
-		if (bPlacementChanged)
-			Arm->InitializeOnGrid(Driver, ArmSpec.Q, ArmSpec.R, ArmSpec.Level, ArmSpec.Facing % 6);
-	}
+    bool bPlacementChanged = (Arm->Q != ArmSpec.Q) || (Arm->R != ArmSpec.R) ||
+                             (Arm->FacingDir != ArmSpec.Facing);
+    if (bPlacementChanged)
+      Arm->InitializeOnGrid(Driver, ArmSpec.Q, ArmSpec.R, ArmSpec.Level,
+                            ArmSpec.Facing % 6);
+  }
 }
 
-void ATestLevelDirector::MarkActiveScenarioDirty()
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	if (UPackage* Pkg = GetOutermost())
-		Pkg->SetDirtyFlag(true);
+void ATestLevelDirector::MarkActiveScenarioDirty() {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  if (UPackage *Pkg = GetOutermost())
+    Pkg->SetDirtyFlag(true);
 }
 
-void ATestLevelDirector::SetActiveScenarioIndex(int32 NewIndex)
-{
-	if (NewIndex == ActiveScenarioIndex) return;
+void ATestLevelDirector::SetActiveScenarioIndex(int32 NewIndex) {
+  if (NewIndex == ActiveScenarioIndex)
+    return;
 
-	if (!Scenarios.IsValidIndex(NewIndex))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: SetActiveScenarioIndex(%d) invalid."), NewIndex);
-		return;
-	}
+  if (!Scenarios.IsValidIndex(NewIndex)) {
+    UE_LOG(LogTemp, Warning,
+           TEXT("TestLevelDirector: SetActiveScenarioIndex(%d) invalid."),
+           NewIndex);
+    return;
+  }
 
-	ActiveScenarioIndex = NewIndex;
-	BuildActiveScenario();          // Clears & applies new scenario
+  ActiveScenarioIndex = NewIndex;
+  BuildActiveScenario(); // Clears & applies new scenario
 
 #if WITH_EDITOR
-	MarkActiveScenarioDirty();
-	if (GetWorld() && GetWorld()->IsPlayInEditor())
-	{
-		MirrorScenarioEditsToEditor();
-	}
+  MarkActiveScenarioDirty();
+  if (GetWorld() && GetWorld()->IsPlayInEditor()) {
+    MirrorScenarioEditsToEditor();
+  }
 #endif
 }
 
 /* ---------------- Runtime Scenario Mutation ---------------- */
 
-void ATestLevelDirector::UpsertTileSpec(const FHex& Hex, ETileKind Kind, uint8 Dir)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+void ATestLevelDirector::UpsertTileSpec(const FHex &Hex, ETileKind Kind,
+                                        uint8 Dir) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
 
-	for (FPlacedTileSpec& T : Sc.Tiles)
-	{
-		if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R && T.Hex.Level == Hex.Level)
-		{
-			T.Kind = Kind;
-			T.Dir = Dir;
-			MarkActiveScenarioDirty();
+  for (FPlacedTileSpec &T : Sc.Tiles) {
+    if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R && T.Hex.Level == Hex.Level) {
+      T.Kind = Kind;
+      T.Dir = Dir;
+      MarkActiveScenarioDirty();
 #if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
+      MirrorScenarioEditsToEditor();
 #endif
-			return;
-		}
-	}
-	FPlacedTileSpec NewSpec;
-	NewSpec.Hex = Hex;
-	NewSpec.Kind = Kind;
-	NewSpec.Dir = Dir;
-	Sc.Tiles.Add(NewSpec);
-	MarkActiveScenarioDirty();
+      return;
+    }
+  }
+  FPlacedTileSpec NewSpec;
+  NewSpec.Hex = Hex;
+  NewSpec.Kind = Kind;
+  NewSpec.Dir = Dir;
+  Sc.Tiles.Add(NewSpec);
+  MarkActiveScenarioDirty();
 #if WITH_EDITOR
-	MirrorScenarioEditsToEditor();
+  MirrorScenarioEditsToEditor();
 #endif
 }
 
-void ATestLevelDirector::UpsertClusterOutputTileSpec(const FHex& Hex, uint8 TemplateId, uint8 OrbType)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
+void ATestLevelDirector::UpsertClusterOutputTileSpec(const FHex &Hex,
+                                                     uint8 TemplateId,
+                                                     uint8 OrbType) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
 
-	for (FPlacedTileSpec& T : Sc.Tiles)
-	{
-		if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R && T.Hex.Level == Hex.Level)
-		{
-			T.Kind = ETileKind::ClusterOutput;
-			T.Dir = TemplateId;
-			T.OrbType = OrbType;
-			MarkActiveScenarioDirty();
+  for (FPlacedTileSpec &T : Sc.Tiles) {
+    if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R && T.Hex.Level == Hex.Level) {
+      T.Kind = ETileKind::ClusterOutput;
+      T.Dir = TemplateId;
+      T.OrbType = OrbType;
+      MarkActiveScenarioDirty();
 #if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
+      MirrorScenarioEditsToEditor();
 #endif
-			return;
-		}
-	}
-	FPlacedTileSpec NewSpec;
-	NewSpec.Hex = Hex;
-	NewSpec.Kind = ETileKind::ClusterOutput;
-	NewSpec.Dir = TemplateId;
-	NewSpec.OrbType = OrbType;
-	Sc.Tiles.Add(NewSpec);
-	MarkActiveScenarioDirty();
+      return;
+    }
+  }
+  FPlacedTileSpec NewSpec;
+  NewSpec.Hex = Hex;
+  NewSpec.Kind = ETileKind::ClusterOutput;
+  NewSpec.Dir = TemplateId;
+  NewSpec.OrbType = OrbType;
+  Sc.Tiles.Add(NewSpec);
+  MarkActiveScenarioDirty();
 #if WITH_EDITOR
-	MirrorScenarioEditsToEditor();
+  MirrorScenarioEditsToEditor();
 #endif
 }
 
-void ATestLevelDirector::SyncClusterOutputTiles()
-{
-	if (!Driver) return;
-	USimWorldHex* Sim = Driver->GetSim();
-	if (!Sim) return;
-	
-	// Sync ALL ClusterOutput tiles, not just merged ones
-	// This ensures proper saving of orb types for all cluster configurations
-	const TMap<FHex, FTile>& TileMap = Sim->TileMap;
-	const TMap<uint8, USimWorldHex::FClusterTemplate>& Templates = Sim->GetClusterTemplates();
-	
-	// Group ClusterOutput tiles by template ID
-	TMap<uint8, TArray<FHex>> TilesByTemplate;
-	for (const auto& TileKV : TileMap)
-	{
-		if (TileKV.Value.Kind == ETileKind::ClusterOutput)
-		{
-			uint8 TemplateId = TileKV.Value.Arg;
-			TilesByTemplate.FindOrAdd(TemplateId).Add(TileKV.Key);
-		}
-	}
-	
-	// For each template group, find the BaseHex and sync orb types
-	for (const auto& TemplateGroup : TilesByTemplate)
-	{
-		uint8 TemplateId = TemplateGroup.Key;
-		const TArray<FHex>& Tiles = TemplateGroup.Value;
-		
-		if (Tiles.Num() == 0) continue;
-		
-		const USimWorldHex::FClusterTemplate* Template = Templates.Find(TemplateId);
-		if (!Template) continue;
-		
-		// Find the center-most tile as BaseHex (same logic as RebuildClusterOutputRelationships)
-		int32 SumQ = 0;
-		int32 SumR = 0;
-		for (const FHex& H : Tiles)
-		{
-			SumQ += H.Q;
-			SumR += H.R;
-		}
-		
-		int32 CenterQ = FMath::RoundToInt((float)SumQ / Tiles.Num());
-		int32 CenterR = FMath::RoundToInt((float)SumR / Tiles.Num());
-		
-		FHex BaseHex = Tiles[0];
-		int32 MinDist = INT_MAX;
-		for (const FHex& H : Tiles)
-		{
-			int32 dQ = H.Q - CenterQ;
-			int32 dR = H.R - CenterR;
-			int32 dist = FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR);
-			if (dist < MinDist)
-			{
-				MinDist = dist;
-				BaseHex = H;
-			}
-		}
-		
-		// Now update each tile with its orb type from the template
-		for (const FHex& TileHex : Tiles)
-		{
-			// Calculate this tile's relative position from BaseHex
-			int32 RelQ = TileHex.Q - BaseHex.Q;
-			int32 RelR = TileHex.R - BaseHex.R;
-			
-			// Find matching orb in template
-			uint8 OrbType = 0;
-			for (const FOrbData& TemplateOrb : Template->Orbs)
-			{
-				if (TemplateOrb.dQ == RelQ && TemplateOrb.dR == RelR)
-				{
-					OrbType = TemplateOrb.Type;
-					break;
-				}
-			}
-			
-			// Update the scenario
-			UpsertClusterOutputTileSpec(TileHex, TemplateId, OrbType);
-			
-			UE_LOG(LogTemp, Log, TEXT("SyncClusterOutputTiles: Updated tile at (%d,%d) - Template %d, Type %d"), 
-				TileHex.Q, TileHex.R, TemplateId, OrbType);
-		}
-	}
+void ATestLevelDirector::SyncClusterOutputTiles() {
+  if (!Driver)
+    return;
+  USimWorldHex *Sim = Driver->GetSim();
+  if (!Sim)
+    return;
+
+  // Sync ALL ClusterOutput tiles, not just merged ones
+  // This ensures proper saving of orb types for all cluster configurations
+  const TMap<FHex, FTile> &TileMap = Sim->TileMap;
+  const TMap<uint8, USimWorldHex::FClusterTemplate> &Templates =
+      Sim->GetClusterTemplates();
+
+  // Group ClusterOutput tiles by template ID
+  TMap<uint8, TArray<FHex>> TilesByTemplate;
+  for (const auto &TileKV : TileMap) {
+    if (TileKV.Value.Kind == ETileKind::ClusterOutput) {
+      uint8 TemplateId = TileKV.Value.Arg;
+      TilesByTemplate.FindOrAdd(TemplateId).Add(TileKV.Key);
+    }
+  }
+
+  // For each template group, find the BaseHex and sync orb types
+  for (const auto &TemplateGroup : TilesByTemplate) {
+    uint8 TemplateId = TemplateGroup.Key;
+    const TArray<FHex> &Tiles = TemplateGroup.Value;
+
+    if (Tiles.Num() == 0)
+      continue;
+
+    const USimWorldHex::FClusterTemplate *Template = Templates.Find(TemplateId);
+    if (!Template)
+      continue;
+
+    // Find the center-most tile as BaseHex (same logic as
+    // RebuildClusterOutputRelationships)
+    int32 SumQ = 0;
+    int32 SumR = 0;
+    for (const FHex &H : Tiles) {
+      SumQ += H.Q;
+      SumR += H.R;
+    }
+
+    int32 CenterQ = FMath::RoundToInt((float)SumQ / Tiles.Num());
+    int32 CenterR = FMath::RoundToInt((float)SumR / Tiles.Num());
+
+    FHex BaseHex = Tiles[0];
+    int32 MinDist = INT_MAX;
+    for (const FHex &H : Tiles) {
+      int32 dQ = H.Q - CenterQ;
+      int32 dR = H.R - CenterR;
+      int32 dist = FMath::Abs(dQ) + FMath::Abs(dR) + FMath::Abs(dQ + dR);
+      if (dist < MinDist) {
+        MinDist = dist;
+        BaseHex = H;
+      }
+    }
+
+    // Now update each tile with its orb type from the template
+    for (const FHex &TileHex : Tiles) {
+      // Calculate this tile's relative position from BaseHex
+      int32 RelQ = TileHex.Q - BaseHex.Q;
+      int32 RelR = TileHex.R - BaseHex.R;
+
+      // Find matching orb in template
+      uint8 OrbType = 0;
+      for (const FOrbData &TemplateOrb : Template->Orbs) {
+        if (TemplateOrb.dQ == RelQ && TemplateOrb.dR == RelR) {
+          OrbType = TemplateOrb.Type;
+          break;
+        }
+      }
+
+      // Update the scenario
+      UpsertClusterOutputTileSpec(TileHex, TemplateId, OrbType);
+
+      UE_LOG(LogTemp, Log,
+             TEXT("SyncClusterOutputTiles: Updated tile at (%d,%d) - Template "
+                  "%d, Type %d"),
+             TileHex.Q, TileHex.R, TemplateId, OrbType);
+    }
+  }
 }
 
-bool ATestLevelDirector::RemoveTileSpec(const FHex& Hex)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	for (int32 i = 0; i < Sc.Tiles.Num(); ++i)
-	{
-		if (Sc.Tiles[i].Hex.Q == Hex.Q && Sc.Tiles[i].Hex.R == Hex.R && Sc.Tiles[i].Hex.Level == Hex.Level)
-		{
-			Sc.Tiles.RemoveAt(i);
-			MarkActiveScenarioDirty();
+bool ATestLevelDirector::RemoveTileSpec(const FHex &Hex) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return false;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+  for (int32 i = 0; i < Sc.Tiles.Num(); ++i) {
+    if (Sc.Tiles[i].Hex.Q == Hex.Q && Sc.Tiles[i].Hex.R == Hex.R &&
+        Sc.Tiles[i].Hex.Level == Hex.Level) {
+      Sc.Tiles.RemoveAt(i);
+      MarkActiveScenarioDirty();
 #if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
+      MirrorScenarioEditsToEditor();
 #endif
-			return true;
-		}
-	}
-	return false;
+      return true;
+    }
+  }
+  return false;
 }
 
-void ATestLevelDirector::UpsertArmSpec(int32 Q, int32 R, uint8 Facing, const TArray<FArmInstr>& Program, bool bLoop, int32 Level)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	
-	auto FindRuntimeArmAt = [&](int32 InQ, int32 InR, int32 InLevel) -> ABasicArm*
-		{
-			if (!GetWorld()) return nullptr;
-			for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It)
-			{
-				if (It->Q == InQ && It->R == InR && It->Level == InLevel)
-				{
-					return *It;
-				}
-			}
-			return nullptr;
-		};
-	
-	for (FArmSpawnSpec& A : Sc.Arms)
-	{
-		if (A.Q == Q && A.R == R && A.Level == Level)
-		{
-			A.Facing = Facing % 6;
-			A.Program = Program;
-			A.bLoopProgram = bLoop;
-			if (!A.Spawned) A.Spawned = FindRuntimeArmAt(Q, R, Level);
-			MarkActiveScenarioDirty();
-#if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
-#endif
-			return;
-		}
-	}
-	
-	FArmSpawnSpec NewA;
-	NewA.Q = Q;
-	NewA.R = R;
-	NewA.Level = Level;
-	NewA.Facing = Facing % 6;
-	NewA.StartingRotation = Facing % 6;  // Initialize to placement direction
-	NewA.StartingReach = 1;              // Default reach
-	NewA.Program = Program;
-	NewA.bLoopProgram = bLoop;
-	NewA.Spawned = FindRuntimeArmAt(Q, R, Level);   // capture runtime actor if already spawned
-	Sc.Arms.Add(NewA);
-	MarkActiveScenarioDirty();
-#if WITH_EDITOR
-	MirrorScenarioEditsToEditor();
-#endif
-}
+void ATestLevelDirector::UpsertArmSpec(int32 Q, int32 R, uint8 Facing,
+                                       const TArray<FArmInstr> &Program,
+                                       bool bLoop, int32 Level) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
 
-bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R, int32 Level)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	
-	for (int32 i = 0; i < Sc.Arms.Num(); ++i)
-	{
-		if (Sc.Arms[i].Q == Q && Sc.Arms[i].R == R && Sc.Arms[i].Level == Level)
-		{
-			if (Sc.Arms[i].Spawned)
-			{
-				DestroyActorNow(Sc.Arms[i].Spawned);
-				Sc.Arms[i].Spawned = nullptr;
-			}
-			else if (UWorld* W = GetWorld())
-			{
-				for (TActorIterator<ABasicArm> It(W); It; ++It)
-				{
-					if (It->Q == Q && It->R == R && It->Level == Level)
-					{
-						DestroyActorNow(*It);
-						break;
-					}
-				}
-			}
-			
-			Sc.Arms.RemoveAt(i);
-			MarkActiveScenarioDirty();
-#if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
-#endif
-			return true;
-		}
-	}
-	
-	if (UWorld* W = GetWorld())
-	{
-		for (TActorIterator<ABasicArm> It(W); It; ++It)
-		{
-			if (It->Q == Q && It->R == R && It->Level == Level)
-			{
-				DestroyActorNow(*It);
-				MarkActiveScenarioDirty();
-#if WITH_EDITOR
-				MirrorScenarioEditsToEditor();
-#endif
-				return true;
-			}
-		}
-	}
-	return false;
-}
+  auto FindRuntimeArmAt = [&](int32 InQ, int32 InR,
+                              int32 InLevel) -> ABasicArm * {
+    if (!GetWorld())
+      return nullptr;
+    for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It) {
+      if (It->Q == InQ && It->R == InR && It->Level == InLevel) {
+        return *It;
+      }
+    }
+    return nullptr;
+  };
 
-void ATestLevelDirector::UpsertWalkerSpec(int32 Q, int32 R, const FHex& StartingLocation, const TArray<FWalkerInstr>& Program, bool bLoop, int32 Level)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	
-	auto FindRuntimeWalkerAt = [&](int32 InQ, int32 InR, int32 InLevel) -> ABasicWalker*
-		{
-			if (!GetWorld()) return nullptr;
-			for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It)
-			{
-				if (It->Q == InQ && It->R == InR && It->Level == InLevel)
-				{
-					return *It;
-				}
-			}
-			return nullptr;
-		};
-	
-	for (FWalkerSpawnSpec& W : Sc.Walkers)
-	{
-		if (W.Q == Q && W.R == R && W.Level == Level)
-		{
-			W.StartingLocation = StartingLocation;
-			W.Program = Program;
-			W.bLoopProgram = bLoop;
-			if (!W.Spawned) W.Spawned = FindRuntimeWalkerAt(Q, R, Level);
-			MarkActiveScenarioDirty();
+  for (FArmSpawnSpec &A : Sc.Arms) {
+    if (A.Q == Q && A.R == R && A.Level == Level) {
+      A.Facing = Facing % 6;
+      A.Program = Program;
+      A.bLoopProgram = bLoop;
+      if (!A.Spawned)
+        A.Spawned = FindRuntimeArmAt(Q, R, Level);
+      MarkActiveScenarioDirty();
 #if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
+      MirrorScenarioEditsToEditor();
 #endif
-			return;
-		}
-	}
-	
-	FWalkerSpawnSpec NewW;
-	NewW.Q = Q;
-	NewW.R = R;
-	NewW.Level = Level;
-	NewW.StartingLocation = StartingLocation;
-	NewW.Program = Program;
-	NewW.bLoopProgram = bLoop;
-	NewW.Spawned = FindRuntimeWalkerAt(Q, R, Level);   // capture runtime actor if already spawned
-	Sc.Walkers.Add(NewW);
-	MarkActiveScenarioDirty();
+      return;
+    }
+  }
+
+  FArmSpawnSpec NewA;
+  NewA.Q = Q;
+  NewA.R = R;
+  NewA.Level = Level;
+  NewA.Facing = Facing % 6;
+  NewA.StartingRotation = Facing % 6; // Initialize to placement direction
+  NewA.StartingReach = 1;             // Default reach
+  NewA.Program = Program;
+  NewA.bLoopProgram = bLoop;
+  NewA.Spawned =
+      FindRuntimeArmAt(Q, R, Level); // capture runtime actor if already spawned
+  Sc.Arms.Add(NewA);
+  MarkActiveScenarioDirty();
 #if WITH_EDITOR
-	MirrorScenarioEditsToEditor();
+  MirrorScenarioEditsToEditor();
 #endif
 }
 
-bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R, int32 Level)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	
-	for (int32 i = 0; i < Sc.Walkers.Num(); ++i)
-	{
-		if (Sc.Walkers[i].Q == Q && Sc.Walkers[i].R == R && Sc.Walkers[i].Level == Level)
-		{
-			if (Sc.Walkers[i].Spawned)
-			{
-				DestroyActorNow(Sc.Walkers[i].Spawned);
-				Sc.Walkers[i].Spawned = nullptr;
-			}
-			else if (UWorld* W = GetWorld())
-			{
-				for (TActorIterator<ABasicWalker> It(W); It; ++It)
-				{
-					if (It->Q == Q && It->R == R && It->Level == Level)
-					{
-						DestroyActorNow(*It);
-						break;
-					}
-				}
-			}
-			
-			Sc.Walkers.RemoveAt(i);
-			MarkActiveScenarioDirty();
+bool ATestLevelDirector::RemoveArmSpec(int32 Q, int32 R, int32 Level) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return false;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  for (int32 i = 0; i < Sc.Arms.Num(); ++i) {
+    if (Sc.Arms[i].Q == Q && Sc.Arms[i].R == R && Sc.Arms[i].Level == Level) {
+      if (Sc.Arms[i].Spawned) {
+        DestroyActorNow(Sc.Arms[i].Spawned);
+        Sc.Arms[i].Spawned = nullptr;
+      } else if (UWorld *W = GetWorld()) {
+        for (TActorIterator<ABasicArm> It(W); It; ++It) {
+          if (It->Q == Q && It->R == R && It->Level == Level) {
+            DestroyActorNow(*It);
+            break;
+          }
+        }
+      }
+
+      Sc.Arms.RemoveAt(i);
+      MarkActiveScenarioDirty();
 #if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
+      MirrorScenarioEditsToEditor();
 #endif
-			return true;
-		}
-	}
-	
-	if (UWorld* W = GetWorld())
-	{
-		for (TActorIterator<ABasicWalker> It(W); It; ++It)
-		{
-			if (It->Q == Q && It->R == R && It->Level == Level)
-			{
-				DestroyActorNow(*It);
-				MarkActiveScenarioDirty();
+      return true;
+    }
+  }
+
+  if (UWorld *W = GetWorld()) {
+    for (TActorIterator<ABasicArm> It(W); It; ++It) {
+      if (It->Q == Q && It->R == R && It->Level == Level) {
+        DestroyActorNow(*It);
+        MarkActiveScenarioDirty();
 #if WITH_EDITOR
-				MirrorScenarioEditsToEditor();
+        MirrorScenarioEditsToEditor();
 #endif
-				return true;
-			}
-		}
-	}
-	return false;
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
-void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconType, EBeaconRole BeaconRole, float Rotation, int32 Level)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	
-	auto FindRuntimeBeaconAt = [&](int32 InQ, int32 InR, EBeaconRole InRole, int32 InLevel) -> ARequestBeacon*
-		{
-			if (!GetWorld()) return nullptr;
-			for (TActorIterator<ARequestBeacon> It(GetWorld()); It; ++It)
-			{
-				if (It->Q == InQ && It->R == InR && It->BeaconRole == InRole && It->Level == InLevel)
-				{
-					return *It;
-				}
-			}
-			return nullptr;
-		};
-	
-	for (FRequestBeaconSpec& B : Sc.Beacons)
-	{
-		if (B.Q == Q && B.R == R && B.BeaconRole == BeaconRole && B.Level == Level)
-		{
-			B.BeaconType = BeaconType;
-			B.Rotation = Rotation;
-			if (!B.Spawned) B.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole, Level);
-			
-			// Update paired beacon info from runtime
-			if (B.Spawned && B.Spawned->PairedBeacon && IsValid(B.Spawned->PairedBeacon))
-			{
-				B.PairedBeaconQ = B.Spawned->PairedBeacon->Q;
-				B.PairedBeaconR = B.Spawned->PairedBeacon->R;
-				B.PairedBeaconRole = B.Spawned->PairedBeacon->BeaconRole;
-			}
-			
-			MarkActiveScenarioDirty();
+void ATestLevelDirector::UpsertWalkerSpec(int32 Q, int32 R,
+                                          const FHex &StartingLocation,
+                                          const TArray<FWalkerInstr> &Program,
+                                          bool bLoop, int32 Level) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  auto FindRuntimeWalkerAt = [&](int32 InQ, int32 InR,
+                                 int32 InLevel) -> ABasicWalker * {
+    if (!GetWorld())
+      return nullptr;
+    for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It) {
+      if (It->Q == InQ && It->R == InR && It->Level == InLevel) {
+        return *It;
+      }
+    }
+    return nullptr;
+  };
+
+  for (FWalkerSpawnSpec &W : Sc.Walkers) {
+    if (W.Q == Q && W.R == R && W.Level == Level) {
+      W.StartingLocation = StartingLocation;
+      W.Program = Program;
+      W.bLoopProgram = bLoop;
+      if (!W.Spawned)
+        W.Spawned = FindRuntimeWalkerAt(Q, R, Level);
+      MarkActiveScenarioDirty();
 #if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
+      MirrorScenarioEditsToEditor();
 #endif
-			return;
-		}
-	}
-	
-	FRequestBeaconSpec NewB;
-	NewB.Q = Q;
-	NewB.R = R;
-	NewB.Level = Level;
-	NewB.BeaconType = BeaconType;
-	NewB.BeaconRole = BeaconRole;
-	NewB.Rotation = Rotation;
-	NewB.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole, Level);
-	
-	// Save paired beacon info from runtime
-	if (NewB.Spawned && NewB.Spawned->PairedBeacon && IsValid(NewB.Spawned->PairedBeacon))
-	{
-		NewB.PairedBeaconQ = NewB.Spawned->PairedBeacon->Q;
-		NewB.PairedBeaconR = NewB.Spawned->PairedBeacon->R;
-		NewB.PairedBeaconRole = NewB.Spawned->PairedBeacon->BeaconRole;
-	}
-	
-	Sc.Beacons.Add(NewB);
-	MarkActiveScenarioDirty();
+      return;
+    }
+  }
+
+  FWalkerSpawnSpec NewW;
+  NewW.Q = Q;
+  NewW.R = R;
+  NewW.Level = Level;
+  NewW.StartingLocation = StartingLocation;
+  NewW.Program = Program;
+  NewW.bLoopProgram = bLoop;
+  NewW.Spawned = FindRuntimeWalkerAt(
+      Q, R, Level); // capture runtime actor if already spawned
+  Sc.Walkers.Add(NewW);
+  MarkActiveScenarioDirty();
 #if WITH_EDITOR
-	MirrorScenarioEditsToEditor();
+  MirrorScenarioEditsToEditor();
 #endif
 }
 
-bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R, int32 Level)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	
-	bool bRemovedAny = false;
-	
-	// Remove all beacons at this hex (both Pickup and DropOff if at same location)
-	for (int32 i = Sc.Beacons.Num() - 1; i >= 0; --i)
-	{
-		if (Sc.Beacons[i].Q == Q && Sc.Beacons[i].R == R && Sc.Beacons[i].Level == Level)
-		{
-			if (Sc.Beacons[i].Spawned)
-			{
-				DestroyActorNow(Sc.Beacons[i].Spawned);
-				Sc.Beacons[i].Spawned = nullptr;
-			}
-			else if (UWorld* W = GetWorld())
-			{
-				for (TActorIterator<ARequestBeacon> It(W); It; ++It)
-				{
-					if (It->Q == Q && It->R == R && It->BeaconRole == Sc.Beacons[i].BeaconRole && It->Level == Level)
-					{
-						DestroyActorNow(*It);
-						break;
-					}
-				}
-			}
-			
-			Sc.Beacons.RemoveAt(i);
-			bRemovedAny = true;
-		}
-	}
-	
-	if (bRemovedAny)
-	{
-		MarkActiveScenarioDirty();
+bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R, int32 Level) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return false;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  for (int32 i = 0; i < Sc.Walkers.Num(); ++i) {
+    if (Sc.Walkers[i].Q == Q && Sc.Walkers[i].R == R &&
+        Sc.Walkers[i].Level == Level) {
+      if (Sc.Walkers[i].Spawned) {
+        DestroyActorNow(Sc.Walkers[i].Spawned);
+        Sc.Walkers[i].Spawned = nullptr;
+      } else if (UWorld *W = GetWorld()) {
+        for (TActorIterator<ABasicWalker> It(W); It; ++It) {
+          if (It->Q == Q && It->R == R && It->Level == Level) {
+            DestroyActorNow(*It);
+            break;
+          }
+        }
+      }
+
+      Sc.Walkers.RemoveAt(i);
+      MarkActiveScenarioDirty();
 #if WITH_EDITOR
-		MirrorScenarioEditsToEditor();
+      MirrorScenarioEditsToEditor();
 #endif
-		return true;
-	}
-	
-	// Fallback: remove any runtime beacons not in specs
-	if (UWorld* W = GetWorld())
-	{
-		for (TActorIterator<ARequestBeacon> It(W); It; ++It)
-		{
-			if (It->Q == Q && It->R == R && It->Level == Level)
-			{
-				DestroyActorNow(*It);
-				bRemovedAny = true;
-			}
-		}
-	}
-	
-	if (bRemovedAny)
-	{
-		MarkActiveScenarioDirty();
+      return true;
+    }
+  }
+
+  if (UWorld *W = GetWorld()) {
+    for (TActorIterator<ABasicWalker> It(W); It; ++It) {
+      if (It->Q == Q && It->R == R && It->Level == Level) {
+        DestroyActorNow(*It);
+        MarkActiveScenarioDirty();
 #if WITH_EDITOR
-		MirrorScenarioEditsToEditor();
+        MirrorScenarioEditsToEditor();
 #endif
-	}
-	
-	return bRemovedAny;
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
-void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R, EOrbType TriggerOrbType, ETriggerVariant Variant, int32 OwnerQ, int32 OwnerR, ETriggerTileOwnerType OwnerType, float Rotation, int32 Level)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	
-	auto FindRuntimeTriggerTileAt = [&](int32 InQ, int32 InR, int32 InLevel) -> ATriggerTile*
-		{
-			if (!GetWorld()) return nullptr;
-			for (TActorIterator<ATriggerTile> It(GetWorld()); It; ++It)
-			{
-				if (It->Q == InQ && It->R == InR && It->Level == InLevel)
-				{
-					return *It;
-				}
-			}
-			return nullptr;
-		};
-	
-	for (FTriggerTileSpec& T : Sc.TriggerTiles)
-	{
-		if (T.Q == Q && T.R == R && T.Level == Level)
-		{
-			T.TriggerOrbType = TriggerOrbType;
-			T.Variant = Variant;
-			T.OwnerQ = OwnerQ;
-			T.OwnerR = OwnerR;
-			T.OwnerType = OwnerType;
-			T.Rotation = Rotation;
-			if (!T.Spawned) T.Spawned = FindRuntimeTriggerTileAt(Q, R, Level);
-			MarkActiveScenarioDirty();
+void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R,
+                                          EBeaconType BeaconType,
+                                          EBeaconRole BeaconRole,
+                                          float Rotation, int32 Level) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  auto FindRuntimeBeaconAt = [&](int32 InQ, int32 InR, EBeaconRole InRole,
+                                 int32 InLevel) -> ARequestBeacon * {
+    if (!GetWorld())
+      return nullptr;
+    for (TActorIterator<ARequestBeacon> It(GetWorld()); It; ++It) {
+      if (It->Q == InQ && It->R == InR && It->BeaconRole == InRole &&
+          It->Level == InLevel) {
+        return *It;
+      }
+    }
+    return nullptr;
+  };
+
+  for (FRequestBeaconSpec &B : Sc.Beacons) {
+    if (B.Q == Q && B.R == R && B.BeaconRole == BeaconRole &&
+        B.Level == Level) {
+      B.BeaconType = BeaconType;
+      B.Rotation = Rotation;
+      if (!B.Spawned)
+        B.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole, Level);
+
+      // Update paired beacon info from runtime
+      if (B.Spawned && B.Spawned->PairedBeacon &&
+          IsValid(B.Spawned->PairedBeacon)) {
+        B.PairedBeaconQ = B.Spawned->PairedBeacon->Q;
+        B.PairedBeaconR = B.Spawned->PairedBeacon->R;
+        B.PairedBeaconRole = B.Spawned->PairedBeacon->BeaconRole;
+      }
+
+      MarkActiveScenarioDirty();
 #if WITH_EDITOR
-			MirrorScenarioEditsToEditor();
+      MirrorScenarioEditsToEditor();
 #endif
-			return;
-		}
-	}
-	
-	FTriggerTileSpec NewT;
-	NewT.Q = Q;
-	NewT.R = R;
-	NewT.Level = Level;
-	NewT.TriggerOrbType = TriggerOrbType;
-	NewT.Variant = Variant;
-	NewT.OwnerQ = OwnerQ;
-	NewT.OwnerR = OwnerR;
-	NewT.OwnerType = OwnerType;
-	NewT.Rotation = Rotation;
-	NewT.Spawned = FindRuntimeTriggerTileAt(Q, R, Level);
-	
-	Sc.TriggerTiles.Add(NewT);
-	MarkActiveScenarioDirty();
+      return;
+    }
+  }
+
+  FRequestBeaconSpec NewB;
+  NewB.Q = Q;
+  NewB.R = R;
+  NewB.Level = Level;
+  NewB.BeaconType = BeaconType;
+  NewB.BeaconRole = BeaconRole;
+  NewB.Rotation = Rotation;
+  NewB.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole, Level);
+
+  // Save paired beacon info from runtime
+  if (NewB.Spawned && NewB.Spawned->PairedBeacon &&
+      IsValid(NewB.Spawned->PairedBeacon)) {
+    NewB.PairedBeaconQ = NewB.Spawned->PairedBeacon->Q;
+    NewB.PairedBeaconR = NewB.Spawned->PairedBeacon->R;
+    NewB.PairedBeaconRole = NewB.Spawned->PairedBeacon->BeaconRole;
+  }
+
+  Sc.Beacons.Add(NewB);
+  MarkActiveScenarioDirty();
 #if WITH_EDITOR
-	MirrorScenarioEditsToEditor();
+  MirrorScenarioEditsToEditor();
 #endif
 }
 
-bool ATestLevelDirector::RemoveTriggerTileSpec(int32 Q, int32 R, int32 Level)
-{
-	if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) return false;
-	FScenarioSpec& Sc = Scenarios[ActiveScenarioIndex];
-	
-	bool bRemovedAny = false;
-	
-	// Remove all trigger tiles at this hex
-	for (int32 i = Sc.TriggerTiles.Num() - 1; i >= 0; --i)
-	{
-		if (Sc.TriggerTiles[i].Q == Q && Sc.TriggerTiles[i].R == R && Sc.TriggerTiles[i].Level == Level)
-		{
-			if (Sc.TriggerTiles[i].Spawned)
-			{
-				DestroyActorNow(Sc.TriggerTiles[i].Spawned);
-				Sc.TriggerTiles[i].Spawned = nullptr;
-			}
-			else if (UWorld* W = GetWorld())
-			{
-				for (TActorIterator<ATriggerTile> It(W); It; ++It)
-				{
-					if (It->Q == Q && It->R == R && It->Level == Level)
-					{
-						DestroyActorNow(*It);
-						break;
-					}
-				}
-			}
-			
-			Sc.TriggerTiles.RemoveAt(i);
-			bRemovedAny = true;
-		}
-	}
-	
-	if (bRemovedAny)
-	{
-		MarkActiveScenarioDirty();
+bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R, int32 Level) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return false;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  bool bRemovedAny = false;
+
+  // Remove all beacons at this hex (both Pickup and DropOff if at same
+  // location)
+  for (int32 i = Sc.Beacons.Num() - 1; i >= 0; --i) {
+    if (Sc.Beacons[i].Q == Q && Sc.Beacons[i].R == R &&
+        Sc.Beacons[i].Level == Level) {
+      if (Sc.Beacons[i].Spawned) {
+        DestroyActorNow(Sc.Beacons[i].Spawned);
+        Sc.Beacons[i].Spawned = nullptr;
+      } else if (UWorld *W = GetWorld()) {
+        for (TActorIterator<ARequestBeacon> It(W); It; ++It) {
+          if (It->Q == Q && It->R == R &&
+              It->BeaconRole == Sc.Beacons[i].BeaconRole &&
+              It->Level == Level) {
+            DestroyActorNow(*It);
+            break;
+          }
+        }
+      }
+
+      Sc.Beacons.RemoveAt(i);
+      bRemovedAny = true;
+    }
+  }
+
+  if (bRemovedAny) {
+    MarkActiveScenarioDirty();
 #if WITH_EDITOR
-		MirrorScenarioEditsToEditor();
+    MirrorScenarioEditsToEditor();
 #endif
-		return true;
-	}
-	
-	// Fallback: remove any runtime trigger tiles not in specs
-	if (UWorld* W = GetWorld())
-	{
-		for (TActorIterator<ATriggerTile> It(W); It; ++It)
-		{
-			if (It->Q == Q && It->R == R && It->Level == Level)
-			{
-				DestroyActorNow(*It);
-				bRemovedAny = true;
-			}
-		}
-	}
-	
-	if (bRemovedAny)
-	{
-		MarkActiveScenarioDirty();
+    return true;
+  }
+
+  // Fallback: remove any runtime beacons not in specs
+  if (UWorld *W = GetWorld()) {
+    for (TActorIterator<ARequestBeacon> It(W); It; ++It) {
+      if (It->Q == Q && It->R == R && It->Level == Level) {
+        DestroyActorNow(*It);
+        bRemovedAny = true;
+      }
+    }
+  }
+
+  if (bRemovedAny) {
+    MarkActiveScenarioDirty();
 #if WITH_EDITOR
-		MirrorScenarioEditsToEditor();
+    MirrorScenarioEditsToEditor();
 #endif
-	}
-	
-	return bRemovedAny;
+  }
+
+  return bRemovedAny;
+}
+
+void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R,
+                                               EOrbType TriggerOrbType,
+                                               ETriggerVariant Variant,
+                                               int32 OwnerQ, int32 OwnerR,
+                                               ETriggerTileOwnerType OwnerType,
+                                               float Rotation, int32 Level) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  auto FindRuntimeTriggerTileAt = [&](int32 InQ, int32 InR,
+                                      int32 InLevel) -> ATriggerTile * {
+    if (!GetWorld())
+      return nullptr;
+    for (TActorIterator<ATriggerTile> It(GetWorld()); It; ++It) {
+      if (It->Q == InQ && It->R == InR && It->Level == InLevel) {
+        return *It;
+      }
+    }
+    return nullptr;
+  };
+
+  for (FTriggerTileSpec &T : Sc.TriggerTiles) {
+    if (T.Q == Q && T.R == R && T.Level == Level) {
+      T.TriggerOrbType = TriggerOrbType;
+      T.Variant = Variant;
+      T.OwnerQ = OwnerQ;
+      T.OwnerR = OwnerR;
+      T.OwnerType = OwnerType;
+      T.Rotation = Rotation;
+      if (!T.Spawned)
+        T.Spawned = FindRuntimeTriggerTileAt(Q, R, Level);
+      MarkActiveScenarioDirty();
+#if WITH_EDITOR
+      MirrorScenarioEditsToEditor();
+#endif
+      return;
+    }
+  }
+
+  FTriggerTileSpec NewT;
+  NewT.Q = Q;
+  NewT.R = R;
+  NewT.Level = Level;
+  NewT.TriggerOrbType = TriggerOrbType;
+  NewT.Variant = Variant;
+  NewT.OwnerQ = OwnerQ;
+  NewT.OwnerR = OwnerR;
+  NewT.OwnerType = OwnerType;
+  NewT.Rotation = Rotation;
+  NewT.Spawned = FindRuntimeTriggerTileAt(Q, R, Level);
+
+  Sc.TriggerTiles.Add(NewT);
+  MarkActiveScenarioDirty();
+#if WITH_EDITOR
+  MirrorScenarioEditsToEditor();
+#endif
+}
+
+bool ATestLevelDirector::RemoveTriggerTileSpec(int32 Q, int32 R, int32 Level) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return false;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  bool bRemovedAny = false;
+
+  // Remove all trigger tiles at this hex
+  for (int32 i = Sc.TriggerTiles.Num() - 1; i >= 0; --i) {
+    if (Sc.TriggerTiles[i].Q == Q && Sc.TriggerTiles[i].R == R &&
+        Sc.TriggerTiles[i].Level == Level) {
+      if (Sc.TriggerTiles[i].Spawned) {
+        DestroyActorNow(Sc.TriggerTiles[i].Spawned);
+        Sc.TriggerTiles[i].Spawned = nullptr;
+      } else if (UWorld *W = GetWorld()) {
+        for (TActorIterator<ATriggerTile> It(W); It; ++It) {
+          if (It->Q == Q && It->R == R && It->Level == Level) {
+            DestroyActorNow(*It);
+            break;
+          }
+        }
+      }
+
+      Sc.TriggerTiles.RemoveAt(i);
+      bRemovedAny = true;
+    }
+  }
+
+  if (bRemovedAny) {
+    MarkActiveScenarioDirty();
+#if WITH_EDITOR
+    MirrorScenarioEditsToEditor();
+#endif
+    return true;
+  }
+
+  // Fallback: remove any runtime trigger tiles not in specs
+  if (UWorld *W = GetWorld()) {
+    for (TActorIterator<ATriggerTile> It(W); It; ++It) {
+      if (It->Q == Q && It->R == R && It->Level == Level) {
+        DestroyActorNow(*It);
+        bRemovedAny = true;
+      }
+    }
+  }
+
+  if (bRemovedAny) {
+    MarkActiveScenarioDirty();
+#if WITH_EDITOR
+    MirrorScenarioEditsToEditor();
+#endif
+  }
+
+  return bRemovedAny;
 }
 
 /* ---------------- PIE Sync (Editor Only) ---------------- */
 #if WITH_EDITOR
-void ATestLevelDirector::HandlePreBeginPIE(bool /*bIsSimulating*/)
-{
-	if (!IsValid(this)) return;
-	CommitPreviewEdits();
+void ATestLevelDirector::HandlePreBeginPIE(bool /*bIsSimulating*/) {
+  if (!IsValid(this))
+    return;
+  CommitPreviewEdits();
 }
 
-void ATestLevelDirector::HandleEndPIE(bool /*bIsSimulating*/)
-{
-	// Only run on the PIE world copy
-	if (!GetWorld() || !GetWorld()->IsPlayInEditor()) return;
+void ATestLevelDirector::HandleEndPIE(bool /*bIsSimulating*/) {
+  // Only run on the PIE world copy
+  if (!GetWorld() || !GetWorld()->IsPlayInEditor())
+    return;
 
-	// First harvest any runtime arm changes (program edits etc.)
+  // First harvest any runtime arm changes (program edits etc.)
 #if WITH_EDITOR
-	SyncAllRuntimeArmEdits();
+  SyncAllRuntimeArmEdits();
 #endif
 
-	// Mirror one last time to editor world
-	MirrorScenarioEditsToEditor();
+  // Mirror one last time to editor world
+  MirrorScenarioEditsToEditor();
 }
 
 #if WITH_EDITOR
-void ATestLevelDirector::SyncAllRuntimeArmEdits()
-{
-	// Only sync the active scenario - other scenarios should not be overwritten
-	if (Scenarios.IsValidIndex(ActiveScenarioIndex))
-	{
-		SyncPreviewEditsIntoScenarioFiltered(Scenarios[ActiveScenarioIndex]);
-	}
+void ATestLevelDirector::SyncAllRuntimeArmEdits() {
+  // Only sync the active scenario - other scenarios should not be overwritten
+  if (Scenarios.IsValidIndex(ActiveScenarioIndex)) {
+    SyncPreviewEditsIntoScenarioFiltered(Scenarios[ActiveScenarioIndex]);
+  }
 }
 #endif
 
-void ATestLevelDirector::MirrorScenarioEditsToEditor()
-{
-	if (!GIsEditor) return;
-	if (!GetWorld() || !GetWorld()->IsPlayInEditor()) return;
+void ATestLevelDirector::MirrorScenarioEditsToEditor() {
+  if (!GIsEditor)
+    return;
+  if (!GetWorld() || !GetWorld()->IsPlayInEditor())
+    return;
 
-	UEditorEngine* EE = Cast<UEditorEngine>(GEngine);
-	if (!EE) return;
+  UEditorEngine *EE = Cast<UEditorEngine>(GEngine);
+  if (!EE)
+    return;
 
-	UWorld* EditorWorld = EE->GetEditorWorldContext().World();
-	if (!EditorWorld || EditorWorld == GetWorld()) return;
+  UWorld *EditorWorld = EE->GetEditorWorldContext().World();
+  if (!EditorWorld || EditorWorld == GetWorld())
+    return;
 
-	for (TActorIterator<ATestLevelDirector> It(EditorWorld); It; ++It)
-	{
-		ATestLevelDirector* EditorDir = *It;
-		// Copy arrays (deep copy structs)
-		EditorDir->Scenarios = Scenarios;
-		EditorDir->ActiveScenarioIndex = ActiveScenarioIndex;
-		EditorDir->MarkActiveScenarioDirty();
-		break;
-	}
+  for (TActorIterator<ATestLevelDirector> It(EditorWorld); It; ++It) {
+    ATestLevelDirector *EditorDir = *It;
+    // Copy arrays (deep copy structs)
+    EditorDir->Scenarios = Scenarios;
+    EditorDir->ActiveScenarioIndex = ActiveScenarioIndex;
+    EditorDir->MarkActiveScenarioDirty();
+    break;
+  }
 }
 
-void ATestLevelDirector::PostEditChangeProperty(FPropertyChangedEvent& Event)
-{
-	Super::PostEditChangeProperty(Event);
+void ATestLevelDirector::PostEditChangeProperty(FPropertyChangedEvent &Event) {
+  Super::PostEditChangeProperty(Event);
 
-	if (Event.MemberProperty)
-	{
-		const FName Name = Event.MemberProperty->GetFName();
+  if (Event.MemberProperty) {
+    const FName Name = Event.MemberProperty->GetFName();
 
-		if (Name == GET_MEMBER_NAME_CHECKED(ATestLevelDirector, ActiveScenarioIndex))
-		{
-			// Only rebuild scenario when in PIE, not in editor
-			// Editor spawning causes duplicate arms when switching to PIE
-			if (GetWorld() && GetWorld()->IsPlayInEditor())
-			{
-				BuildActiveScenario();
-			}
-			MarkActiveScenarioDirty();
-		}
-		else if (Name == GET_MEMBER_NAME_CHECKED(ATestLevelDirector, Scenarios))
-		{
-			RefreshSpawnedArmsFromScenario(ActiveScenarioIndex);
-		}
-	}
+    if (Name ==
+        GET_MEMBER_NAME_CHECKED(ATestLevelDirector, ActiveScenarioIndex)) {
+      // Only rebuild scenario when in PIE, not in editor
+      // Editor spawning causes duplicate arms when switching to PIE
+      if (GetWorld() && GetWorld()->IsPlayInEditor()) {
+        BuildActiveScenario();
+      }
+      MarkActiveScenarioDirty();
+    } else if (Name == GET_MEMBER_NAME_CHECKED(ATestLevelDirector, Scenarios)) {
+      RefreshSpawnedArmsFromScenario(ActiveScenarioIndex);
+    }
+  }
 }
 #endif
 
-void ATestLevelDirector::ReapplyActiveScenario()
-{
-	if (Scenarios.IsValidIndex(ActiveScenarioIndex))
-		ApplyScenario(Scenarios[ActiveScenarioIndex]);
+void ATestLevelDirector::ReapplyActiveScenario() {
+  if (Scenarios.IsValidIndex(ActiveScenarioIndex))
+    ApplyScenario(Scenarios[ActiveScenarioIndex]);
 }
 
-void ATestLevelDirector::CommitRuntimeFacingEdits()
-{
-	// One�shot capture of current facing directions regardless of bCaptureRuntimeFacingEdits flag
-	for (FScenarioSpec& Scenario : Scenarios)
-	{
-		for (FArmSpawnSpec& ArmSpec : Scenario.Arms)
-		{
-			if (ArmSpec.Spawned)
-			{
-				ArmSpec.Facing = ArmSpec.Spawned->FacingDir;
-			}
-		}
-	}
-	MarkActiveScenarioDirty();
+void ATestLevelDirector::CommitRuntimeFacingEdits() {
+  // One�shot capture of current facing directions regardless of
+  // bCaptureRuntimeFacingEdits flag
+  for (FScenarioSpec &Scenario : Scenarios) {
+    for (FArmSpawnSpec &ArmSpec : Scenario.Arms) {
+      if (ArmSpec.Spawned) {
+        ArmSpec.Facing = ArmSpec.Spawned->FacingDir;
+      }
+    }
+  }
+  MarkActiveScenarioDirty();
 #if WITH_EDITOR
-	if (GetWorld() && GetWorld()->IsPlayInEditor())
-	{
-		MirrorScenarioEditsToEditor();
-	}
+  if (GetWorld() && GetWorld()->IsPlayInEditor()) {
+    MirrorScenarioEditsToEditor();
+  }
 #endif
 }
 
-void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(FScenarioSpec& Scenario)
-{
-	// First, update existing arms from spawned actors
-	for (FArmSpawnSpec& ArmSpec : Scenario.Arms)
-	{
-		if (!ArmSpec.Spawned) continue;
+void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
+    FScenarioSpec &Scenario) {
+  // First, update existing arms from spawned actors
+  for (FArmSpawnSpec &ArmSpec : Scenario.Arms) {
+    if (!ArmSpec.Spawned)
+      continue;
 
-		if (bCaptureRuntimeProgramEdits)
-		{
-			ArmSpec.Program = ArmSpec.Spawned->Program;
-			ArmSpec.bLoopProgram = ArmSpec.Spawned->bLoopProgram;
-		}
-		if (bCaptureRuntimeFacingEdits)
-		{
-			ArmSpec.Facing = ArmSpec.Spawned->FacingDir;
-		}
-	}
+    if (bCaptureRuntimeProgramEdits) {
+      ArmSpec.Program = ArmSpec.Spawned->Program;
+      ArmSpec.bLoopProgram = ArmSpec.Spawned->bLoopProgram;
+    }
+    if (bCaptureRuntimeFacingEdits) {
+      ArmSpec.Facing = ArmSpec.Spawned->FacingDir;
+    }
+  }
 
-	// NEW: Capture ALL current simulation state (including manually placed arms/tiles)
-	if (Driver && Driver->GetSim())
-	{
-		USimWorldHex* Sim = Driver->GetSim();
-		UWorld* W = GetWorld();
-		if (!W) return;
+  // NEW: Capture ALL current simulation state (including manually placed
+  // arms/tiles)
+  if (Driver && Driver->GetSim()) {
+    USimWorldHex *Sim = Driver->GetSim();
+    UWorld *W = GetWorld();
+    if (!W)
+      return;
 
-		// Clear and rebuild tile specs from current simulation
-		Scenario.Tiles.Empty();
-		for (const auto& KV : Sim->TileMap)
-		{
-			const FHex& Hex = KV.Key;
-			const FTile& Tile = KV.Value;
+    // Clear and rebuild tile specs from current simulation
+    Scenario.Tiles.Empty();
+    for (const auto &KV : Sim->TileMap) {
+      const FHex &Hex = KV.Key;
+      const FTile &Tile = KV.Value;
 
-			FPlacedTileSpec TileSpec;
-			TileSpec.Hex = Hex;
-			TileSpec.Kind = Tile.Kind;
-			TileSpec.Dir = Tile.Arg;
-			Scenario.Tiles.Add(TileSpec);
-			// UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured tile at (%d,%d) type %d"), Hex.Q, Hex.R, (int32)Tile.Kind);
-		}
-		
-		// Update ClusterOutput tiles with their orb types from MergedClusterOutputs
-		const TMap<FHex, FMergedTileInfo>& MergedOutputs = Sim->GetMergedClusterOutputs();
-		for (const auto& MergedKV : MergedOutputs)
-		{
-			const FMergedTileInfo& Info = MergedKV.Value;
-			
-			// Find and update the tile specs for both hexes
-			for (FPlacedTileSpec& TileSpec : Scenario.Tiles)
-			{
-				if (TileSpec.Hex == Info.Hex1)
-				{
-					TileSpec.OrbType = Info.OrbType1;
-				}
-				else if (TileSpec.Hex == Info.Hex2)
-				{
-					TileSpec.OrbType = Info.OrbType2;
-				}
-			}
-		}
+      FPlacedTileSpec TileSpec;
+      TileSpec.Hex = Hex;
+      TileSpec.Kind = Tile.Kind;
+      TileSpec.Dir = Tile.Arg;
+      Scenario.Tiles.Add(TileSpec);
+      // UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured tile at (%d,%d)
+      // type %d"), Hex.Q, Hex.R, (int32)Tile.Kind);
+    }
 
-		// Build a map of existing arm specs to preserve their original facing (if not capturing runtime edits)
-		TMap<FHex, FArmSpawnSpec> ExistingArmSpecs;
-		for (const FArmSpawnSpec& ExistingSpec : Scenario.Arms)
-		{
-			ExistingArmSpecs.Add(FHex(ExistingSpec.Q, ExistingSpec.R), ExistingSpec);
-		}
+    // Update ClusterOutput tiles with their orb types from MergedClusterOutputs
+    const TMap<FHex, FMergedTileInfo> &MergedOutputs =
+        Sim->GetMergedClusterOutputs();
+    for (const auto &MergedKV : MergedOutputs) {
+      const FMergedTileInfo &Info = MergedKV.Value;
 
-		// Completely rebuild arm specs from current world state
-		// This ensures removed arms are properly deleted from the scenario
-		Scenario.Arms.Empty();
+      // Find and update the tile specs for both hexes
+      for (FPlacedTileSpec &TileSpec : Scenario.Tiles) {
+        if (TileSpec.Hex == Info.Hex1) {
+          TileSpec.OrbType = Info.OrbType1;
+        } else if (TileSpec.Hex == Info.Hex2) {
+          TileSpec.OrbType = Info.OrbType2;
+        }
+      }
+    }
 
-		for (TActorIterator<ABasicArm> It(W); It; ++It)
-		{
-			ABasicArm* Arm = *It;
-			if (!Arm) continue;
+    // Build a map of existing arm specs to preserve their original facing (if
+    // not capturing runtime edits)
+    TMap<FHex, FArmSpawnSpec> ExistingArmSpecs;
+    for (const FArmSpawnSpec &ExistingSpec : Scenario.Arms) {
+      ExistingArmSpecs.Add(FHex(ExistingSpec.Q, ExistingSpec.R), ExistingSpec);
+    }
 
-			// Create new arm spec for every arm currently in the world
-			FArmSpawnSpec NewArmSpec;
-			NewArmSpec.Q = Arm->Q;
-			NewArmSpec.R = Arm->R;
-			NewArmSpec.StartingRotation = Arm->StartingRotation;
-			NewArmSpec.StartingReach = Arm->StartingReach;
+    // Completely rebuild arm specs from current world state
+    // This ensures removed arms are properly deleted from the scenario
+    Scenario.Arms.Empty();
 
-			// Preserve original facing unless we're explicitly capturing runtime facing edits
-			FHex ArmHex(Arm->Q, Arm->R);
-			if (!bCaptureRuntimeFacingEdits && ExistingArmSpecs.Contains(ArmHex))
-			{
-				// Use original facing from scenario to avoid rotation drift
-				NewArmSpec.Facing = ExistingArmSpecs[ArmHex].Facing;
+    for (TActorIterator<ABasicArm> It(W); It; ++It) {
+      ABasicArm *Arm = *It;
+      if (!Arm)
+        continue;
 
-			}
-			else if (!bCaptureRuntimeFacingEdits)
-			{
-				// For new arms (including blueprint-placed), use their HomeFacing from simulation (starting rotation)
-				if (Sim && Arm->SimArmIndex >= 0 && Arm->SimArmIndex < Sim->Arms.Num())
-				{
-					const FArmState& ArmState = Sim->Arms[Arm->SimArmIndex];
-					NewArmSpec.Facing = (uint8)ArmState.HomeFacing;
-					UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Used HomeFacing %d from simulation for new arm at (%d,%d)"),
-						NewArmSpec.Facing, Arm->Q, Arm->R);
-				}
-				else
-				{
-					// Fallback to current facing if simulation not available
-					NewArmSpec.Facing = Arm->FacingDir;
-					UE_LOG(LogTemp, Warning, TEXT("TestLevelDirector: Fallback to current facing %d for arm at (%d,%d) (no sim state)"),
-						NewArmSpec.Facing, Arm->Q, Arm->R);
-				}
-			}
-			else
-			{
-				// Use current facing when explicitly capturing runtime edits
-				NewArmSpec.Facing = Arm->FacingDir;
-				UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured current facing %d for arm at (%d,%d) (runtime capture enabled)"),
-					NewArmSpec.Facing, Arm->Q, Arm->R);
-			}
+      // Create new arm spec for every arm currently in the world
+      FArmSpawnSpec NewArmSpec;
+      NewArmSpec.Q = Arm->Q;
+      NewArmSpec.R = Arm->R;
+      NewArmSpec.StartingRotation = Arm->StartingRotation;
+      NewArmSpec.StartingReach = Arm->StartingReach;
 
-			NewArmSpec.Program = Arm->Program;
-			NewArmSpec.bLoopProgram = Arm->bLoopProgram;
-			NewArmSpec.StartingRotation = Arm->StartingRotation;
-			NewArmSpec.StartingReach = Arm->StartingReach;
-			NewArmSpec.Spawned = Arm; // Keep reference
-			Scenario.Arms.Add(NewArmSpec);
-		}
+      // Preserve original facing unless we're explicitly capturing runtime
+      // facing edits
+      FHex ArmHex(Arm->Q, Arm->R);
+      if (!bCaptureRuntimeFacingEdits && ExistingArmSpecs.Contains(ArmHex)) {
+        // Use original facing from scenario to avoid rotation drift
+        NewArmSpec.Facing = ExistingArmSpecs[ArmHex].Facing;
 
-		// Preserve existing walker specs (for program data) unless capturing edits
-		TMap<FHex, FWalkerSpawnSpec> ExistingWalkerSpecs;
-		for (const FWalkerSpawnSpec& ExistingWalker : Scenario.Walkers)
-		{
-			ExistingWalkerSpecs.Add(FHex(ExistingWalker.Q, ExistingWalker.R), ExistingWalker);
-		}
+      } else if (!bCaptureRuntimeFacingEdits) {
+        // For new arms (including blueprint-placed), use their HomeFacing from
+        // simulation (starting rotation)
+        if (Sim && Arm->SimArmIndex >= 0 &&
+            Arm->SimArmIndex < Sim->Arms.Num()) {
+          const FArmState &ArmState = Sim->Arms[Arm->SimArmIndex];
+          NewArmSpec.Facing = (uint8)ArmState.HomeFacing;
+          UE_LOG(LogTemp, Log,
+                 TEXT("TestLevelDirector: Used HomeFacing %d from simulation "
+                      "for new arm at (%d,%d)"),
+                 NewArmSpec.Facing, Arm->Q, Arm->R);
+        } else {
+          // Fallback to current facing if simulation not available
+          NewArmSpec.Facing = Arm->FacingDir;
+          UE_LOG(LogTemp, Warning,
+                 TEXT("TestLevelDirector: Fallback to current facing %d for "
+                      "arm at (%d,%d) (no sim state)"),
+                 NewArmSpec.Facing, Arm->Q, Arm->R);
+        }
+      } else {
+        // Use current facing when explicitly capturing runtime edits
+        NewArmSpec.Facing = Arm->FacingDir;
+        UE_LOG(LogTemp, Log,
+               TEXT("TestLevelDirector: Captured current facing %d for arm at "
+                    "(%d,%d) (runtime capture enabled)"),
+               NewArmSpec.Facing, Arm->Q, Arm->R);
+      }
 
-		Scenario.Walkers.Empty();
+      NewArmSpec.Program = Arm->Program;
+      NewArmSpec.bLoopProgram = Arm->bLoopProgram;
+      NewArmSpec.StartingRotation = Arm->StartingRotation;
+      NewArmSpec.StartingReach = Arm->StartingReach;
+      NewArmSpec.Spawned = Arm; // Keep reference
+      Scenario.Arms.Add(NewArmSpec);
+    }
 
-		for (TActorIterator<ABasicWalker> It(W); It; ++It)
-		{
-			ABasicWalker* Walker = *It;
-			if (!Walker) continue;
+    // Preserve existing walker specs (for program data) unless capturing edits
+    TMap<FHex, FWalkerSpawnSpec> ExistingWalkerSpecs;
+    for (const FWalkerSpawnSpec &ExistingWalker : Scenario.Walkers) {
+      ExistingWalkerSpecs.Add(FHex(ExistingWalker.Q, ExistingWalker.R),
+                              ExistingWalker);
+    }
 
-			FWalkerSpawnSpec NewWalkerSpec;
-			NewWalkerSpec.Q = Walker->Q;
-			NewWalkerSpec.R = Walker->R;
-			NewWalkerSpec.StartingLocation = Walker->HomeHex;
-			NewWalkerSpec.Spawned = Walker;
+    Scenario.Walkers.Empty();
 
-			FHex WalkerHex(Walker->Q, Walker->R);
-			if (!bCaptureRuntimeProgramEdits && ExistingWalkerSpecs.Contains(WalkerHex))
-			{
-				NewWalkerSpec.Program = ExistingWalkerSpecs[WalkerHex].Program;
-				NewWalkerSpec.bLoopProgram = ExistingWalkerSpecs[WalkerHex].bLoopProgram;
-			}
-			else
-			{
-				NewWalkerSpec.Program = Walker->Program;
-				NewWalkerSpec.bLoopProgram = Walker->bLoopProgram;
-			}
+    for (TActorIterator<ABasicWalker> It(W); It; ++It) {
+      ABasicWalker *Walker = *It;
+      if (!Walker)
+        continue;
 
-			Scenario.Walkers.Add(NewWalkerSpec);
-		}
+      FWalkerSpawnSpec NewWalkerSpec;
+      NewWalkerSpec.Q = Walker->Q;
+      NewWalkerSpec.R = Walker->R;
+      NewWalkerSpec.StartingLocation = Walker->HomeHex;
+      NewWalkerSpec.Spawned = Walker;
 
-		// Capture request beacons
-		Scenario.Beacons.Empty();
-		for (TActorIterator<ARequestBeacon> It(W); It; ++It)
-		{
-			ARequestBeacon* Beacon = *It;
-			if (!Beacon) continue;
+      FHex WalkerHex(Walker->Q, Walker->R);
+      if (!bCaptureRuntimeProgramEdits &&
+          ExistingWalkerSpecs.Contains(WalkerHex)) {
+        NewWalkerSpec.Program = ExistingWalkerSpecs[WalkerHex].Program;
+        NewWalkerSpec.bLoopProgram =
+            ExistingWalkerSpecs[WalkerHex].bLoopProgram;
+      } else {
+        NewWalkerSpec.Program = Walker->Program;
+        NewWalkerSpec.bLoopProgram = Walker->bLoopProgram;
+      }
 
-			FRequestBeaconSpec NewBeaconSpec;
-			NewBeaconSpec.Q = Beacon->Q;
-			NewBeaconSpec.R = Beacon->R;
-			NewBeaconSpec.BeaconType = Beacon->BeaconType;
-			NewBeaconSpec.BeaconRole = Beacon->BeaconRole;
-			NewBeaconSpec.Rotation = Beacon->GetActorRotation().Yaw;
-			NewBeaconSpec.Spawned = Beacon;
-			
-			// Save paired beacon info
-			if (Beacon->PairedBeacon && IsValid(Beacon->PairedBeacon))
-			{
-				NewBeaconSpec.PairedBeaconQ = Beacon->PairedBeacon->Q;
-				NewBeaconSpec.PairedBeaconR = Beacon->PairedBeacon->R;
-				NewBeaconSpec.PairedBeaconRole = Beacon->PairedBeacon->BeaconRole;
-			}
-			else
-			{
-				NewBeaconSpec.PairedBeaconRole = EBeaconRole::None;
-			}
-			
-			Scenario.Beacons.Add(NewBeaconSpec);
-		}
+      Scenario.Walkers.Add(NewWalkerSpec);
+    }
 
-		// Capture trigger tiles
-		Scenario.TriggerTiles.Empty();
-		for (TActorIterator<ATriggerTile> It(W); It; ++It)
-		{
-			ATriggerTile* TriggerTile = *It;
-			if (!TriggerTile) continue;
+    // Capture request beacons
+    Scenario.Beacons.Empty();
+    for (TActorIterator<ARequestBeacon> It(W); It; ++It) {
+      ARequestBeacon *Beacon = *It;
+      if (!Beacon)
+        continue;
 
-			FTriggerTileSpec NewTriggerSpec;
-			NewTriggerSpec.Q = TriggerTile->Q;
-			NewTriggerSpec.R = TriggerTile->R;
-			NewTriggerSpec.TriggerOrbType = TriggerTile->TriggerOrbType;
-			NewTriggerSpec.Variant = TriggerTile->Variant;
-			NewTriggerSpec.OwnerQ = TriggerTile->OwnerQ;
-			NewTriggerSpec.OwnerR = TriggerTile->OwnerR;
-			NewTriggerSpec.OwnerType = TriggerTile->OwnerType;
-			NewTriggerSpec.Rotation = TriggerTile->GetActorRotation().Yaw;
-			NewTriggerSpec.Spawned = TriggerTile;
-			
-			Scenario.TriggerTiles.Add(NewTriggerSpec);
-		}
-	}
+      FRequestBeaconSpec NewBeaconSpec;
+      NewBeaconSpec.Q = Beacon->Q;
+      NewBeaconSpec.R = Beacon->R;
+      NewBeaconSpec.BeaconType = Beacon->BeaconType;
+      NewBeaconSpec.BeaconRole = Beacon->BeaconRole;
+      NewBeaconSpec.Rotation = Beacon->GetActorRotation().Yaw;
+      NewBeaconSpec.Spawned = Beacon;
+
+      // Save paired beacon info
+      if (Beacon->PairedBeacon && IsValid(Beacon->PairedBeacon)) {
+        NewBeaconSpec.PairedBeaconQ = Beacon->PairedBeacon->Q;
+        NewBeaconSpec.PairedBeaconR = Beacon->PairedBeacon->R;
+        NewBeaconSpec.PairedBeaconRole = Beacon->PairedBeacon->BeaconRole;
+      } else {
+        NewBeaconSpec.PairedBeaconRole = EBeaconRole::None;
+      }
+
+      Scenario.Beacons.Add(NewBeaconSpec);
+    }
+
+    // Capture trigger tiles
+    Scenario.TriggerTiles.Empty();
+    for (TActorIterator<ATriggerTile> It(W); It; ++It) {
+      ATriggerTile *TriggerTile = *It;
+      if (!TriggerTile)
+        continue;
+
+      FTriggerTileSpec NewTriggerSpec;
+      NewTriggerSpec.Q = TriggerTile->Q;
+      NewTriggerSpec.R = TriggerTile->R;
+      NewTriggerSpec.TriggerOrbType = TriggerTile->TriggerOrbType;
+      NewTriggerSpec.Variant = TriggerTile->Variant;
+      NewTriggerSpec.OwnerQ = TriggerTile->OwnerQ;
+      NewTriggerSpec.OwnerR = TriggerTile->OwnerR;
+      NewTriggerSpec.OwnerType = TriggerTile->OwnerType;
+      NewTriggerSpec.Rotation = TriggerTile->GetActorRotation().Yaw;
+      NewTriggerSpec.Spawned = TriggerTile;
+
+      Scenario.TriggerTiles.Add(NewTriggerSpec);
+    }
+  }
+}
+
+void ATestLevelDirector::GenerateDiscoveryScenario() {
+  AutoFindOrSpawn();
+  UWorld *W = GetWorld();
+  if (!W)
+    return;
+
+  // Ensure we have GameManager
+  AGameManager *GM = nullptr;
+  for (TActorIterator<AGameManager> It(W); It; ++It) {
+    GM = *It;
+    break;
+  }
+  if (!GM) {
+    UE_LOG(LogTemp, Warning,
+           TEXT("GenerateDiscoveryScenario: No GameManager found."));
+    return;
+  }
+
+  // Setup Discovery Mode on GM
+  GM->SetDiscoveryMode(true);
+  GM->UnlockedRadius = StartingGridRadius;
+  GM->MinimumUnlockRadiusPerOutput = MinimumUnlockRadiusPerOutput;
+  GM->DiscoveryStartingDifficulty = StartingDifficulty;
+  GM->DiscoveryDifficultyScale = DifficultyScale;
+
+  UE_LOG(LogTemp, Log,
+         TEXT("GenerateDiscoveryScenario: Starting generation with "
+              "StartingDifficulty = %d"),
+         StartingDifficulty);
+
+  // Create or reuse "Discovery" scenario
+  int32 DiscoveryIndex = INDEX_NONE;
+  for (int32 i = 0; i < Scenarios.Num(); i++) {
+    if (Scenarios[i].Name == "Discovery") {
+      DiscoveryIndex = i;
+      break;
+    }
+  }
+
+  if (DiscoveryIndex == INDEX_NONE) {
+    FScenarioSpec NewScen;
+    NewScen.Name = "Discovery";
+    NewScen.bIsDiscovery = true;
+    DiscoveryIndex = Scenarios.Add(NewScen);
+  } else {
+    Scenarios[DiscoveryIndex].Tiles.Empty();
+    Scenarios[DiscoveryIndex].Arms.Empty();
+    Scenarios[DiscoveryIndex].Walkers.Empty();
+    Scenarios[DiscoveryIndex].Beacons.Empty();
+    Scenarios[DiscoveryIndex].TriggerTiles.Empty();
+    Scenarios[DiscoveryIndex].bIsDiscovery = true;
+  }
+
+  ActiveScenarioIndex = DiscoveryIndex;
+  FScenarioSpec &Scen = Scenarios[ActiveScenarioIndex];
+  int32 ClustersGenerated = 0;
+  int32 ClustersFailed = 0;
+  int32 InputsGenerated = 0;
+
+  // Prepare simulation
+  USimWorldHex *Sim = Driver ? Driver->GetSim() : nullptr;
+  if (!Sim && GM->OrbSimDriver)
+    Sim = GM->OrbSimDriver->GetSim();
+
+  if (!Sim) {
+    UE_LOG(LogTemp, Error,
+           TEXT("GenerateDiscoveryScenario: No Simulation instance found!"));
+    return;
+  }
+
+  // Evolution Tree Structure
+  struct FEvolutionNode {
+    int32 TemplateId;
+    FHex Hex;
+    int32 Dist;
+    int32 ParentIdx; // -1 for root
+  };
+  TArray<FEvolutionNode> ActiveNodes;
+  TSet<FHex> OccupiedHexes;
+
+  // For debug drawing
+  TArray<TPair<FHex, FHex>> ParentChildLinks; // Parent center -> Child center
+
+  // Helper lambda
+  auto GetHexOffset = [](int32 D, int32 Stp) {
+    const int32 DQ[] = {1, 1, 0, -1, -1, 0};
+    const int32 DR[] = {0, -1, -1, 0, 1, 1};
+    int32 i = D % 6;
+    return FHexAxial(DQ[i] * Stp, DR[i] * Stp);
+  };
+
+  // 1. Generate Root Cluster (Ancestral Root)
+  {
+    GM->DifficultyValue = 4; // Absolute basic start
+    int32 RootId = GM->GenerateRandomCluster(Sim);
+    if (RootId >= 0) {
+      const USimWorldHex::FClusterTemplate *T =
+          Sim->GetClusterTemplates().Find((uint8)RootId);
+      FHex RootHex(0, 0, 0);
+      if (T && T->Orbs.Num() > 0) {
+        for (const FOrbData &Orb : T->Orbs) {
+          FHex H(RootHex.Q + Orb.dQ, RootHex.R + Orb.dR, RootHex.Level);
+          FPlacedTileSpec TileSpec;
+          TileSpec.Hex = H;
+          TileSpec.Kind = ETileKind::DiscoveryClusterOutput;
+          TileSpec.OrbType = Orb.Type;
+          TileSpec.Dir = (uint8)RootId;
+          Scen.Tiles.Add(TileSpec);
+          OccupiedHexes.Add(H);
+        }
+        ActiveNodes.Add({RootId, RootHex, 0, -1});
+        ClustersGenerated++;
+      }
+    }
+  }
+
+  // 2. Grow the Tree
+  const int32 MaxRadius = GeneratedRadius;
+  const int32 TargetClusters = 60 + (MaxRadius / 10);
+  const int32 MaxAttempts = 3000;
+
+  UE_LOG(LogTemp, Log,
+         TEXT("GenerateDiscoveryScenario: Starting Evolution Tree. Target: %d, "
+              "SpacingScale: %.2f"),
+         TargetClusters, GeneratedInputOutputSpacingScale);
+
+  for (int32 Attempt = 0;
+       Attempt < MaxAttempts && ClustersGenerated < TargetClusters; Attempt++) {
+    if (ActiveNodes.Num() == 0)
+      break;
+
+    // Pick a parent node randomly
+    int32 ParentIdx = FMath::RandRange(0, ActiveNodes.Num() - 1);
+    const FEvolutionNode &Parent = ActiveNodes[ParentIdx];
+
+    // Pick a direction to grow
+    int32 Dir = FMath::RandRange(0, 5);
+
+    // Spacing increases with distance from center, scaled by user parameter
+    float MinSpacing = 8.0f + (float(Parent.Dist) / MaxRadius) * 20.0f *
+                                  GeneratedInputOutputSpacingScale;
+    int32 Step = FMath::RoundToInt(MinSpacing * FMath::RandRange(0.8f, 1.5f));
+
+    FHexAxial Offset = GetHexOffset(Dir, Step);
+    FHex NewHex(Parent.Hex.Q + Offset.Q, Parent.Hex.R + Offset.R, 0);
+
+    // Dist check
+    int32 NewDist = (FMath::Abs(NewHex.Q) + FMath::Abs(NewHex.Q + NewHex.R) +
+                     FMath::Abs(NewHex.R)) /
+                    2;
+    if (NewDist > MaxRadius)
+      continue;
+
+    // Overlap check with existing centers
+    bool bTooClose = false;
+    for (const auto &Node : ActiveNodes) {
+      int32 d = (FMath::Abs(Node.Hex.Q - NewHex.Q) +
+                 FMath::Abs(Node.Hex.Q + Node.Hex.R - NewHex.Q - NewHex.R) +
+                 FMath::Abs(Node.Hex.R - NewHex.R)) /
+                2;
+      if (d < MinSpacing * 0.7f) {
+        bTooClose = true;
+        break;
+      }
+    }
+    if (bTooClose)
+      continue;
+
+    // Difficulty increases with distance, tied to checkpoints
+    int32 LocalDifficulty = 4;
+    if (GM->AncestralDifficultyCheckpoints.Num() > 0)
+      LocalDifficulty = GM->AncestralDifficultyCheckpoints[0];
+    if (NewDist > 50 && GM->AncestralDifficultyCheckpoints.Num() > 1)
+      LocalDifficulty = GM->AncestralDifficultyCheckpoints[1];
+    if (NewDist > 100 && GM->AncestralDifficultyCheckpoints.Num() > 2)
+      LocalDifficulty = GM->AncestralDifficultyCheckpoints[2];
+    if (NewDist > 150 && GM->AncestralDifficultyCheckpoints.Num() > 3)
+      LocalDifficulty = GM->AncestralDifficultyCheckpoints[3];
+    if (NewDist > 180 && GM->AncestralDifficultyCheckpoints.Num() > 4)
+      LocalDifficulty = GM->AncestralDifficultyCheckpoints[4];
+    if (NewDist > 250 && GM->AncestralDifficultyCheckpoints.Num() > 5)
+      LocalDifficulty = GM->AncestralDifficultyCheckpoints[5];
+
+    GM->DifficultyValue = LocalDifficulty;
+
+    // Generate Child (Related/Mutated) - Must be UNIQUE
+    // Try to generate a unique cluster; if we can't, we may need higher
+    // difficulty
+    int32 ChildId = -1;
+    int32 UniqueAttempts = 0;
+    const int32 MaxUniqueAttempts = 10;
+
+    while (ChildId < 0 && UniqueAttempts < MaxUniqueAttempts) {
+      int32 CandidateId = GM->GenerateRelatedCluster(Parent.TemplateId, Sim);
+      if (CandidateId >= 0) {
+        // Check if this template is unique (not already used)
+        bool bIsUnique = true;
+        for (const FEvolutionNode &ExistingNode : ActiveNodes) {
+          if (ExistingNode.TemplateId == CandidateId) {
+            bIsUnique = false;
+            break;
+          }
+        }
+
+        if (bIsUnique) {
+          ChildId = CandidateId;
+        } else {
+          // Try again with higher difficulty to get more variety
+          UniqueAttempts++;
+          GM->DifficultyValue = LocalDifficulty + UniqueAttempts;
+        }
+      } else {
+        UniqueAttempts++;
+      }
+    }
+
+    if (ChildId < 0) {
+      ClustersFailed++;
+      continue;
+    }
+
+    const USimWorldHex::FClusterTemplate *ChildT =
+        Sim->GetClusterTemplates().Find((uint8)ChildId);
+    if (!ChildT || ChildT->Orbs.Num() == 0)
+      continue;
+
+    // Validate Placement overlap
+    bool bOverlap = false;
+    TArray<FHex> ChildTiles;
+    for (const FOrbData &Orb : ChildT->Orbs) {
+      FHex H(NewHex.Q + Orb.dQ, NewHex.R + Orb.dR, NewHex.Level);
+      if (OccupiedHexes.Contains(H)) {
+        bOverlap = true;
+        break;
+      }
+      ChildTiles.Add(H);
+    }
+    if (bOverlap)
+      continue;
+
+    // Commit Child Output
+    for (int32 i = 0; i < ChildTiles.Num(); i++) {
+      const FHex &H = ChildTiles[i];
+      FPlacedTileSpec TileSpec;
+      TileSpec.Hex = H;
+      TileSpec.Kind = ETileKind::DiscoveryClusterOutput;
+      TileSpec.OrbType = ChildT->Orbs[i].Type;
+      TileSpec.Dir = (uint8)ChildId;
+      Scen.Tiles.Add(TileSpec);
+      OccupiedHexes.Add(H);
+    }
+
+    // Track parent-child link for debug drawing
+    ParentChildLinks.Add(TPair<FHex, FHex>(Parent.Hex, NewHex));
+
+    ActiveNodes.Add({ChildId, NewHex, NewDist, ParentIdx});
+    ClustersGenerated++;
+
+    // ALWAYS attempt Input Placement for each output
+    // Inputs use GenerateRandomCluster (not related) - they don't need to be
+    // unique
+    bool bPlacedInput = false;
+    for (int32 Iter = 0; Iter < 20 && !bPlacedInput; Iter++) {
+      int32 IDs = FMath::RandRange(4, 10); // Closer range for inputs
+      int32 IDir = FMath::RandRange(0, 5);
+
+      FHexAxial IOff = GetHexOffset(IDir, IDs);
+      FHex IHex(NewHex.Q + IOff.Q, NewHex.R + IOff.R, 0);
+
+      // Check if center is occupied
+      if (OccupiedHexes.Contains(IHex))
+        continue;
+
+      // Calculate input difficulty based on input location
+      int32 InputDist = (FMath::Abs(IHex.Q) + FMath::Abs(IHex.Q + IHex.R) +
+                         FMath::Abs(IHex.R)) /
+                        2;
+      int32 InputDifficulty = 4;
+      if (InputDist > 50)
+        InputDifficulty = 6;
+      if (InputDist > 100)
+        InputDifficulty = 9;
+      if (InputDist > 150)
+        InputDifficulty = 12;
+      if (InputDist > 250)
+        InputDifficulty = 15;
+
+      // Use GenerateRandomCluster for inputs (not unique, just random)
+      GM->DifficultyValue = InputDifficulty;
+      int32 InputId = GM->GenerateRandomCluster(Sim);
+
+      const USimWorldHex::FClusterTemplate *InT =
+          Sim->GetClusterTemplates().Find((uint8)InputId);
+      if (!InT || InT->Orbs.Num() == 0)
+        continue;
+
+      // Overlap check for all input tiles
+      bool bInOverlap = false;
+      TArray<FHex> InTiles;
+      for (const FOrbData &Orb : InT->Orbs) {
+        FHex H(IHex.Q + Orb.dQ, IHex.R + Orb.dR, IHex.Level);
+        if (OccupiedHexes.Contains(H)) {
+          bInOverlap = true;
+          break;
+        }
+        InTiles.Add(H);
+      }
+
+      if (!bInOverlap && InTiles.Num() > 0) {
+        for (int32 i = 0; i < InTiles.Num(); i++) {
+          const FHex &H = InTiles[i];
+          FPlacedTileSpec TileSpec;
+          TileSpec.Hex = H;
+          TileSpec.Kind = ETileKind::DiscoveryClusterInput;
+          TileSpec.OrbType = InT->Orbs[i].Type;
+          TileSpec.Dir = (uint8)InputId;
+          Scen.Tiles.Add(TileSpec);
+          OccupiedHexes.Add(H);
+        }
+        InputsGenerated++;
+        bPlacedInput = true;
+      }
+    }
+  }
+
+  UE_LOG(LogTemp, Warning,
+         TEXT("GenerateDiscoveryScenario: Generated %d clusters (Failed: %d) "
+              "with %d Inputs and %d total tiles."),
+         ClustersGenerated, ClustersFailed, InputsGenerated, Scen.Tiles.Num());
+
+  // Draw debug lines for 10 seconds
+  if (UWorld *World = GetWorld()) {
+    // Get world transform info
+    FVector WorldAnchor = FVector::ZeroVector;
+    float TileSize = 120.0f; // Default
+    if (Driver && Driver->GetGridAnchor()) {
+      WorldAnchor = Driver->GetGridAnchor()->GetActorLocation();
+      TileSize = Driver->GetTileSize();
+    }
+
+    EHexOrientation Ori = EHexOrientation::PointyTop;
+
+    // Draw line from center to each cluster
+    for (const FEvolutionNode &Node : ActiveNodes) {
+      FVector2D NodeXY =
+          HexCoord::AxialToXY(FHexAxial(Node.Hex.Q, Node.Hex.R), TileSize, Ori);
+      FVector NodeWorld = WorldAnchor + FVector(NodeXY.X, NodeXY.Y, 50.0f);
+      FVector CenterWorld = WorldAnchor + FVector(0, 0, 50.0f);
+
+      // Center to node (yellow, thin)
+      DrawDebugLine(World, CenterWorld, NodeWorld, FColor::Yellow, false, 10.0f,
+                    0, 1.0f);
+    }
+
+    // Draw parent-child links (green, thicker)
+    for (const auto &Link : ParentChildLinks) {
+      FVector2D ParentXY =
+          HexCoord::AxialToXY(FHexAxial(Link.Key.Q, Link.Key.R), TileSize, Ori);
+      FVector2D ChildXY = HexCoord::AxialToXY(
+          FHexAxial(Link.Value.Q, Link.Value.R), TileSize, Ori);
+
+      FVector ParentWorld =
+          WorldAnchor + FVector(ParentXY.X, ParentXY.Y, 100.0f);
+      FVector ChildWorld = WorldAnchor + FVector(ChildXY.X, ChildXY.Y, 100.0f);
+
+      DrawDebugLine(World, ParentWorld, ChildWorld, FColor::Green, false, 10.0f,
+                    0, 3.0f);
+    }
+  }
+
+  // Update UI/Editor
+#if WITH_EDITOR
+  MarkActiveScenarioDirty();
+  MirrorScenarioEditsToEditor();
+#endif
+
+  BuildActiveScenario();
 }
