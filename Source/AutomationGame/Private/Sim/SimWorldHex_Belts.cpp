@@ -301,6 +301,187 @@ void USimWorldHex::StepBelts() {
       }
     }
 
+    // Handle pulling from other belts if they can't push forward on their own
+    if (SourceTile->Kind == ETileKind::Belt) {
+      FItem *PullItem = ItemMap.Find(SourceHex);
+      if (PullItem && PullItem->Id > 0 &&
+          !RecentlyDroppedByArm.Contains(PullItem->Id)) {
+        // Skip if ANY part of this item/cluster has already moved this tick
+        if (OrbsMovedThisTick.Contains(PullItem->Id))
+          return false;
+
+        // Check if the belt points at us or is disabled
+        bool bInputBeltCanPush = false;
+        if (IsBeltEnabled(SourceHex)) {
+          const uint8 InputBeltDir = (uint8)(SourceTile->Arg & 0xFF);
+          FHex InputDestHex =
+              HexUtil::Neighbor(SourceHex, (EHexDir)(InputBeltDir % 6));
+          if (InputDestHex == BeltHex) {
+            bInputBeltCanPush = true;
+          }
+        }
+
+        // If it points elsewhere or is disabled, it "can't push" into our slot,
+        // so we can pull it!
+        if (!bInputBeltCanPush) {
+          if (!PullItem->bIsReady) {
+            ItemsToSetReady.Add(PullItem->Id);
+            return false;
+          }
+
+          // Build cluster - same logic as main movement
+          TArray<int32> ConnectedItemIds;
+          TSet<int32> InCluster;
+          TArray<int32> ToProcess;
+
+          ToProcess.Add(PullItem->Id);
+          InCluster.Add(PullItem->Id);
+          ConnectedItemIds.Add(PullItem->Id);
+
+          while (ToProcess.Num() > 0) {
+            int32 CurrentId = ToProcess.Pop();
+
+            if (const TArray<int32> *BondList = ItemToBonds.Find(CurrentId)) {
+              for (int32 BondIdx : *BondList) {
+                if (!Bonds.IsValidIndex(BondIdx))
+                  continue;
+                const FBond &Bond = Bonds[BondIdx];
+                if (!Bond.bActive)
+                  continue;
+
+                int32 OtherId =
+                    (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
+                if (OtherId > 0 && !InCluster.Contains(OtherId)) {
+                  // Only include items that are on the board
+                  bool bFoundOnBoard = false;
+                  for (const auto &ItemKV : ItemMap) {
+                    if (ItemKV.Value.Id == OtherId &&
+                        !RecentlyDroppedByArm.Contains(OtherId)) {
+                      ConnectedItemIds.Add(OtherId);
+                      InCluster.Add(OtherId);
+                      ToProcess.Add(OtherId);
+                      bFoundOnBoard = true;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Calculate cluster movement offset
+          FHex ClusterMoveOffset(BeltHex.Q - SourceHex.Q,
+                                 BeltHex.R - SourceHex.R);
+
+          // Build cluster position maps
+          TMap<int32, FHex> ClusterPositions;
+          TMap<int32, FHex> ClusterDestinations;
+
+          for (int32 ConnectedId : ConnectedItemIds) {
+            for (const auto &BoardKV : ItemMap) {
+              if (BoardKV.Value.Id == ConnectedId) {
+                FHex CurrentPos = BoardKV.Key;
+                FHex DestPos(CurrentPos.Q + ClusterMoveOffset.Q,
+                             CurrentPos.R + ClusterMoveOffset.R,
+                             CurrentPos.Level);
+
+                ClusterPositions.Add(ConnectedId, CurrentPos);
+                ClusterDestinations.Add(ConnectedId, DestPos);
+                break;
+              }
+            }
+          }
+
+          // Check if cluster destinations are available
+          bool bCanMoveCluster = true;
+          for (const auto &DestKV : ClusterDestinations) {
+            int32 ItemId = DestKV.Key;
+            const FHex &DestPos = DestKV.Value;
+
+            // Don't move clusters containing newly placed items
+            if (NewlyPlacedItems.Contains(ItemId)) {
+              bCanMoveCluster = false;
+              break;
+            }
+
+            if (HeldOrbHexes.Contains(DestPos)) {
+              bCanMoveCluster = false;
+              break;
+            }
+
+            if (const FItem *DestItem = ItemMap.Find(DestPos)) {
+              if (!InCluster.Contains(DestItem->Id)) {
+                bCanMoveCluster = false;
+                break;
+              }
+            }
+          }
+
+          if (bCanMoveCluster) {
+            // Execute cluster pull
+            TMap<int32, FItem> MovingItems;
+            TMap<int32, FHex> OldPositions;
+            TMap<int32, FHex> NewPositions;
+
+            for (int32 ItemId : ConnectedItemIds) {
+              if (FHex *CurrentPos = ClusterPositions.Find(ItemId)) {
+                if (FItem *MovingItem = ItemMap.Find(*CurrentPos)) {
+                  MovingItems.Add(ItemId, *MovingItem);
+                  OldPositions.Add(ItemId, *CurrentPos);
+
+                  if (FHex *DestPos = ClusterDestinations.Find(ItemId)) {
+                    NewPositions.Add(ItemId, *DestPos);
+                  }
+                }
+              }
+            }
+
+            // Remove all items from old positions
+            for (const auto &PosKV : OldPositions) {
+              ItemMap.Remove(PosKV.Value);
+              OrbAt.Remove(PosKV.Value);
+            }
+
+            // Place at new positions
+            for (const auto &NewPosKV : NewPositions) {
+              int32 ItemId = NewPosKV.Key;
+              FHex NewHex = NewPosKV.Value;
+
+              if (FItem *MovingItem = MovingItems.Find(ItemId)) {
+                ItemMap.Add(NewHex, *MovingItem);
+                OrbAt.Add(NewHex, KindFromItem(*MovingItem));
+                ItemsMovedLastStep.Add(ItemId);
+
+                // Mark this orb as having moved this tick
+                OrbsMovedThisTick.Add(ItemId);
+              }
+            }
+
+            // Update bonds
+            for (int32 ItemId : ConnectedItemIds) {
+              if (const TArray<int32> *BondIndices = ItemToBonds.Find(ItemId)) {
+                for (int32 BondIdx : *BondIndices) {
+                  if (!Bonds.IsValidIndex(BondIdx))
+                    continue;
+                  FBond &Bond = Bonds[BondIdx];
+                  if (!Bond.bActive)
+                    continue;
+
+                  if (Bond.ItemA == ItemId) {
+                    Bond.Root = NewPositions.FindRef(ItemId);
+                  } else if (Bond.ItemB == ItemId) {
+                    Bond.Root = NewPositions.FindRef(ItemId);
+                  }
+                }
+              }
+            }
+
+            return true;
+          }
+        }
+      }
+    }
+
     // Handle bond/unbond tiles with enhanced cluster logic
     if (SourceTile->Kind == ETileKind::Bond ||
         SourceTile->Kind == ETileKind::Unbond ||
@@ -749,12 +930,32 @@ void USimWorldHex::StepBelts() {
                 bCanPull = true;
               } else if (PullableItem->bIsCluster) {
                 // Always pull clusters from ClusterOutput tiles if they haven't
-                // been accepted yet This ensures that if a cluster is placed on
-                // a single-orb ClusterOutput tile, it gets pulled
+                // been accepted yet
                 bCanPull = true;
               } else if (PullableItem->Single.Type !=
                              (EOrbType)InputTile->Arg &&
                          (EOrbType)InputTile->Arg != EOrbType::Void) {
+                bCanPull = true;
+              }
+            } else if (InputTile->Kind == ETileKind::Belt) {
+              // Pull from another belt if it can't push forward on its own
+              // (either because it's disabled or points away from us)
+              bool bInputBeltCanPush = false;
+              if (IsBeltEnabled(PullInputHex)) {
+                const uint8 InputBeltDir = (uint8)(InputTile->Arg & 0xFF);
+                FHex InputDestHex = HexUtil::Neighbor(
+                    PullInputHex, (EHexDir)(InputBeltDir % 6));
+
+                // If the belt points at us, it is capable of pushing into our
+                // slot normally
+                if (InputDestHex == FromHex) {
+                  bInputBeltCanPush = true;
+                }
+              }
+
+              // If it points elsewhere or is disabled, it "can't push" into our
+              // slot, so we can pull it!
+              if (!bInputBeltCanPush) {
                 bCanPull = true;
               }
             }
@@ -762,7 +963,9 @@ void USimWorldHex::StepBelts() {
 
           if (bCanPull && PullableItem->bIsReady &&
               !RecentlyDroppedByArm.Contains(PullableItem->Id) &&
-              !ProcessedItems.Contains(PullableItem->Id)) {
+              !ProcessedItems.Contains(PullableItem->Id) &&
+              !OrbsMovedThisTick.Contains(PullableItem->Id) &&
+              !InCluster.Contains(PullableItem->Id)) {
             // Create a pull operation for the item on the bond/unbond tile
             FMoveOperation PullOp;
             PullOp.ItemId = PullableItem->Id;
@@ -893,7 +1096,9 @@ void USimWorldHex::StepBelts() {
                 if (PartnerItem && PartnerItem->Id > 0 &&
                     PartnerItem->bIsReady &&
                     !RecentlyDroppedByArm.Contains(PartnerItem->Id) &&
-                    !ProcessedItems.Contains(PartnerItem->Id)) {
+                    !ProcessedItems.Contains(PartnerItem->Id) &&
+                    !OrbsMovedThisTick.Contains(PartnerItem->Id) &&
+                    !InCluster.Contains(PartnerItem->Id)) {
                   // Similar pull logic for partner areas (simplified for
                   // brevity) The full implementation would be the same as above
                   break;

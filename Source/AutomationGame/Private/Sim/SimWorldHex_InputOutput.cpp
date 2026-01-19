@@ -1330,8 +1330,10 @@ void USimWorldHex::ProcessOutputs() {
                     Driver->GM->GetClusterCount(ProcessedClusterTemplate);
                 if (CurrentCount >= Driver->GM->StorageLimit) {
                   // This cluster structure has reached its storage limit
-                  // Skip processing - leave items on output tiles until room
-                  // is available
+                  // Reject items so they can be pulled by belts
+                  for (int32 Id : ItemsOnChain) {
+                    ItemsRejectedByClusterOutput.Add(Id);
+                  }
                   continue;
                 }
               }
@@ -1535,10 +1537,23 @@ void USimWorldHex::ProcessOutputs() {
         }
       }
 
-      // ClusterSend requires at least 2 connected tiles to function
-      // Single tiles should not send orbs prematurely
-      if (ClusterTiles.Num() < 2) {
-        bAllTilesReady = false;
+      // Single tiles allow sending only if the orb is not bonded to anything
+      // else
+      if (bAllTilesReady && ClusterTiles.Num() < 2) {
+        if (OrbItemIds.Num() == 1) {
+          int32 ItemId = OrbItemIds[0];
+          if (const TArray<int32> *BondList = ItemToBonds.Find(ItemId)) {
+            for (int32 BondIdx : *BondList) {
+              if (Bonds.IsValidIndex(BondIdx) && Bonds[BondIdx].bActive) {
+                bAllTilesReady = false;
+                break;
+              }
+            }
+          }
+          // If no bonds found, bAllTilesReady remains true
+        } else {
+          bAllTilesReady = false;
+        }
       }
 
       // If ready, move levels!

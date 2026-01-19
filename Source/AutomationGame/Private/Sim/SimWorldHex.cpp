@@ -1544,13 +1544,15 @@ void USimWorldHex::StepSim() {
   // pass 1 (empty at start)
   StepArms();
 
-  // Update occupancy cache after StepArms - HeldOrbHexes and ArmBaseHexes are
-  // now valid for use by StepWalkers and StepBelts
-  UpdateHeldOrbCache();
-
   // Interaction pass 1: bond things sitting from last tick (including
   // ClusterSend arrivals)
   StepBonds();
+
+  // Update occupancy cache after StepArms AND StepBonds - HeldOrbHexes and
+  // ArmBaseHexes are now valid for use by StepWalkers and StepBelts.
+  // Crucial to do this AFTER StepBonds because assimilation can move orbs from
+  // board to held state.
+  UpdateHeldOrbCache();
 
   StepWalkers();
   StepBelts();
