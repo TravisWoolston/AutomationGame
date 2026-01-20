@@ -410,6 +410,130 @@ void AHexFactoryActor::Rebuild() {
   RebuildInternal();
 }
 
+void AHexFactoryActor::SetInputHighlight(bool bEnable) {
+  uint32 Stencil = bEnable ? 1 : 0;
+  if (InputTileISM) {
+    InputTileISM->SetRenderCustomDepth(bEnable);
+    InputTileISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (InputNoneISM) {
+    InputNoneISM->SetRenderCustomDepth(bEnable);
+    InputNoneISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (InputBaseAISM) {
+    InputBaseAISM->SetRenderCustomDepth(bEnable);
+    InputBaseAISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (InputBaseBISM) {
+    InputBaseBISM->SetRenderCustomDepth(bEnable);
+    InputBaseBISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (InputBaseCISM) {
+    InputBaseCISM->SetRenderCustomDepth(bEnable);
+    InputBaseCISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (InputMetalAISM) {
+    InputMetalAISM->SetRenderCustomDepth(bEnable);
+    InputMetalAISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (InputCatalystXISM) {
+    InputCatalystXISM->SetRenderCustomDepth(bEnable);
+    InputCatalystXISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (InputVoidISM) {
+    InputVoidISM->SetRenderCustomDepth(bEnable);
+    InputVoidISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (InputTilesMesh) {
+    InputTilesMesh->SetRenderCustomDepth(bEnable);
+    InputTilesMesh->SetCustomDepthStencilValue(Stencil);
+  }
+}
+
+void AHexFactoryActor::SetOutputHighlight(bool bEnable) {
+  uint32 Stencil = bEnable ? 1 : 0;
+  if (OutputTileISM) {
+    OutputTileISM->SetRenderCustomDepth(bEnable);
+    OutputTileISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (OutputNoneISM) {
+    OutputNoneISM->SetRenderCustomDepth(bEnable);
+    OutputNoneISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (OutputBaseAISM) {
+    OutputBaseAISM->SetRenderCustomDepth(bEnable);
+    OutputBaseAISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (OutputBaseBISM) {
+    OutputBaseBISM->SetRenderCustomDepth(bEnable);
+    OutputBaseBISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (OutputBaseCISM) {
+    OutputBaseCISM->SetRenderCustomDepth(bEnable);
+    OutputBaseCISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (OutputMetalAISM) {
+    OutputMetalAISM->SetRenderCustomDepth(bEnable);
+    OutputMetalAISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (OutputCatalystXISM) {
+    OutputCatalystXISM->SetRenderCustomDepth(bEnable);
+    OutputCatalystXISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (OutputVoidISM) {
+    OutputVoidISM->SetRenderCustomDepth(bEnable);
+    OutputVoidISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (MergedOutputMesh) {
+    MergedOutputMesh->SetRenderCustomDepth(bEnable);
+    MergedOutputMesh->SetCustomDepthStencilValue(Stencil);
+  }
+}
+
+void AHexFactoryActor::SetBeltHighlight(bool bEnable) {
+  uint32 Stencil = bEnable ? 1 : 0;
+  if (BeltISM) {
+    BeltISM->SetRenderCustomDepth(bEnable);
+    BeltISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltReadyISM) {
+    BeltReadyISM->SetRenderCustomDepth(bEnable);
+    BeltReadyISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltWaitingISM) {
+    BeltWaitingISM->SetRenderCustomDepth(bEnable);
+    BeltWaitingISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltTileISM) {
+    BeltTileISM->SetRenderCustomDepth(bEnable);
+    BeltTileISM->SetCustomDepthStencilValue(Stencil);
+  }
+}
+
+void AHexFactoryActor::SetBondHighlight(bool bEnable) {
+  uint32 Stencil = bEnable ? 1 : 0;
+  if (BondTileISM) {
+    BondTileISM->SetRenderCustomDepth(bEnable);
+    BondTileISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BondISM) {
+    BondISM->SetRenderCustomDepth(bEnable);
+    BondISM->SetCustomDepthStencilValue(Stencil);
+  }
+}
+
+void AHexFactoryActor::SetUnbondHighlight(bool bEnable) {
+  uint32 Stencil = bEnable ? 1 : 0;
+  if (UnbondTileISM) {
+    UnbondTileISM->SetRenderCustomDepth(bEnable);
+    UnbondTileISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (UnbondISM) {
+    UnbondISM->SetRenderCustomDepth(bEnable);
+    UnbondISM->SetCustomDepthStencilValue(Stencil);
+  }
+}
+
 FVector AHexFactoryActor::HexToWorld(const FHex &H) const {
   const AActor *Anchor = GetAnchor();
   const FVector AnchorV =
@@ -585,9 +709,12 @@ void AHexFactoryActor::RebuildTiles() {
       // materials
       break;
     case ETileKind::Belt:
+      if (BeltTileISM)
+        BeltTileISM->AddInstance(Transform);
+      break;
     case ETileKind::Bond:
     case ETileKind::Unbond:
-      // Belts and bonds don't use base tile meshes - only their glyph meshes
+      // Bonds don't use base tile meshes - only their glyph meshes
       // Skip tile mesh rendering for these
       break;
     default:

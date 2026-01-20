@@ -114,6 +114,9 @@ private:
   FHex BlueprintPlacementOffset;
   uint8 BlueprintRotation = 0;
   int32 CurrentLevel = 0;
+  EPlaceKind LastGlobalHighlightKind = (EPlaceKind)255;
+  TArray<TWeakObjectPtr<AActor>> GlobalHighlightedActors;
+  void SetGlobalHighlightForKind(EPlaceKind Kind, bool bEnable);
 
   void MoveX(float V) { AxisX = V; }
   void MoveY(float V) { AxisY = V; }

@@ -1496,6 +1496,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       FArmSpawnSpec NewArmSpec;
       NewArmSpec.Q = Arm->Q;
       NewArmSpec.R = Arm->R;
+      NewArmSpec.Level = Arm->Level;
       NewArmSpec.StartingRotation = Arm->StartingRotation;
       NewArmSpec.StartingReach = Arm->StartingReach;
 
@@ -1559,6 +1560,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       FWalkerSpawnSpec NewWalkerSpec;
       NewWalkerSpec.Q = Walker->Q;
       NewWalkerSpec.R = Walker->R;
+      NewWalkerSpec.Level = Walker->Level;
       NewWalkerSpec.StartingLocation = Walker->HomeHex;
       NewWalkerSpec.Spawned = Walker;
 
@@ -1586,6 +1588,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       FRequestBeaconSpec NewBeaconSpec;
       NewBeaconSpec.Q = Beacon->Q;
       NewBeaconSpec.R = Beacon->R;
+      NewBeaconSpec.Level = Beacon->Level;
       NewBeaconSpec.BeaconType = Beacon->BeaconType;
       NewBeaconSpec.BeaconRole = Beacon->BeaconRole;
       NewBeaconSpec.Rotation = Beacon->GetActorRotation().Yaw;
@@ -1613,6 +1616,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       FTriggerTileSpec NewTriggerSpec;
       NewTriggerSpec.Q = TriggerTile->Q;
       NewTriggerSpec.R = TriggerTile->R;
+      NewTriggerSpec.Level = TriggerTile->Level;
       NewTriggerSpec.TriggerOrbType = TriggerTile->TriggerOrbType;
       NewTriggerSpec.Variant = TriggerTile->Variant;
       NewTriggerSpec.OwnerQ = TriggerTile->OwnerQ;

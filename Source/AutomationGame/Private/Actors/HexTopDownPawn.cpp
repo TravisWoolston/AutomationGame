@@ -1,5 +1,6 @@
 #include "Actors/HexTopDownPawn.h"
 #include "Actors/BasicArm.h"
+#include "Actors/BasicWalker.h"
 #include "Actors/HexFactoryActor.h"
 #include "Actors/OrbSimDriver.h"
 #include "Actors/RequestBeacon.h"
@@ -279,6 +280,22 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
   // Reset tile highlight
   if (TileHighlightMesh) {
     TileHighlightMesh->SetVisibility(false);
+  }
+
+  // 4. Handle global category highlight based on current selection
+  if (Placer) {
+    if (Placer->PlaceKind != LastGlobalHighlightKind) {
+      // Turn off old highlight
+      if (LastGlobalHighlightKind != (EPlaceKind)255) {
+        SetGlobalHighlightForKind(LastGlobalHighlightKind, false);
+      }
+      // Turn on new highlight
+      SetGlobalHighlightForKind(Placer->PlaceKind, true);
+      LastGlobalHighlightKind = Placer->PlaceKind;
+    }
+  } else if (LastGlobalHighlightKind != (EPlaceKind)255) {
+    SetGlobalHighlightForKind(LastGlobalHighlightKind, false);
+    LastGlobalHighlightKind = (EPlaceKind)255;
   }
 
   // If dragging selection/blueprint, usually we don't highlight single tiles,
@@ -592,6 +609,93 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent *IC) {
   // Walker debug visualization toggle
   IC->BindAction("ToggleDebugWalkers", IE_Pressed, this,
                  &AHexTopDownPawn::ToggleDebugWalkers);
+}
+
+void AHexTopDownPawn::SetGlobalHighlightForKind(EPlaceKind Kind, bool bEnable) {
+  if (!GetWorld())
+    return;
+
+  // 1. Handle HexFactory (ISM/Procedural Mesh based)
+  if (!CachedHexFactory) {
+    for (TActorIterator<AHexFactoryActor> It(GetWorld()); It; ++It) {
+      CachedHexFactory = *It;
+      break;
+    }
+  }
+
+  if (CachedHexFactory) {
+    switch (Kind) {
+    case EPlaceKind::Belt:
+      CachedHexFactory->SetBeltHighlight(bEnable);
+      break;
+    case EPlaceKind::Input:
+    case EPlaceKind::ClusterInput:
+    case EPlaceKind::ClusterSend:
+      CachedHexFactory->SetInputHighlight(bEnable);
+      break;
+    case EPlaceKind::Output:
+    case EPlaceKind::ClusterOutput:
+      CachedHexFactory->SetOutputHighlight(bEnable);
+      break;
+    case EPlaceKind::Bond:
+      CachedHexFactory->SetBondHighlight(bEnable);
+      break;
+    case EPlaceKind::Unbond:
+      CachedHexFactory->SetUnbondHighlight(bEnable);
+      break;
+    default:
+      break;
+    }
+  }
+
+  // 2. Handle Actors
+  if (bEnable) {
+    GlobalHighlightedActors.Empty();
+    uint32 Stencil = 1; // Match factory stencil
+
+    auto HighlightActors = [&](UClass *Class) {
+      for (TActorIterator<AActor> It(GetWorld(), Class); It; ++It) {
+        AActor *A = *It;
+        if (IsValid(A)) {
+          TArray<UPrimitiveComponent *> Comps;
+          A->GetComponents(Comps);
+          for (UPrimitiveComponent *C : Comps) {
+            C->SetRenderCustomDepth(true);
+            C->SetCustomDepthStencilValue(Stencil);
+          }
+          GlobalHighlightedActors.Add(A);
+        }
+      }
+    };
+
+    switch (Kind) {
+    case EPlaceKind::Arm:
+      HighlightActors(ABasicArm::StaticClass());
+      break;
+    case EPlaceKind::Walker:
+      HighlightActors(ABasicWalker::StaticClass());
+      break;
+    case EPlaceKind::RequestBeacon:
+      HighlightActors(ARequestBeacon::StaticClass());
+      break;
+    case EPlaceKind::TriggerTile:
+      HighlightActors(ATriggerTile::StaticClass());
+      break;
+    default:
+      break;
+    }
+  } else {
+    for (auto &WeakA : GlobalHighlightedActors) {
+      if (AActor *A = WeakA.Get()) {
+        TArray<UPrimitiveComponent *> Comps;
+        A->GetComponents(Comps);
+        for (UPrimitiveComponent *C : Comps) {
+          C->SetRenderCustomDepth(false);
+        }
+      }
+    }
+    GlobalHighlightedActors.Empty();
+  }
 }
 
 void AHexTopDownPawn::SetInputMode1() {
@@ -1894,6 +1998,9 @@ void AHexTopDownPawn::PlaceBlueprint() {
       uint8 RotatedTileDirection = BlueprintTile.TileDirection;
       switch (BlueprintTile.TileType) {
       case ETileKind::Belt:
+        RotatedTileDirection =
+            (BlueprintTile.TileDirection + BlueprintRotation) % 6;
+        break;
       case ETileKind::Bond:
       case ETileKind::Unbond:
         RotatedTileDirection =

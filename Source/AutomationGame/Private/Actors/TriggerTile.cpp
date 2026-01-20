@@ -1,868 +1,829 @@
 #include "Actors/TriggerTile.h"
-#include "Components/StaticMeshComponent.h"
-#include "Components/SplineMeshComponent.h"
 #include "Actors/OrbSimDriver.h"
-#include "Sim/SimWorldHex.h"
-#include "Sim/HexTypes.h"
-#include "Sim/Tiles.h"
-#include "Framework/GameManager.h"
-#include "Data/OrbMaterialManager.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Components/SplineMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Data/OrbMaterialManager.h"
+#include "Engine/TextureRenderTarget2D.h"
 #include "EngineUtils.h"
-#include "Materials/MaterialInstanceDynamic.h"
+#include "Framework/GameManager.h"
 #include "Framework/GameTickManager.h"
 #include "Kismet/KismetRenderingLibrary.h"
-#include "Engine/TextureRenderTarget2D.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Sim/HexTypes.h"
+#include "Sim/SimWorldHex.h"
+#include "Sim/Tiles.h"
 
-ATriggerTile::ATriggerTile()
-{
-	PrimaryActorTick.bCanEverTick = true;
+ATriggerTile::ATriggerTile() {
+  PrimaryActorTick.bCanEverTick = true;
 
-	RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("RootComp"));
-	RootComponent = RootComp;
+  RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("RootComp"));
+  RootComponent = RootComp;
 
-	MeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshComp"));
-	MeshComp->SetupAttachment(RootComp);
-	MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  MeshComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MeshComp"));
+  MeshComp->SetupAttachment(RootComp);
+  MeshComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-	// Create wire component for visual connection to owner
-	WireComp = CreateDefaultSubobject<USplineMeshComponent>(TEXT("WireComp"));
-	WireComp->SetupAttachment(RootComp);
-	WireComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	WireComp->SetMobility(EComponentMobility::Movable);
-	// Use Z-axis as forward since engine cylinder is oriented along Z
-	WireComp->SetForwardAxis(ESplineMeshAxis::Z);
-	WireComp->SetVisibility(false); // Hidden until owner is set
+  // Create wire component for visual connection to owner
+  WireComp = CreateDefaultSubobject<USplineMeshComponent>(TEXT("WireComp"));
+  WireComp->SetupAttachment(RootComp);
+  WireComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  WireComp->SetMobility(EComponentMobility::Movable);
+  // Use Z-axis as forward since engine cylinder is oriented along Z
+  WireComp->SetForwardAxis(ESplineMeshAxis::Z);
+  WireComp->SetVisibility(false); // Hidden until owner is set
 
-	// Create wave pulse indicator component
-	WavePulseComp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WavePulseComp"));
-	WavePulseComp->SetupAttachment(RootComp);
-	WavePulseComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	WavePulseComp->SetMobility(EComponentMobility::Movable);
-	WavePulseComp->SetVisibility(false); // Hidden until owner is set
-	WavePulseComp->SetCastShadow(false);
+  // Create wave pulse indicator component
+  WavePulseComp =
+      CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WavePulseComp"));
+  WavePulseComp->SetupAttachment(RootComp);
+  WavePulseComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  WavePulseComp->SetMobility(EComponentMobility::Movable);
+  WavePulseComp->SetVisibility(false); // Hidden until owner is set
+  WavePulseComp->SetCastShadow(false);
 
-	PositiveMesh = nullptr;
-	NegativeMesh = nullptr;
+  PositiveMesh = nullptr;
+  NegativeMesh = nullptr;
 }
 
-void ATriggerTile::BeginPlay()
-{
-	Super::BeginPlay();
+void ATriggerTile::BeginPlay() {
+  Super::BeginPlay();
 
-	// Find Driver and Sim
-	if (UWorld* World = GetWorld())
-	{
-		Driver = AOrbSimDriver::Find(World);
-		if (Driver)
-		{
-			Sim = Driver->GetSim();
-		}
+  // Find Driver and Sim
+  if (UWorld *World = GetWorld()) {
+    Driver = AOrbSimDriver::Find(World);
+    if (Driver) {
+      Sim = Driver->GetSim();
+    }
 
-		// Initialize IsGridVisible from GameManager's current state and get mesh if not set
-		for (TActorIterator<AGameManager> It(World); It; ++It)
-		{
-			AGameManager* GM = *It;
-			if (GM)
-			{
-				// If mesh isn't already set (e.g., from Blueprint), use GameManager's TileMesh
-				if (MeshComp && !MeshComp->GetStaticMesh() && GM->TileMesh)
-				{
-					MeshComp->SetStaticMesh(GM->TileMesh);
-				}
-				
-				if (UInstancedStaticMeshComponent* ISM = GM->FindComponentByClass<UInstancedStaticMeshComponent>())
-				{
-					SetIsGridVisible(ISM->IsVisible());
-				}
-				break;
-			}
-		}
+    // Initialize IsGridVisible from GameManager's current state and get mesh if
+    // not set
+    for (TActorIterator<AGameManager> It(World); It; ++It) {
+      AGameManager *GM = *It;
+      if (GM) {
+        // If mesh isn't already set (e.g., from Blueprint), use GameManager's
+        // TileMesh
+        if (MeshComp && !MeshComp->GetStaticMesh() && GM->TileMesh) {
+          MeshComp->SetStaticMesh(GM->TileMesh);
+        }
 
-		// Find GameTickManager for tick rate reference
-		TickManager = AGameTickManager::Get(this);
-	}
+        if (UInstancedStaticMeshComponent *ISM =
+                GM->FindComponentByClass<UInstancedStaticMeshComponent>()) {
+          SetIsGridVisible(ISM->IsVisible());
+        }
+        break;
+      }
+    }
 
-	SyncWorldLocation();
-	UpdateVisuals();
-	UpdateWireVisual();
+    // Find GameTickManager for tick rate reference
+    TickManager = AGameTickManager::Get(this);
+  }
+
+  SyncWorldLocation();
+  UpdateVisuals();
+  UpdateWireVisual();
 }
 
-void ATriggerTile::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
+void ATriggerTile::Tick(float DeltaTime) {
+  Super::Tick(DeltaTime);
 
-	// Force wire update for first few frames to catch late Blueprint property initialization
-	if (bWireNeedsInitialUpdate && WireUpdateRetryCount < 10)
-	{
-		WireUpdateRetryCount++;
-		
-		// Check if WireMaterial is now set (from Blueprint) or if we just need to refresh the geometry
-		if ((WireMaterial && WireMaterial != LastWireMaterialUsed) || WireUpdateRetryCount == 10)
-		{
-			if (WireMaterial && WireMaterial != LastWireMaterialUsed)
-			{
-				UE_LOG(LogTemp, Log, TEXT("TriggerTile: Late wire material detected (%s), updating wire"), *WireMaterial->GetName());
-				CachedWireMID = nullptr; // Force recreation
-			}
-			
-			UpdateWireVisual();
-			bWireNeedsInitialUpdate = false;
-		}
-	}
+  // Force wire update for first few frames to catch late Blueprint property
+  // initialization
+  if (bWireNeedsInitialUpdate && WireUpdateRetryCount < 10) {
+    WireUpdateRetryCount++;
 
-	// Only check trigger condition if we have an owner
-	if (bHasOwner)
-	{
-		CheckTriggerCondition();
-	}
+    // Check if WireMaterial is now set (from Blueprint) or if we just need to
+    // refresh the geometry
+    if ((WireMaterial && WireMaterial != LastWireMaterialUsed) ||
+        WireUpdateRetryCount == 10) {
+      if (WireMaterial && WireMaterial != LastWireMaterialUsed) {
+        UE_LOG(
+            LogTemp, Log,
+            TEXT(
+                "TriggerTile: Late wire material detected (%s), updating wire"),
+            *WireMaterial->GetName());
+        CachedWireMID = nullptr; // Force recreation
+      }
 
-	// Animate ripple based on GTM tick rate (updates every engine tick)
-	if (bEnableWavePulse && bHasOwner && Driver && TickManager)
-	{
-		// Get GTM's current ticks per second
-		float GTMTicksPerSecond = TickManager->TicksPerSecond;
-		
-		// Advance ripple position based on GTM tick rate
-		// WavePulseSpeed = 1.0 means it takes 1 GTM tick to travel from start to end
-		// So we advance by: (DeltaTime * TicksPerSecond) / WavePulseSpeed
-		float AdvanceRate = (DeltaTime * GTMTicksPerSecond) / FMath::Max(0.001f, WavePulseSpeed);
-		WavePulseT += AdvanceRate;
-		
-		if (WavePulseT >= 1.0f)
-		{
-			WavePulseT -= FMath::Floor(WavePulseT); // Wrap around for continuous loop
-			RippleIntensity = 0.0f; // Reset intensity when starting new cycle
-		}
+      UpdateWireVisual();
+      bWireNeedsInitialUpdate = false;
+    }
+  }
 
-		// Calculate fade in/out based on position
-		// Convert fade ticks to normalized position (0-1)
-		float TotalTravelTicks = WavePulseSpeed;
-		float FadeInEnd = (RippleFadeInTicks / TotalTravelTicks);
-		float FadeOutStart = 1.0f - (RippleFadeOutTicks / TotalTravelTicks);
-		
-		if (WavePulseT < FadeInEnd)
-		{
-			// Fading in
-			RippleIntensity = (FadeInEnd > 0.0f) ? FMath::Clamp(WavePulseT / FadeInEnd, 0.0f, 1.0f) : 1.0f;
-		}
-		else if (WavePulseT > FadeOutStart)
-		{
-			// Fading out
-			float FadeOutRange = (RippleFadeOutTicks / TotalTravelTicks);
-			RippleIntensity = (FadeOutRange > 0.0f) ? FMath::Clamp((1.0f - WavePulseT) / FadeOutRange, 0.0f, 1.0f) : 1.0f;
-		}
-		else
-		{
-			// Full intensity in the middle
-			RippleIntensity = 1.0f;
-		}
-	}
+  // Only check trigger condition if we have an owner
+  if (bHasOwner) {
+    CheckTriggerCondition();
+  }
 
-	// Update visuals every frame
-	UpdateRippleVisuals();
+  // Animate ripple based on GTM tick rate (updates every engine tick)
+  if (bEnableWavePulse && bHasOwner && Driver && TickManager) {
+    // Get GTM's current ticks per second
+    float GTMTicksPerSecond = TickManager->TicksPerSecond;
+
+    // Advance ripple position based on GTM tick rate
+    // WavePulseSpeed = 1.0 means it takes 1 GTM tick to travel from start to
+    // end So we advance by: (DeltaTime * TicksPerSecond) / WavePulseSpeed
+    float AdvanceRate =
+        (DeltaTime * GTMTicksPerSecond) / FMath::Max(0.001f, WavePulseSpeed);
+    WavePulseT += AdvanceRate;
+
+    if (WavePulseT >= 1.0f) {
+      WavePulseT -= FMath::Floor(WavePulseT); // Wrap around for continuous loop
+      RippleIntensity = 0.0f; // Reset intensity when starting new cycle
+    }
+
+    // Calculate fade in/out based on position
+    // Convert fade ticks to normalized position (0-1)
+    float TotalTravelTicks = WavePulseSpeed;
+    float FadeInEnd = (RippleFadeInTicks / TotalTravelTicks);
+    float FadeOutStart = 1.0f - (RippleFadeOutTicks / TotalTravelTicks);
+
+    if (WavePulseT < FadeInEnd) {
+      // Fading in
+      RippleIntensity = (FadeInEnd > 0.0f)
+                            ? FMath::Clamp(WavePulseT / FadeInEnd, 0.0f, 1.0f)
+                            : 1.0f;
+    } else if (WavePulseT > FadeOutStart) {
+      // Fading out
+      float FadeOutRange = (RippleFadeOutTicks / TotalTravelTicks);
+      RippleIntensity =
+          (FadeOutRange > 0.0f)
+              ? FMath::Clamp((1.0f - WavePulseT) / FadeOutRange, 0.0f, 1.0f)
+              : 1.0f;
+    } else {
+      // Full intensity in the middle
+      RippleIntensity = 1.0f;
+    }
+  }
+
+  // Update visuals every frame
+  UpdateRippleVisuals();
 }
 
-void ATriggerTile::UpdateRippleVisuals()
-{
-	if (!bEnableWavePulse || !bHasOwner || !Driver)
-	{
-		// Disable effects when wave pulse is disabled or no owner
-		if (WavePulseComp)
-		{
-			WavePulseComp->SetVisibility(false);
-		}
-		return;
-	}
+void ATriggerTile::UpdateRippleVisuals() {
+  if (!bEnableWavePulse || !bHasOwner || !Driver) {
+    // Disable effects when wave pulse is disabled or no owner
+    if (WavePulseComp) {
+      WavePulseComp->SetVisibility(false);
+    }
+    return;
+  }
 
-	// Calculate start and end positions (at grid level)
-	FVector StartPos = GetActorLocation();
-	FHex OwnerHex(OwnerQ, OwnerR);
-	FVector EndPos = Driver->MapHexToWorld(OwnerHex);
-	
-	// Calculate current ripple position at grid level
-	FVector RipplePos = FMath::Lerp(StartPos, EndPos, WavePulseT);
-	
-	// Draw ripple to render target
-	if (UWorld* World = GetWorld())
-	{
-		AGameManager* GM = nullptr;
-		for (TActorIterator<AGameManager> It(World); It; ++It)
-		{
-			GM = *It;
-			break;
-		}
-		
-		if (GM)
-		{
-			UTextureRenderTarget2D* RT = GM->GetRippleRenderTarget();
-			UMaterialInterface* DrawMaterial = GM->RippleDrawMaterial;
-			
-			// Skip if draw material isn't set (prevents crash)
-			if (!DrawMaterial)
-			{
-				return;
-			}
-			
-			if (RT && RippleIntensity > 0.0f && RT->IsValidLowLevel() && DrawMaterial->IsValidLowLevel())
-			{
-				// Create or get material instance for drawing
-				if (!RippleDrawMID)
-				{
-					UMaterialInterface* BaseMat = DrawMaterial;
-					if (UMaterialInstanceDynamic* ExistingMID = Cast<UMaterialInstanceDynamic>(BaseMat))
-					{
-						BaseMat = ExistingMID->Parent;
-					}
-					
-					if (BaseMat && BaseMat->IsValidLowLevel())
-					{
-						RippleDrawMID = UMaterialInstanceDynamic::Create(BaseMat, this);
-					}
-				}
-				
-				if (RippleDrawMID && RippleDrawMID->IsValidLowLevel())
-				{
-					// Convert world position to RT UV coordinates
-					FVector2D RTUV = GM->WorldPositionToRippleRTUV(RipplePos);
-					
-					// Encode data: R = intensity, G = signal type (0=red, 1=green)
-					FLinearColor EncodedColor(
-						RippleIntensity,  // R channel: intensity
-						bCurrentSignal ? 1.0f : 0.0f,  // G channel: signal type
-						0.0f,  // B channel: reserved for waves
-						1.0f   // A channel: unused
-					);
-					
-					// Set material parameters for ripple drawing
-					// Parameters expected by the draw material:
-					// - RippleCenter: UV coordinates in RT (0-1 range)
-					// - RippleColor: Encoded color (R=intensity, G=signal type)
-					// - RippleRadius: Radius in RT UV space (0-1)
-					// - RippleFalloff: Falloff distance in RT UV space (0-1)
-					float RTWorldSize = GM->RippleRenderTargetWorldSize;
-					if (RTWorldSize > 0.0f)
-					{
-						RippleDrawMID->SetVectorParameterValue(FName("RippleCenter"), FLinearColor(RTUV.X, RTUV.Y, 0.0f, 1.0f));
-						RippleDrawMID->SetVectorParameterValue(FName("RippleColor"), EncodedColor);
-						RippleDrawMID->SetScalarParameterValue(FName("RippleRadius"), RippleRadius / RTWorldSize);
-						RippleDrawMID->SetScalarParameterValue(FName("RippleFalloff"), RippleFalloff / RTWorldSize);
-						
-						// Draw to render target (additive blend mode in material)
-						// Only draw if we're in game world (not editor preview)
-						if (World->WorldType == EWorldType::Game || World->WorldType == EWorldType::PIE)
-						{
-							UKismetRenderingLibrary::DrawMaterialToRenderTarget(World, RT, RippleDrawMID);
-						}
-					}
-				}
-			}
-		}
-	}
-	
-	// Optional: Update visible pulse mesh indicator (if mesh is set up)
-	if (WavePulseComp && WavePulseMesh)
-	{
-		// Add height offset for visible mesh
-		FVector MeshPos = RipplePos;
-		MeshPos.Z += WireHeightOffset + WavePulseHeightOffset;
-		
-		WavePulseComp->SetWorldLocation(MeshPos);
-		WavePulseComp->SetWorldScale3D(FVector(WavePulseScale));
-		
-		// Setup mesh if needed
-		if (!WavePulseComp->GetStaticMesh())
-		{
-			WavePulseComp->SetStaticMesh(WavePulseMesh);
-		}
-		
-		// Setup material if needed
-		if (!WavePulseMID && WavePulseComp->GetStaticMesh())
-		{
-			UMaterialInterface* BaseMat = WavePulseMaterial;
-			if (!BaseMat)
-			{
-				BaseMat = WavePulseComp->GetStaticMesh()->GetMaterial(0);
-			}
-			
-			if (BaseMat)
-			{
-				if (UMaterialInstanceDynamic* ExistingMID = Cast<UMaterialInstanceDynamic>(BaseMat))
-				{
-					BaseMat = ExistingMID->Parent;
-				}
-				
-				if (BaseMat)
-				{
-					WavePulseMID = UMaterialInstanceDynamic::Create(BaseMat, this);
-					WavePulseComp->SetMaterial(0, WavePulseMID);
-				}
-			}
-		}
-		
-		// Update color with intensity
-		if (WavePulseMID)
-		{
-			FLinearColor PulseColor = bCurrentSignal ? PositiveWireColor : NegativeWireColor;
-			FLinearColor EmissiveColor = PulseColor * WavePulseEmissiveIntensity * RippleIntensity;
-			
-			WavePulseMID->SetVectorParameterValue(FName("BaseColor"), PulseColor * RippleIntensity);
-			WavePulseMID->SetVectorParameterValue(FName("Color"), PulseColor * RippleIntensity);
-			WavePulseMID->SetVectorParameterValue(FName("Tint"), PulseColor * RippleIntensity);
-			WavePulseMID->SetVectorParameterValue(FName("EmissiveColor"), EmissiveColor);
-		}
-		
-		WavePulseComp->SetVisibility(RippleIntensity > 0.0f);
-	}
-	else if (WavePulseComp)
-	{
-		WavePulseComp->SetVisibility(false);
-	}
+  // Calculate start and end positions (at grid level)
+  FVector StartPos = GetActorLocation();
+  FHex OwnerHex(OwnerQ, OwnerR, Level);
+  FVector EndPos = Driver->MapHexToWorld(OwnerHex);
+
+  // Calculate current ripple position at grid level
+  FVector RipplePos = FMath::Lerp(StartPos, EndPos, WavePulseT);
+
+  // Draw ripple to render target
+  if (UWorld *World = GetWorld()) {
+    AGameManager *GM = nullptr;
+    for (TActorIterator<AGameManager> It(World); It; ++It) {
+      GM = *It;
+      break;
+    }
+
+    if (GM) {
+      UTextureRenderTarget2D *RT = GM->GetRippleRenderTarget();
+      UMaterialInterface *DrawMaterial = GM->RippleDrawMaterial;
+
+      // Skip if draw material isn't set (prevents crash)
+      if (!DrawMaterial) {
+        return;
+      }
+
+      if (RT && RippleIntensity > 0.0f && RT->IsValidLowLevel() &&
+          DrawMaterial->IsValidLowLevel()) {
+        // Create or get material instance for drawing
+        if (!RippleDrawMID) {
+          UMaterialInterface *BaseMat = DrawMaterial;
+          if (UMaterialInstanceDynamic *ExistingMID =
+                  Cast<UMaterialInstanceDynamic>(BaseMat)) {
+            BaseMat = ExistingMID->Parent;
+          }
+
+          if (BaseMat && BaseMat->IsValidLowLevel()) {
+            RippleDrawMID = UMaterialInstanceDynamic::Create(BaseMat, this);
+          }
+        }
+
+        if (RippleDrawMID && RippleDrawMID->IsValidLowLevel()) {
+          // Convert world position to RT UV coordinates
+          FVector2D RTUV = GM->WorldPositionToRippleRTUV(RipplePos);
+
+          // Encode data: R = intensity, G = signal type (0=red, 1=green)
+          FLinearColor EncodedColor(
+              RippleIntensity,              // R channel: intensity
+              bCurrentSignal ? 1.0f : 0.0f, // G channel: signal type
+              0.0f,                         // B channel: reserved for waves
+              1.0f                          // A channel: unused
+          );
+
+          // Set material parameters for ripple drawing
+          // Parameters expected by the draw material:
+          // - RippleCenter: UV coordinates in RT (0-1 range)
+          // - RippleColor: Encoded color (R=intensity, G=signal type)
+          // - RippleRadius: Radius in RT UV space (0-1)
+          // - RippleFalloff: Falloff distance in RT UV space (0-1)
+          float RTWorldSize = GM->RippleRenderTargetWorldSize;
+          if (RTWorldSize > 0.0f) {
+            RippleDrawMID->SetVectorParameterValue(
+                FName("RippleCenter"),
+                FLinearColor(RTUV.X, RTUV.Y, 0.0f, 1.0f));
+            RippleDrawMID->SetVectorParameterValue(FName("RippleColor"),
+                                                   EncodedColor);
+            RippleDrawMID->SetScalarParameterValue(FName("RippleRadius"),
+                                                   RippleRadius / RTWorldSize);
+            RippleDrawMID->SetScalarParameterValue(FName("RippleFalloff"),
+                                                   RippleFalloff / RTWorldSize);
+
+            // Draw to render target (additive blend mode in material)
+            // Only draw if we're in game world (not editor preview)
+            if (World->WorldType == EWorldType::Game ||
+                World->WorldType == EWorldType::PIE) {
+              UKismetRenderingLibrary::DrawMaterialToRenderTarget(
+                  World, RT, RippleDrawMID);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Optional: Update visible pulse mesh indicator (if mesh is set up)
+  if (WavePulseComp && WavePulseMesh) {
+    // Add height offset for visible mesh
+    FVector MeshPos = RipplePos;
+    MeshPos.Z += WireHeightOffset + WavePulseHeightOffset;
+
+    WavePulseComp->SetWorldLocation(MeshPos);
+    WavePulseComp->SetWorldScale3D(FVector(WavePulseScale));
+
+    // Setup mesh if needed
+    if (!WavePulseComp->GetStaticMesh()) {
+      WavePulseComp->SetStaticMesh(WavePulseMesh);
+    }
+
+    // Setup material if needed
+    if (!WavePulseMID && WavePulseComp->GetStaticMesh()) {
+      UMaterialInterface *BaseMat = WavePulseMaterial;
+      if (!BaseMat) {
+        BaseMat = WavePulseComp->GetStaticMesh()->GetMaterial(0);
+      }
+
+      if (BaseMat) {
+        if (UMaterialInstanceDynamic *ExistingMID =
+                Cast<UMaterialInstanceDynamic>(BaseMat)) {
+          BaseMat = ExistingMID->Parent;
+        }
+
+        if (BaseMat) {
+          WavePulseMID = UMaterialInstanceDynamic::Create(BaseMat, this);
+          WavePulseComp->SetMaterial(0, WavePulseMID);
+        }
+      }
+    }
+
+    // Update color with intensity
+    if (WavePulseMID) {
+      FLinearColor PulseColor =
+          bCurrentSignal ? PositiveWireColor : NegativeWireColor;
+      FLinearColor EmissiveColor =
+          PulseColor * WavePulseEmissiveIntensity * RippleIntensity;
+
+      WavePulseMID->SetVectorParameterValue(FName("BaseColor"),
+                                            PulseColor * RippleIntensity);
+      WavePulseMID->SetVectorParameterValue(FName("Color"),
+                                            PulseColor * RippleIntensity);
+      WavePulseMID->SetVectorParameterValue(FName("Tint"),
+                                            PulseColor * RippleIntensity);
+      WavePulseMID->SetVectorParameterValue(FName("EmissiveColor"),
+                                            EmissiveColor);
+    }
+
+    WavePulseComp->SetVisibility(RippleIntensity > 0.0f);
+  } else if (WavePulseComp) {
+    WavePulseComp->SetVisibility(false);
+  }
 }
 
-void ATriggerTile::CheckTriggerCondition()
-{
-	// Ensure we have Sim reference
-	if (!Sim && !Driver)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			Driver = AOrbSimDriver::Find(World);
-			if (Driver)
-			{
-				Sim = Driver->GetSim();
-			}
-		}
-	}
+void ATriggerTile::CheckTriggerCondition() {
+  // Ensure we have Sim reference
+  if (!Sim && !Driver) {
+    if (UWorld *World = GetWorld()) {
+      Driver = AOrbSimDriver::Find(World);
+      if (Driver) {
+        Sim = Driver->GetSim();
+      }
+    }
+  }
 
-	if (!Sim) return;
+  if (!Sim)
+    return;
 
-	// Check tile content at Q, R
-	FHex Location(Q, R);
-	bool bMatchingOrb = false;
+  // Check tile content at Q, R
+  FHex Location(Q, R, Level);
+  bool bMatchingOrb = false;
 
-	// Check Sim Grid for ItemId
-	if (Sim->ItemMap.Contains(Location))
-	{
-		const FItem* Item = Sim->ItemMap.Find(Location);
-		if (Item && Item->Id != 0)
-		{
-			// There's an orb here - check if it matches our trigger type
-			if (TriggerOrbType == EOrbType::Void)
-			{
-				// Void type: any orb triggers positive signal
-				bMatchingOrb = true;
-			}
-			else if (!Item->bIsCluster)
-			{
-				// Single orb - check if type matches
-				bMatchingOrb = (Item->Single.Type == TriggerOrbType);
-			}
-			else
-			{
-				// Cluster - check if any orb in the cluster matches
-				// For now, check the first orb in the cluster at this position
-				for (const FOrbData& OrbData : Item->Orbs)
-				{
-					if (OrbData.dQ == 0 && OrbData.dR == 0)
-					{
-						// This is the orb at the cluster's root position
-						bMatchingOrb = ((EOrbType)OrbData.Type == TriggerOrbType);
-						break;
-					}
-				}
-			}
+  // Check Sim Grid for ItemId
+  if (Sim->ItemMap.Contains(Location)) {
+    const FItem *Item = Sim->ItemMap.Find(Location);
+    if (Item && Item->Id != 0) {
+      // There's an orb here - check if it matches our trigger type
+      if (TriggerOrbType == EOrbType::Void) {
+        // Void type: any orb triggers positive signal
+        bMatchingOrb = true;
+      } else if (!Item->bIsCluster) {
+        // Single orb - check if type matches
+        bMatchingOrb = (Item->Single.Type == TriggerOrbType);
+      } else {
+        // Cluster - check if any orb in the cluster matches
+        // For now, check the first orb in the cluster at this position
+        for (const FOrbData &OrbData : Item->Orbs) {
+          if (OrbData.dQ == 0 && OrbData.dR == 0) {
+            // This is the orb at the cluster's root position
+            bMatchingOrb = ((EOrbType)OrbData.Type == TriggerOrbType);
+            break;
+          }
+        }
+      }
 
-			if (bMatchingOrb)
-			{
-				// Log matching orb detection
-				// UE_LOG(LogTemp, Verbose, TEXT("TriggerTile at (%d,%d) detected matching orb ID:%d"), Q, R, Item->Id);
-			}
-		}
-	}
-	else
-	{
-		// No item at this location
-		// UE_LOG(LogTemp, VeryVerbose, TEXT("TriggerTile at (%d,%d) - no item found in sim"), Q, R);
-	}
+      if (bMatchingOrb) {
+        // Log matching orb detection
+        // UE_LOG(LogTemp, Verbose, TEXT("TriggerTile at (%d,%d) detected
+        // matching orb ID:%d"), Q, R, Item->Id);
+      }
+    }
+  } else {
+    // No item at this location
+    // UE_LOG(LogTemp, VeryVerbose, TEXT("TriggerTile at (%d,%d) - no item found
+    // in sim"), Q, R);
+  }
 
-	// Update signal state if changed
-	bool bFinalSignal = bMatchingOrb;
-	if (Variant == ETriggerVariant::Negative)
-	{
-		bFinalSignal = !bMatchingOrb;
-	}
-	SetSignal(bFinalSignal);
+  // Update signal state if changed
+  bool bFinalSignal = bMatchingOrb;
+  if (Variant == ETriggerVariant::Negative) {
+    bFinalSignal = !bMatchingOrb;
+  }
+  SetSignal(bFinalSignal);
 }
 
-void ATriggerTile::SetSignal(bool bNewSignal)
-{
-	if (bCurrentSignal != bNewSignal)
-	{
-		bCurrentSignal = bNewSignal;
-		OnSignalChanged.Broadcast(bCurrentSignal);
+void ATriggerTile::SetSignal(bool bNewSignal) {
+  if (bCurrentSignal != bNewSignal) {
+    bCurrentSignal = bNewSignal;
+    OnSignalChanged.Broadcast(bCurrentSignal);
 
-		// Update the simulation's trigger signal
-		if (bHasOwner && Sim)
-		{
-			FHex OwnerHex(OwnerQ, OwnerR);
-			FHex TriggerHex(Q, R);
-			
-			if (OwnerType == ETriggerTileOwnerType::Belt)
-			{
-				Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
-			}
-			else
-			{
-				Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
-			}
-			
-			// UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) signal changed to %s - owner %s at (%d,%d) combined state updated"),
-			// 	Q, R, bCurrentSignal ? TEXT("POSITIVE") : TEXT("NEGATIVE"),
-			// 	OwnerType == ETriggerTileOwnerType::Belt ? TEXT("BELT") : TEXT("ARM"),
-			// 	OwnerQ, OwnerR);
-		}
+    // Update the simulation's trigger signal
+    if (bHasOwner && Sim) {
+      FHex OwnerHex(OwnerQ, OwnerR, Level);
+      FHex TriggerHex(Q, R, Level);
 
-		// Update visuals to reflect signal state
-		UpdateVisuals();
-		UpdateWireVisual();
-	}
+      if (OwnerType == ETriggerTileOwnerType::Belt) {
+        Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+      } else {
+        Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+      }
+
+      // UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) signal changed to %s
+      // - owner %s at (%d,%d) combined state updated"), 	Q, R, bCurrentSignal ?
+      // TEXT("POSITIVE") : TEXT("NEGATIVE"), 	OwnerType ==
+      // ETriggerTileOwnerType::Belt ? TEXT("BELT") : TEXT("ARM"), 	OwnerQ,
+      // OwnerR);
+    }
+
+    // Update visuals to reflect signal state
+    UpdateVisuals();
+    UpdateWireVisual();
+  }
 }
 
-void ATriggerTile::OnConstruction(const FTransform& Transform)
-{
-	Super::OnConstruction(Transform);
-	
-	// Try to set mesh from GameManager if not already set
-	if (MeshComp && !MeshComp->GetStaticMesh())
-	{
-		if (UWorld* World = GetWorld())
-		{
-			for (TActorIterator<AGameManager> It(World); It; ++It)
-			{
-				AGameManager* GM = *It;
-				if (GM && GM->TileMesh)
-				{
-					MeshComp->SetStaticMesh(GM->TileMesh);
-					break;
-				}
-			}
-		}
-	}
-	
-	SyncWorldLocation();
-	UpdateVisuals();
-	UpdateWireVisual();
+void ATriggerTile::OnConstruction(const FTransform &Transform) {
+  Super::OnConstruction(Transform);
+
+  // Try to set mesh from GameManager if not already set
+  if (MeshComp && !MeshComp->GetStaticMesh()) {
+    if (UWorld *World = GetWorld()) {
+      for (TActorIterator<AGameManager> It(World); It; ++It) {
+        AGameManager *GM = *It;
+        if (GM && GM->TileMesh) {
+          MeshComp->SetStaticMesh(GM->TileMesh);
+          break;
+        }
+      }
+    }
+  }
+
+  SyncWorldLocation();
+  UpdateVisuals();
+  UpdateWireVisual();
 }
 
-void ATriggerTile::SetIsGridVisible(bool bVisible)
-{
-	if (bIsGridVisible != bVisible)
-	{
-		bIsGridVisible = bVisible;
-		OnGridVisibilityChanged.Broadcast(bVisible);
-	}
+void ATriggerTile::SetIsGridVisible(bool bVisible) {
+  if (bIsGridVisible != bVisible) {
+    bIsGridVisible = bVisible;
+    OnGridVisibilityChanged.Broadcast(bVisible);
+  }
 }
 
-void ATriggerTile::SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR)
-{
-	// Ensure we have Sim reference if it wasn't found in BeginPlay yet
-	if (!Sim)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			Driver = AOrbSimDriver::Find(World);
-			if (Driver) Sim = Driver->GetSim();
-		}
-	}
+void ATriggerTile::SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR) {
+  // Ensure we have Sim reference if it wasn't found in BeginPlay yet
+  if (!Sim) {
+    if (UWorld *World = GetWorld()) {
+      Driver = AOrbSimDriver::Find(World);
+      if (Driver)
+        Sim = Driver->GetSim();
+    }
+  }
 
-	// Clear old owner signal if changing
-	if (bHasOwner && Sim)
-	{
-		FHex OldOwnerHex(OwnerQ, OwnerR);
-		FHex TriggerHex(Q, R);
-		if (OwnerType == ETriggerTileOwnerType::Belt)
-			Sim->ClearBeltTriggerSignal(TriggerHex, OldOwnerHex);
-		else
-			Sim->ClearArmTriggerSignal(TriggerHex, OldOwnerHex);
-	}
+  // Clear old owner signal if changing
+  if (bHasOwner && Sim) {
+    FHex OldOwnerHex(OwnerQ, OwnerR, Level);
+    FHex TriggerHex(Q, R, Level);
+    if (OwnerType == ETriggerTileOwnerType::Belt)
+      Sim->ClearBeltTriggerSignal(TriggerHex, OldOwnerHex);
+    else
+      Sim->ClearArmTriggerSignal(TriggerHex, OldOwnerHex);
+  }
 
-	OwnerQ = InOwnerQ;
-	OwnerR = InOwnerR;
-	bHasOwner = true;
-	OwnerType = ETriggerTileOwnerType::Belt;
+  OwnerQ = InOwnerQ;
+  OwnerR = InOwnerR;
+  bHasOwner = true;
+  OwnerType = ETriggerTileOwnerType::Belt;
 
-	UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) now owned by belt at (%d,%d)"), Q, R, OwnerQ, OwnerR);
-	
-	// Initialize the simulation with the current signal state
-	if (Sim)
-	{
-		FHex TriggerHex(Q, R);
-		FHex OwnerHex(InOwnerQ, InOwnerR);
-		Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
-	}
+  UE_LOG(LogTemp, Log,
+         TEXT("TriggerTile at (%d,%d) now owned by belt at (%d,%d)"), Q, R,
+         OwnerQ, OwnerR);
 
-	// Update wire visual to show connection
-	UpdateWireVisual();
+  // Initialize the simulation with the current signal state
+  if (Sim) {
+    FHex TriggerHex(Q, R, Level);
+    FHex OwnerHex(InOwnerQ, InOwnerR, Level);
+    Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+  }
+
+  // Update wire visual to show connection
+  UpdateWireVisual();
 }
 
-void ATriggerTile::UpdateVisuals()
-{
-	if (!MeshComp) return;
+void ATriggerTile::UpdateVisuals() {
+  if (!MeshComp)
+    return;
 
-	// Set the correct mesh based on variant
-	UStaticMesh* DesiredMesh = (Variant == ETriggerVariant::Positive) ? PositiveMesh : NegativeMesh;
-	
-	// If specific variant mesh is not available, try to get from GameManager (for PositiveMesh)
-	if (!DesiredMesh)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			for (TActorIterator<AGameManager> It(World); It; ++It)
-			{
-				AGameManager* GM = *It;
-				if (GM && GM->TileMesh)
-				{
-					if (Variant == ETriggerVariant::Positive)
-					{
-						DesiredMesh = GM->TileMesh;
-					}
-					// If we're on Negative variant and no NegativeMesh is provided, 
-					// we could fallback to the same mesh or something else.
-					// For now let's just use GM->TileMesh as a fallback for both if DesiredMesh is null.
-					if (!DesiredMesh) DesiredMesh = GM->TileMesh;
-					break;
-				}
-			}
-		}
-	}
+  // Set the correct mesh based on variant
+  UStaticMesh *DesiredMesh =
+      (Variant == ETriggerVariant::Positive) ? PositiveMesh : NegativeMesh;
 
-	if (DesiredMesh && MeshComp->GetStaticMesh() != DesiredMesh)
-	{
-		MeshComp->SetStaticMesh(DesiredMesh);
-	}
+  // If specific variant mesh is not available, try to get from GameManager (for
+  // PositiveMesh)
+  if (!DesiredMesh) {
+    if (UWorld *World = GetWorld()) {
+      for (TActorIterator<AGameManager> It(World); It; ++It) {
+        AGameManager *GM = *It;
+        if (GM && GM->TileMesh) {
+          if (Variant == ETriggerVariant::Positive) {
+            DesiredMesh = GM->TileMesh;
+          }
+          // If we're on Negative variant and no NegativeMesh is provided,
+          // we could fallback to the same mesh or something else.
+          // For now let's just use GM->TileMesh as a fallback for both if
+          // DesiredMesh is null.
+          if (!DesiredMesh)
+            DesiredMesh = GM->TileMesh;
+          break;
+        }
+      }
+    }
+  }
 
-	// Priority 1: Use explicit signal state materials if provided
-	if (bCurrentSignal && PositiveSignalMaterial)
-	{
-		MeshComp->SetMaterial(0, PositiveSignalMaterial);
-		return;
-	}
-	else if (!bCurrentSignal && NegativeSignalMaterial)
-	{
-		MeshComp->SetMaterial(0, NegativeSignalMaterial);
-		return;
-	}
+  if (DesiredMesh && MeshComp->GetStaticMesh() != DesiredMesh) {
+    MeshComp->SetStaticMesh(DesiredMesh);
+  }
 
-	// Priority 2: Use TranslucentBaseMaterial with orb type color tint
-	if (TranslucentBaseMaterial)
-	{
-		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(TranslucentBaseMaterial, this);
-		if (MID)
-		{
-			// Get the orb type color from the material manager
-			FLinearColor OrbColor = FLinearColor::White;
-			if (UWorld* World = GetWorld())
-			{
-				UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
-				if (MaterialManager)
-				{
-					// Try to get color from the orb type material
-					UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(TriggerOrbType);
-					if (TypeMaterial)
-					{
-						// Try to extract base color from the material
-						// Use material-specific colors based on orb type
-						switch (TriggerOrbType)
-						{
-						case EOrbType::BaseA:   OrbColor = FLinearColor(0.8f, 0.2f, 0.2f); break; // Red
-						case EOrbType::BaseB:   OrbColor = FLinearColor(0.2f, 0.8f, 0.2f); break; // Green
-						case EOrbType::BaseC:   OrbColor = FLinearColor(0.2f, 0.2f, 0.8f); break; // Blue
-						case EOrbType::MetalA:  OrbColor = FLinearColor(0.7f, 0.7f, 0.7f); break; // Silver
-						case EOrbType::CatalystX: OrbColor = FLinearColor(0.8f, 0.6f, 0.2f); break; // Gold
-						case EOrbType::Void:    OrbColor = FLinearColor(0.5f, 0.0f, 0.8f); break; // Purple (any orb)
-						default:                OrbColor = FLinearColor::White; break;
-						}
-					}
-				}
-			}
+  // Priority 1: Use explicit signal state materials if provided
+  if (bCurrentSignal && PositiveSignalMaterial) {
+    MeshComp->SetMaterial(0, PositiveSignalMaterial);
+    return;
+  } else if (!bCurrentSignal && NegativeSignalMaterial) {
+    MeshComp->SetMaterial(0, NegativeSignalMaterial);
+    return;
+  }
 
-			// Apply color and opacity to the translucent material
-			MID->SetVectorParameterValue(FName("BaseColor"), OrbColor);
-			MID->SetVectorParameterValue(FName("Color"), OrbColor); // Alternative parameter name
-			MID->SetVectorParameterValue(FName("Tint"), OrbColor); // Another common name
-			MID->SetScalarParameterValue(FName("Opacity"), TriggerTileOpacity);
-			
-			MeshComp->SetMaterial(0, MID);
-			return;
-		}
-	}
+  // Priority 2: Use TranslucentBaseMaterial with orb type color tint
+  if (TranslucentBaseMaterial) {
+    UMaterialInstanceDynamic *MID =
+        UMaterialInstanceDynamic::Create(TranslucentBaseMaterial, this);
+    if (MID) {
+      // Get the orb type color from the material manager
+      FLinearColor OrbColor = FLinearColor::White;
+      if (UWorld *World = GetWorld()) {
+        UOrbMaterialManager *MaterialManager =
+            UOrbMaterialManager::FindInWorld(this);
+        if (MaterialManager) {
+          // Try to get color from the orb type material
+          UMaterialInterface *TypeMaterial =
+              MaterialManager->GetMaterialForOrbType(TriggerOrbType);
+          if (TypeMaterial) {
+            // Try to extract base color from the material
+            // Use material-specific colors based on orb type
+            switch (TriggerOrbType) {
+            case EOrbType::BaseA:
+              OrbColor = FLinearColor(0.8f, 0.2f, 0.2f);
+              break; // Red
+            case EOrbType::BaseB:
+              OrbColor = FLinearColor(0.2f, 0.8f, 0.2f);
+              break; // Green
+            case EOrbType::BaseC:
+              OrbColor = FLinearColor(0.2f, 0.2f, 0.8f);
+              break; // Blue
+            case EOrbType::MetalA:
+              OrbColor = FLinearColor(0.7f, 0.7f, 0.7f);
+              break; // Silver
+            case EOrbType::CatalystX:
+              OrbColor = FLinearColor(0.8f, 0.6f, 0.2f);
+              break; // Gold
+            case EOrbType::Void:
+              OrbColor = FLinearColor(0.5f, 0.0f, 0.8f);
+              break; // Purple (any orb)
+            default:
+              OrbColor = FLinearColor::White;
+              break;
+            }
+          }
+        }
+      }
 
-	// Priority 3: Fallback - create translucent version of orb material
-	if (UWorld* World = GetWorld())
-	{
-		UOrbMaterialManager* MaterialManager = UOrbMaterialManager::FindInWorld(this);
-		if (MaterialManager)
-		{
-			UMaterialInterface* TypeMaterial = MaterialManager->GetMaterialForOrbType(TriggerOrbType);
-			if (TypeMaterial)
-			{
-				UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(TypeMaterial, this);
-				if (MID)
-				{
-					// Try to set opacity (material must support this parameter)
-					MID->SetScalarParameterValue(FName("Opacity"), TriggerTileOpacity);
-					MeshComp->SetMaterial(0, MID);
-					return;
-				}
-			}
-		}
-	}
+      // Apply color and opacity to the translucent material
+      MID->SetVectorParameterValue(FName("BaseColor"), OrbColor);
+      MID->SetVectorParameterValue(FName("Color"),
+                                   OrbColor); // Alternative parameter name
+      MID->SetVectorParameterValue(FName("Tint"),
+                                   OrbColor); // Another common name
+      MID->SetScalarParameterValue(FName("Opacity"), TriggerTileOpacity);
+
+      MeshComp->SetMaterial(0, MID);
+      return;
+    }
+  }
+
+  // Priority 3: Fallback - create translucent version of orb material
+  if (UWorld *World = GetWorld()) {
+    UOrbMaterialManager *MaterialManager =
+        UOrbMaterialManager::FindInWorld(this);
+    if (MaterialManager) {
+      UMaterialInterface *TypeMaterial =
+          MaterialManager->GetMaterialForOrbType(TriggerOrbType);
+      if (TypeMaterial) {
+        UMaterialInstanceDynamic *MID =
+            UMaterialInstanceDynamic::Create(TypeMaterial, this);
+        if (MID) {
+          // Try to set opacity (material must support this parameter)
+          MID->SetScalarParameterValue(FName("Opacity"), TriggerTileOpacity);
+          MeshComp->SetMaterial(0, MID);
+          return;
+        }
+      }
+    }
+  }
 }
 
-void ATriggerTile::UpdateWireVisual()
-{
-	if (!WireComp) return;
+void ATriggerTile::UpdateWireVisual() {
+  if (!WireComp)
+    return;
 
-	// Hide wire if no owner
-	if (!bHasOwner)
-	{
-		WireComp->SetVisibility(false);
-		return;
-	}
+  // Hide wire if no owner
+  if (!bHasOwner) {
+    WireComp->SetVisibility(false);
+    return;
+  }
 
-	// Get world positions for start and end points
-	FVector StartPos = GetActorLocation();
-	FVector EndPos = StartPos; // Default to same position
+  // Get world positions for start and end points
+  FVector StartPos = GetActorLocation();
+  FVector EndPos = StartPos; // Default to same position
 
-	// Calculate owner world position
-	if (!Driver)
-	{
-		Driver = AOrbSimDriver::Find(GetWorld());
-	}
+  // Calculate owner world position
+  if (!Driver) {
+    Driver = AOrbSimDriver::Find(GetWorld());
+  }
 
-	if (Driver)
-	{
-		FHex OwnerHex(OwnerQ, OwnerR, Level);
-		EndPos = Driver->MapHexToWorld(OwnerHex);
-	}
+  if (Driver) {
+    FHex OwnerHex(OwnerQ, OwnerR, Level);
+    EndPos = Driver->MapHexToWorld(OwnerHex);
+  }
 
-	// Apply height offset
-	StartPos.Z += WireHeightOffset;
-	EndPos.Z += WireHeightOffset;
+  // Apply height offset
+  StartPos.Z += WireHeightOffset;
+  EndPos.Z += WireHeightOffset;
 
-	// Convert to local space (relative to actor)
-	FVector LocalStart = GetActorTransform().InverseTransformPosition(StartPos);
-	FVector LocalEnd = GetActorTransform().InverseTransformPosition(EndPos);
+  // Convert to local space (relative to actor)
+  FVector LocalStart = GetActorTransform().InverseTransformPosition(StartPos);
+  FVector LocalEnd = GetActorTransform().InverseTransformPosition(EndPos);
 
-	// Calculate distance and direction
-	FVector ToEnd = LocalEnd - LocalStart;
-	float Distance = ToEnd.Size();
-	FVector HorizontalDir = ToEnd.GetSafeNormal();
+  // Calculate distance and direction
+  FVector ToEnd = LocalEnd - LocalStart;
+  float Distance = ToEnd.Size();
+  FVector HorizontalDir = ToEnd.GetSafeNormal();
 
-	// Create tangents that produce a drooping cable effect
-	// The tangents point horizontally at start/end, but the spline will sag in the middle
-	// due to how Bezier curves work with these tangent directions
-	float TangentLength = Distance * 0.5f;
-	
-	// Start tangent: point toward the end, but also slightly downward to create sag
-	FVector StartTangent = HorizontalDir * TangentLength;
-	StartTangent.Z -= WireSagAmount; // Add downward component for sag
-	
-	// End tangent: point from start direction, also with downward component
-	FVector EndTangent = HorizontalDir * TangentLength;
-	EndTangent.Z -= WireSagAmount; // Add downward component for sag
+  // Create tangents that produce a drooping cable effect
+  // The tangents point horizontally at start/end, but the spline will sag in
+  // the middle due to how Bezier curves work with these tangent directions
+  float TangentLength = Distance * 0.5f;
 
-	// Set spline mesh geometry
-	WireComp->SetStartAndEnd(LocalStart, StartTangent, LocalEnd, EndTangent);
+  // Start tangent: point toward the end, but also slightly downward to create
+  // sag
+  FVector StartTangent = HorizontalDir * TangentLength;
+  StartTangent.Z -= WireSagAmount; // Add downward component for sag
 
-	// Set start/end scale based on wire radius
-	// SplineMesh scale is applied to the mesh's original size
-	// Assuming a unit cylinder, scale to desired radius
-	FVector2D WireScale(WireRadius, WireRadius);
-	WireComp->SetStartScale(WireScale);
-	WireComp->SetEndScale(WireScale);
+  // End tangent: point from start direction, also with downward component
+  FVector EndTangent = HorizontalDir * TangentLength;
+  EndTangent.Z -= WireSagAmount; // Add downward component for sag
 
-	// Try to set the wire mesh if not already set
-	if (!WireComp->GetStaticMesh() && WireMesh)
-	{
-		WireComp->SetStaticMesh(WireMesh);
-	}
+  // Set spline mesh geometry
+  WireComp->SetStartAndEnd(LocalStart, StartTangent, LocalEnd, EndTangent);
 
-	// If still no mesh, try to load a default cylinder from engine
-	if (!WireComp->GetStaticMesh())
-	{
-		UStaticMesh* DefaultCylinder = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-		if (DefaultCylinder)
-		{
-			WireComp->SetStaticMesh(DefaultCylinder);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("TriggerTile: Could not load default cylinder mesh for wire. Assign WireMesh property."));
-		}
-	}
+  // Set start/end scale based on wire radius
+  // SplineMesh scale is applied to the mesh's original size
+  // Assuming a unit cylinder, scale to desired radius
+  FVector2D WireScale(WireRadius, WireRadius);
+  WireComp->SetStartScale(WireScale);
+  WireComp->SetEndScale(WireScale);
 
-	// Apply material with signal-based color
-	FLinearColor WireColor = bCurrentSignal ? PositiveWireColor : NegativeWireColor;
+  // Try to set the wire mesh if not already set
+  if (!WireComp->GetStaticMesh() && WireMesh) {
+    WireComp->SetStaticMesh(WireMesh);
+  }
 
-	// Determine the base material to use - prioritize explicitly set WireMaterial
-	UMaterialInterface* DesiredBaseMaterial = nullptr;
-	
-	if (WireMaterial)
-	{
-		DesiredBaseMaterial = WireMaterial;
-		UE_LOG(LogTemp, Verbose, TEXT("TriggerTile: Using assigned WireMaterial: %s"), *WireMaterial->GetName());
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("TriggerTile: WireMaterial is not set! Assign a material in the Blueprint."));
-		if (WireComp->GetStaticMesh())
-		{
-			// Fallback to mesh's default material
-			DesiredBaseMaterial = WireComp->GetStaticMesh()->GetMaterial(0);
-			if (DesiredBaseMaterial)
-			{
-				UE_LOG(LogTemp, Log, TEXT("TriggerTile: Falling back to mesh default material: %s"), *DesiredBaseMaterial->GetName());
-			}
-		}
-	}
+  // If still no mesh, try to load a default cylinder from engine
+  if (!WireComp->GetStaticMesh()) {
+    UStaticMesh *DefaultCylinder = LoadObject<UStaticMesh>(
+        nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+    if (DefaultCylinder) {
+      WireComp->SetStaticMesh(DefaultCylinder);
+    } else {
+      UE_LOG(LogTemp, Warning,
+             TEXT("TriggerTile: Could not load default cylinder mesh for wire. "
+                  "Assign WireMesh property."));
+    }
+  }
 
-	// Check if we need to (re)create the cached MID
-	// Recreate if: no cache exists, OR the source material changed, OR WireMaterial was set but we used mesh default
-	bool bNeedNewMID = !CachedWireMID || 
-	                   (WireMaterial && LastWireMaterialUsed != WireMaterial) ||
-	                   (!WireMaterial && DesiredBaseMaterial != LastWireMaterialUsed);
+  // Apply material with signal-based color
+  FLinearColor WireColor =
+      bCurrentSignal ? PositiveWireColor : NegativeWireColor;
 
-	if (bNeedNewMID && DesiredBaseMaterial)
-	{
-		UMaterialInterface* BaseMaterial = DesiredBaseMaterial;
-		
-		// Make sure we're not creating a MID from another MID
-		if (UMaterialInstanceDynamic* ExistingMID = Cast<UMaterialInstanceDynamic>(BaseMaterial))
-		{
-			// Get the parent material instead
-			BaseMaterial = ExistingMID->Parent;
-		}
-		
-		if (BaseMaterial)
-		{
-			CachedWireMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-			LastWireMaterialUsed = DesiredBaseMaterial;
-			
-			UE_LOG(LogTemp, Log, TEXT("TriggerTile: Created wire MID from material %s"), 
-				*BaseMaterial->GetName());
-		}
-	}
+  // Determine the base material to use - prioritize explicitly set WireMaterial
+  UMaterialInterface *DesiredBaseMaterial = nullptr;
 
-	// Update the color on the cached MID
-	if (CachedWireMID)
-	{
-		CachedWireMID->SetVectorParameterValue(FName("BaseColor"), WireColor);
-		CachedWireMID->SetVectorParameterValue(FName("Color"), WireColor);
-		CachedWireMID->SetVectorParameterValue(FName("Tint"), WireColor);
-		CachedWireMID->SetVectorParameterValue(FName("EmissiveColor"), WireColor);
-		WireComp->SetMaterial(0, CachedWireMID);
-	}
-	else if (DesiredBaseMaterial)
-	{
-		// Fallback: apply material directly without dynamic instance
-		WireComp->SetMaterial(0, DesiredBaseMaterial);
-		UE_LOG(LogTemp, Warning, TEXT("TriggerTile: Could not create MID, applying material directly"));
-	}
+  if (WireMaterial) {
+    DesiredBaseMaterial = WireMaterial;
+    UE_LOG(LogTemp, Verbose,
+           TEXT("TriggerTile: Using assigned WireMaterial: %s"),
+           *WireMaterial->GetName());
+  } else {
+    UE_LOG(LogTemp, Warning,
+           TEXT("TriggerTile: WireMaterial is not set! Assign a material in "
+                "the Blueprint."));
+    if (WireComp->GetStaticMesh()) {
+      // Fallback to mesh's default material
+      DesiredBaseMaterial = WireComp->GetStaticMesh()->GetMaterial(0);
+      if (DesiredBaseMaterial) {
+        UE_LOG(LogTemp, Log,
+               TEXT("TriggerTile: Falling back to mesh default material: %s"),
+               *DesiredBaseMaterial->GetName());
+      }
+    }
+  }
 
-	// Show the wire
-	WireComp->SetVisibility(true);
+  // Check if we need to (re)create the cached MID
+  // Recreate if: no cache exists, OR the source material changed, OR
+  // WireMaterial was set but we used mesh default
+  bool bNeedNewMID =
+      !CachedWireMID ||
+      (WireMaterial && LastWireMaterialUsed != WireMaterial) ||
+      (!WireMaterial && DesiredBaseMaterial != LastWireMaterialUsed);
+
+  if (bNeedNewMID && DesiredBaseMaterial) {
+    UMaterialInterface *BaseMaterial = DesiredBaseMaterial;
+
+    // Make sure we're not creating a MID from another MID
+    if (UMaterialInstanceDynamic *ExistingMID =
+            Cast<UMaterialInstanceDynamic>(BaseMaterial)) {
+      // Get the parent material instead
+      BaseMaterial = ExistingMID->Parent;
+    }
+
+    if (BaseMaterial) {
+      CachedWireMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+      LastWireMaterialUsed = DesiredBaseMaterial;
+
+      UE_LOG(LogTemp, Log,
+             TEXT("TriggerTile: Created wire MID from material %s"),
+             *BaseMaterial->GetName());
+    }
+  }
+
+  // Update the color on the cached MID
+  if (CachedWireMID) {
+    CachedWireMID->SetVectorParameterValue(FName("BaseColor"), WireColor);
+    CachedWireMID->SetVectorParameterValue(FName("Color"), WireColor);
+    CachedWireMID->SetVectorParameterValue(FName("Tint"), WireColor);
+    CachedWireMID->SetVectorParameterValue(FName("EmissiveColor"), WireColor);
+    WireComp->SetMaterial(0, CachedWireMID);
+  } else if (DesiredBaseMaterial) {
+    // Fallback: apply material directly without dynamic instance
+    WireComp->SetMaterial(0, DesiredBaseMaterial);
+    UE_LOG(
+        LogTemp, Warning,
+        TEXT("TriggerTile: Could not create MID, applying material directly"));
+  }
+
+  // Show the wire
+  WireComp->SetVisibility(true);
 }
 
-void ATriggerTile::Destroyed()
-{
-	Super::Destroyed();
+void ATriggerTile::Destroyed() {
+  Super::Destroyed();
 
-	// Clean up the trigger signal in simulation
-	if (bHasOwner && Sim)
-	{
-		FHex OwnerHex(OwnerQ, OwnerR);
-		FHex TriggerHex(Q, R);
-		
-		if (OwnerType == ETriggerTileOwnerType::Belt)
-		{
-			Sim->ClearBeltTriggerSignal(TriggerHex, OwnerHex);
-		}
-		else
-		{
-			Sim->ClearArmTriggerSignal(TriggerHex, OwnerHex);
-		}
-		
-		UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) destroyed - cleared signal for %s at (%d,%d)"), 
-			Q, R, OwnerType == ETriggerTileOwnerType::Belt ? TEXT("belt") : TEXT("arm"), OwnerQ, OwnerR);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) destroyed"), Q, R);
-	}
+  // Clean up the trigger signal in simulation
+  if (bHasOwner && Sim) {
+    FHex OwnerHex(OwnerQ, OwnerR, Level);
+    FHex TriggerHex(Q, R, Level);
+
+    if (OwnerType == ETriggerTileOwnerType::Belt) {
+      Sim->ClearBeltTriggerSignal(TriggerHex, OwnerHex);
+    } else {
+      Sim->ClearArmTriggerSignal(TriggerHex, OwnerHex);
+    }
+
+    UE_LOG(LogTemp, Log,
+           TEXT("TriggerTile at (%d,%d) destroyed - cleared signal for %s at "
+                "(%d,%d)"),
+           Q, R,
+           OwnerType == ETriggerTileOwnerType::Belt ? TEXT("belt")
+                                                    : TEXT("arm"),
+           OwnerQ, OwnerR);
+  } else {
+    UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) destroyed"), Q, R);
+  }
 }
 
+void ATriggerTile::SetOwnerArm(int32 InOwnerQ, int32 InOwnerR) {
+  // Ensure we have Sim reference if it wasn't found in BeginPlay yet
+  if (!Sim) {
+    if (UWorld *World = GetWorld()) {
+      Driver = AOrbSimDriver::Find(World);
+      if (Driver)
+        Sim = Driver->GetSim();
+    }
+  }
 
-void ATriggerTile::SetOwnerArm(int32 InOwnerQ, int32 InOwnerR)
-{
-	// Ensure we have Sim reference if it wasn't found in BeginPlay yet
-	if (!Sim)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			Driver = AOrbSimDriver::Find(World);
-			if (Driver) Sim = Driver->GetSim();
-		}
-	}
+  // Clear old owner signal if changing
+  if (bHasOwner && Sim) {
+    FHex OldOwnerHex(OwnerQ, OwnerR, Level);
+    FHex TriggerHex(Q, R, Level);
+    if (OwnerType == ETriggerTileOwnerType::Belt)
+      Sim->ClearBeltTriggerSignal(TriggerHex, OldOwnerHex);
+    else
+      Sim->ClearArmTriggerSignal(TriggerHex, OldOwnerHex);
+  }
 
-	// Clear old owner signal if changing
-	if (bHasOwner && Sim)
-	{
-		FHex OldOwnerHex(OwnerQ, OwnerR);
-		FHex TriggerHex(Q, R);
-		if (OwnerType == ETriggerTileOwnerType::Belt)
-			Sim->ClearBeltTriggerSignal(TriggerHex, OldOwnerHex);
-		else
-			Sim->ClearArmTriggerSignal(TriggerHex, OldOwnerHex);
-	}
+  OwnerQ = InOwnerQ;
+  OwnerR = InOwnerR;
+  bHasOwner = true;
+  OwnerType = ETriggerTileOwnerType::Arm;
 
-	OwnerQ = InOwnerQ;
-	OwnerR = InOwnerR;
-	bHasOwner = true;
-	OwnerType = ETriggerTileOwnerType::Arm;
+  UE_LOG(LogTemp, Log,
+         TEXT("TriggerTile at (%d,%d) now owned by arm at (%d,%d)"), Q, R,
+         OwnerQ, OwnerR);
 
-	UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) now owned by arm at (%d,%d)"), Q, R, OwnerQ, OwnerR);
-	
-	// Initialize the simulation with the current signal state (crucial for disabling owner by default)
-	if (Sim)
-	{
-		FHex TriggerHex(Q, R);
-		FHex OwnerHex(InOwnerQ, InOwnerR);
-		Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
-		
-		UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) initialized SIM signal for Arm at (%d,%d) to %s"),
-			Q, R, OwnerQ, OwnerR, bCurrentSignal ? TEXT("POSITIVE") : TEXT("NEGATIVE"));
-	}
+  // Initialize the simulation with the current signal state (crucial for
+  // disabling owner by default)
+  if (Sim) {
+    FHex TriggerHex(Q, R, Level);
+    FHex OwnerHex(InOwnerQ, InOwnerR, Level);
+    Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
 
-	// Update wire visual to show connection
-	UpdateWireVisual();
+    UE_LOG(LogTemp, Log,
+           TEXT("TriggerTile at (%d,%d) initialized SIM signal for Arm at "
+                "(%d,%d) to %s"),
+           Q, R, OwnerQ, OwnerR,
+           bCurrentSignal ? TEXT("POSITIVE") : TEXT("NEGATIVE"));
+  }
+
+  // Update wire visual to show connection
+  UpdateWireVisual();
 }
 
-void ATriggerTile::SyncWorldLocation()
-{
-	if (!Driver)
-	{
-		if (UWorld* World = GetWorld())
-		{
-			Driver = AOrbSimDriver::Find(World);
-		}
-	}
+void ATriggerTile::SyncWorldLocation() {
+  if (!Driver) {
+    if (UWorld *World = GetWorld()) {
+      Driver = AOrbSimDriver::Find(World);
+    }
+  }
 
-	if (Driver)
-	{
-		FVector NewLocation = Driver->MapHexToWorld(FHex(Q, R, Level));
-		SetActorLocation(NewLocation);
-		UpdateWireVisual();
-	}
+  if (Driver) {
+    FVector NewLocation = Driver->MapHexToWorld(FHex(Q, R, Level));
+    SetActorLocation(NewLocation);
+    UpdateWireVisual();
+  }
 }
