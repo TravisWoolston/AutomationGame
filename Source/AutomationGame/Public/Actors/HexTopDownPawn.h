@@ -48,6 +48,17 @@ public:
   UPROPERTY(VisibleAnywhere, Category = "Blueprint Preview")
   TArray<UStaticMeshComponent *> BlueprintPreviewComponents;
 
+  // Components for highlighting orbs/clusters in Orb View
+  UPROPERTY()
+  TArray<UStaticMeshComponent *> OrbHighlightComponents;
+
+  // Components for highlighting multiple tiles (selection box)
+  UPROPERTY()
+  TArray<UStaticMeshComponent *> SelectionHighlightComponents;
+
+  // Helper to find the anchor hex of an item/cluster at a given position
+  FHex FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const;
+
   // Timeline editor widget class
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
   TSubclassOf<class UUserWidget> TimelineEditorWidgetClass = nullptr;
@@ -77,7 +88,20 @@ public:
   // Toggle walker debug visualization
   void ToggleDebugWalkers();
 
+  // Cycle to the next view mode (Standard, Advanced Filter, Orb View)
+  UFUNCTION(BlueprintCallable, Category = "View")
+  void NextViewMode();
+
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
+  EViewMode CurrentViewMode = EViewMode::Standard;
+
   // Highlight components
+  // Helper to get the correct highlight mesh, rotation and scale for a given
+  // hex
+  UStaticMesh *GetHighlightMeshForHex(const FHex &Hex, float &OutYaw,
+                                      FVector &OutScale, FVector &OutWorldPos,
+                                      bool &bOutWorldPosSet);
+
   UPROPERTY()
   UStaticMeshComponent *TileHighlightMesh;
 
@@ -142,6 +166,7 @@ private:
   void StartDeletionSelection();
   void EndDeletionSelection();
   void UpdateDeletionSelection();
+  void UpdateSelectionHighlights();
   void BlueprintModePressed();
   void BlueprintModeReleased();
   void ToggleBlueprintMode();
@@ -155,6 +180,9 @@ private:
   void DeleteTileAndOrbs(const FHex &Hex);
   void DeleteSelectedTilesAndOrbs();
   void RemoveTileAndOrbsAtCursor();
+  TArray<FHex> FindItemConnectedComponent(const FHex &StartHex,
+                                          TArray<FHex> &OutAnchors,
+                                          TArray<int32> &OutBondIndices) const;
 
   // Blueprint placement functions
   void PlaceBlueprint();
@@ -166,6 +194,7 @@ private:
   void EnsureBlueprintPreviewComponents();
   void UpdateBlueprintPreviewMeshes(float DeltaSeconds);
   void ClearBlueprintPreviewComponents();
+  void ClearOrbHighlightComponents();
 
   // Helper function to convert simulation ops to arm instructions
   TArray<FArmInstr> ConvertOpsToProgram(const TArray<FOp> &Ops);

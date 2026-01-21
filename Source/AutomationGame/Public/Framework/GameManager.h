@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 #include "Framework/WaveTypes.h"
 #include "GameFramework/Actor.h"
-
 #include "Sim/ArmTypes.h"
 #include "Sim/SimWorldHex.h"
 #include "Sim/WalkerTypes.h"
@@ -693,6 +692,9 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "Grid")
   void ToggleGridVisibility();
+
+  UFUNCTION(BlueprintCallable, Category = "Grid")
+  void SetGridVisibility(bool bVisible);
 
   // ------------ Cluster Storage ------------
   /** Add a processed cluster to storage or increment its count if already

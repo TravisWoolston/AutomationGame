@@ -534,6 +534,51 @@ void AHexFactoryActor::SetUnbondHighlight(bool bEnable) {
   }
 }
 
+void AHexFactoryActor::SetViewMode(EViewMode Mode) {
+  bool bOrbMode = (Mode == EViewMode::OrbView);
+
+  // Components that should be hidden in Orb View
+  TArray<UPrimitiveComponent *> ComponentsToHide;
+  ComponentsToHide.Add(TileISM);
+  ComponentsToHide.Add(BeltTileISM);
+  ComponentsToHide.Add(BondTileISM);
+  ComponentsToHide.Add(UnbondTileISM);
+  ComponentsToHide.Add(BeltISM);
+  ComponentsToHide.Add(BeltReadyISM);
+  ComponentsToHide.Add(BeltWaitingISM);
+  ComponentsToHide.Add(BondISM);
+  ComponentsToHide.Add(UnbondISM);
+
+  for (auto *Comp : ComponentsToHide) {
+    if (Comp) {
+      Comp->SetVisibility(!bOrbMode, true);
+    }
+  }
+
+  // Input/Output tiles should STAY visible in Orb Mode
+  if (InputTileISM)
+    InputTileISM->SetVisibility(true, true);
+  if (OutputTileISM)
+    OutputTileISM->SetVisibility(true, true);
+  if (InputTilesMesh)
+    InputTilesMesh->SetVisibility(true, true);
+  if (MergedOutputMesh)
+    MergedOutputMesh->SetVisibility(true, true);
+
+  // Type-specific ISMs
+  TArray<UInstancedStaticMeshComponent *> IOISMs = {
+      OutputNoneISM,     OutputBaseAISM,     OutputBaseBISM, OutputBaseCISM,
+      OutputMetalAISM,   OutputCatalystXISM, OutputVoidISM,  InputNoneISM,
+      InputBaseAISM,     InputBaseBISM,      InputBaseCISM,  InputMetalAISM,
+      InputCatalystXISM, InputVoidISM};
+
+  for (auto *ISM : IOISMs) {
+    if (ISM) {
+      ISM->SetVisibility(true, true);
+    }
+  }
+}
+
 FVector AHexFactoryActor::HexToWorld(const FHex &H) const {
   const AActor *Anchor = GetAnchor();
   const FVector AnchorV =

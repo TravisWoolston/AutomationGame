@@ -644,17 +644,22 @@ void AGameManager::Rebuild() {
 
 void AGameManager::ToggleGridVisibility() {
   if (ISM) {
-    bool bNewVisibility = !ISM->IsVisible();
-    ISM->SetVisibility(bNewVisibility, true);
-    UE_LOG(LogTemp, Log, TEXT("GameManager: Toggled grid visibility: %s"),
-           bNewVisibility ? TEXT("Visible") : TEXT("Hidden"));
+    SetGridVisibility(!ISM->IsVisible());
+  }
+}
+
+void AGameManager::SetGridVisibility(bool bVisible) {
+  if (ISM) {
+    ISM->SetVisibility(bVisible, true);
+    UE_LOG(LogTemp, Log, TEXT("GameManager: Set grid visibility: %s"),
+           bVisible ? TEXT("Visible") : TEXT("Hidden"));
 
     // Update all RequestBeacon actors
     if (UWorld *World = GetWorld()) {
       for (TActorIterator<ARequestBeacon> It(World); It; ++It) {
         ARequestBeacon *Beacon = *It;
         if (Beacon && IsValid(Beacon)) {
-          Beacon->SetIsGridVisible(bNewVisibility);
+          Beacon->SetIsGridVisible(bVisible);
         }
       }
     }

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "CoreMinimal.h"
 #include "Components/WidgetComponent.h"
-#include "Sim/ArmTypes.h"
+#include "CoreMinimal.h"
 #include "Framework/GameTickManager.h"
+#include "Sim/ArmTypes.h"
 #include "UMG.h"
 #include "ArmTimelineWidget.generated.h"
 
@@ -14,235 +14,249 @@ class UTexture2D;
  * 3D Widget component that displays a timeline of arm commands
  * Shows command icons in sequence with highlighting for current command
  */
-UCLASS(BlueprintType, ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class AUTOMATIONGAME_API UArmTimelineWidget : public UWidgetComponent
-{
-	GENERATED_BODY()
+UCLASS(BlueprintType, ClassGroup = (Custom),
+       meta = (BlueprintSpawnableComponent))
+class AUTOMATIONGAME_API UArmTimelineWidget : public UWidgetComponent {
+  GENERATED_BODY()
 
 public:
-	UArmTimelineWidget();
+  UArmTimelineWidget();
 
-	virtual void BeginPlay() override;
-	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+  virtual void BeginPlay() override;
+  virtual void
+  TickComponent(float DeltaTime, ELevelTick TickType,
+                FActorComponentTickFunction *ThisTickFunction) override;
 
-	/** Handle simulation step events for performance optimization */
-	UFUNCTION()
-	void OnSimulationStep(float StepSeconds);
+  /** Handle simulation step events for performance optimization */
+  UFUNCTION()
+  void OnSimulationStep(float StepSeconds);
 
-	/** Set the arm program to display */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetArmProgram(const TArray<FArmInstr>& Program);
+  /** Set the arm program to display */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetArmProgram(const TArray<FArmInstr> &Program);
 
-	/** Update the current command being executed */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetCurrentCommand(int32 CommandIndex, float Progress = 0.0f);
+  /** Update the current command being executed */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetCurrentCommand(int32 CommandIndex, float Progress = 0.0f);
 
-	/** Set the command textures for each command type */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetCommandTextures(const TMap<EArmCmd, UTexture2D*>& Textures);
+  /** Set the command textures for each command type */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetCommandTextures(const TMap<EArmCmd, UTexture2D *> &Textures);
 
-	/** Get the current program */
-	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
-	const TArray<FArmInstr>& GetArmProgram() const { return ArmProgram; }
+  /** Get the current program */
+  UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+  const TArray<FArmInstr> &GetArmProgram() const { return ArmProgram; }
 
-	/** Get the current command index */
-	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
-	int32 GetCurrentCommandIndex() const { return CurrentCommandIndex; }
+  /** Get the current command index */
+  UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+  int32 GetCurrentCommandIndex() const { return CurrentCommandIndex; }
 
-	/** Get the current command progress (0.0 to 1.0) */
-	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
-	float GetCurrentCommandProgress() const { return CurrentCommandProgress; }
+  /** Get the current command progress (0.0 to 1.0) */
+  UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+  float GetCurrentCommandProgress() const { return CurrentCommandProgress; }
 
-	/** Get the timeline widget instance */
-	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
-	UUserWidget* GetTimelineWidgetInstance() const { return TimelineWidgetInstance; }
+  /** Get the timeline widget instance */
+  UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+  UUserWidget *GetTimelineWidgetInstance() const {
+    return TimelineWidgetInstance;
+  }
 
-	/** Set widget visibility */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetTimelineWidgetVisible(bool bIsVisible);
+  /** Set widget visibility */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetTimelineWidgetVisible(bool bIsVisible);
 
-	/** Set the scale of the timeline widget */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetTimelineScale(float Scale);
+  /** Set the scale of the timeline widget */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetTimelineScale(float Scale);
 
-	/** Set the offset from the arm position */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetTimelineOffset(const FVector& Offset);
+  /** Set the offset from the arm position */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetTimelineOffset(const FVector &Offset);
 
-	/** Set the widget class to use for timeline display */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetTimelineWidgetClass(TSubclassOf<UUserWidget> NewWidgetClass);
+  /** Set the widget class to use for timeline display */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetTimelineWidgetClass(TSubclassOf<UUserWidget> NewWidgetClass);
 
-	/** Update widget position to follow the arm */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void UpdateWidgetPosition(const FVector& ArmLocation, const FRotator& ArmRotation);
+  /** Update widget position to follow the arm */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void UpdateWidgetPosition(const FVector &ArmLocation,
+                            const FRotator &ArmRotation);
 
-	/** Get the associated arm */
-	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
-	class ABasicArm* GetAssociatedArm() const { return AssociatedArm; }
+  /** Get the associated arm */
+  UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+  class ABasicArm *GetAssociatedArm() const { return AssociatedArm; }
 
-	/** Set the associated arm */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetAssociatedArm(class ABasicArm* Arm) { AssociatedArm = Arm; }
+  /** Set the associated arm */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetAssociatedArm(class ABasicArm *Arm) { AssociatedArm = Arm; }
 
-	/** Get the target world location */
-	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
-	FVector GetTargetWorldLocation() const { return TargetWorldLocation; }
+  /** Get the target world location */
+  UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+  FVector GetTargetWorldLocation() const { return TargetWorldLocation; }
 
-	/** Update widget position using arm's hex coordinates */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void UpdateWidgetPositionFromHex(const FHex& HexCoord, float BaseZ, const FRotator& ArmRotation);
+  /** Update widget position using arm's hex coordinates */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void UpdateWidgetPositionFromHex(const FHex &HexCoord, float BaseZ,
+                                   const FRotator &ArmRotation);
 
-	/** Set the default command texture */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetDefaultCommandTexture(UTexture2D* DefaultTexture);
+  /** Set the default command texture */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetDefaultCommandTexture(UTexture2D *DefaultTexture);
 
-	/** Set the icon size for command icons */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetIconSize(float IconSize);
+  /** Set the icon size for command icons */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetIconSize(float IconSize);
 
-	/** Set the background color for command icons */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetIconBackgroundColor(const FLinearColor& IconBackgroundColor);
+  /** Set the background color for command icons */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetIconBackgroundColor(const FLinearColor &IconBackgroundColor);
 
-	/** Set the normal command color */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetNormalCommandColor(const FLinearColor& NormalColor);
+  /** Set the normal command color */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetNormalCommandColor(const FLinearColor &NormalColor);
 
-	/** Set the current command color */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetCurrentCommandColor(const FLinearColor& CurrentColor);
+  /** Set the current command color */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetCurrentCommandColor(const FLinearColor &CurrentColor);
 
-	/** Set the completed command color */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetCompletedCommandColor(const FLinearColor& CompletedColor);
+  /** Set the completed command color */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetCompletedCommandColor(const FLinearColor &CompletedColor);
 
-	/** Calculate optimal timeline position to avoid blocking line of sight */
-	FVector CalculateOptimalTimelinePosition(const FVector& ArmLocation);
+  /** Calculate optimal timeline position to avoid blocking line of sight */
+  FVector CalculateOptimalTimelinePosition(const FVector &ArmLocation);
 
-	/** Calculate distance-based scale for timeline widget */
-	float CalculateDistanceBasedScale(const FVector& WidgetLocation);
+  /** Calculate distance-based scale for timeline widget */
+  float CalculateDistanceBasedScale(const FVector &WidgetLocation);
 
-	/** Cached scale value to prevent recalculating every tick */
-	float CachedDistanceScale = 1.0f;
-	
-	/** Last tick when scale was updated */
-	float LastScaleUpdateTime = 0.0f;
+  /** Cached scale value to prevent recalculating every tick */
+  float CachedDistanceScale = 1.0f;
 
-	/** Target position for lerp interpolation */
-	FVector TargetWorldLocation = FVector::ZeroVector;
+  /** Last tick when scale was updated */
+  float LastScaleUpdateTime = 0.0f;
 
-	/** Current interpolated position */
-	FVector CurrentWorldLocation = FVector::ZeroVector;
+  /** Target position for lerp interpolation */
+  FVector TargetWorldLocation = FVector::ZeroVector;
 
-	/** Lerp speed for position updates (units per second) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	float LerpSpeed = 500.0f;
+  /** Current interpolated position */
+  FVector CurrentWorldLocation = FVector::ZeroVector;
 
-	/** Minimum separation distance between timelines to avoid overlap */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	float MinSeparationDistance = 200.0f;
+  /** Lerp speed for position updates (units per second) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  float LerpSpeed = 500.0f;
 
-	/** Associated arm for line drawing */
-	UPROPERTY()
-	class ABasicArm* AssociatedArm = nullptr;
+  /** Minimum separation distance between timelines to avoid overlap */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  float MinSeparationDistance = 200.0f;
 
-	/** Set the maximum number of command icons to display */
-	UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
-	void SetMaxCommandIcons(int32 MaxIcons);
+  /** Associated arm for line drawing */
+  UPROPERTY()
+  class ABasicArm *AssociatedArm = nullptr;
+
+  /** Set the maximum number of command icons to display */
+  UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
+  void SetMaxCommandIcons(int32 MaxIcons);
 
 public:
-	/** Widget class to use for the timeline display */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	TSubclassOf<UUserWidget> TimelineWidgetClass;
+  /** Widget class to use for the timeline display */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  TSubclassOf<UUserWidget> TimelineWidgetClass;
 
-	/** Scale of the timeline widget */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	float TimelineScale = 1.0f;
+  /** Scale of the timeline widget */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  float TimelineScale = 1.0f;
 
-	/** Offset from the arm position */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	FVector TimelineOffset = FVector(0.0f, 0.0f, 100.0f);
+  /** Offset from the arm position */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  FVector TimelineOffset = FVector(0.0f, 0.0f, 100.0f);
 
-	/** Whether the timeline is visible */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	bool bTimelineVisible = false;
+  /** Whether the timeline is visible */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  bool bTimelineVisible = false;
 
-	/** Maximum number of commands to display */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline", meta = (ClampMin = "1", ClampMax = "20"))
-	int32 MaxDisplayedCommands = 10;
+  /** Maximum number of commands to display */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline",
+            meta = (ClampMin = "1", ClampMax = "20"))
+  int32 MaxDisplayedCommands = 10;
 
-	/** Command textures for each command type */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	TMap<EArmCmd, UTexture2D*> CommandTextures;
+  /** Command textures for each command type */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  TMap<EArmCmd, UTexture2D *> CommandTextures;
 
-	/** Default texture for unknown commands */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	UTexture2D* DefaultCommandTexture = nullptr;
+  /** Default texture for unknown commands */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  UTexture2D *DefaultCommandTexture = nullptr;
 
-	/** Highlight color for current command */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	FLinearColor CurrentCommandColor = FLinearColor::Yellow;
+  /** Highlight color for current command */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  FLinearColor CurrentCommandColor = FLinearColor::Yellow;
 
-	/** Normal color for other commands */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	FLinearColor NormalCommandColor = FLinearColor::White;
+  /** Normal color for other commands */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  FLinearColor NormalCommandColor = FLinearColor::White;
 
-	/** Completed command color */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	FLinearColor CompletedCommandColor = FLinearColor::Green;
+  /** Completed command color */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  FLinearColor CompletedCommandColor = FLinearColor::Green;
 
-	/** Size of command icons */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	float IconSize = 32.0f;
+  /** Size of command icons */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  float IconSize = 32.0f;
 
-	/** Background color for command icons */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	FLinearColor IconBackgroundColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+  /** Background color for command icons */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  FLinearColor IconBackgroundColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
 
-	/** Offset for the line connection point relative to the widget component location */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	FVector LineConnectionOffset = FVector::ZeroVector;
+  /** Offset for the line connection point relative to the widget component
+   * location */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  FVector LineConnectionOffset = FVector::ZeroVector;
 
-	/** Whether to pulse the current command icon */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	bool bPulseCurrentCommand = true;
+  /** Whether to pulse the current command icon */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  bool bPulseCurrentCommand = true;
 
-	/** Border color for the command list */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	FLinearColor ListBorderColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
+  /** Border color for the command list */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  FLinearColor ListBorderColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
 
-	/** Border thickness for the command list */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
-	float ListBorderThickness = 2.0f;
+  /** Border thickness for the command list */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
+  float ListBorderThickness = 2.0f;
 
-	/** Get the world location for the line connection */
-	UFUNCTION(BlueprintPure, Category = "Arm Timeline")
-	FVector GetConnectionLocation() const;
+  /** Get the world location for the line connection */
+  UFUNCTION(BlueprintPure, Category = "Arm Timeline")
+  FVector GetConnectionLocation() const;
 
 private:
-	/** The arm program being displayed */
-	TArray<FArmInstr> ArmProgram;
+  /** The arm program being displayed */
+  TArray<FArmInstr> ArmProgram;
 
-	/** Current command index being executed */
-	int32 CurrentCommandIndex = -1;
+  /** Current command index being executed */
+  int32 CurrentCommandIndex = -1;
 
-	/** Progress of current command (0.0 to 1.0) */
-	float CurrentCommandProgress = 0.0f;
+  /** Progress of current command (0.0 to 1.0) */
+  float CurrentCommandProgress = 0.0f;
 
-	/** Cached widget instance */
-	UPROPERTY()
-	UUserWidget* TimelineWidgetInstance = nullptr;
+  /** Cached widget instance */
+  UPROPERTY()
+  UUserWidget *TimelineWidgetInstance = nullptr;
 
-	/** Initialize the widget */
-	void InitializeWidget();
+  /** Last seen values to throttle updates */
+  int32 LastCommandIndex = -1;
+  float LastCommandProgress = -1.0f;
+  int32 LastProgramSize = -1;
+  TWeakObjectPtr<class ABasicArm> LastAssociatedArm = nullptr;
 
-	/** Update the widget content */
-	void UpdateWidgetContent();
+  /** Initialize the widget */
+  void InitializeWidget();
 
-	/** Get texture for a command type */
-	UTexture2D* GetTextureForCommand(EArmCmd Command) const;
+  /** Update the widget content */
+  void UpdateWidgetContent();
 
-	/** Get display name for a command */
-	FString GetCommandDisplayName(EArmCmd Command) const;
+  /** Get texture for a command type */
+  UTexture2D *GetTextureForCommand(EArmCmd Command) const;
+
+  /** Get display name for a command */
+  FString GetCommandDisplayName(EArmCmd Command) const;
 };

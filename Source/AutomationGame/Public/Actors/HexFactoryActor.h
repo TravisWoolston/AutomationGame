@@ -38,6 +38,9 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Visual")
   void SetUnbondHighlight(bool bEnable);
 
+  UFUNCTION(BlueprintCallable, Category = "Visual")
+  void SetViewMode(EViewMode Mode);
+
   UFUNCTION()
   void HandleSimStepComplete(float StepSeconds);
 

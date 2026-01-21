@@ -263,7 +263,8 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
   }
 
   // Handle continuous placement (painting) for belts
-  if (bPlaceHeld && Placer && Placer->PlaceKind == EPlaceKind::Belt) {
+  if (bPlaceHeld && Placer && Placer->PlaceKind == EPlaceKind::Belt &&
+      !bBlueprintMode && !bDeletionMode) {
     if (Placer->IsHoverValid()) {
       Placer->HandlePlace(true);
     }
@@ -314,9 +315,280 @@ void AHexTopDownPawn::PlaceReleased() {
   }
 }
 
+UStaticMesh *AHexTopDownPawn::GetHighlightMeshForHex(const FHex &Hex,
+                                                     float &OutYaw,
+                                                     FVector &OutScale,
+                                                     FVector &OutWorldPos,
+                                                     bool &bOutWorldPosSet) {
+  OutYaw = 0.f;
+  OutScale = FVector(1.f);
+  bOutWorldPosSet = false;
+  OutWorldPos = FVector::ZeroVector;
+
+  AOrbSimDriver *Driver = CachedOrbSimDriver;
+  if (!Driver && GetWorld()) {
+    Driver = AOrbSimDriver::Find(GetWorld());
+    CachedOrbSimDriver = Driver;
+  }
+  if (!Driver)
+    return nullptr;
+
+  USimWorldHex *Sim = Driver->GetSim();
+  if (!Sim)
+    return nullptr;
+
+  if (!CachedHexFactory) {
+    for (TActorIterator<AHexFactoryActor> It(GetWorld()); It; ++It) {
+      CachedHexFactory = *It;
+      break;
+    }
+  }
+
+  // Helper to compute yaw to a specific neighbor direction
+  auto GetYawToNeighbor = [&](const FHex &Start, uint8 Dir) -> float {
+    FHex Neighbor = HexUtil::Neighbor(Start, (EHexDir)(Dir % 6));
+    FVector PosA = Driver->MapHexToWorld(Start);
+    FVector PosB = Driver->MapHexToWorld(Neighbor);
+    FVector DirVec = (PosB - PosA).GetSafeNormal();
+    return DirVec.IsNearlyZero()
+               ? 0.f
+               : FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+  };
+
+  // 1. Check for Arms (Actors)
+  if (ABasicArm *Arm = FindArmAtHex(Hex)) {
+    // For selection box, we use a hex highlight at the base
+    OutYaw = GetYawToNeighbor(Hex, 0);
+    if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
+      OutYaw += 30.f;
+    return Placer ? Placer->GenericTilePreviewMesh
+                  : (TileHighlightMesh
+                         ? (UStaticMesh *)TileHighlightMesh->GetStaticMesh()
+                         : nullptr);
+  }
+
+  // 2. Check for Walkers (Actors)
+  for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It) {
+    ABasicWalker *Walker = *It;
+    if (Walker && Walker->Q == Hex.Q && Walker->R == Hex.R &&
+        Walker->Level == Hex.Level) {
+      OutYaw = GetYawToNeighbor(Hex, 0);
+      if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
+        OutYaw += 30.f;
+      return Placer ? Placer->GenericTilePreviewMesh
+                    : (TileHighlightMesh
+                           ? (UStaticMesh *)TileHighlightMesh->GetStaticMesh()
+                           : nullptr);
+    }
+  }
+
+  // 3. Check for Tiles (via Sim)
+  FTile *Tile = Sim->TileMap.Find(Hex);
+  if (!Tile)
+    return nullptr;
+
+  UStaticMesh *MeshToUse = nullptr;
+
+  switch (Tile->Kind) {
+  case ETileKind::Belt:
+    MeshToUse = Placer ? Placer->GetActualBeltMesh() : nullptr;
+    {
+      uint8 Dir = (uint8)Tile->Arg;
+      OutYaw = GetYawToNeighbor(Hex, Dir);
+      if (CachedHexFactory) {
+        OutScale = CachedHexFactory->BeltScale;
+      }
+    }
+    break;
+  case ETileKind::Input:
+  case ETileKind::ClusterInput:
+    MeshToUse = Placer ? Placer->GetActualOrbMesh() : nullptr;
+    OutYaw = GetYawToNeighbor(Hex, 0);
+    if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
+      OutYaw += 30.f;
+    break;
+  case ETileKind::Output:
+  case ETileKind::ClusterOutput:
+    MeshToUse = Placer ? Placer->GetActualOutputOrbMesh() : nullptr;
+    OutYaw = GetYawToNeighbor(Hex, 0);
+    if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
+      OutYaw += 30.f;
+
+    if (Tile->Kind == ETileKind::ClusterOutput) {
+      if (CachedGameManager) {
+        OutScale = FVector(CachedGameManager->ClusterOutputScale);
+      } else if (UWorld *World = GetWorld()) {
+        for (TActorIterator<AGameManager> It(World); It; ++It) {
+          OutScale = FVector((*It)->ClusterOutputScale);
+          CachedGameManager = *It;
+          break;
+        }
+      }
+    }
+    break;
+  case ETileKind::Bond:
+    MeshToUse = Placer ? Placer->BondPreviewMesh : nullptr;
+    {
+      uint8 Dir = (uint8)Tile->Arg;
+      FVector CenterA = Driver->MapHexToWorld(Hex);
+      FVector CenterB =
+          Driver->MapHexToWorld(HexUtil::Neighbor(Hex, (EHexDir)(Dir % 6)));
+      OutWorldPos = (CenterA + CenterB) * 0.5f;
+      bOutWorldPosSet = true;
+      FVector DirVec = (CenterB - CenterA).GetSafeNormal();
+      OutYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+      if (CachedHexFactory) {
+        OutScale = CachedHexFactory->BondScale;
+      }
+    }
+    break;
+  case ETileKind::Unbond:
+    MeshToUse = (Placer && Placer->UnbondPreviewMesh)
+                    ? Placer->UnbondPreviewMesh
+                    : (Placer ? Placer->BondPreviewMesh : nullptr);
+    {
+      uint8 Dir = (uint8)Tile->Arg;
+      FVector CenterA = Driver->MapHexToWorld(Hex);
+      FVector CenterB =
+          Driver->MapHexToWorld(HexUtil::Neighbor(Hex, (EHexDir)(Dir % 6)));
+      OutWorldPos = (CenterA + CenterB) * 0.5f;
+      bOutWorldPosSet = true;
+      FVector DirVec = (CenterB - CenterA).GetSafeNormal();
+      OutYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+      if (CachedHexFactory) {
+        OutScale = CachedHexFactory->UnbondScale;
+      }
+    }
+    break;
+  default:
+    break;
+  }
+
+  return MeshToUse;
+}
+
 void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
   if (!Placer || !GetWorld())
     return;
+
+  if (CurrentViewMode == EViewMode::OrbView) {
+    if (TileHighlightMesh)
+      TileHighlightMesh->SetVisibility(false);
+
+    const FHex CursorHex = Placer ? Placer->GetHoverHex() : FHex(-1, -1, -1);
+    TArray<FHex> BondedAnchors;
+    TArray<int32> BondIndices;
+    TArray<FHex> ClusterHexes =
+        FindItemConnectedComponent(CursorHex, BondedAnchors, BondIndices);
+
+    if (ClusterHexes.Num() > 0) {
+      // Use the actual orb mesh for highlighting if available
+      UStaticMesh *OrbMesh = Placer ? Placer->GetActualOrbMesh() : nullptr;
+      UStaticMesh *BondMesh = Placer ? Placer->BondPreviewMesh : nullptr;
+      float OrbScale = 0.35f;
+
+      int32 TotalNeeded = ClusterHexes.Num() + BondIndices.Num();
+
+      // Ensure we have enough components
+      while (OrbHighlightComponents.Num() < TotalNeeded) {
+        UStaticMeshComponent *Comp = NewObject<UStaticMeshComponent>(this);
+        Comp->RegisterComponent();
+        Comp->AttachToComponent(
+            RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+        Comp->SetRenderCustomDepth(true);
+        Comp->SetCustomDepthStencilValue(1); // Outline color
+        Comp->SetRenderInMainPass(false);    // Only see outline
+        Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Comp->SetCollisionProfileName(TEXT("NoCollision"));
+        Comp->SetCastShadow(false);
+        OrbHighlightComponents.Add(Comp);
+      }
+
+      // Hide excess
+      for (int32 i = TotalNeeded; i < OrbHighlightComponents.Num(); ++i) {
+        OrbHighlightComponents[i]->SetVisibility(false);
+      }
+
+      // Position and show orbs at orb height
+      float ZOffset = (CachedOrbSimDriver && CachedOrbSimDriver->GetSim())
+                          ? CachedOrbSimDriver->GetSim()->OrbZOffset
+                          : 50.0f;
+
+      AOrbSimDriver *Driver = CachedOrbSimDriver;
+      if (!Driver)
+        Driver = AOrbSimDriver::Find(GetWorld());
+
+      // 1. Position Orbs
+      for (int32 i = 0; i < ClusterHexes.Num(); ++i) {
+        UStaticMeshComponent *Comp = OrbHighlightComponents[i];
+
+        if (OrbMesh && Comp->GetStaticMesh() != OrbMesh) {
+          Comp->SetStaticMesh(OrbMesh);
+          Comp->SetWorldScale3D(FVector(OrbScale));
+        } else if (!OrbMesh && TileHighlightMesh &&
+                   Comp->GetStaticMesh() !=
+                       TileHighlightMesh->GetStaticMesh()) {
+          Comp->SetStaticMesh(TileHighlightMesh->GetStaticMesh());
+          Comp->SetWorldScale3D(TileHighlightMesh->GetRelativeScale3D() * 0.4f);
+        }
+
+        FVector WorldPos =
+            CachedGameManager
+                ? CachedGameManager->GetWorldForHex(ClusterHexes[i])
+                : FVector::ZeroVector;
+        WorldPos.Z += ZOffset;
+        Comp->SetWorldLocation(WorldPos);
+        Comp->SetWorldRotation(FRotator::ZeroRotator);
+        Comp->SetVisibility(true);
+      }
+
+      // 2. Position Bonds
+      if (Driver && Driver->GetSim()) {
+        USimWorldHex *Sim = Driver->GetSim();
+        for (int32 i = 0; i < BondIndices.Num(); ++i) {
+          int32 BondIdx = BondIndices[i];
+          UStaticMeshComponent *Comp =
+              OrbHighlightComponents[ClusterHexes.Num() + i];
+
+          if (BondMesh && Comp->GetStaticMesh() != BondMesh) {
+            Comp->SetStaticMesh(BondMesh);
+          }
+
+          if (Sim->Bonds.IsValidIndex(BondIdx)) {
+            const USimWorldHex::FBond &B = Sim->Bonds[BondIdx];
+            FHex AnchorA = B.Root;
+            FHex AnchorB(B.Root.Q + B.dQ, B.Root.R + B.dR, B.Root.Level);
+
+            FVector PosA = Driver->MapHexToWorld(AnchorA);
+            FVector PosB = Driver->MapHexToWorld(AnchorB);
+            FVector Mid = (PosA + PosB) * 0.5f;
+            Mid.Z += ZOffset; // Same height as orbs
+
+            FVector DirVec = (PosB - PosA).GetSafeNormal();
+            float Yaw =
+                FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+
+            Comp->SetWorldLocation(Mid);
+            Comp->SetWorldRotation(FRotator(0, Yaw, 0));
+
+            FVector BScale(1.0f);
+            if (CachedHexFactory)
+              BScale = CachedHexFactory->BondScale;
+            Comp->SetWorldScale3D(BScale);
+            Comp->SetVisibility(true);
+          }
+        }
+      }
+    } else {
+      for (auto *Comp : OrbHighlightComponents)
+        Comp->SetVisibility(false);
+    }
+    return;
+  } else {
+    // Hidden in other modes if it was used
+    if (OrbHighlightComponents.Num() > 0)
+      ClearOrbHighlightComponents();
+  }
 
   // Reset previous actor highlight if any
   if (IsValid(LastHighlightedActor)) {
@@ -358,12 +630,11 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
 
   FHex HoverHex = Placer->GetHoverHex();
 
-  // 1. Check for Arms (Actors)
+  // 1. Check for Arms/Walkers first for special per-actor highlight
   if (ABasicArm *Arm = FindArmAtHex(HoverHex)) {
     TArray<UPrimitiveComponent *> Comps;
     Arm->GetComponents(Comps);
     for (UPrimitiveComponent *C : Comps) {
-      // Highlight mesh components
       if (C->IsA<UMeshComponent>()) {
         C->SetRenderCustomDepth(true);
       }
@@ -372,9 +643,6 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
     bHighlightSmoothingInitialized = false;
     return;
   }
-
-  // 2. Check for Walkers (Actors)
-  // Iterate walkers to find one at this hex
   for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It) {
     ABasicWalker *Walker = *It;
     if (Walker && Walker->Q == HoverHex.Q && Walker->R == HoverHex.R &&
@@ -392,144 +660,24 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
     }
   }
 
-  // 3. Check for Tiles (via Sim)
-  if (!TileHighlightMesh)
-    return;
-
-  AOrbSimDriver *Driver = CachedOrbSimDriver;
-  if (!Driver) {
-    Driver = AOrbSimDriver::Find(GetWorld());
-    CachedOrbSimDriver = Driver;
-  }
-  if (!Driver)
-    return;
-  USimWorldHex *Sim = Driver->GetSim();
-  if (!Sim)
-    return;
-
-  // Cache the factory actor if we haven't already
-  if (!CachedHexFactory) {
-    for (TActorIterator<AHexFactoryActor> It(GetWorld()); It; ++It) {
-      CachedHexFactory = *It;
-      break;
-    }
-  }
-
-  FTile *Tile = Sim->TileMap.Find(HoverHex);
-  if (!Tile) {
-    bHighlightSmoothingInitialized = false;
-    return;
-  }
-
-  UStaticMesh *MeshToUse = nullptr;
+  // 2. Otherwise use the ghost mesh via GetHighlightMeshForHex
   float RotationYaw = 0.f;
   FVector Scale = FVector(1.f);
-
   FVector TargetLocation = FVector::ZeroVector;
   bool bTargetLocationSet = false;
 
-  // Helper to compute yaw to a specific neighbor direction (matches placement
-  // logic)
-  auto GetYawToNeighbor = [&](const FHex &Start, uint8 Dir) -> float {
-    FHex Neighbor = HexUtil::Neighbor(Start, (EHexDir)(Dir % 6));
-    FVector PosA = Driver->MapHexToWorld(Start);
-    FVector PosB = Driver->MapHexToWorld(Neighbor);
-    FVector DirVec = (PosB - PosA).GetSafeNormal();
-    return DirVec.IsNearlyZero()
-               ? 0.f
-               : FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
-  };
+  UStaticMesh *MeshToUse = GetHighlightMeshForHex(
+      HoverHex, RotationYaw, Scale, TargetLocation, bTargetLocationSet);
 
-  // Determine mesh based on tile type
-  switch (Tile->Kind) {
-  case ETileKind::Belt:
-    MeshToUse = Placer->GetActualBeltMesh();
-    // Calculate rotation for belt
-    {
-      uint8 Dir = (uint8)Tile->Arg; // Belt direction stored in Arg
-      RotationYaw = GetYawToNeighbor(HoverHex, Dir);
-      if (CachedHexFactory) {
-        Scale = CachedHexFactory->BeltScale;
-      }
-    }
-    break;
-  case ETileKind::Input:
-  case ETileKind::ClusterInput:
-    MeshToUse = Placer->GetActualOrbMesh();
-    // Input tiles align with grid (neighbor 0)
-    RotationYaw = GetYawToNeighbor(HoverHex, 0);
-    if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
-      RotationYaw += 30.f;
-    break;
-  case ETileKind::Output:
-  case ETileKind::ClusterOutput:
-    MeshToUse = Placer->GetActualOutputOrbMesh();
-    // Output tiles align with grid (neighbor 0)
-    RotationYaw = GetYawToNeighbor(HoverHex, 0);
-    if (Driver->GetGridOrientation() == EHexOrientation::FlatTop)
-      RotationYaw += 30.f;
-
-    if (Tile->Kind == ETileKind::ClusterOutput) {
-      // Try to find GM for scale
-      if (CachedGameManager) {
-        Scale = FVector(CachedGameManager->ClusterOutputScale);
-      } else if (UWorld *World = GetWorld()) {
-        for (TActorIterator<AGameManager> It(World); It; ++It) {
-          Scale = FVector((*It)->ClusterOutputScale);
-          CachedGameManager = *It;
-          break;
-        }
-      }
-    }
-    break;
-  case ETileKind::Bond:
-    MeshToUse = Placer->BondPreviewMesh;
-    {
-      uint8 Dir = (uint8)Tile->Arg;
-      FVector CenterA = Driver->MapHexToWorld(HoverHex);
-      FVector CenterB = Driver->MapHexToWorld(
-          HexUtil::Neighbor(HoverHex, (EHexDir)(Dir % 6)));
-      TargetLocation = (CenterA + CenterB) * 0.5f;
-      bTargetLocationSet = true;
-
-      // Re-calc yaw
-      FVector DirVec = (CenterB - CenterA).GetSafeNormal();
-      RotationYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
-
-      if (CachedHexFactory) {
-        Scale = CachedHexFactory->BondScale;
-      }
-    }
-    break;
-  case ETileKind::Unbond:
-    MeshToUse = Placer->UnbondPreviewMesh ? Placer->UnbondPreviewMesh
-                                          : Placer->BondPreviewMesh;
-    {
-      uint8 Dir = (uint8)Tile->Arg;
-      FVector CenterA = Driver->MapHexToWorld(HoverHex);
-      FVector CenterB = Driver->MapHexToWorld(
-          HexUtil::Neighbor(HoverHex, (EHexDir)(Dir % 6)));
-      TargetLocation = (CenterA + CenterB) * 0.5f;
-      bTargetLocationSet = true;
-
-      FVector DirVec = (CenterB - CenterA).GetSafeNormal();
-      RotationYaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
-
-      if (CachedHexFactory) {
-        Scale = CachedHexFactory->UnbondScale;
-      }
-    }
-    break;
-  default:
-    // Don't highlight empty/unknown
-    break;
-  }
-
-  if (MeshToUse) {
+  if (MeshToUse && TileHighlightMesh) {
     TileHighlightMesh->SetStaticMesh(MeshToUse);
 
     if (!bTargetLocationSet) {
-      TargetLocation = Driver->MapHexToWorld(HoverHex);
+      AOrbSimDriver *Driver = CachedOrbSimDriver;
+      if (!Driver)
+        Driver = AOrbSimDriver::Find(GetWorld());
+      TargetLocation =
+          Driver ? Driver->MapHexToWorld(HoverHex) : FVector::ZeroVector;
     }
 
     FRotator TargetRotation = FRotator(0.f, RotationYaw, 0.f);
@@ -653,6 +801,10 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent *IC) {
   // Grid visibility toggle
   IC->BindAction("ToggleGridVisibility", IE_Pressed, this,
                  &AHexTopDownPawn::ToggleGridVisibility);
+
+  // View mode cycling
+  IC->BindAction("NextViewMode", IE_Pressed, this,
+                 &AHexTopDownPawn::NextViewMode);
 
   // Switch active grid level
   IC->BindAction("SwitchGrid", IE_Pressed, this, &AHexTopDownPawn::SwitchGrid);
@@ -1530,6 +1682,7 @@ void AHexTopDownPawn::StartSelection() {
 
   FVector2D MousePosition;
   if (PC->GetMousePosition(MousePosition.X, MousePosition.Y)) {
+    ClearSelection();
     SelectionStart = MousePosition;
     SelectionEnd = MousePosition;
     bBlueprintSelectionActive = true;
@@ -1642,6 +1795,9 @@ void AHexTopDownPawn::UpdateSelection() {
 
     UE_LOG(LogTemp, Warning, TEXT("Blueprint selection: %d tiles selected"),
            SelectedTiles.Num());
+
+    // Update visual highlights
+    UpdateSelectionHighlights();
   }
 }
 
@@ -1832,6 +1988,13 @@ void AHexTopDownPawn::ClearSelection() {
   BlueprintTiles.Empty();
   bBlueprintSelectionActive = false;
   ClearBlueprintPreviewComponents();
+
+  // Clear selection highlights
+  for (UStaticMeshComponent *Comp : SelectionHighlightComponents) {
+    if (Comp) {
+      Comp->SetVisibility(false);
+    }
+  }
 }
 
 void AHexTopDownPawn::CancelBlueprintPlacement() {
@@ -2273,21 +2436,39 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
   if (!Sim)
     return;
 
-  // Check grid visibility
-  bool bGridVisible = true;
-  if (CachedGameManager) {
-    if (UInstancedStaticMeshComponent *ISM =
-            CachedGameManager
-                ->FindComponentByClass<UInstancedStaticMeshComponent>()) {
-      bGridVisible = ISM->IsVisible();
+  // View mode removal rules
+  bool bIsAdvanced = false;
+  if (UWorld *World = GetWorld()) {
+    for (TActorIterator<ATriggerTile> It(World); It; ++It) {
+      if (It->Q == Hex.Q && It->R == Hex.R && It->Level == Hex.Level) {
+        bIsAdvanced = true;
+        break;
+      }
+    }
+    if (!bIsAdvanced) {
+      for (TActorIterator<ARequestBeacon> It(World); It; ++It) {
+        if (It->Q == Hex.Q && It->R == Hex.R && It->Level == Hex.Level) {
+          bIsAdvanced = true;
+          break;
+        }
+      }
     }
   }
 
-  UE_LOG(LogTemp, Log, TEXT("Deleting at (%d,%d) - GridVisible: %d"), Hex.Q,
-         Hex.R, bGridVisible);
+  if (CurrentViewMode == EViewMode::Standard) {
+    if (bIsAdvanced) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("Cannot delete advanced tiles in Standard Mode"));
+      return;
+    }
+  } else if (CurrentViewMode == EViewMode::AdvancedFilter) {
+    if (!bIsAdvanced) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("Only advanced tiles are removable in Advanced Filter Mode"));
+      return;
+    }
 
-  if (!bGridVisible) {
-    // Hidden Grid: Only delete RequestBeacons and TriggerTiles
+    // Perform advanced deletion (with scenario capture)
     if (UWorld *World = GetWorld()) {
       // Delete RequestBeacons at this location
       for (TActorIterator<ARequestBeacon> It(World); It; ++It) {
@@ -2306,9 +2487,7 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
               break;
             }
           }
-
           Beacon->Destroy();
-          // Don't break, maybe multiple beacons? (Though unlikely on same tile)
         }
       }
 
@@ -2329,27 +2508,38 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
               break;
             }
           }
-
           TriggerTile->Destroy();
-          // Don't break, in case multiple triggers on same tile
         }
       }
     }
-    return; // Stop here
+    return;
+  } else if (CurrentViewMode == EViewMode::OrbView) {
+    // Orb View ONLY deletes orbs/clusters (including bonded groups)
+    TArray<FHex> BondedAnchors;
+    TArray<int32> BondIndices;
+    TArray<FHex> ClusterHexes =
+        FindItemConnectedComponent(Hex, BondedAnchors, BondIndices);
+
+    if (BondedAnchors.Num() > 0) {
+      for (const FHex &Anchor : BondedAnchors) {
+        FItem RemovedItem;
+        Sim->TryTakeItem(Anchor, RemovedItem);
+      }
+      UE_LOG(LogTemp, Log, TEXT("Orb View: Removed bonded group with %d items"),
+             BondedAnchors.Num());
+      Sim->TileRevision++;
+    }
+    return; // Don't delete tiles in Orb View
   }
 
-  // Grid Visible: Ignore RequestBeacons (don't delete them), proceed with
-  // normal deletion
-
-  // Scenario capture for beacon removal (if deletion should capture it)
-  // Note: Currently beacons are not deleted when grid is visible, so this isn't
-  // needed But keeping it here for consistency with other deletion logic
-
-  // 1. Remove any orbs/items at this hex
-  FItem RemovedItem;
-  if (Sim->TryTakeItem(Hex, RemovedItem)) {
-    UE_LOG(LogTemp, Log, TEXT("Removed orb/item ID %d at (%d,%d)"),
-           RemovedItem.Id, Hex.Q, Hex.R);
+  // 1. Remove any orbs/items at this hex (Disabled in Standard Mode per user
+  // request)
+  if (CurrentViewMode != EViewMode::Standard) {
+    FItem RemovedItem;
+    if (Sim->TryTakeItem(Hex, RemovedItem)) {
+      UE_LOG(LogTemp, Log, TEXT("Removed orb/item ID %d at (%d,%d)"),
+             RemovedItem.Id, Hex.Q, Hex.R);
+    }
   }
 
   // 2. Remove any arms at this hex (check both simulation and world actors)
@@ -2462,7 +2652,8 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
   }
 
   // 3. Remove the tile itself
-  // First, check if this is a ClusterOutput tile and clean up its partnerships
+  // First, check if this is a ClusterOutput tile and clean up its
+  // partnerships
   if (FTile *Tile = Sim->TileMap.Find(Hex)) {
     if (Tile->Kind == ETileKind::ClusterOutput) {
       // Find and remove all partnerships involving this tile
@@ -2551,6 +2742,8 @@ void AHexTopDownPawn::StartDeletionSelection() {
     SelectionStart = MousePosition;
     SelectionEnd = MousePosition;
     bDeletionSelectionActive = true;
+    SelectedTiles.Empty();
+    UpdateSelectionHighlights();
 
     // Start HUD selection box (reuse the same box but with different purpose)
     AAutomationGameHUD *GameHUD = Cast<AAutomationGameHUD>(PC->GetHUD());
@@ -2561,8 +2754,8 @@ void AHexTopDownPawn::StartDeletionSelection() {
     UE_LOG(LogTemp, Warning, TEXT("Deletion selection started at (%f, %f)"),
            MousePosition.X, MousePosition.Y);
   } else {
-    // UE_LOG(LogTemp, Warning, TEXT("Failed to get mouse position for deletion
-    // selection"));
+    // UE_LOG(LogTemp, Warning, TEXT("Failed to get mouse position for
+    // deletion selection"));
   }
 }
 
@@ -2623,8 +2816,8 @@ void AHexTopDownPawn::UpdateDeletionSelection() {
     // Updated: GridPlaneZ now accurately reflects the active level's visual Z
     float GridPlaneZ = Driver ? Driver->GetGridPlaneZ(this) : 0.f;
 
-    // Convert screen coordinates to world coordinates by projecting rays to the
-    // grid plane
+    // Convert screen coordinates to world coordinates by projecting rays to
+    // the grid plane
     FVector WorldStart, WorldEnd;
     FVector WorldStartDir, WorldEndDir;
 
@@ -2658,6 +2851,9 @@ void AHexTopDownPawn::UpdateDeletionSelection() {
 
     UE_LOG(LogTemp, Warning, TEXT("Deletion selection: %d tiles selected"),
            SelectedTiles.Num());
+
+    // Update visual highlights
+    UpdateSelectionHighlights();
   }
 }
 
@@ -2859,7 +3055,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
     FHex RotatedTileOffset = OffsetFromCenter;
     if (BlueprintRotation > 0) {
       // Hexagonal rotation formula for 60-degree increments
-      // Each rotation step rotates the hex coordinates by 60 degrees clockwise
+      // Each rotation step rotates the hex coordinates by 60 degrees
+      // clockwise
       for (uint8 j = 0; j < BlueprintRotation; j++) {
         int32 NewQ = RotatedTileOffset.Q + RotatedTileOffset.R;
         int32 NewR = -RotatedTileOffset.Q;
@@ -2923,7 +3120,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
           } else {
             PreviewMesh = Placer->GetActualOrbMesh();
           }
-          // Compute base yaw the same way as individual placement (direction 0)
+          // Compute base yaw the same way as individual placement (direction
+          // 0)
           {
             const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)0);
             const FVector NeighborWorldPos =
@@ -2964,7 +3162,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
           } else {
             PreviewMesh = Placer->GenericTilePreviewMesh;
           }
-          // Compute base yaw the same way as individual placement (direction 0)
+          // Compute base yaw the same way as individual placement (direction
+          // 0)
           {
             const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)0);
             const FVector NeighborWorldPos =
@@ -2980,7 +3179,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
               PreviewYaw =
                   FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
             }
-            // For cluster input tiles, handle grid orientation (same as output)
+            // For cluster input tiles, handle grid orientation (same as
+            // output)
             if (Orientation == EHexOrientation::FlatTop) {
               PreviewYaw = FMath::UnwindDegrees(PreviewYaw + 30.0f);
             }
@@ -2990,7 +3190,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
       case ETileKind::Output:
         if (Placer) {
           PreviewMesh = Placer->GetActualOutputOrbMesh();
-          // Compute base yaw the same way as individual placement (direction 0)
+          // Compute base yaw the same way as individual placement (direction
+          // 0)
           {
             const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)0);
             const FVector NeighborWorldPos =
@@ -3016,7 +3217,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
       case ETileKind::ClusterOutput:
         if (Placer) {
           PreviewMesh = Placer->GetActualOutputOrbMesh();
-          // Compute base yaw the same way as individual placement (direction 0)
+          // Compute base yaw the same way as individual placement (direction
+          // 0)
           {
             const FHex NeighborHex = HexUtil::Neighbor(PreviewHex, (EHexDir)0);
             const FVector NeighborWorldPos =
@@ -3043,7 +3245,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
         if (Placer) {
           PreviewMesh = Placer->GetActualBeltMesh();
         }
-        // Apply belt direction rotation using proper world position calculation
+        // Apply belt direction rotation using proper world position
+        // calculation
         {
           const uint8 RotatedDir =
               (BlueprintTile.TileDirection + BlueprintRotation) % 6;
@@ -3070,7 +3273,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
                             ? Placer->BondPreviewMesh
                             : Placer->GenericTilePreviewMesh;
         }
-        // Apply bond direction rotation using proper world position calculation
+        // Apply bond direction rotation using proper world position
+        // calculation
         {
           const uint8 RotatedDir =
               (BlueprintTile.TileDirection + BlueprintRotation) % 6;
@@ -3212,8 +3416,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
               }
             }
 
-            // If material not set (either not Kind8 or template lookup failed),
-            // use TileDirection as orb type
+            // If material not set (either not Kind8 or template lookup
+            // failed), use TileDirection as orb type
             if (!MaterialToApply) {
               // This is a regular ClusterOutput or copy/paste - TileDirection
               // stores the orb type directly
@@ -3266,8 +3470,8 @@ void AHexTopDownPawn::UpdateBlueprintPreviewMeshes(float DeltaSeconds) {
       } else if (BlueprintTile.TileType == ETileKind::Input ||
                  BlueprintTile.TileType == ETileKind::ClusterInput ||
                  BlueprintTile.TileType == ETileKind::DiscoveryClusterInput) {
-        // For Input and ClusterInput tiles, get material based on TileDirection
-        // (which stores the orb type)
+        // For Input and ClusterInput tiles, get material based on
+        // TileDirection (which stores the orb type)
         if (UOrbMaterialManager *MaterialManager =
                 UOrbMaterialManager::FindInWorld(this)) {
           UMaterialInterface *MaterialToApply =
@@ -3423,10 +3627,9 @@ void AHexTopDownPawn::RemoveBlueprintFromLibrary(int32 Index) {
   }
 
   if (!SaveGameInstance) {
-    UE_LOG(
-        LogTemp, Error,
-        TEXT(
-            "RemoveBlueprintFromLibrary: Failed to create save game instance"));
+    UE_LOG(LogTemp, Error,
+           TEXT("RemoveBlueprintFromLibrary: Failed to create save game "
+                "instance"));
     return;
   }
 
@@ -3514,4 +3717,319 @@ void AHexTopDownPawn::ToggleDebugWalkers() {
 
   UE_LOG(LogTemp, Warning,
          TEXT("ToggleDebugWalkers: Could not find GameManager"));
+}
+void AHexTopDownPawn::NextViewMode() {
+  // Cycle view mode
+  uint8 NextMode = (uint8)CurrentViewMode + 1;
+  if (NextMode > (uint8)EViewMode::OrbView) {
+    NextMode = 0;
+  }
+  CurrentViewMode = (EViewMode)NextMode;
+
+  UE_LOG(LogTemp, Log, TEXT("View Mode changed to: %d"),
+         (int32)CurrentViewMode);
+
+  // 1. Handle Grid Visibility
+  bool bGridShouldBeVisible = (CurrentViewMode != EViewMode::AdvancedFilter);
+  if (CachedGameManager) {
+    CachedGameManager->SetGridVisibility(bGridShouldBeVisible);
+  }
+
+  // 2. Handle Factory Component Visibility
+  if (!CachedHexFactory) {
+    for (TActorIterator<AHexFactoryActor> It(GetWorld()); It; ++It) {
+      CachedHexFactory = *It;
+      break;
+    }
+  }
+  if (CachedHexFactory) {
+    CachedHexFactory->SetViewMode(CurrentViewMode);
+  }
+
+  // 3. Handle Actor Visibility (Arms, Walkers, Beacons, TriggerTiles)
+  if (UWorld *World = GetWorld()) {
+    for (TActorIterator<ABasicArm> It(World); It; ++It) {
+      It->SetActorHiddenInGame(CurrentViewMode != EViewMode::Standard);
+    }
+    for (TActorIterator<ABasicWalker> It(World); It; ++It) {
+      It->SetActorHiddenInGame(CurrentViewMode != EViewMode::Standard);
+    }
+    for (TActorIterator<ARequestBeacon> It(World); It; ++It) {
+      It->SetActorHiddenInGame(CurrentViewMode == EViewMode::OrbView);
+    }
+    for (TActorIterator<ATriggerTile> It(World); It; ++It) {
+      It->SetActorHiddenInGame(CurrentViewMode == EViewMode::OrbView);
+    }
+  }
+}
+
+FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const {
+  if (!CachedOrbSimDriver || !CachedOrbSimDriver->GetSim()) {
+    return FHex(-1, -1, -1);
+  }
+  USimWorldHex *Sim = CachedOrbSimDriver->GetSim();
+
+  // 1. Direct hit in item map (primary anchor)
+  if (FItem *Item = Sim->ItemMap.Find(Hex)) {
+    OutItem = *Item;
+    return Hex;
+  }
+
+  // 2. Check all items to see if any cluster covers this hex
+  for (auto &KV : Sim->ItemMap) {
+    const FHex &Anchor = KV.Key;
+    const FItem &Item = KV.Value;
+    if (Item.bIsCluster) {
+      for (const FOrbData &Orb : Item.Orbs) {
+        FHex AbsoluteOrbHex(Anchor.Q + Orb.dQ, Anchor.R + Orb.dR, Anchor.Level);
+        if (AbsoluteOrbHex == Hex) {
+          OutItem = Item;
+          return Anchor;
+        }
+      }
+    }
+  }
+
+  return FHex(-1, -1, -1);
+}
+
+TArray<FHex> AHexTopDownPawn::FindItemConnectedComponent(
+    const FHex &StartHex, TArray<FHex> &OutAnchors,
+    TArray<int32> &OutBondIndices) const {
+  TArray<FHex> AllOrbHexes;
+  OutAnchors.Empty();
+  OutBondIndices.Empty();
+
+  if (!CachedOrbSimDriver || !CachedOrbSimDriver->GetSim())
+    return AllOrbHexes;
+  USimWorldHex *Sim = CachedOrbSimDriver->GetSim();
+
+  FItem StartItem;
+  FHex StartAnchor = FindItemAnchorAt(StartHex, StartItem);
+  if (StartAnchor.Q == -1)
+    return AllOrbHexes;
+
+  TArray<int32> PendingItemIds;
+  TSet<int32> VisitedItemIds;
+  TSet<int32> CollectedBondIds;
+
+  // Add initial item
+  PendingItemIds.Add(StartItem.Id);
+
+  while (PendingItemIds.Num() > 0) {
+    int32 CurrentId = PendingItemIds.Pop();
+    if (VisitedItemIds.Contains(CurrentId))
+      continue;
+    VisitedItemIds.Add(CurrentId);
+
+    // Find anchor for this item
+    FHex Anchor(-1, -1, -1);
+    FItem Item;
+    // Search ItemMap for this ID
+    for (auto &KV : Sim->ItemMap) {
+      if (KV.Value.Id == CurrentId) {
+        Anchor = KV.Key;
+        Item = KV.Value;
+        break;
+      }
+    }
+
+    if (Anchor.Q != -1) {
+      OutAnchors.Add(Anchor);
+      if (Item.bIsCluster) {
+        for (const FOrbData &Orb : Item.Orbs) {
+          AllOrbHexes.Add(
+              FHex(Anchor.Q + Orb.dQ, Anchor.R + Orb.dR, Anchor.Level));
+        }
+      } else {
+        AllOrbHexes.Add(Anchor);
+      }
+
+      // Traverse bonds
+      if (const TArray<int32> *BondList = Sim->ItemToBonds.Find(CurrentId)) {
+        for (int32 BondIdx : *BondList) {
+          if (Sim->Bonds.IsValidIndex(BondIdx) && Sim->Bonds[BondIdx].bActive) {
+            if (!CollectedBondIds.Contains(BondIdx)) {
+              CollectedBondIds.Add(BondIdx);
+              OutBondIndices.Add(BondIdx);
+            }
+
+            int32 OtherId = (Sim->Bonds[BondIdx].ItemA == CurrentId)
+                                ? Sim->Bonds[BondIdx].ItemB
+                                : Sim->Bonds[BondIdx].ItemA;
+            if (OtherId > 0 && !VisitedItemIds.Contains(OtherId)) {
+              PendingItemIds.Add(OtherId);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return AllOrbHexes;
+}
+
+void AHexTopDownPawn::ClearOrbHighlightComponents() {
+  for (UStaticMeshComponent *Comp : OrbHighlightComponents) {
+    if (Comp) {
+      Comp->DestroyComponent();
+    }
+  }
+  OrbHighlightComponents.Empty();
+}
+
+void AHexTopDownPawn::UpdateSelectionHighlights() {
+  // Hide all current selection highlights
+  for (UStaticMeshComponent *Comp : SelectionHighlightComponents) {
+    if (Comp) {
+      Comp->SetVisibility(false);
+    }
+  }
+
+  // Get the driver to access tile size and orientation
+  AOrbSimDriver *Driver = CachedOrbSimDriver;
+  if (!Driver) {
+    Driver = AOrbSimDriver::Find(GetWorld());
+    CachedOrbSimDriver = Driver;
+  }
+  if (!Driver)
+    return;
+
+  if (SelectedTiles.Num() == 0)
+    return;
+
+  // 1. Identify occupied tiles within selection
+  struct FValidHighlight {
+    FHex Hex;
+    UStaticMesh *Mesh;
+    float Yaw;
+    FVector Scale;
+    FVector WorldPos;
+    bool bWorldPosSet;
+  };
+  TArray<FValidHighlight> ValidTiles;
+  for (const FHex &Hex : SelectedTiles) {
+    float RotationYaw = 0.f;
+    FVector Scale = FVector(1.f);
+    FVector WorldPos = FVector::ZeroVector;
+    bool bWorldPosSet = false;
+
+    UStaticMesh *MeshToUse =
+        GetHighlightMeshForHex(Hex, RotationYaw, Scale, WorldPos, bWorldPosSet);
+
+    if (MeshToUse) {
+      ValidTiles.Add(
+          {Hex, MeshToUse, RotationYaw, Scale, WorldPos, bWorldPosSet});
+    }
+  }
+
+  // 2. Find bonds within the selection (to create unified outlines)
+  TArray<int32> BondsInSelection;
+  if (Driver->GetSim()) {
+    USimWorldHex *Sim = Driver->GetSim();
+    TSet<FHex> SelectedSet(SelectedTiles);
+    for (int32 i = 0; i < Sim->Bonds.Num(); i++) {
+      const USimWorldHex::FBond &B = Sim->Bonds[i];
+      FHex AnchorB(B.Root.Q + B.dQ, B.Root.R + B.dR, B.Root.Level);
+      if (B.bActive && SelectedSet.Contains(B.Root) &&
+          SelectedSet.Contains(AnchorB)) {
+        BondsInSelection.Add(i);
+      }
+    }
+  }
+
+  int32 TotalNeeded = ValidTiles.Num() + BondsInSelection.Num();
+
+  if (!CachedHexFactory) {
+    for (TActorIterator<AHexFactoryActor> It(GetWorld()); It; ++It) {
+      CachedHexFactory = *It;
+      break;
+    }
+  }
+
+  // Ensure we have enough components
+  while (SelectionHighlightComponents.Num() < TotalNeeded) {
+    UStaticMeshComponent *NewComp = NewObject<UStaticMeshComponent>(this);
+    NewComp->RegisterComponent();
+    NewComp->AttachToComponent(
+        RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+    NewComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    NewComp->SetCastShadow(false);
+
+    // Apply the same outline settings as TileHighlightMesh
+    NewComp->SetRenderCustomDepth(true);
+    NewComp->SetCustomDepthStencilValue(1); // Outline color
+    NewComp->SetRenderInMainPass(false);    // Only see outline
+
+    // Copy material from hover highlight if it exists
+    if (TileHighlightMesh && TileHighlightMesh->GetMaterial(0)) {
+      NewComp->SetMaterial(0, TileHighlightMesh->GetMaterial(0));
+    }
+
+    SelectionHighlightComponents.Add(NewComp);
+  }
+
+  // Hide excess
+  for (int32 i = TotalNeeded; i < SelectionHighlightComponents.Num(); ++i) {
+    SelectionHighlightComponents[i]->SetVisibility(false);
+  }
+
+  float ZOffset = 5.0f;
+  if (CurrentViewMode == EViewMode::OrbView && Driver->GetSim()) {
+    ZOffset = Driver->GetSim()->OrbZOffset;
+  }
+
+  int32 CompIdx = 0;
+
+  // 1. Position Tile/Actor highlights
+  for (const auto &Val : ValidTiles) {
+    UStaticMeshComponent *Comp = SelectionHighlightComponents[CompIdx++];
+    if (Comp) {
+      if (Comp->GetStaticMesh() != Val.Mesh) {
+        Comp->SetStaticMesh(Val.Mesh);
+        if (TileHighlightMesh && TileHighlightMesh->GetMaterial(0)) {
+          Comp->SetMaterial(0, TileHighlightMesh->GetMaterial(0));
+        }
+      }
+
+      FVector Pos =
+          Val.bWorldPosSet ? Val.WorldPos : Driver->MapHexToWorld(Val.Hex);
+      Comp->SetWorldLocation(Pos + FVector(0, 0, ZOffset));
+      Comp->SetWorldRotation(FRotator(0.f, Val.Yaw, 0.f));
+      Comp->SetWorldScale3D(Val.Scale);
+      Comp->SetVisibility(true);
+    }
+  }
+
+  // 2. Position Bond highlights
+  if (Driver->GetSim()) {
+    USimWorldHex *Sim = Driver->GetSim();
+    UStaticMesh *BondMesh = Placer ? Placer->BondPreviewMesh : nullptr;
+    for (int32 i = 0; i < BondsInSelection.Num(); i++) {
+      int32 BondIdx = BondsInSelection[i];
+      UStaticMeshComponent *Comp = SelectionHighlightComponents[CompIdx++];
+
+      if (BondMesh && Comp->GetStaticMesh() != BondMesh) {
+        Comp->SetStaticMesh(BondMesh);
+      }
+
+      const USimWorldHex::FBond &B = Sim->Bonds[BondIdx];
+      FHex AnchorB(B.Root.Q + B.dQ, B.Root.R + B.dR, B.Root.Level);
+      FVector PosA = Driver->MapHexToWorld(B.Root);
+      FVector PosB = Driver->MapHexToWorld(AnchorB);
+      FVector Mid = (PosA + PosB) * 0.5f;
+
+      FVector DirVec = (PosB - PosA).GetSafeNormal();
+      float Yaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+
+      Comp->SetWorldLocation(Mid + FVector(0, 0, ZOffset));
+      Comp->SetWorldRotation(FRotator(0, Yaw, 0));
+
+      FVector BScale(1.0f);
+      if (CachedHexFactory)
+        BScale = CachedHexFactory->BondScale;
+      Comp->SetWorldScale3D(BScale);
+      Comp->SetVisibility(true);
+    }
+  }
 }
