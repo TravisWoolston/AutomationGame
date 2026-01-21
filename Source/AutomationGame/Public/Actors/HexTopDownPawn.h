@@ -105,7 +105,8 @@ private:
   bool bDeletionSelectionActive = false;  // For deletion drag selection
   bool bBlueprintMode = false;
   bool bBlueprintPlacementMode = false;
-  bool bContinuePlacementActive = false; // NEW: For continuous placement mode
+  bool bContinuePlacementActive = false;
+  bool bPlaceHeld = false; // Track if the Place action button is currently held
   bool bDeletionMode = false;
   FVector2D SelectionStart;
   FVector2D SelectionEnd;
@@ -122,46 +123,8 @@ private:
   void MoveY(float V) { AxisY = V; }
   void Zoom(float V) { AxisZoom = V; }
 
-  void PlacePressed() {
-    if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0) {
-      PlaceBlueprint();
-    } else if (bBlueprintMode && !bBlueprintSelectionActive) {
-      StartSelection();
-    } else if (bDeletionMode && !bDeletionSelectionActive) {
-      StartDeletionSelection();
-    } else if (Placer) {
-      // Check if there's an arm at the target location first
-      if (Placer->IsHoverValid()) {
-        FHex TargetHex = Placer->GetHoverHex();
-        ABasicArm *ArmAtLocation = FindArmAtHex(TargetHex);
-        if (ArmAtLocation) {
-          // Don't toggle timeline if we are in the middle of a multi-step
-          // placement (like TriggerTile owner selection)
-          bool bInMultiStepPlacement = false;
-          if (Placer->PlaceKind == EPlaceKind::TriggerTile &&
-              Placer->TriggerTilePlacementStep > 0)
-            bInMultiStepPlacement = true;
-          if (Placer->PlaceKind == EPlaceKind::RequestBeacon &&
-              Placer->BeaconPlacementStep > 0)
-            bInMultiStepPlacement = true;
-
-          if (!bInMultiStepPlacement) {
-            // Toggle the individual arm's timeline
-            ToggleArmTimeline(ArmAtLocation);
-            return;
-          }
-        }
-      }
-      Placer->HandlePlace(true);
-    }
-  }
-  void PlaceReleased() {
-    if (bBlueprintMode && bBlueprintSelectionActive) {
-      EndSelection();
-    } else if (bDeletionMode && bDeletionSelectionActive) {
-      EndDeletionSelection();
-    }
-  }
+  void PlacePressed();
+  void PlaceReleased();
   void RemovePressed() {
     if (bBlueprintPlacementMode) {
       // Cancel blueprint placement and return to kind placement

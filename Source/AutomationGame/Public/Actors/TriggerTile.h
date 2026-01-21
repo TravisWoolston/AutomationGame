@@ -2,21 +2,22 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Sim/OrbTypes.h"
 #include "Sim/HexTypes.h"
+#include "Sim/OrbTypes.h"
 #include "Sim/TriggerTypes.h"
 #include "TriggerTile.generated.h"
 
 // Signal state delegate
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerSignalChanged, bool, bPositiveSignal);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerSignalChanged, bool,
+                                            bPositiveSignal);
 
 // Grid visibility delegate
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerGridVisibilityChanged, bool, bIsVisible);
-
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerGridVisibilityChanged,
+                                            bool, bIsVisible);
 
 /**
  * TriggerTile - A placeable tile that sends signals based on orb presence.
- * 
+ *
  * - Placeable on any tile
  * - Only removable when grid visibility is toggled off
  * - Placed with a selected orb type, uses that type's material for its mesh
@@ -26,253 +27,294 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTriggerGridVisibilityChanged, boo
  * - If placed with Void type, any orb triggers a positive signal
  */
 UCLASS()
-class AUTOMATIONGAME_API ATriggerTile : public AActor
-{
-	GENERATED_BODY()
+class AUTOMATIONGAME_API ATriggerTile : public AActor {
+  GENERATED_BODY()
 
 public:
-	ATriggerTile();
+  ATriggerTile();
 
 protected:
-	virtual void BeginPlay() override;
-	virtual void OnConstruction(const FTransform& Transform) override;
+  virtual void BeginPlay() override;
+  virtual void OnConstruction(const FTransform &Transform) override;
 
 public:
-	virtual void Tick(float DeltaTime) override;
-	virtual void Destroyed() override;
+  virtual void Tick(float DeltaTime) override;
+  virtual void Destroyed() override;
 
-	// Components
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	class USceneComponent* RootComp;
+  // Components
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+  class USceneComponent *RootComp;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	class UStaticMeshComponent* MeshComp;
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+  class UStaticMeshComponent *MeshComp;
 
-	/** Spline mesh component for the wire connecting to owner belt */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	class USplineMeshComponent* WireComp;
+  /** Spline mesh component for the wire connecting to owner belt */
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+  class USplineMeshComponent *WireComp;
 
-	/** Mesh component for the traveling wave pulse indicator */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	class UStaticMeshComponent* WavePulseComp;
+  /** Mesh component for the traveling wave pulse indicator */
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+  class UStaticMeshComponent *WavePulseComp;
 
-	// Location
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
-	int32 Q = 0;
+  // Location
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
+  int32 Q = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
-	int32 R = 0;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
+  int32 R = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
-	int32 Level = 0;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
+  int32 Level = 0;
 
-	// The variant of this trigger (Positive or Negative logic)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
-	ETriggerVariant Variant = ETriggerVariant::Positive;
+  // The variant of this trigger (Positive or Negative logic)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
+  ETriggerVariant Variant = ETriggerVariant::Positive;
 
-	// The orb type this trigger responds to
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
-	EOrbType TriggerOrbType = EOrbType::BaseA;
+  // The orb type this trigger responds to
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
+  EOrbType TriggerOrbType = EOrbType::BaseA;
 
-	// Owner tile location (the belt that "owns" this trigger)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
-	int32 OwnerQ = 0;
+  // List of owners this trigger sends signals to
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
+  TArray<FTriggerOwner> Owners;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "TriggerTile")
-	int32 OwnerR = 0;
+  // Whether this trigger has any valid owners assigned
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TriggerTile")
+  bool bHasOwner = false;
 
-	// Whether this trigger has a valid owner assigned
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TriggerTile")
-	bool bHasOwner = false;
+  // Current signal state
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TriggerTile")
+  bool bCurrentSignal = false;
 
-	// Owner type (belt or arm)
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TriggerTile")
-	ETriggerTileOwnerType OwnerType = ETriggerTileOwnerType::Belt;
+  // Delegates
+  UPROPERTY(BlueprintAssignable, Category = "TriggerTile")
+  FOnTriggerSignalChanged OnSignalChanged;
 
-	// Current signal state
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "TriggerTile")
-	bool bCurrentSignal = false;
+  UPROPERTY(BlueprintAssignable, Category = "TriggerTile")
+  FOnTriggerGridVisibilityChanged OnGridVisibilityChanged;
 
-	// Delegates
-	UPROPERTY(BlueprintAssignable, Category = "TriggerTile")
-	FOnTriggerSignalChanged OnSignalChanged;
+  // Grid visibility getter
+  UFUNCTION(BlueprintPure, Category = "TriggerTile")
+  bool GetIsGridVisible() const { return bIsGridVisible; }
 
-	UPROPERTY(BlueprintAssignable, Category = "TriggerTile")
-	FOnTriggerGridVisibilityChanged OnGridVisibilityChanged;
+  // Grid visibility setter (fires delegate)
+  UFUNCTION(BlueprintCallable, Category = "TriggerTile")
+  void SetIsGridVisible(bool bVisible);
 
-	// Grid visibility getter
-	UFUNCTION(BlueprintPure, Category = "TriggerTile")
-	bool GetIsGridVisible() const { return bIsGridVisible; }
+  // Add a new owner (belt or arm)
+  UFUNCTION(BlueprintCallable, Category = "TriggerTile")
+  void AddOwner(int32 InOwnerQ, int32 InOwnerR, ETriggerTileOwnerType InType);
 
-	// Grid visibility setter (fires delegate)
-	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
-	void SetIsGridVisible(bool bVisible);
+  // Remove an owner
+  UFUNCTION(BlueprintCallable, Category = "TriggerTile")
+  void RemoveOwner(int32 InOwnerQ, int32 InOwnerR,
+                   ETriggerTileOwnerType InType);
 
-	// Set the owner belt tile
-	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
-	void SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR);
+  // Toggles an owner (adds if missing, removes if present)
+  UFUNCTION(BlueprintCallable, Category = "TriggerTile")
+  void ToggleOwner(int32 InOwnerQ, int32 InOwnerR,
+                   ETriggerTileOwnerType InType);
 
-	// Set the owner arm tile
-	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
-	void SetOwnerArm(int32 InOwnerQ, int32 InOwnerR);
+  // DEPRECATED: set the single owner belt tile (now adds to Owners array)
+  UFUNCTION(BlueprintCallable, Category = "TriggerTile",
+            meta = (DeprecatedFunction,
+                    DeprecationMessage = "Use AddOwner instead"))
+  void SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR);
 
-	// Get the owner hex
-	UFUNCTION(BlueprintPure, Category = "TriggerTile")
-	FHex GetOwnerHex() const { return FHex(OwnerQ, OwnerR); }
+  // DEPRECATED: set the single owner arm tile (now adds to Owners array)
+  UFUNCTION(BlueprintCallable, Category = "TriggerTile",
+            meta = (DeprecatedFunction,
+                    DeprecationMessage = "Use AddOwner instead"))
+  void SetOwnerArm(int32 InOwnerQ, int32 InOwnerR);
 
-	// Get the trigger hex location
-	UFUNCTION(BlueprintPure, Category = "TriggerTile")
-	FHex GetTriggerHex() const { return FHex(Q, R); }
+  // Get the owner hex
+  UFUNCTION(BlueprintPure, Category = "TriggerTile")
+  // Get the first owner hex (if any)
+  FHex GetOwnerHex() const {
+    return Owners.Num() > 0 ? FHex(Owners[0].Q, Owners[0].R) : FHex(0, 0);
+  }
 
-	// Update visuals (material based on orb type)
-	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
-	void UpdateVisuals();
+  // Get the trigger hex location
+  UFUNCTION(BlueprintPure, Category = "TriggerTile")
+  FHex GetTriggerHex() const { return FHex(Q, R); }
 
-	// Sync world location from Q, R, Level using Driver
-	UFUNCTION(BlueprintCallable, Category = "Grid")
-	void SyncWorldLocation();
+  // Update visuals (material based on orb type)
+  UFUNCTION(BlueprintCallable, Category = "TriggerTile")
+  void UpdateVisuals();
 
-	// Visuals - these can be set in a Blueprint child class
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UStaticMesh* PositiveMesh;
+  // Sync world location from Q, R, Level using Driver
+  UFUNCTION(BlueprintCallable, Category = "Grid")
+  void SyncWorldLocation();
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UStaticMesh* NegativeMesh;
+  // Condition check (called from Tick)
+  void CheckTriggerCondition();
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UMaterialInterface* PositiveSignalMaterial;
+  // Wave ripple and pulse visuals
+  void UpdateRippleVisuals();
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UMaterialInterface* NegativeSignalMaterial;
+  // Internal signal update
+  void SetSignal(bool bPositive);
 
-	/** Base translucent material to use for the trigger tile mesh. 
-	 *  Should be a translucent material with "BaseColor" and "Opacity" parameters.
-	 *  The orb type color will be applied to this material. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UMaterialInterface* TranslucentBaseMaterial;
+  // Visuals - these can be set in a Blueprint child class
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UStaticMesh *PositiveMesh;
 
-	/** Opacity of the trigger tile mesh (0.0 = invisible, 1.0 = opaque) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float TriggerTileOpacity = 0.5f;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UStaticMesh *NegativeMesh;
 
-	// ---- Wire Visuals ----
-	
-	/** Static mesh to use for the wire (should be a cylinder/tube oriented along X axis) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
-	UStaticMesh* WireMesh;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UMaterialInterface *PositiveSignalMaterial;
 
-	/** Base material for the wire (should support "BaseColor" or "Color" parameter) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
-	UMaterialInterface* WireMaterial;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UMaterialInterface *NegativeSignalMaterial;
 
-	/** Color for positive signal (green) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
-	FLinearColor PositiveWireColor = FLinearColor(0.1f, 0.9f, 0.1f, 1.0f);
+  /** Base translucent material to use for the trigger tile mesh.
+   *  Should be a translucent material with "BaseColor" and "Opacity"
+   * parameters. The orb type color will be applied to this material. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UMaterialInterface *TranslucentBaseMaterial;
 
-	/** Color for negative signal (red) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
-	FLinearColor NegativeWireColor = FLinearColor(0.9f, 0.1f, 0.1f, 1.0f);
+  /** Opacity of the trigger tile mesh (0.0 = invisible, 1.0 = opaque) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals",
+            meta = (ClampMin = "0.0", ClampMax = "1.0"))
+  float TriggerTileOpacity = 0.5f;
 
-	/** Height offset for the wire above the ground */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire", meta = (ClampMin = "0.0"))
-	float WireHeightOffset = 10.0f;
+  // ---- Wire Visuals ----
 
-	/** Radius/thickness of the wire */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire", meta = (ClampMin = "0.1"))
-	float WireRadius = 3.0f;
+  /** Static mesh to use for the wire (should be a cylinder/tube oriented along
+   * X axis) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+  UStaticMesh *WireMesh;
 
-	/** How much the wire droops/sags in the middle (creates cable-like curve) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
-	float WireSagAmount = 20.0f;
+  /** Base material for the wire (should support "BaseColor" or "Color"
+   * parameter) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+  UMaterialInterface *WireMaterial;
 
-	/** Update the wire visual connecting to owner belt */
-	UFUNCTION(BlueprintCallable, Category = "TriggerTile")
-	void UpdateWireVisual();
+  /** Color for positive signal (green) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+  FLinearColor PositiveWireColor = FLinearColor(0.1f, 0.9f, 0.1f, 1.0f);
 
-	// ---- Wave Pulse Indicator ----
+  /** Color for negative signal (red) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+  FLinearColor NegativeWireColor = FLinearColor(0.9f, 0.1f, 0.1f, 1.0f);
 
-	/** Mesh for the traveling wave pulse (e.g., small sphere or ring) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
-	UStaticMesh* WavePulseMesh;
+  /** Height offset for the wire above the ground */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire",
+            meta = (ClampMin = "0.0"))
+  float WireHeightOffset = 10.0f;
 
-	/** Material for the wave pulse (should support BaseColor/EmissiveColor parameters) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
-	UMaterialInterface* WavePulseMaterial;
+  /** Radius/thickness of the wire */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire",
+            meta = (ClampMin = "0.1"))
+  float WireRadius = 3.0f;
 
-	/** Speed of the wave pulse travel in GTM ticks (1.0 = travels from trigger to owner in one tick) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.1"))
-	float WavePulseSpeed = 1.0f;
+  /** How much the wire droops/sags in the middle (creates cable-like curve) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wire")
+  float WireSagAmount = 20.0f;
 
-	/** Scale of the wave pulse mesh */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.1"))
-	float WavePulseScale = 0.3f;
+  /** Update the wire visual connecting to owner belt */
+  UFUNCTION(BlueprintCallable, Category = "TriggerTile")
+  void UpdateWireVisual();
 
-	/** Height offset for the wave pulse above the wire */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
-	float WavePulseHeightOffset = 5.0f;
+  // ---- Wave Pulse Indicator ----
 
-	/** Enable/disable the traveling wave pulse effect */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
-	bool bEnableWavePulse = true;
+  /** Mesh for the traveling wave pulse (e.g., small sphere or ring) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
+  UStaticMesh *WavePulseMesh;
 
-	/** Emissive intensity multiplier for the pulse glow */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.0"))
-	float WavePulseEmissiveIntensity = 3.0f;
+  /** Material for the wave pulse (should support BaseColor/EmissiveColor
+   * parameters) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
+  UMaterialInterface *WavePulseMaterial;
 
-	/** Radius of the ripple effect on the grid material (in world units) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "1.0"))
-	float RippleRadius = 50.0f;
+  /** Speed of the wave pulse travel in GTM ticks (1.0 = travels from trigger to
+   * owner in one tick) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse",
+            meta = (ClampMin = "0.1"))
+  float WavePulseSpeed = 1.0f;
 
-	/** Falloff distance for soft edge on the ripple (in world units) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "1.0"))
-	float RippleFalloff = 30.0f;
+  /** Scale of the wave pulse mesh */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse",
+            meta = (ClampMin = "0.1"))
+  float WavePulseScale = 0.3f;
 
-	/** Duration in GTM ticks for ripple to fade in at start */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.0"))
-	float RippleFadeInTicks = 0.2f;
+  /** Height offset for the wave pulse above the wire */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
+  float WavePulseHeightOffset = 5.0f;
 
-	/** Duration in GTM ticks for ripple to fade out at end */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse", meta = (ClampMin = "0.0"))
-	float RippleFadeOutTicks = 0.2f;
+  /** Enable/disable the traveling wave pulse effect */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse")
+  bool bEnableWavePulse = true;
+
+  /** Emissive intensity multiplier for the pulse glow */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse",
+            meta = (ClampMin = "0.0"))
+  float WavePulseEmissiveIntensity = 3.0f;
+
+  /** Radius of the ripple effect on the grid material (in world units) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse",
+            meta = (ClampMin = "1.0"))
+  float RippleRadius = 50.0f;
+
+  /** Falloff distance for soft edge on the ripple (in world units) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse",
+            meta = (ClampMin = "1.0"))
+  float RippleFalloff = 30.0f;
+
+  /** Duration in GTM ticks for ripple to fade in at start */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse",
+            meta = (ClampMin = "0.0"))
+  float RippleFadeInTicks = 0.2f;
+
+  /** Duration in GTM ticks for ripple to fade out at end */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave Pulse",
+            meta = (ClampMin = "0.0"))
+  float RippleFadeOutTicks = 0.2f;
+
+  // Dynamic components for multiple wires and pulses
+  UPROPERTY()
+  TMap<FTriggerOwner, USplineMeshComponent *> WireComponents;
+
+  UPROPERTY()
+  TMap<FTriggerOwner, UStaticMeshComponent *> WavePulseComponents;
+
+  // Helper to ensure components exist for an owner
+  void EnsureComponentsForOwner(const FTriggerOwner &Owner);
+
+  // Helper to create a wave pulse component
+  UStaticMeshComponent *CreateWavePulseComponent(const FTriggerOwner &Owner);
+
+  // Helper to create a wire component
+  USplineMeshComponent *CreateWireComponent(const FTriggerOwner &Owner);
+
+  // Grid visibility state
+  bool bIsGridVisible = true;
 
 private:
-	// Check if an orb of the correct type is on this tile
-	void CheckTriggerCondition();
+  UPROPERTY()
+  class AOrbSimDriver *Driver = nullptr;
 
-	// Update the signal state
-	void SetSignal(bool bNewSignal);
+  UPROPERTY()
+  class USimWorldHex *Sim = nullptr;
 
-	// Cached references
-	class AOrbSimDriver* Driver = nullptr;
-	class USimWorldHex* Sim = nullptr;
-	class AGameTickManager* TickManager = nullptr;
+  UPROPERTY()
+  class AGameTickManager *TickManager = nullptr;
 
-	// Cached dynamic material instances (to avoid recreating each frame)
-	UPROPERTY()
-	UMaterialInstanceDynamic* CachedWireMID = nullptr;
+  UPROPERTY()
+  UMaterialInstanceDynamic *CachedWireMID = nullptr;
 
-	// Track what material was used to create the cache (to detect changes)
-	UPROPERTY()
-	UMaterialInterface* LastWireMaterialUsed = nullptr;
+  UPROPERTY()
+  UMaterialInterface *LastWireMaterialUsed = nullptr;
 
-	// Flag to force wire update after initialization (to catch late Blueprint property setting)
-	bool bWireNeedsInitialUpdate = true;
-	int32 WireUpdateRetryCount = 0;
+  UPROPERTY()
+  UMaterialInstanceDynamic *RippleDrawMID = nullptr;
 
-	// Wave pulse animation state
-	float WavePulseT = 0.0f; // 0 to 1 interpolation factor
-	float RippleIntensity = 0.0f; // 0 to 1, controls fade in/out
-	UPROPERTY()
-	UMaterialInstanceDynamic* WavePulseMID = nullptr;
-	
-	// Cached material instance for drawing to render target
-	UPROPERTY()
-	UMaterialInstanceDynamic* RippleDrawMID = nullptr;
+  UPROPERTY()
+  UMaterialInstanceDynamic *WavePulseMID = nullptr;
 
-	// Update ripple visuals (draws to render target)
-	void UpdateRippleVisuals();
-
-	// Grid visibility state
-	bool bIsGridVisible = true;
+  float WavePulseT = 0.0f;
+  float RippleIntensity = 0.0f;
+  bool bWireNeedsInitialUpdate = true;
+  int32 WireUpdateRetryCount = 0;
 };
-

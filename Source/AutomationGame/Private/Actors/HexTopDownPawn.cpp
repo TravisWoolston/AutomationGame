@@ -261,6 +261,57 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
     GM->DifficultyValue = GM->DiscoveryStartingDifficulty +
                           (Dist * GM->DiscoveryDifficultyScale) / 20;
   }
+
+  // Handle continuous placement (painting) for belts
+  if (bPlaceHeld && Placer && Placer->PlaceKind == EPlaceKind::Belt) {
+    if (Placer->IsHoverValid()) {
+      Placer->HandlePlace(true);
+    }
+  }
+}
+
+void AHexTopDownPawn::PlacePressed() {
+  bPlaceHeld = true;
+  if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0) {
+    PlaceBlueprint();
+  } else if (bBlueprintMode && !bBlueprintSelectionActive) {
+    StartSelection();
+  } else if (bDeletionMode && !bDeletionSelectionActive) {
+    StartDeletionSelection();
+  } else if (Placer) {
+    // Check if there's an arm at the target location first
+    if (Placer->IsHoverValid()) {
+      FHex TargetHex = Placer->GetHoverHex();
+      ABasicArm *ArmAtLocation = FindArmAtHex(TargetHex);
+      if (ArmAtLocation) {
+        // Don't toggle timeline if we are in the middle of a multi-step
+        // placement (like TriggerTile owner selection)
+        bool bInMultiStepPlacement = false;
+        if (Placer->PlaceKind == EPlaceKind::TriggerTile &&
+            Placer->TriggerTilePlacementStep > 0)
+          bInMultiStepPlacement = true;
+        if (Placer->PlaceKind == EPlaceKind::RequestBeacon &&
+            Placer->BeaconPlacementStep > 0)
+          bInMultiStepPlacement = true;
+
+        if (!bInMultiStepPlacement) {
+          // Toggle the individual arm's timeline
+          ToggleArmTimeline(ArmAtLocation);
+          return;
+        }
+      }
+    }
+    Placer->HandlePlace(true);
+  }
+}
+
+void AHexTopDownPawn::PlaceReleased() {
+  bPlaceHeld = false;
+  if (bBlueprintMode && bBlueprintSelectionActive) {
+    EndSelection();
+  } else if (bDeletionMode && bDeletionSelectionActive) {
+    EndDeletionSelection();
+  }
 }
 
 void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
@@ -2101,8 +2152,13 @@ void AHexTopDownPawn::RotateBlueprintCW() {
   if (BlueprintTiles.Num() == 0)
     return;
 
-  BlueprintRotation =
-      (BlueprintRotation + 5) % 6; // +5 is equivalent to -1 mod 6
+  // Invert rotation direction on flipped grid (Level 1)
+  if (CurrentLevel == 1) {
+    BlueprintRotation = (BlueprintRotation + 1) % 6;
+  } else {
+    BlueprintRotation = (BlueprintRotation + 5) % 6;
+  }
+
   UE_LOG(LogTemp, Log, TEXT("Blueprint rotated CW, new rotation: %d"),
          BlueprintRotation);
 }
@@ -2111,7 +2167,13 @@ void AHexTopDownPawn::RotateBlueprintCCW() {
   if (BlueprintTiles.Num() == 0)
     return;
 
-  BlueprintRotation = (BlueprintRotation + 1) % 6;
+  // Invert rotation direction on flipped grid (Level 1)
+  if (CurrentLevel == 1) {
+    BlueprintRotation = (BlueprintRotation + 5) % 6;
+  } else {
+    BlueprintRotation = (BlueprintRotation + 1) % 6;
+  }
+
   UE_LOG(LogTemp, Log, TEXT("Blueprint rotated CCW, new rotation: %d"),
          BlueprintRotation);
 }

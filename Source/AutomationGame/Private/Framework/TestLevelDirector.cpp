@@ -619,21 +619,22 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
       TriggerSpec.Spawned->Level = TriggerSpec.Level;
       TriggerSpec.Spawned->TriggerOrbType = TriggerSpec.TriggerOrbType;
       TriggerSpec.Spawned->Variant = TriggerSpec.Variant;
-      if (TriggerSpec.OwnerType == ETriggerTileOwnerType::Belt)
-        TriggerSpec.Spawned->SetOwnerBelt(TriggerSpec.OwnerQ,
-                                          TriggerSpec.OwnerR);
-      else
-        TriggerSpec.Spawned->SetOwnerArm(TriggerSpec.OwnerQ,
-                                         TriggerSpec.OwnerR);
+
+      // Clear current owners as a safety measure before reapplying from spec
+      TriggerSpec.Spawned->Owners.Empty();
+
+      for (const FTriggerOwner &TOwner : TriggerSpec.Owners) {
+        TriggerSpec.Spawned->AddOwner(TOwner.Q, TOwner.R, TOwner.Type);
+      }
+
       TriggerSpec.Spawned->SyncWorldLocation();
       TriggerSpec.Spawned->UpdateVisuals();
 
       UE_LOG(LogTemp, Log,
-             TEXT("TestLevelDirector: Spawned TriggerTile at (%d,%d) Type=%s "
-                  "Owner=(%d,%d)"),
-             TriggerSpec.Q, TriggerSpec.R,
-             *UEnum::GetValueAsString(TriggerSpec.TriggerOrbType),
-             TriggerSpec.OwnerQ, TriggerSpec.OwnerR);
+             TEXT("TestLevelDirector: Spawned TriggerTile at (%d,%d) Type=%d "
+                  "with %d owners"),
+             TriggerSpec.Q, TriggerSpec.R, (int32)TriggerSpec.TriggerOrbType,
+             TriggerSpec.Owners.Num());
     }
   }
 
@@ -1210,8 +1211,6 @@ bool ATestLevelDirector::RemoveBeaconSpec(int32 Q, int32 R, int32 Level) {
 void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R,
                                                EOrbType TriggerOrbType,
                                                ETriggerVariant Variant,
-                                               int32 OwnerQ, int32 OwnerR,
-                                               ETriggerTileOwnerType OwnerType,
                                                float Rotation, int32 Level) {
   if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
     return;
@@ -1233,9 +1232,6 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R,
     if (T.Q == Q && T.R == R && T.Level == Level) {
       T.TriggerOrbType = TriggerOrbType;
       T.Variant = Variant;
-      T.OwnerQ = OwnerQ;
-      T.OwnerR = OwnerR;
-      T.OwnerType = OwnerType;
       T.Rotation = Rotation;
       if (!T.Spawned)
         T.Spawned = FindRuntimeTriggerTileAt(Q, R, Level);
@@ -1253,9 +1249,6 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R,
   NewT.Level = Level;
   NewT.TriggerOrbType = TriggerOrbType;
   NewT.Variant = Variant;
-  NewT.OwnerQ = OwnerQ;
-  NewT.OwnerR = OwnerR;
-  NewT.OwnerType = OwnerType;
   NewT.Rotation = Rotation;
   NewT.Spawned = FindRuntimeTriggerTileAt(Q, R, Level);
 
@@ -1264,6 +1257,35 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R,
 #if WITH_EDITOR
   MirrorScenarioEditsToEditor();
 #endif
+}
+
+void ATestLevelDirector::ToggleTriggerTileOwnerSpec(
+    int32 Q, int32 R, int32 Level, int32 OwnerQ, int32 OwnerR,
+    ETriggerTileOwnerType OwnerType) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  for (FTriggerTileSpec &T : Sc.TriggerTiles) {
+    if (T.Q == Q && T.R == R && T.Level == Level) {
+      FTriggerOwner NewOwner;
+      NewOwner.Q = OwnerQ;
+      NewOwner.R = OwnerR;
+      NewOwner.Type = OwnerType;
+
+      if (T.Owners.Contains(NewOwner)) {
+        T.Owners.Remove(NewOwner);
+      } else {
+        T.Owners.Add(NewOwner);
+      }
+
+      MarkActiveScenarioDirty();
+#if WITH_EDITOR
+      MirrorScenarioEditsToEditor();
+#endif
+      return;
+    }
+  }
 }
 
 bool ATestLevelDirector::RemoveTriggerTileSpec(int32 Q, int32 R, int32 Level) {
@@ -1619,9 +1641,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       NewTriggerSpec.Level = TriggerTile->Level;
       NewTriggerSpec.TriggerOrbType = TriggerTile->TriggerOrbType;
       NewTriggerSpec.Variant = TriggerTile->Variant;
-      NewTriggerSpec.OwnerQ = TriggerTile->OwnerQ;
-      NewTriggerSpec.OwnerR = TriggerTile->OwnerR;
-      NewTriggerSpec.OwnerType = TriggerTile->OwnerType;
+      NewTriggerSpec.Owners = TriggerTile->Owners;
       NewTriggerSpec.Rotation = TriggerTile->GetActorRotation().Yaw;
       NewTriggerSpec.Spawned = TriggerTile;
 

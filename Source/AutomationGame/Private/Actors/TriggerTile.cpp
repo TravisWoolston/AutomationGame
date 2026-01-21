@@ -110,8 +110,8 @@ void ATriggerTile::Tick(float DeltaTime) {
     }
   }
 
-  // Only check trigger condition if we have an owner
-  if (bHasOwner) {
+  // Only check trigger condition if we have at least one owner
+  if (Owners.Num() > 0) {
     CheckTriggerCondition();
   }
 
@@ -161,152 +161,127 @@ void ATriggerTile::Tick(float DeltaTime) {
 }
 
 void ATriggerTile::UpdateRippleVisuals() {
-  if (!bEnableWavePulse || !bHasOwner || !Driver) {
-    // Disable effects when wave pulse is disabled or no owner
-    if (WavePulseComp) {
-      WavePulseComp->SetVisibility(false);
+  if (!bEnableWavePulse || Owners.Num() == 0 || !Driver) {
+    // Disable effects when wave pulse is disabled or no owners
+    for (auto &KV : WavePulseComponents) {
+      if (KV.Value)
+        KV.Value->SetVisibility(false);
     }
     return;
   }
 
-  // Calculate start and end positions (at grid level)
-  FVector StartPos = GetActorLocation();
-  FHex OwnerHex(OwnerQ, OwnerR, Level);
-  FVector EndPos = Driver->MapHexToWorld(OwnerHex);
+  // Draw ripple for each owner
+  for (const FTriggerOwner &TOwner : Owners) {
+    EnsureComponentsForOwner(TOwner);
 
-  // Calculate current ripple position at grid level
-  FVector RipplePos = FMath::Lerp(StartPos, EndPos, WavePulseT);
+    // Calculate start and end positions (at grid level)
+    FVector StartPos = GetActorLocation();
+    FHex OwnerHex(TOwner.Q, TOwner.R, Level);
+    FVector EndPos = Driver->MapHexToWorld(OwnerHex);
 
-  // Draw ripple to render target
-  if (UWorld *World = GetWorld()) {
-    AGameManager *GM = nullptr;
-    for (TActorIterator<AGameManager> It(World); It; ++It) {
-      GM = *It;
-      break;
-    }
+    // Calculate current ripple position at grid level
+    FVector RipplePos = FMath::Lerp(StartPos, EndPos, WavePulseT);
 
-    if (GM) {
-      UTextureRenderTarget2D *RT = GM->GetRippleRenderTarget();
-      UMaterialInterface *DrawMaterial = GM->RippleDrawMaterial;
-
-      // Skip if draw material isn't set (prevents crash)
-      if (!DrawMaterial) {
-        return;
+    // Draw ripple to render target
+    if (UWorld *World = GetWorld()) {
+      AGameManager *GM = nullptr;
+      for (TActorIterator<AGameManager> It(World); It; ++It) {
+        GM = *It;
+        break;
       }
 
-      if (RT && RippleIntensity > 0.0f && RT->IsValidLowLevel() &&
-          DrawMaterial->IsValidLowLevel()) {
-        // Create or get material instance for drawing
-        if (!RippleDrawMID) {
-          UMaterialInterface *BaseMat = DrawMaterial;
-          if (UMaterialInstanceDynamic *ExistingMID =
-                  Cast<UMaterialInstanceDynamic>(BaseMat)) {
-            BaseMat = ExistingMID->Parent;
+      if (GM) {
+        UTextureRenderTarget2D *RT = GM->GetRippleRenderTarget();
+        UMaterialInterface *DrawMaterial = GM->RippleDrawMaterial;
+
+        if (RT && RippleIntensity > 0.0f && RT->IsValidLowLevel() &&
+            DrawMaterial && DrawMaterial->IsValidLowLevel()) {
+          if (!RippleDrawMID) {
+            UMaterialInterface *BaseMat = DrawMaterial;
+            if (UMaterialInstanceDynamic *ExistingMID =
+                    Cast<UMaterialInstanceDynamic>(BaseMat)) {
+              BaseMat = ExistingMID->Parent;
+            }
+            if (BaseMat && BaseMat->IsValidLowLevel()) {
+              RippleDrawMID = UMaterialInstanceDynamic::Create(BaseMat, this);
+            }
           }
 
-          if (BaseMat && BaseMat->IsValidLowLevel()) {
-            RippleDrawMID = UMaterialInstanceDynamic::Create(BaseMat, this);
-          }
-        }
+          if (RippleDrawMID && RippleDrawMID->IsValidLowLevel()) {
+            FVector2D RTUV = GM->WorldPositionToRippleRTUV(RipplePos);
+            FLinearColor EncodedColor(RippleIntensity,
+                                      bCurrentSignal ? 1.0f : 0.0f, 0.0f, 1.0f);
+            float RTWorldSize = GM->RippleRenderTargetWorldSize;
+            if (RTWorldSize > 0.0f) {
+              RippleDrawMID->SetVectorParameterValue(
+                  FName("RippleCenter"),
+                  FLinearColor(RTUV.X, RTUV.Y, 0.0f, 1.0f));
+              RippleDrawMID->SetVectorParameterValue(FName("RippleColor"),
+                                                     EncodedColor);
+              RippleDrawMID->SetScalarParameterValue(
+                  FName("RippleRadius"), RippleRadius / RTWorldSize);
+              RippleDrawMID->SetScalarParameterValue(
+                  FName("RippleFalloff"), RippleFalloff / RTWorldSize);
 
-        if (RippleDrawMID && RippleDrawMID->IsValidLowLevel()) {
-          // Convert world position to RT UV coordinates
-          FVector2D RTUV = GM->WorldPositionToRippleRTUV(RipplePos);
-
-          // Encode data: R = intensity, G = signal type (0=red, 1=green)
-          FLinearColor EncodedColor(
-              RippleIntensity,              // R channel: intensity
-              bCurrentSignal ? 1.0f : 0.0f, // G channel: signal type
-              0.0f,                         // B channel: reserved for waves
-              1.0f                          // A channel: unused
-          );
-
-          // Set material parameters for ripple drawing
-          // Parameters expected by the draw material:
-          // - RippleCenter: UV coordinates in RT (0-1 range)
-          // - RippleColor: Encoded color (R=intensity, G=signal type)
-          // - RippleRadius: Radius in RT UV space (0-1)
-          // - RippleFalloff: Falloff distance in RT UV space (0-1)
-          float RTWorldSize = GM->RippleRenderTargetWorldSize;
-          if (RTWorldSize > 0.0f) {
-            RippleDrawMID->SetVectorParameterValue(
-                FName("RippleCenter"),
-                FLinearColor(RTUV.X, RTUV.Y, 0.0f, 1.0f));
-            RippleDrawMID->SetVectorParameterValue(FName("RippleColor"),
-                                                   EncodedColor);
-            RippleDrawMID->SetScalarParameterValue(FName("RippleRadius"),
-                                                   RippleRadius / RTWorldSize);
-            RippleDrawMID->SetScalarParameterValue(FName("RippleFalloff"),
-                                                   RippleFalloff / RTWorldSize);
-
-            // Draw to render target (additive blend mode in material)
-            // Only draw if we're in game world (not editor preview)
-            if (World->WorldType == EWorldType::Game ||
-                World->WorldType == EWorldType::PIE) {
-              UKismetRenderingLibrary::DrawMaterialToRenderTarget(
-                  World, RT, RippleDrawMID);
+              if (World->WorldType == EWorldType::Game ||
+                  World->WorldType == EWorldType::PIE) {
+                UKismetRenderingLibrary::DrawMaterialToRenderTarget(
+                    World, RT, RippleDrawMID);
+              }
             }
           }
         }
       }
     }
-  }
 
-  // Optional: Update visible pulse mesh indicator (if mesh is set up)
-  if (WavePulseComp && WavePulseMesh) {
-    // Add height offset for visible mesh
-    FVector MeshPos = RipplePos;
-    MeshPos.Z += WireHeightOffset + WavePulseHeightOffset;
+    // Update pulse mesh if enabled
+    UStaticMeshComponent *PulseComp = WavePulseComponents.FindRef(TOwner);
+    if (PulseComp && WavePulseMesh) {
+      FVector MeshPos = RipplePos;
+      MeshPos.Z += WireHeightOffset + WavePulseHeightOffset;
 
-    WavePulseComp->SetWorldLocation(MeshPos);
-    WavePulseComp->SetWorldScale3D(FVector(WavePulseScale));
+      PulseComp->SetWorldLocation(MeshPos);
+      PulseComp->SetWorldScale3D(FVector(WavePulseScale));
 
-    // Setup mesh if needed
-    if (!WavePulseComp->GetStaticMesh()) {
-      WavePulseComp->SetStaticMesh(WavePulseMesh);
-    }
-
-    // Setup material if needed
-    if (!WavePulseMID && WavePulseComp->GetStaticMesh()) {
-      UMaterialInterface *BaseMat = WavePulseMaterial;
-      if (!BaseMat) {
-        BaseMat = WavePulseComp->GetStaticMesh()->GetMaterial(0);
+      if (!PulseComp->GetStaticMesh()) {
+        PulseComp->SetStaticMesh(WavePulseMesh);
       }
 
-      if (BaseMat) {
-        if (UMaterialInstanceDynamic *ExistingMID =
-                Cast<UMaterialInstanceDynamic>(BaseMat)) {
-          BaseMat = ExistingMID->Parent;
-        }
-
+      if (!WavePulseMID && PulseComp->GetStaticMesh()) {
+        UMaterialInterface *BaseMat = WavePulseMaterial;
+        if (!BaseMat)
+          BaseMat = PulseComp->GetStaticMesh()->GetMaterial(0);
         if (BaseMat) {
-          WavePulseMID = UMaterialInstanceDynamic::Create(BaseMat, this);
-          WavePulseComp->SetMaterial(0, WavePulseMID);
+          if (UMaterialInstanceDynamic *ExistingMID =
+                  Cast<UMaterialInstanceDynamic>(BaseMat))
+            BaseMat = ExistingMID->Parent;
+          if (BaseMat)
+            WavePulseMID = UMaterialInstanceDynamic::Create(BaseMat, this);
         }
       }
+
+      if (WavePulseMID) {
+        FLinearColor PulseColor =
+            bCurrentSignal ? PositiveWireColor : NegativeWireColor;
+        FLinearColor EmissiveColor =
+            PulseColor * WavePulseEmissiveIntensity * RippleIntensity;
+
+        WavePulseMID->SetVectorParameterValue(FName("BaseColor"),
+                                              PulseColor * RippleIntensity);
+        WavePulseMID->SetVectorParameterValue(FName("Color"),
+                                              PulseColor * RippleIntensity);
+        WavePulseMID->SetVectorParameterValue(FName("Tint"),
+                                              PulseColor * RippleIntensity);
+        WavePulseMID->SetVectorParameterValue(FName("EmissiveColor"),
+                                              EmissiveColor);
+        PulseComp->SetMaterial(0, WavePulseMID);
+      }
+      PulseComp->SetVisibility(RippleIntensity > 0.0f);
     }
-
-    // Update color with intensity
-    if (WavePulseMID) {
-      FLinearColor PulseColor =
-          bCurrentSignal ? PositiveWireColor : NegativeWireColor;
-      FLinearColor EmissiveColor =
-          PulseColor * WavePulseEmissiveIntensity * RippleIntensity;
-
-      WavePulseMID->SetVectorParameterValue(FName("BaseColor"),
-                                            PulseColor * RippleIntensity);
-      WavePulseMID->SetVectorParameterValue(FName("Color"),
-                                            PulseColor * RippleIntensity);
-      WavePulseMID->SetVectorParameterValue(FName("Tint"),
-                                            PulseColor * RippleIntensity);
-      WavePulseMID->SetVectorParameterValue(FName("EmissiveColor"),
-                                            EmissiveColor);
-    }
-
-    WavePulseComp->SetVisibility(RippleIntensity > 0.0f);
-  } else if (WavePulseComp) {
-    WavePulseComp->SetVisibility(false);
   }
+
+  // Hide components for owners no longer in the list (if any cleanup needed)
+  // For now EnsureComponentsForOwner handles creation.
 }
 
 void ATriggerTile::CheckTriggerCondition() {
@@ -375,22 +350,17 @@ void ATriggerTile::SetSignal(bool bNewSignal) {
     bCurrentSignal = bNewSignal;
     OnSignalChanged.Broadcast(bCurrentSignal);
 
-    // Update the simulation's trigger signal
-    if (bHasOwner && Sim) {
-      FHex OwnerHex(OwnerQ, OwnerR, Level);
+    // Update the simulation for all owners
+    if (Sim) {
       FHex TriggerHex(Q, R, Level);
-
-      if (OwnerType == ETriggerTileOwnerType::Belt) {
-        Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
-      } else {
-        Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+      for (const FTriggerOwner &TOwner : Owners) {
+        FHex OwnerHex(TOwner.Q, TOwner.R, Level);
+        if (TOwner.Type == ETriggerTileOwnerType::Belt) {
+          Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+        } else {
+          Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+        }
       }
-
-      // UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) signal changed to %s
-      // - owner %s at (%d,%d) combined state updated"), 	Q, R, bCurrentSignal ?
-      // TEXT("POSITIVE") : TEXT("NEGATIVE"), 	OwnerType ==
-      // ETriggerTileOwnerType::Belt ? TEXT("BELT") : TEXT("ARM"), 	OwnerQ,
-      // OwnerR);
     }
 
     // Update visuals to reflect signal state
@@ -427,8 +397,22 @@ void ATriggerTile::SetIsGridVisible(bool bVisible) {
   }
 }
 
-void ATriggerTile::SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR) {
-  // Ensure we have Sim reference if it wasn't found in BeginPlay yet
+void ATriggerTile::ToggleOwner(int32 InOwnerQ, int32 InOwnerR,
+                               ETriggerTileOwnerType InType) {
+  FTriggerOwner NewOwner;
+  NewOwner.Q = InOwnerQ;
+  NewOwner.R = InOwnerR;
+  NewOwner.Type = InType;
+
+  if (Owners.Contains(NewOwner)) {
+    RemoveOwner(InOwnerQ, InOwnerR, InType);
+  } else {
+    AddOwner(InOwnerQ, InOwnerR, InType);
+  }
+}
+
+void ATriggerTile::AddOwner(int32 InOwnerQ, int32 InOwnerR,
+                            ETriggerTileOwnerType InType) {
   if (!Sim) {
     if (UWorld *World = GetWorld()) {
       Driver = AOrbSimDriver::Find(World);
@@ -437,34 +421,81 @@ void ATriggerTile::SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR) {
     }
   }
 
-  // Clear old owner signal if changing
-  if (bHasOwner && Sim) {
-    FHex OldOwnerHex(OwnerQ, OwnerR, Level);
-    FHex TriggerHex(Q, R, Level);
-    if (OwnerType == ETriggerTileOwnerType::Belt)
-      Sim->ClearBeltTriggerSignal(TriggerHex, OldOwnerHex);
-    else
-      Sim->ClearArmTriggerSignal(TriggerHex, OldOwnerHex);
+  FTriggerOwner NewOwner;
+  NewOwner.Q = InOwnerQ;
+  NewOwner.R = InOwnerR;
+  NewOwner.Type = InType;
+
+  if (!Owners.Contains(NewOwner)) {
+    Owners.Add(NewOwner);
+    bHasOwner = true;
+
+    // Ensure components exist for visualization
+    EnsureComponentsForOwner(NewOwner);
+
+    // Initialize simulation signal
+    if (Sim) {
+      FHex TriggerHex(Q, R, Level);
+      FHex OwnerHex(InOwnerQ, InOwnerR, Level);
+      if (InType == ETriggerTileOwnerType::Belt) {
+        Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+      } else {
+        Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+      }
+    }
+
+    UE_LOG(LogTemp, Log,
+           TEXT("TriggerTile at (%d,%d) added owner %s at (%d,%d)"), Q, R,
+           InType == ETriggerTileOwnerType::Belt ? TEXT("belt") : TEXT("arm"),
+           InOwnerQ, InOwnerR);
+
+    UpdateWireVisual();
   }
+}
 
-  OwnerQ = InOwnerQ;
-  OwnerR = InOwnerR;
-  bHasOwner = true;
-  OwnerType = ETriggerTileOwnerType::Belt;
+void ATriggerTile::RemoveOwner(int32 InOwnerQ, int32 InOwnerR,
+                               ETriggerTileOwnerType InType) {
+  FTriggerOwner Target;
+  Target.Q = InOwnerQ;
+  Target.R = InOwnerR;
+  Target.Type = InType;
 
-  UE_LOG(LogTemp, Log,
-         TEXT("TriggerTile at (%d,%d) now owned by belt at (%d,%d)"), Q, R,
-         OwnerQ, OwnerR);
+  if (Owners.Contains(Target)) {
+    // Clear simulation signal
+    if (Sim) {
+      FHex TriggerHex(Q, R, Level);
+      FHex OwnerHex(InOwnerQ, InOwnerR, Level);
+      if (InType == ETriggerTileOwnerType::Belt) {
+        Sim->ClearBeltTriggerSignal(TriggerHex, OwnerHex);
+      } else {
+        Sim->ClearArmTriggerSignal(TriggerHex, OwnerHex);
+      }
+    }
 
-  // Initialize the simulation with the current signal state
-  if (Sim) {
-    FHex TriggerHex(Q, R, Level);
-    FHex OwnerHex(InOwnerQ, InOwnerR, Level);
-    Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
+    // Remove components
+    if (USplineMeshComponent *Wire = WireComponents.FindRef(Target)) {
+      Wire->DestroyComponent();
+      WireComponents.Remove(Target);
+    }
+    if (UStaticMeshComponent *Pulse = WavePulseComponents.FindRef(Target)) {
+      Pulse->DestroyComponent();
+      WavePulseComponents.Remove(Target);
+    }
+
+    Owners.Remove(Target);
+    bHasOwner = Owners.Num() > 0;
+
+    UE_LOG(LogTemp, Log,
+           TEXT("TriggerTile at (%d,%d) removed owner %s at (%d,%d)"), Q, R,
+           InType == ETriggerTileOwnerType::Belt ? TEXT("belt") : TEXT("arm"),
+           InOwnerQ, InOwnerR);
+
+    UpdateWireVisual();
   }
+}
 
-  // Update wire visual to show connection
-  UpdateWireVisual();
+void ATriggerTile::SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR) {
+  AddOwner(InOwnerQ, InOwnerR, ETriggerTileOwnerType::Belt);
 }
 
 void ATriggerTile::UpdateVisuals() {
@@ -589,229 +620,101 @@ void ATriggerTile::UpdateVisuals() {
 }
 
 void ATriggerTile::UpdateWireVisual() {
-  if (!WireComp)
-    return;
+  for (const FTriggerOwner &TOwner : Owners) {
+    EnsureComponentsForOwner(TOwner);
+    USplineMeshComponent *Comp = WireComponents.FindRef(TOwner);
+    if (!Comp)
+      continue;
 
-  // Hide wire if no owner
-  if (!bHasOwner) {
-    WireComp->SetVisibility(false);
-    return;
-  }
+    Comp->SetVisibility(true);
 
-  // Get world positions for start and end points
-  FVector StartPos = GetActorLocation();
-  FVector EndPos = StartPos; // Default to same position
+    FVector StartPos = GetActorLocation();
+    FHex OwnerHex(TOwner.Q, TOwner.R, Level);
+    FVector EndPos = Driver ? Driver->MapHexToWorld(OwnerHex) : StartPos;
 
-  // Calculate owner world position
-  if (!Driver) {
-    Driver = AOrbSimDriver::Find(GetWorld());
-  }
+    StartPos.Z += WireHeightOffset;
+    EndPos.Z += WireHeightOffset;
 
-  if (Driver) {
-    FHex OwnerHex(OwnerQ, OwnerR, Level);
-    EndPos = Driver->MapHexToWorld(OwnerHex);
-  }
+    FVector LocalStart = GetActorTransform().InverseTransformPosition(StartPos);
+    FVector LocalEnd = GetActorTransform().InverseTransformPosition(EndPos);
 
-  // Apply height offset
-  StartPos.Z += WireHeightOffset;
-  EndPos.Z += WireHeightOffset;
+    FVector ToEnd = LocalEnd - LocalStart;
+    float Distance = ToEnd.Size();
+    FVector HorizontalDir = ToEnd.GetSafeNormal();
 
-  // Convert to local space (relative to actor)
-  FVector LocalStart = GetActorTransform().InverseTransformPosition(StartPos);
-  FVector LocalEnd = GetActorTransform().InverseTransformPosition(EndPos);
+    float TangentLength = Distance * 0.5f;
+    FVector StartTangent = HorizontalDir * TangentLength;
+    StartTangent.Z -= WireSagAmount;
+    FVector EndTangent = HorizontalDir * TangentLength;
+    EndTangent.Z -= WireSagAmount;
 
-  // Calculate distance and direction
-  FVector ToEnd = LocalEnd - LocalStart;
-  float Distance = ToEnd.Size();
-  FVector HorizontalDir = ToEnd.GetSafeNormal();
+    Comp->SetStartAndEnd(LocalStart, StartTangent, LocalEnd, EndTangent);
+    FVector2D WireScale(WireRadius, WireRadius);
+    Comp->SetStartScale(WireScale);
+    Comp->SetEndScale(WireScale);
 
-  // Create tangents that produce a drooping cable effect
-  // The tangents point horizontally at start/end, but the spline will sag in
-  // the middle due to how Bezier curves work with these tangent directions
-  float TangentLength = Distance * 0.5f;
-
-  // Start tangent: point toward the end, but also slightly downward to create
-  // sag
-  FVector StartTangent = HorizontalDir * TangentLength;
-  StartTangent.Z -= WireSagAmount; // Add downward component for sag
-
-  // End tangent: point from start direction, also with downward component
-  FVector EndTangent = HorizontalDir * TangentLength;
-  EndTangent.Z -= WireSagAmount; // Add downward component for sag
-
-  // Set spline mesh geometry
-  WireComp->SetStartAndEnd(LocalStart, StartTangent, LocalEnd, EndTangent);
-
-  // Set start/end scale based on wire radius
-  // SplineMesh scale is applied to the mesh's original size
-  // Assuming a unit cylinder, scale to desired radius
-  FVector2D WireScale(WireRadius, WireRadius);
-  WireComp->SetStartScale(WireScale);
-  WireComp->SetEndScale(WireScale);
-
-  // Try to set the wire mesh if not already set
-  if (!WireComp->GetStaticMesh() && WireMesh) {
-    WireComp->SetStaticMesh(WireMesh);
-  }
-
-  // If still no mesh, try to load a default cylinder from engine
-  if (!WireComp->GetStaticMesh()) {
-    UStaticMesh *DefaultCylinder = LoadObject<UStaticMesh>(
-        nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-    if (DefaultCylinder) {
-      WireComp->SetStaticMesh(DefaultCylinder);
-    } else {
-      UE_LOG(LogTemp, Warning,
-             TEXT("TriggerTile: Could not load default cylinder mesh for wire. "
-                  "Assign WireMesh property."));
+    if (!Comp->GetStaticMesh() && WireMesh) {
+      Comp->SetStaticMesh(WireMesh);
     }
-  }
+    if (!Comp->GetStaticMesh()) {
+      UStaticMesh *DefaultCylinder = LoadObject<UStaticMesh>(
+          nullptr, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+      if (DefaultCylinder)
+        Comp->SetStaticMesh(DefaultCylinder);
+    }
 
-  // Apply material with signal-based color
-  FLinearColor WireColor =
-      bCurrentSignal ? PositiveWireColor : NegativeWireColor;
+    FLinearColor WireColor =
+        bCurrentSignal ? PositiveWireColor : NegativeWireColor;
+    UMaterialInterface *DesiredBaseMaterial =
+        WireMaterial ? WireMaterial : Comp->GetStaticMesh()->GetMaterial(0);
 
-  // Determine the base material to use - prioritize explicitly set WireMaterial
-  UMaterialInterface *DesiredBaseMaterial = nullptr;
-
-  if (WireMaterial) {
-    DesiredBaseMaterial = WireMaterial;
-    UE_LOG(LogTemp, Verbose,
-           TEXT("TriggerTile: Using assigned WireMaterial: %s"),
-           *WireMaterial->GetName());
-  } else {
-    UE_LOG(LogTemp, Warning,
-           TEXT("TriggerTile: WireMaterial is not set! Assign a material in "
-                "the Blueprint."));
-    if (WireComp->GetStaticMesh()) {
-      // Fallback to mesh's default material
-      DesiredBaseMaterial = WireComp->GetStaticMesh()->GetMaterial(0);
-      if (DesiredBaseMaterial) {
-        UE_LOG(LogTemp, Log,
-               TEXT("TriggerTile: Falling back to mesh default material: %s"),
-               *DesiredBaseMaterial->GetName());
+    bool bNeedNewMID = !CachedWireMID ||
+                       (WireMaterial && LastWireMaterialUsed != WireMaterial);
+    if (bNeedNewMID && DesiredBaseMaterial) {
+      UMaterialInterface *BaseMaterial = DesiredBaseMaterial;
+      if (UMaterialInstanceDynamic *ExistingMID =
+              Cast<UMaterialInstanceDynamic>(BaseMaterial))
+        BaseMaterial = ExistingMID->Parent;
+      if (BaseMaterial) {
+        CachedWireMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+        LastWireMaterialUsed = DesiredBaseMaterial;
       }
     }
-  }
 
-  // Check if we need to (re)create the cached MID
-  // Recreate if: no cache exists, OR the source material changed, OR
-  // WireMaterial was set but we used mesh default
-  bool bNeedNewMID =
-      !CachedWireMID ||
-      (WireMaterial && LastWireMaterialUsed != WireMaterial) ||
-      (!WireMaterial && DesiredBaseMaterial != LastWireMaterialUsed);
-
-  if (bNeedNewMID && DesiredBaseMaterial) {
-    UMaterialInterface *BaseMaterial = DesiredBaseMaterial;
-
-    // Make sure we're not creating a MID from another MID
-    if (UMaterialInstanceDynamic *ExistingMID =
-            Cast<UMaterialInstanceDynamic>(BaseMaterial)) {
-      // Get the parent material instead
-      BaseMaterial = ExistingMID->Parent;
-    }
-
-    if (BaseMaterial) {
-      CachedWireMID = UMaterialInstanceDynamic::Create(BaseMaterial, this);
-      LastWireMaterialUsed = DesiredBaseMaterial;
-
-      UE_LOG(LogTemp, Log,
-             TEXT("TriggerTile: Created wire MID from material %s"),
-             *BaseMaterial->GetName());
+    if (CachedWireMID) {
+      CachedWireMID->SetVectorParameterValue(FName("BaseColor"), WireColor);
+      CachedWireMID->SetVectorParameterValue(FName("Color"), WireColor);
+      CachedWireMID->SetVectorParameterValue(FName("Tint"), WireColor);
+      CachedWireMID->SetVectorParameterValue(FName("EmissiveColor"), WireColor);
+      Comp->SetMaterial(0, CachedWireMID);
+    } else if (DesiredBaseMaterial) {
+      Comp->SetMaterial(0, DesiredBaseMaterial);
     }
   }
 
-  // Update the color on the cached MID
-  if (CachedWireMID) {
-    CachedWireMID->SetVectorParameterValue(FName("BaseColor"), WireColor);
-    CachedWireMID->SetVectorParameterValue(FName("Color"), WireColor);
-    CachedWireMID->SetVectorParameterValue(FName("Tint"), WireColor);
-    CachedWireMID->SetVectorParameterValue(FName("EmissiveColor"), WireColor);
-    WireComp->SetMaterial(0, CachedWireMID);
-  } else if (DesiredBaseMaterial) {
-    // Fallback: apply material directly without dynamic instance
-    WireComp->SetMaterial(0, DesiredBaseMaterial);
-    UE_LOG(
-        LogTemp, Warning,
-        TEXT("TriggerTile: Could not create MID, applying material directly"));
-  }
-
-  // Show the wire
-  WireComp->SetVisibility(true);
+  // Cleanup wires for owners no longer present (already handled in
+  // RemoveOwner, but good for safety)
 }
 
 void ATriggerTile::Destroyed() {
   Super::Destroyed();
 
-  // Clean up the trigger signal in simulation
-  if (bHasOwner && Sim) {
-    FHex OwnerHex(OwnerQ, OwnerR, Level);
+  // Clean up all trigger signals in simulation
+  if (Sim) {
     FHex TriggerHex(Q, R, Level);
-
-    if (OwnerType == ETriggerTileOwnerType::Belt) {
-      Sim->ClearBeltTriggerSignal(TriggerHex, OwnerHex);
-    } else {
-      Sim->ClearArmTriggerSignal(TriggerHex, OwnerHex);
+    for (const FTriggerOwner &TOwner : Owners) {
+      FHex OwnerHex(TOwner.Q, TOwner.R, Level);
+      if (TOwner.Type == ETriggerTileOwnerType::Belt) {
+        Sim->ClearBeltTriggerSignal(TriggerHex, OwnerHex);
+      } else {
+        Sim->ClearArmTriggerSignal(TriggerHex, OwnerHex);
+      }
     }
-
-    UE_LOG(LogTemp, Log,
-           TEXT("TriggerTile at (%d,%d) destroyed - cleared signal for %s at "
-                "(%d,%d)"),
-           Q, R,
-           OwnerType == ETriggerTileOwnerType::Belt ? TEXT("belt")
-                                                    : TEXT("arm"),
-           OwnerQ, OwnerR);
-  } else {
-    UE_LOG(LogTemp, Log, TEXT("TriggerTile at (%d,%d) destroyed"), Q, R);
   }
 }
 
 void ATriggerTile::SetOwnerArm(int32 InOwnerQ, int32 InOwnerR) {
-  // Ensure we have Sim reference if it wasn't found in BeginPlay yet
-  if (!Sim) {
-    if (UWorld *World = GetWorld()) {
-      Driver = AOrbSimDriver::Find(World);
-      if (Driver)
-        Sim = Driver->GetSim();
-    }
-  }
-
-  // Clear old owner signal if changing
-  if (bHasOwner && Sim) {
-    FHex OldOwnerHex(OwnerQ, OwnerR, Level);
-    FHex TriggerHex(Q, R, Level);
-    if (OwnerType == ETriggerTileOwnerType::Belt)
-      Sim->ClearBeltTriggerSignal(TriggerHex, OldOwnerHex);
-    else
-      Sim->ClearArmTriggerSignal(TriggerHex, OldOwnerHex);
-  }
-
-  OwnerQ = InOwnerQ;
-  OwnerR = InOwnerR;
-  bHasOwner = true;
-  OwnerType = ETriggerTileOwnerType::Arm;
-
-  UE_LOG(LogTemp, Log,
-         TEXT("TriggerTile at (%d,%d) now owned by arm at (%d,%d)"), Q, R,
-         OwnerQ, OwnerR);
-
-  // Initialize the simulation with the current signal state (crucial for
-  // disabling owner by default)
-  if (Sim) {
-    FHex TriggerHex(Q, R, Level);
-    FHex OwnerHex(InOwnerQ, InOwnerR, Level);
-    Sim->SetArmTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
-
-    UE_LOG(LogTemp, Log,
-           TEXT("TriggerTile at (%d,%d) initialized SIM signal for Arm at "
-                "(%d,%d) to %s"),
-           Q, R, OwnerQ, OwnerR,
-           bCurrentSignal ? TEXT("POSITIVE") : TEXT("NEGATIVE"));
-  }
-
-  // Update wire visual to show connection
-  UpdateWireVisual();
+  AddOwner(InOwnerQ, InOwnerR, ETriggerTileOwnerType::Arm);
 }
 
 void ATriggerTile::SyncWorldLocation() {
@@ -826,4 +729,51 @@ void ATriggerTile::SyncWorldLocation() {
     SetActorLocation(NewLocation);
     UpdateWireVisual();
   }
+}
+
+void ATriggerTile::EnsureComponentsForOwner(const FTriggerOwner &TOwner) {
+  if (!WireComponents.Contains(TOwner)) {
+    CreateWireComponent(TOwner);
+  }
+  if (!WavePulseComponents.Contains(TOwner)) {
+    CreateWavePulseComponent(TOwner);
+  }
+}
+
+UStaticMeshComponent *
+ATriggerTile::CreateWavePulseComponent(const FTriggerOwner &TOwner) {
+  UStaticMeshComponent *NewComp =
+      NewObject<UStaticMeshComponent>(this, NAME_None, RF_Transient);
+  if (NewComp) {
+    NewComp->SetMobility(EComponentMobility::Movable);
+    NewComp->AttachToComponent(
+        RootComp, FAttachmentTransformRules::KeepRelativeTransform);
+    NewComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    NewComp->SetCastShadow(false);
+    if (WavePulseMesh) {
+      NewComp->SetStaticMesh(WavePulseMesh);
+    }
+    NewComp->RegisterComponent();
+    WavePulseComponents.Add(TOwner, NewComp);
+  }
+  return NewComp;
+}
+
+USplineMeshComponent *
+ATriggerTile::CreateWireComponent(const FTriggerOwner &TOwner) {
+  USplineMeshComponent *NewComp =
+      NewObject<USplineMeshComponent>(this, NAME_None, RF_Transient);
+  if (NewComp) {
+    NewComp->SetMobility(EComponentMobility::Movable);
+    NewComp->AttachToComponent(
+        RootComp, FAttachmentTransformRules::KeepRelativeTransform);
+    NewComp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    NewComp->SetForwardAxis(ESplineMeshAxis::Z);
+    if (WireMesh) {
+      NewComp->SetStaticMesh(WireMesh);
+    }
+    NewComp->RegisterComponent();
+    WireComponents.Add(TOwner, NewComp);
+  }
+  return NewComp;
 }
