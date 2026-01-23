@@ -13,15 +13,8 @@
 
 #include "Templates/Tuple.h"
 #include "UObject/Object.h"
+// .generated.h must be last
 #include "SimWorldHex.generated.h"
-/** Merged tile info for rendering cluster outputs */
-struct FMergedTileInfo {
-  FHex Hex1;
-  FHex Hex2;
-  uint8 OrbType1;
-  uint8 OrbType2;
-  uint8 TemplateId;
-};
 
 /** Authoritative deterministic hex simulation world. */
 UCLASS(BlueprintType)
@@ -197,27 +190,22 @@ public:
                                               const FHex &Hex2, uint8 OrbType1,
                                               uint8 OrbType2);
 
-  // Auto-convert Output tiles when placed adjacent to other Output or
-  // ClusterOutput tiles
-  void AutoConvertAdjacentOutputsToCluster(const FHex &NewOutputHex,
-                                           uint8 NewOrbType);
-
-  // Expand an existing cluster template by rebuilding it with all tiles
+  // Expand an existing cluster template to include additional tiles
   uint8 ExpandClusterTemplate(uint8 ExistingTemplateId, const FHex &OldBaseHex,
                               const FHex &NewBaseHex,
                               const TArray<FHex> &AllClusterHexes,
                               const TMap<FHex, uint8> &HexToOrbType);
 
+  // Generate a new unique template ID
+  uint8 GenerateNewTemplateId() { return NextAutoTemplateId++; }
+
   // Find all tiles that are part of a cluster (connected via IOBondPartners)
   TArray<FHex> FindAllTilesInCluster(const FHex &StartHex) const;
 
-  // Get merged cluster output info for rendering
-  const TMap<FHex, ::FMergedTileInfo> &GetMergedClusterOutputs() const {
-    return MergedClusterOutputs;
-  }
-  TMap<FHex, ::FMergedTileInfo> &GetMergedClusterOutputsMutable() {
-    return MergedClusterOutputs;
-  }
+  // Helper function to find all connected ClusterInput tiles in a chain
+  TArray<FHex>
+  FindClusterInputChain(const FHex &StartHex,
+                        const TSet<FHex> &ExcludeHexes = TSet<FHex>()) const;
 
   // Get cluster templates map for template ID lookup
   const TMap<uint8, FClusterTemplate> &GetClusterTemplates() const {
@@ -227,18 +215,6 @@ public:
   // Get IO bond partners map (for ClusterOutput partnerships)
   const TMap<FHex, FHex> &GetIOBondPartners() const { return IOBondPartners; }
   TMap<FHex, FHex> &GetIOBondPartnersMutable() { return IOBondPartners; }
-
-  // Generate a new unique template ID
-  uint8 GenerateNewTemplateId() { return NextAutoTemplateId++; }
-
-  // Rebuild cluster output relationships after loading (reconstructs
-  // IOBondPartners and MergedClusterOutputs)
-  UFUNCTION(BlueprintCallable, Category = "Simulation")
-  void RebuildClusterOutputRelationships();
-
-  // C++ version with saved orb types parameter
-  void
-  RebuildClusterOutputRelationships(const TMap<FHex, uint8> &SavedOrbTypes);
 
   // Item helpers
   bool TryPutItem(const FHex &H, const FItem &I);
@@ -421,10 +397,6 @@ private:
   // conflicts with manual templates)
   uint8 NextAutoTemplateId = 128;
 
-  // Track merged cluster output tiles for rendering (keyed by the "primary" hex
-  // - lower Q, or lower R if Q equal)
-  TMap<FHex, FMergedTileInfo> MergedClusterOutputs;
-
   // Pending bond formations waiting for arm rotation to complete
   struct FPendingBondFormation {
     int32 HeldItemId = 0;
@@ -443,15 +415,6 @@ private:
     int32 ClusterId = 0;
   };
   TArray<FPendingGrab> PendingGrabs;
-
-  // Helper function to find all connected ClusterInput tiles in a chain
-  TArray<FHex>
-  FindClusterInputChain(const FHex &StartHex,
-                        const TSet<FHex> &ExcludeHexes = TSet<FHex>()) const;
-
-  // Cache for ClusterInput chains (invalidated when tiles change)
-  mutable TMap<FHex, TArray<FHex>> ClusterInputChainCache;
-  mutable int32 LastTileRevisionForChainCache = -1;
 
   // ============================================================
   // OCCUPANCY CACHE - computed once per tick, shared across steps

@@ -9,7 +9,6 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Framework/GameManager.h"
-#include "ProceduralMeshComponent.h"
 #include "Sim/HexCoord.h"
 #include "Sim/OrbTypes.h"
 #include "Sim/SimWorldHex.h"
@@ -248,27 +247,7 @@ void AHexFactoryActor::EnsureComponents() {
   EnsureISM(InputCatalystXISM, TEXT("InputCatalystXISM_Runtime"));
   EnsureISM(InputVoidISM, TEXT("InputVoidISM_Runtime"));
 
-  // Ensure procedural mesh for merged outputs
-  if (!MergedOutputMesh) {
-    MergedOutputMesh = NewObject<UProceduralMeshComponent>(
-        this, TEXT("MergedOutputMesh_Runtime"));
-    MergedOutputMesh->SetupAttachment(GetRootComponent());
-    MergedOutputMesh->RegisterComponent();
-    MergedOutputMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-  }
-  MergedOutputMesh->SetVisibility(true, true);
-
-  // Ensure InputTilesMesh component exists
-  if (!InputTilesMesh) {
-    InputTilesMesh = NewObject<UProceduralMeshComponent>(
-        this, TEXT("InputTilesMesh_Runtime"));
-    InputTilesMesh->SetupAttachment(GetRootComponent());
-    InputTilesMesh->RegisterComponent();
-    InputTilesMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-    InputTilesMesh->SetCollisionResponseToAllChannels(
-        ECollisionResponse::ECR_Block);
-  }
-  InputTilesMesh->SetVisibility(true, true);
+  InputTileISM->SetVisibility(true, true);
 
   // Ensure grid collision plane exists
   if (!GridCollisionPlane) {
@@ -444,10 +423,6 @@ void AHexFactoryActor::SetInputHighlight(bool bEnable) {
     InputVoidISM->SetRenderCustomDepth(bEnable);
     InputVoidISM->SetCustomDepthStencilValue(Stencil);
   }
-  if (InputTilesMesh) {
-    InputTilesMesh->SetRenderCustomDepth(bEnable);
-    InputTilesMesh->SetCustomDepthStencilValue(Stencil);
-  }
 }
 
 void AHexFactoryActor::SetOutputHighlight(bool bEnable) {
@@ -483,10 +458,6 @@ void AHexFactoryActor::SetOutputHighlight(bool bEnable) {
   if (OutputVoidISM) {
     OutputVoidISM->SetRenderCustomDepth(bEnable);
     OutputVoidISM->SetCustomDepthStencilValue(Stencil);
-  }
-  if (MergedOutputMesh) {
-    MergedOutputMesh->SetRenderCustomDepth(bEnable);
-    MergedOutputMesh->SetCustomDepthStencilValue(Stencil);
   }
 }
 
@@ -560,10 +531,6 @@ void AHexFactoryActor::SetViewMode(EViewMode Mode) {
     InputTileISM->SetVisibility(true, true);
   if (OutputTileISM)
     OutputTileISM->SetVisibility(true, true);
-  if (InputTilesMesh)
-    InputTilesMesh->SetVisibility(true, true);
-  if (MergedOutputMesh)
-    MergedOutputMesh->SetVisibility(true, true);
 
   // Type-specific ISMs
   TArray<UInstancedStaticMeshComponent *> IOISMs = {
@@ -1396,224 +1363,6 @@ AHexFactoryActor::GetInputISMForType(EOrbType OrbType) {
     return InputVoidISM;
   default:
     return InputBaseAISM; // Fallback
-  }
-}
-
-void AHexFactoryActor::GenerateMergedHexMesh(
-    const FVector &Hex1Center, const FVector &Hex2Center, float HexRadius,
-    UMaterialInterface *Mat1, UMaterialInterface *Mat2, int32 SectionIndex) {
-  if (!MergedOutputMesh)
-    return;
-
-  // Generate vertices for a merged hex shape
-  // For pointy-top hexagons, we need 6 vertices per hex plus shared vertices
-  TArray<FVector> Vertices;
-  TArray<int32> Triangles;
-  TArray<FVector> Normals;
-  TArray<FVector2D> UV0;
-  TArray<FColor> VertexColors;
-  TArray<FProcMeshTangent> Tangents;
-
-  // Generate Hex1 vertices
-  for (int32 i = 0; i < 6; i++) {
-    float Angle = i * UE_PI / 3.0f;
-    FVector LocalPos = FVector(FMath::Cos(Angle) * HexRadius,
-                               FMath::Sin(Angle) * HexRadius, 0);
-    Vertices.Add(Hex1Center + LocalPos);
-    Normals.Add(FVector::UpVector);
-    UV0.Add(FVector2D(0.25f, 0.5f)); // UV for first material
-    VertexColors.Add(FColor::White);
-    Tangents.Add(FProcMeshTangent(1, 0, 0));
-  }
-
-  // Generate Hex2 vertices
-  for (int32 i = 0; i < 6; i++) {
-    float Angle = i * UE_PI / 3.0f;
-    FVector LocalPos = FVector(FMath::Cos(Angle) * HexRadius,
-                               FMath::Sin(Angle) * HexRadius, 0);
-    Vertices.Add(Hex2Center + LocalPos);
-    Normals.Add(FVector::UpVector);
-    UV0.Add(FVector2D(0.75f, 0.5f)); // UV for second material
-    VertexColors.Add(FColor::White);
-    Tangents.Add(FProcMeshTangent(1, 0, 0));
-  }
-
-  // Generate triangles for Hex1 (fan triangulation from center)
-  // REVERSED winding order for correct facing direction (counter-clockwise when
-  // viewed from above)
-  FVector Hex1CenterVert = Hex1Center;
-  int32 Hex1CenterIdx = Vertices.Add(Hex1CenterVert);
-  Normals.Add(FVector::UpVector);
-  UV0.Add(FVector2D(0.25f, 0.5f));
-  VertexColors.Add(FColor::White);
-  Tangents.Add(FProcMeshTangent(1, 0, 0));
-
-  for (int32 i = 0; i < 6; i++) {
-    int32 Next = (i + 1) % 6;
-    // Reversed winding: center -> next -> current (instead of center -> current
-    // -> next)
-    Triangles.Add(Hex1CenterIdx);
-    Triangles.Add(Next);
-    Triangles.Add(i);
-  }
-
-  // Generate triangles for Hex2 (fan triangulation from center)
-  // REVERSED winding order for correct facing direction
-  FVector Hex2CenterVert = Hex2Center;
-  int32 Hex2CenterIdx = Vertices.Add(Hex2CenterVert);
-  Normals.Add(FVector::UpVector);
-  UV0.Add(FVector2D(0.75f, 0.5f));
-  VertexColors.Add(FColor::White);
-  Tangents.Add(FProcMeshTangent(1, 0, 0));
-
-  for (int32 i = 0; i < 6; i++) {
-    int32 Next = (i + 1) % 6;
-    // Reversed winding: center -> next -> current
-    Triangles.Add(Hex2CenterIdx);
-    Triangles.Add(6 + Next);
-    Triangles.Add(6 + i);
-  }
-
-  // Find the shared edge vertices and create bridging triangles
-  // The shared edge is where the two hexes touch
-  // For adjacent hexes, we need to find which vertices are closest
-  float MinDist1 = FLT_MAX, MinDist2 = FLT_MAX;
-  int32 SharedIdx1_A = -1, SharedIdx1_B = -1;
-  int32 SharedIdx2_A = -1, SharedIdx2_B = -1;
-
-  // Find the two closest vertex pairs between the hexes
-  for (int32 i = 0; i < 6; i++) {
-    for (int32 j = 0; j < 6; j++) {
-      float Dist = FVector::Dist(Vertices[i], Vertices[6 + j]);
-      if (Dist < MinDist1) {
-        MinDist2 = MinDist1;
-        SharedIdx2_A = SharedIdx1_A;
-        SharedIdx2_B = SharedIdx1_B;
-
-        MinDist1 = Dist;
-        SharedIdx1_A = i;
-        SharedIdx1_B = 6 + j;
-      } else if (Dist < MinDist2) {
-        MinDist2 = Dist;
-        SharedIdx2_A = i;
-        SharedIdx2_B = 6 + j;
-      }
-    }
-  }
-
-  // Create bridging quads between the shared edges
-  // REVERSED winding order for correct facing direction
-  if (SharedIdx1_A >= 0 && SharedIdx2_A >= 0) {
-    // Bridge quad (two triangles) - reversed winding
-    Triangles.Add(SharedIdx1_A);
-    Triangles.Add(SharedIdx2_A);
-    Triangles.Add(SharedIdx1_B);
-
-    Triangles.Add(SharedIdx2_A);
-    Triangles.Add(SharedIdx2_B);
-    Triangles.Add(SharedIdx1_B);
-  }
-
-  // Create the mesh section
-  MergedOutputMesh->CreateMeshSection(SectionIndex, Vertices, Triangles,
-                                      Normals, UV0, VertexColors, Tangents,
-                                      true);
-
-  // Set materials (for now, use Mat1 for the whole mesh - can be enhanced to
-  // use both)
-  if (Mat1) {
-    MergedOutputMesh->SetMaterial(SectionIndex, Mat1);
-  }
-}
-
-void AHexFactoryActor::GenerateHexWithHole(const FVector &Center,
-                                           float HexRadius, float HoleRadius,
-                                           UMaterialInterface *Material,
-                                           int32 SectionIndex) {
-  if (!InputTilesMesh)
-    return;
-
-  TArray<FVector> Vertices;
-  TArray<int32> Triangles;
-  TArray<FVector> Normals;
-  TArray<FVector2D> UV0;
-  TArray<FColor> VertexColors;
-  TArray<FProcMeshTangent> Tangents;
-
-  const int32 CircleSegments = 32; // Number of segments for the circular hole
-
-  // Generate outer hexagon vertices (6 vertices)
-  for (int32 i = 0; i < 6; i++) {
-    float Angle = i * UE_PI / 3.0f;
-    FVector LocalPos = FVector(FMath::Cos(Angle) * HexRadius,
-                               FMath::Sin(Angle) * HexRadius, 0);
-    Vertices.Add(Center + LocalPos);
-    Normals.Add(FVector::UpVector);
-    // UV mapping: outer edge of hex
-    FVector2D UV = FVector2D(0.5f + 0.5f * FMath::Cos(Angle),
-                             0.5f + 0.5f * FMath::Sin(Angle));
-    UV0.Add(UV);
-    VertexColors.Add(FColor::White);
-    Tangents.Add(FProcMeshTangent(1, 0, 0));
-  }
-
-  // Generate inner circle vertices (for the hole) - reverse order for proper
-  // winding
-  for (int32 i = 0; i < CircleSegments; i++) {
-    // Reverse order for proper winding (counter-clockwise when viewed from
-    // above)
-    float Angle = (CircleSegments - 1 - i) * 2.0f * UE_PI / CircleSegments;
-    FVector LocalPos = FVector(FMath::Cos(Angle) * HoleRadius,
-                               FMath::Sin(Angle) * HoleRadius, 0);
-    Vertices.Add(Center + LocalPos);
-    Normals.Add(FVector::UpVector);
-    // UV mapping: inner edge of circle
-    FVector2D UV =
-        FVector2D(0.5f + (HoleRadius / HexRadius) * 0.5f * FMath::Cos(Angle),
-                  0.5f + (HoleRadius / HexRadius) * 0.5f * FMath::Sin(Angle));
-    UV0.Add(UV);
-    VertexColors.Add(FColor::White);
-    Tangents.Add(FProcMeshTangent(1, 0, 0));
-  }
-
-  // Create triangles connecting hex vertices to circle vertices
-  // Form a ring by connecting each hex edge to the corresponding circle arc
-  for (int32 HexIdx = 0; HexIdx < 6; HexIdx++) {
-    int32 NextHexIdx = (HexIdx + 1) % 6;
-    int32 HexVertexIdx = HexIdx;
-    int32 NextHexVertexIdx = NextHexIdx;
-
-    // Calculate which circle segments correspond to this hex edge
-    // Each hex edge spans 60 degrees (UE_PI/3), divide circle segments equally
-    int32 SegmentsPerEdge = CircleSegments / 6;
-    int32 StartCircleIdx = HexIdx * SegmentsPerEdge;
-
-    // Connect hex edge to circle arc with triangles
-    for (int32 i = 0; i < SegmentsPerEdge; i++) {
-      int32 CircleIdx1 = 6 + ((StartCircleIdx + i) % CircleSegments);
-      int32 CircleIdx2 = 6 + ((StartCircleIdx + i + 1) % CircleSegments);
-
-      // Create two triangles forming a quad between hex edge and circle arc
-      // For correct front-facing (viewed from above), use counter-clockwise
-      // winding Triangle 1: hex vertex -> circle segment 1 -> next hex vertex
-      Triangles.Add(HexVertexIdx);
-      Triangles.Add(CircleIdx1);
-      Triangles.Add(NextHexVertexIdx);
-
-      // Triangle 2: next hex vertex -> circle segment 1 -> circle segment 2
-      Triangles.Add(NextHexVertexIdx);
-      Triangles.Add(CircleIdx1);
-      Triangles.Add(CircleIdx2);
-    }
-  }
-
-  // Create the mesh section
-  InputTilesMesh->CreateMeshSection(SectionIndex, Vertices, Triangles, Normals,
-                                    UV0, VertexColors, Tangents, true);
-
-  // Set material
-  if (Material) {
-    InputTilesMesh->SetMaterial(SectionIndex, Material);
   }
 }
 

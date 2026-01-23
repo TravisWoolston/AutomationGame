@@ -397,9 +397,7 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
       }
     }
 
-    // Rebuild cluster output relationships after loading all tiles, using saved
-    // orb types
-    Sim->RebuildClusterOutputRelationships(ClusterOutputOrbTypes);
+    // ClusterOutput tiles are now handled directly without merged relationships
   }
 
   for (FArmSpawnSpec &A : const_cast<TArray<FArmSpawnSpec> &>(S.Arms)) {
@@ -1482,21 +1480,8 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       // type %d"), Hex.Q, Hex.R, (int32)Tile.Kind);
     }
 
-    // Update ClusterOutput tiles with their orb types from MergedClusterOutputs
-    const TMap<FHex, FMergedTileInfo> &MergedOutputs =
-        Sim->GetMergedClusterOutputs();
-    for (const auto &MergedKV : MergedOutputs) {
-      const FMergedTileInfo &Info = MergedKV.Value;
-
-      // Find and update the tile specs for both hexes
-      for (FPlacedTileSpec &TileSpec : Scenario.Tiles) {
-        if (TileSpec.Hex == Info.Hex1) {
-          TileSpec.OrbType = Info.OrbType1;
-        } else if (TileSpec.Hex == Info.Hex2) {
-          TileSpec.OrbType = Info.OrbType2;
-        }
-      }
-    }
+    // ClusterOutput tiles now store their orb type in Tile.Arg directly
+    // No need for separate MergedClusterOutputs tracking
 
     // Build a map of existing arm specs to preserve their original facing (if
     // not capturing runtime edits)

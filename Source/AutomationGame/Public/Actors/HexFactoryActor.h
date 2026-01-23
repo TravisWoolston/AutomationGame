@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "Data/OrbMaterialManager.h"
 #include "GameFramework/Actor.h"
+
 #include "Sim/HexCoord.h"
 #include "Sim/HexTypes.h"
 #include "Sim/OrbTypes.h"
@@ -140,12 +141,6 @@ protected:
   UInstancedStaticMeshComponent *InputCatalystXISM = nullptr;
   UPROPERTY(Transient) UInstancedStaticMeshComponent *InputVoidISM = nullptr;
 
-  // Procedural mesh for merged cluster outputs
-  UPROPERTY(Transient) UProceduralMeshComponent *MergedOutputMesh = nullptr;
-
-  // Procedural mesh for Input/ClusterInput tiles with cutouts
-  UPROPERTY(Transient) UProceduralMeshComponent *InputTilesMesh = nullptr;
-
   // Collision plane for line traces (more performant than individual tile
   // meshes)
   UPROPERTY(Transient) UBoxComponent *GridCollisionPlane = nullptr;
@@ -177,18 +172,6 @@ protected:
 
   // Helper functions for input type management
   UInstancedStaticMeshComponent *GetInputISMForType(EOrbType OrbType);
-
-  // Generate a merged hex mesh between two adjacent hexagons
-  void GenerateMergedHexMesh(const FVector &Hex1Center,
-                             const FVector &Hex2Center, float HexRadius,
-                             UMaterialInterface *Mat1, UMaterialInterface *Mat2,
-                             int32 SectionIndex);
-
-  // Generate a hexagon mesh with a circular hole cut out (for
-  // Input/ClusterInput tiles)
-  void GenerateHexWithHole(const FVector &Center, float HexRadius,
-                           float HoleRadius, UMaterialInterface *Material,
-                           int32 SectionIndex);
 
   // Update the grid collision plane position to match the grid Z level
   void UpdateGridCollisionPlane();

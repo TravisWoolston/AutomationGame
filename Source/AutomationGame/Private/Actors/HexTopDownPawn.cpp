@@ -2670,27 +2670,6 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
         UE_LOG(LogTemp, Log, TEXT("Removed IOBondPartners entry for (%d,%d)"),
                PartnerHex.Q, PartnerHex.R);
       }
-
-      // Remove any merged tile info entries involving this hex
-      TArray<FHex> MergedToRemove;
-      for (const auto &MergedKV : Sim->GetMergedClusterOutputs()) {
-        if (MergedKV.Value.Hex1 == Hex || MergedKV.Value.Hex2 == Hex) {
-          MergedToRemove.Add(MergedKV.Key);
-        }
-      }
-
-      TMap<FHex, FMergedTileInfo> &MergedClusterOutputs =
-          Sim->GetMergedClusterOutputsMutable();
-      for (const FHex &MergedHex : MergedToRemove) {
-        MergedClusterOutputs.Remove(MergedHex);
-        UE_LOG(LogTemp, Log,
-               TEXT("Removed MergedClusterOutputs entry for (%d,%d)"),
-               MergedHex.Q, MergedHex.R);
-      }
-
-      UE_LOG(LogTemp, Log,
-             TEXT("Cleaned up ClusterOutput partnerships for (%d,%d,%d)"),
-             Hex.Q, Hex.R, Hex.Level);
     }
   }
 
