@@ -230,37 +230,24 @@ void UArmTimelineUMGWidget::InitializeWidget() {
 }
 
 void UArmTimelineUMGWidget::UpdateWidgetContent() {
-  // Don't create icons if there are no commands
-  if (ArmProgram.Num() == 0) {
-    // Clear any existing icons
-    for (UWidget *Widget : CommandIconWidgets) {
-      if (Widget && Widget->IsValidLowLevel()) {
-        Widget->RemoveFromParent();
-      }
-    }
-    CommandIconWidgets.Empty();
-    bIconsCreated = false;
-    return;
-  }
-
   // Use caching flag to prevent unnecessary recreation
-  bool bNeedsRecreation = !bIconsCreated || (CommandIconWidgets.Num() == 0);
+  bool bNeedsRecreation = !bIconsCreated;
 
-  // Check if program size changed (recreate if size is different)
-  if (!bNeedsRecreation && ArmProgram.Num() > 0) {
-    int32 CurrentIconCount = CommandIconWidgets.Num();
-    int32 ProgramSize = FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
-    if (CurrentIconCount != ProgramSize) {
+  // Check if icon count matches expected count for current program
+  if (!bNeedsRecreation) {
+    int32 ExpectedIconCount =
+        FMath::Min(ArmProgram.Num(), MaxDisplayedCommands);
+    if (CommandIconWidgets.Num() != ExpectedIconCount) {
       bNeedsRecreation = true;
     }
   }
 
   if (bNeedsRecreation) {
-    // No icons exist or program changed, create them
+    // Recreate all UI elements (Icons, Reset Button, Property Inputs)
     CreateCommandIcons();
-    bIconsCreated = true;
+    // bIconsCreated is set to true inside CreateCommandIcons
   } else {
-    // Icons exist and program is stable, just update them
+    // Just update visual states of existing icons
     UpdateCommandIcons();
   }
 
@@ -331,6 +318,14 @@ void UArmTimelineUMGWidget::CreateCommandIcons() {
   if (ResetButton && ResetButton->IsValidLowLevel()) {
     ResetButton->RemoveFromParent();
     ResetButton = nullptr;
+  }
+
+  // Clear and remove existing property inputs if they exist
+  if (PropertyInputBox && PropertyInputBox->IsValidLowLevel()) {
+    PropertyInputBox->RemoveFromParent();
+    PropertyInputBox = nullptr;
+    ReachInput = nullptr;
+    RotationInput = nullptr;
   }
 
   // Also clear the container so borders/inner boxes don't accumulate
@@ -1201,6 +1196,9 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
     InputSlot->SetPadding(FMargin(12.0f, 12.0f, 12.0f, 16.0f));
     InputSlot->SetHorizontalAlignment(HAlign_Center);
   }
+
+  // Store for future cleanup
+  PropertyInputBox = InputHBox;
 
   // Initialize values
   if (ABasicArm *Arm = GetAssociatedArm()) {
