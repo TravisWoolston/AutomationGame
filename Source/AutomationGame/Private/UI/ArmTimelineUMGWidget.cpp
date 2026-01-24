@@ -55,12 +55,13 @@ void UArmTimelineUMGWidget::NativeConstruct() {
 
   InitializeWidget();
 
-  // Ensure cursor is in front
+  // Ensure cursor is in front and doesn't block input
   if (CursorIndicator) {
     if (UCanvasPanelSlot *CanvasSlot =
             Cast<UCanvasPanelSlot>(CursorIndicator->Slot)) {
       CanvasSlot->SetZOrder(100);
     }
+    CursorIndicator->SetVisibility(ESlateVisibility::HitTestInvisible);
   }
 }
 
@@ -254,10 +255,16 @@ void UArmTimelineUMGWidget::UpdateWidgetContent() {
   // Update property input values if arm exists
   if (ABasicArm *Arm = GetAssociatedArm()) {
     if (ReachInput && !ReachInput->HasKeyboardFocus()) {
-      ReachInput->SetText(FText::AsNumber(Arm->StartingReach));
+      FText TargetText = FText::AsNumber(Arm->StartingReach);
+      if (!ReachInput->GetText().EqualTo(TargetText)) {
+        ReachInput->SetText(TargetText);
+      }
     }
     if (RotationInput && !RotationInput->HasKeyboardFocus()) {
-      RotationInput->SetText(FText::AsNumber(Arm->StartingRotation));
+      FText TargetText = FText::AsNumber(Arm->StartingRotation);
+      if (!RotationInput->GetText().EqualTo(TargetText)) {
+        RotationInput->SetText(TargetText);
+      }
     }
   }
 
@@ -941,6 +948,9 @@ void UArmTimelineUMGWidget::CreateResetButton() {
       return;
     }
 
+    // Set container to not block hits to its children
+    ParentVerticalBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
     // Remove CommandIconsBox from its current parent
     CommandIconsBox->RemoveFromParent();
 
@@ -968,6 +978,16 @@ void UArmTimelineUMGWidget::CreateResetButton() {
         if (HorizontalSlot) {
           HorizontalSlot->SetHorizontalAlignment(HAlign_Fill);
           HorizontalSlot->SetVerticalAlignment(VAlign_Center);
+        }
+      } else if (UCanvasPanel *Canvas = Cast<UCanvasPanel>(ParentWidget)) {
+        // Specifically handle CanvasPanel which is common for root widgets
+        UCanvasPanelSlot *CanvasSlot =
+            Canvas->AddChildToCanvas(ParentVerticalBox);
+        if (CanvasSlot) {
+          // Center it in the canvas and size to content
+          CanvasSlot->SetAnchors(FAnchors(0.5f, 0.5f));
+          CanvasSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+          CanvasSlot->SetAutoSize(true);
         }
       } else {
         // Fallback: try to add as child using UPanelWidget interface
@@ -1117,6 +1137,7 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
   UHorizontalBox *InputHBox = NewObject<UHorizontalBox>(this);
   if (!InputHBox)
     return;
+  InputHBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
   // Common label font
   FSlateFontInfo LabelFont;
@@ -1140,8 +1161,10 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
 
   // Constrain width of input boxes
   USizeBox *ReachSizeBox = NewObject<USizeBox>(this);
-  ReachSizeBox->SetWidthOverride(60.0f);
+  ReachSizeBox->SetWidthOverride(100.0f);
+  ReachSizeBox->SetHeightOverride(40.0f);
   ReachSizeBox->SetContent(ReachInput);
+  ReachSizeBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
   UVerticalBoxSlot *ReachInputSlot =
       ReachVBox->AddChildToVerticalBox(ReachSizeBox);
@@ -1149,6 +1172,7 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
     ReachInputSlot->SetPadding(FMargin(0, 2, 0, 0));
     ReachInputSlot->SetHorizontalAlignment(HAlign_Center);
   }
+  ReachVBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
   UHorizontalBoxSlot *ReachHSlot =
       InputHBox->AddChildToHorizontalBox(ReachVBox);
@@ -1172,8 +1196,10 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
 
   // Constrain width of input boxes
   USizeBox *RotationSizeBox = NewObject<USizeBox>(this);
-  RotationSizeBox->SetWidthOverride(60.0f);
+  RotationSizeBox->SetWidthOverride(100.0f);
+  RotationSizeBox->SetHeightOverride(40.0f);
   RotationSizeBox->SetContent(RotationInput);
+  RotationSizeBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
   UVerticalBoxSlot *RotInputSlot =
       RotationVBox->AddChildToVerticalBox(RotationSizeBox);
@@ -1181,6 +1207,7 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
     RotInputSlot->SetPadding(FMargin(0, 2, 0, 0));
     RotInputSlot->SetHorizontalAlignment(HAlign_Center);
   }
+  RotationVBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
   UHorizontalBoxSlot *RotationHSlot =
       InputHBox->AddChildToHorizontalBox(RotationVBox);

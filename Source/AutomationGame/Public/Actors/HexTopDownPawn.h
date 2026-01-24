@@ -183,7 +183,8 @@ private:
   void RemoveTileAndOrbsAtCursor();
   TArray<FHex> FindItemConnectedComponent(const FHex &StartHex,
                                           TArray<FHex> &OutAnchors,
-                                          TArray<int32> &OutBondIndices) const;
+                                          TArray<int32> &OutBondIndices,
+                                          TArray<int32> &OutArmIndices) const;
 
   // Blueprint placement functions
   void PlaceBlueprint();

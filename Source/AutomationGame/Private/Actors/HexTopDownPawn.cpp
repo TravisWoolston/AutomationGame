@@ -478,8 +478,9 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
     const FHex CursorHex = Placer ? Placer->GetHoverHex() : FHex(-1, -1, -1);
     TArray<FHex> BondedAnchors;
     TArray<int32> BondIndices;
-    TArray<FHex> ClusterHexes =
-        FindItemConnectedComponent(CursorHex, BondedAnchors, BondIndices);
+    TArray<int32> ArmIndices;
+    TArray<FHex> ClusterHexes = FindItemConnectedComponent(
+        CursorHex, BondedAnchors, BondIndices, ArmIndices);
 
     if (ClusterHexes.Num() > 0) {
       // Use the actual orb mesh for highlighting if available
@@ -2550,16 +2551,35 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
     // Orb View ONLY deletes orbs/clusters (including bonded groups)
     TArray<FHex> BondedAnchors;
     TArray<int32> BondIndices;
+    TArray<int32> ArmIndices;
     TArray<FHex> ClusterHexes =
-        FindItemConnectedComponent(Hex, BondedAnchors, BondIndices);
+        FindItemConnectedComponent(Hex, BondedAnchors, BondIndices, ArmIndices);
 
+    bool bChanged = false;
     if (BondedAnchors.Num() > 0) {
       for (const FHex &Anchor : BondedAnchors) {
         FItem RemovedItem;
-        Sim->TryTakeItem(Anchor, RemovedItem);
+        if (Sim->TryTakeItem(Anchor, RemovedItem)) {
+          bChanged = true;
+        }
       }
-      UE_LOG(LogTemp, Log, TEXT("Orb View: Removed bonded group with %d items"),
-             BondedAnchors.Num());
+    }
+
+    if (ArmIndices.Num() > 0) {
+      for (int32 ArmIndex : ArmIndices) {
+        if (Sim->Arms.IsValidIndex(ArmIndex)) {
+          Sim->Arms[ArmIndex].bHolding = false;
+          Sim->Arms[ArmIndex].Held = FItem();
+          bChanged = true;
+        }
+      }
+    }
+
+    if (bChanged) {
+      UE_LOG(LogTemp, Log,
+             TEXT("Orb View: Removed bonded group with %d board items and %d "
+                  "held items"),
+             BondedAnchors.Num(), ArmIndices.Num());
       Sim->TileRevision++;
     }
     return; // Don't delete tiles in Orb View
@@ -3799,22 +3819,61 @@ FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const {
   }
   USimWorldHex *Sim = CachedOrbSimDriver->GetSim();
 
-  // 1. Direct hit in item map (primary anchor)
-  if (FItem *Item = Sim->ItemMap.Find(Hex)) {
-    OutItem = *Item;
-    return Hex;
-  }
+  // Try both grid levels - starting with the one the user is currently on
+  TArray<int32> LevelsToTry;
+  LevelsToTry.Add(Hex.Level);
+  LevelsToTry.Add(1 - Hex.Level);
 
-  // 2. Check all items to see if any cluster covers this hex
-  for (auto &KV : Sim->ItemMap) {
-    const FHex &Anchor = KV.Key;
-    const FItem &Item = KV.Value;
-    if (Item.bIsCluster) {
-      for (const FOrbData &Orb : Item.Orbs) {
-        FHex AbsoluteOrbHex(Anchor.Q + Orb.dQ, Anchor.R + Orb.dR, Anchor.Level);
-        if (AbsoluteOrbHex == Hex) {
-          OutItem = Item;
-          return Anchor;
+  for (int32 L : LevelsToTry) {
+    FHex TestHex = Hex;
+    TestHex.Level = L;
+
+    // 1. Direct hit in item map (primary anchor)
+    if (FItem *Item = Sim->ItemMap.Find(TestHex)) {
+      OutItem = *Item;
+      return TestHex;
+    }
+
+    // 2. Check all items to see if any cluster covers this hex
+    for (auto &KV : Sim->ItemMap) {
+      const FHex &Anchor = KV.Key;
+      const FItem &Item = KV.Value;
+
+      // Only check clusters on this level
+      if (Anchor.Level == L && Item.bIsCluster) {
+        for (const FOrbData &Orb : Item.Orbs) {
+          FHex AbsoluteOrbHex(Anchor.Q + Orb.dQ, Anchor.R + Orb.dR,
+                              Anchor.Level);
+          if (AbsoluteOrbHex == TestHex) {
+            OutItem = Item;
+            return Anchor;
+          }
+        }
+      }
+    }
+
+    // 3. Check all arms to see if any held item covers this hex
+    for (int32 i = 0; i < Sim->Arms.Num(); ++i) {
+      const FArmState &A = Sim->Arms[i];
+      if (!A.bHolding || A.BaseHex.Level != L)
+        continue;
+
+      FHex Grip = Sim->GetArmGripHex_Sim(i);
+      if (!A.Held.bIsCluster) {
+        if (Grip == TestHex) {
+          OutItem = A.Held;
+          return Grip; // Return grip hex as proxy anchor
+        }
+      } else {
+        uint8 ccw = Sim->GetHeldCCW_Steps_Sim(i);
+        for (const FOrbData &Sub : A.Held.Orbs) {
+          FHex Local(Sub.dQ, Sub.dR);
+          FHex Rot = Sim->Rot60CCW(Local, ccw);
+          FHex AbsOrb(Grip.Q + Rot.Q, Grip.R + Rot.R, Grip.Level);
+          if (AbsOrb == TestHex) {
+            OutItem = A.Held;
+            return Grip; // Return grip hex as proxy anchor
+          }
         }
       }
     }
@@ -3825,10 +3884,11 @@ FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const {
 
 TArray<FHex> AHexTopDownPawn::FindItemConnectedComponent(
     const FHex &StartHex, TArray<FHex> &OutAnchors,
-    TArray<int32> &OutBondIndices) const {
+    TArray<int32> &OutBondIndices, TArray<int32> &OutArmIndices) const {
   TArray<FHex> AllOrbHexes;
   OutAnchors.Empty();
   OutBondIndices.Empty();
+  OutArmIndices.Empty();
 
   if (!CachedOrbSimDriver || !CachedOrbSimDriver->GetSim())
     return AllOrbHexes;
@@ -3852,44 +3912,63 @@ TArray<FHex> AHexTopDownPawn::FindItemConnectedComponent(
       continue;
     VisitedItemIds.Add(CurrentId);
 
-    // Find anchor for this item
-    FHex Anchor(-1, -1, -1);
-    FItem Item;
-    // Search ItemMap for this ID
+    // 1. Search ItemMap for this ID
+    bool bFoundOnBoard = false;
     for (auto &KV : Sim->ItemMap) {
       if (KV.Value.Id == CurrentId) {
-        Anchor = KV.Key;
-        Item = KV.Value;
+        FHex Anchor = KV.Key;
+        FItem Item = KV.Value;
+        bFoundOnBoard = true;
+
+        OutAnchors.Add(Anchor);
+        if (Item.bIsCluster) {
+          for (const FOrbData &Orb : Item.Orbs) {
+            AllOrbHexes.Add(
+                FHex(Anchor.Q + Orb.dQ, Anchor.R + Orb.dR, Anchor.Level));
+          }
+        } else {
+          AllOrbHexes.Add(Anchor);
+        }
         break;
       }
     }
 
-    if (Anchor.Q != -1) {
-      OutAnchors.Add(Anchor);
-      if (Item.bIsCluster) {
-        for (const FOrbData &Orb : Item.Orbs) {
-          AllOrbHexes.Add(
-              FHex(Anchor.Q + Orb.dQ, Anchor.R + Orb.dR, Anchor.Level));
+    // 2. Search Arms for this ID (if not on board)
+    for (int32 i = 0; i < Sim->Arms.Num(); ++i) {
+      const FArmState &A = Sim->Arms[i];
+      if (A.bHolding && A.Held.Id == CurrentId) {
+        OutArmIndices.AddUnique(i);
+
+        // Add orb hexes for highlighting
+        FHex Grip = Sim->GetArmGripHex_Sim(i);
+        if (!A.Held.bIsCluster) {
+          AllOrbHexes.Add(Grip);
+        } else {
+          uint8 ccw = Sim->GetHeldCCW_Steps_Sim(i);
+          for (const FOrbData &Sub : A.Held.Orbs) {
+            FHex Local(Sub.dQ, Sub.dR);
+            FHex Rot = Sim->Rot60CCW(Local, ccw);
+            AllOrbHexes.Add(FHex(Grip.Q + Rot.Q, Grip.R + Rot.R, Grip.Level));
+          }
         }
-      } else {
-        AllOrbHexes.Add(Anchor);
+        break;
       }
+    }
 
-      // Traverse bonds
-      if (const TArray<int32> *BondList = Sim->ItemToBonds.Find(CurrentId)) {
-        for (int32 BondIdx : *BondList) {
-          if (Sim->Bonds.IsValidIndex(BondIdx) && Sim->Bonds[BondIdx].bActive) {
-            if (!CollectedBondIds.Contains(BondIdx)) {
-              CollectedBondIds.Add(BondIdx);
-              OutBondIndices.Add(BondIdx);
-            }
+    // Regardless of where it was found (board or arm), traverse bonds from it
+    if (const TArray<int32> *BondList = Sim->ItemToBonds.Find(CurrentId)) {
+      for (int32 BondIdx : *BondList) {
+        if (Sim->Bonds.IsValidIndex(BondIdx) && Sim->Bonds[BondIdx].bActive) {
+          if (!CollectedBondIds.Contains(BondIdx)) {
+            CollectedBondIds.Add(BondIdx);
+            OutBondIndices.Add(BondIdx);
+          }
 
-            int32 OtherId = (Sim->Bonds[BondIdx].ItemA == CurrentId)
-                                ? Sim->Bonds[BondIdx].ItemB
-                                : Sim->Bonds[BondIdx].ItemA;
-            if (OtherId > 0 && !VisitedItemIds.Contains(OtherId)) {
-              PendingItemIds.Add(OtherId);
-            }
+          int32 OtherId = (Sim->Bonds[BondIdx].ItemA == CurrentId)
+                              ? Sim->Bonds[BondIdx].ItemB
+                              : Sim->Bonds[BondIdx].ItemA;
+          if (OtherId > 0 && !VisitedItemIds.Contains(OtherId)) {
+            PendingItemIds.Add(OtherId);
           }
         }
       }
