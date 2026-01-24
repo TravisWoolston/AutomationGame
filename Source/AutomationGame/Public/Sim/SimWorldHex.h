@@ -113,6 +113,11 @@ public:
   UFUNCTION(BlueprintPure, Category = "Sim|Orbs")
   bool GetOrbKindAt(const FHex &Hex, uint8 &OutKind) const;
 
+  /** Returns the type of orb at the given location, checking board items and
+   * held items. */
+  UFUNCTION(BlueprintPure, Category = "Sim|Orbs")
+  EOrbType GetOrbTypeAtLocation(const FHex &H) const;
+
   // Maps
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim")
   TMap<FHex, FTile> TileMap;

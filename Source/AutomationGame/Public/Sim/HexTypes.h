@@ -34,6 +34,18 @@ struct AUTOMATIONGAME_API FHex {
     return FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)),
                       FMath::Abs(dq + dr));
   }
+
+  FORCEINLINE FHex RotateCCW(int32 Steps) const {
+    FHex Res = *this;
+    int32 N = ((Steps % 6) + 6) % 6;
+    for (int32 i = 0; i < N; ++i) {
+      int32 OldQ = Res.Q;
+      int32 OldR = Res.R;
+      Res.Q = -OldR;
+      Res.R = OldQ + OldR;
+    }
+    return Res;
+  }
 };
 
 FORCEINLINE uint32 GetTypeHash(const FHex &H) {

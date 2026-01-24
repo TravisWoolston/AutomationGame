@@ -3,10 +3,10 @@
 #include "Data/OrbMaterialManager.h"
 #include "GameFramework/Actor.h"
 
-
 #include "Sim/HexCoord.h"
 #include "Sim/HexTypes.h"
 #include "Sim/OrbTypes.h"
+//.generated.h must be the last include
 #include "HexFactoryActor.generated.h"
 
 class UInstancedStaticMeshComponent;
@@ -46,6 +46,9 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "Visual")
   void SetViewMode(EViewMode Mode);
+
+  /** Utility to find the first factory actor in the world. */
+  static AHexFactoryActor *FindInWorld(UWorld *World);
 
   UFUNCTION()
   void HandleSimStepComplete(float StepSeconds);
@@ -111,6 +114,10 @@ public:
   // Optional debug arrows for bonds
   UPROPERTY(EditAnywhere, Category = "Visual|Bonds")
   bool bDrawBondDebugArrows = false;
+
+  // ----- Arms -----
+  UPROPERTY(EditAnywhere, Category = "Visual|Arms")
+  USkeletalMesh *UpsideDownArmMesh = nullptr;
 
 protected:
   // Components

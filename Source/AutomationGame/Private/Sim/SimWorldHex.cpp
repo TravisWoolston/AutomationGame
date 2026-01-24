@@ -1809,3 +1809,58 @@ USimWorldHex::FindClusterInputChain(const FHex &StartHex,
 
   return Chain;
 }
+EOrbType USimWorldHex::GetOrbTypeAtLocation(const FHex &H) const {
+  // 1. Check direct board items (singles)
+  if (const FItem *Item = ItemMap.Find(H)) {
+    if (!Item->bIsCluster) {
+      return Item->Single.Type;
+    }
+  }
+
+  // 2. Check cluster members on board
+  for (const auto &KV : ItemMap) {
+    const FItem &Item = KV.Value;
+    if (Item.bIsCluster) {
+      for (const FOrbData &Orb : Item.Orbs) {
+        FHex OrbPos(KV.Key.Q + Orb.dQ, KV.Key.R + Orb.dR, KV.Key.Level);
+        if (OrbPos == H)
+          return (EOrbType)Orb.Type;
+      }
+    }
+  }
+
+  // 3. Check items held by arms
+  for (int32 i = 0; i < Arms.Num(); ++i) {
+    const FArmState &A = Arms[i];
+    if (!A.bHolding)
+      continue;
+
+    // Calculate grip hex (same logic as Sim) using sim state where possible
+    uint8 Facing = GetSimFacing(i, A);
+    int32 ArmLen = GetSimArmLen(i, A);
+    FHex GripHex = A.BaseHex;
+    for (int j = 0; j < ArmLen; ++j)
+      GripHex = HexUtil::Neighbor(GripHex, (EHexDir)Facing);
+
+    if (!A.Held.bIsCluster) {
+      if (GripHex == H)
+        return A.Held.Single.Type;
+    } else {
+      const uint8 cur = Facing % 6;
+      const int8 grab = GetSimGrabFacing(i, A);
+      const uint8 facingDelta =
+          (grab >= 0) ? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6) : cur;
+      const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+      for (const FOrbData &Sub : A.Held.Orbs) {
+        FHex Local(Sub.dQ, Sub.dR, 0); // Local delta is at Level 0
+        FHex Rot = Local.RotateCCW(ccw);
+        FHex WorldPos(GripHex.Q + Rot.Q, GripHex.R + Rot.R, GripHex.Level);
+        if (WorldPos == H)
+          return (EOrbType)Sub.Type;
+      }
+    }
+  }
+
+  return EOrbType::None;
+}

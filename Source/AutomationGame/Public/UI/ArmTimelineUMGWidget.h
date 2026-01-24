@@ -1,6 +1,5 @@
 #pragma once
 
-
 #include "Blueprint/UserWidget.h"
 #include "Components/HorizontalBox.h"
 #include "Components/Image.h"
@@ -162,6 +161,10 @@ public:
   /** Completed command color */
   UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
   FLinearColor CompletedCommandColor = FLinearColor::Green;
+
+  /** Border color for the command that would be deleted (selected) */
+  UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
+  FLinearColor SelectedCommandColor = FLinearColor::Blue;
 
   /** Size of command icons */
   UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")

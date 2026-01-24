@@ -1487,7 +1487,9 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
     // not capturing runtime edits)
     TMap<FHex, FArmSpawnSpec> ExistingArmSpecs;
     for (const FArmSpawnSpec &ExistingSpec : Scenario.Arms) {
-      ExistingArmSpecs.Add(FHex(ExistingSpec.Q, ExistingSpec.R), ExistingSpec);
+      ExistingArmSpecs.Add(
+          FHex(ExistingSpec.Q, ExistingSpec.R, ExistingSpec.Level),
+          ExistingSpec);
     }
 
     // Completely rebuild arm specs from current world state
@@ -1509,7 +1511,7 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
 
       // Preserve original facing unless we're explicitly capturing runtime
       // facing edits
-      FHex ArmHex(Arm->Q, Arm->R);
+      FHex ArmHex(Arm->Q, Arm->R, Arm->Level);
       if (!bCaptureRuntimeFacingEdits && ExistingArmSpecs.Contains(ArmHex)) {
         // Use original facing from scenario to avoid rotation drift
         NewArmSpec.Facing = ExistingArmSpecs[ArmHex].Facing;
@@ -1553,8 +1555,9 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
     // Preserve existing walker specs (for program data) unless capturing edits
     TMap<FHex, FWalkerSpawnSpec> ExistingWalkerSpecs;
     for (const FWalkerSpawnSpec &ExistingWalker : Scenario.Walkers) {
-      ExistingWalkerSpecs.Add(FHex(ExistingWalker.Q, ExistingWalker.R),
-                              ExistingWalker);
+      ExistingWalkerSpecs.Add(
+          FHex(ExistingWalker.Q, ExistingWalker.R, ExistingWalker.Level),
+          ExistingWalker);
     }
 
     Scenario.Walkers.Empty();

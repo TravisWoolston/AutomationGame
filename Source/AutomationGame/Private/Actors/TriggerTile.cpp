@@ -302,39 +302,17 @@ void ATriggerTile::CheckTriggerCondition() {
   FHex Location(Q, R, Level);
   bool bMatchingOrb = false;
 
-  // Check Sim Grid for ItemId
-  if (Sim->ItemMap.Contains(Location)) {
-    const FItem *Item = Sim->ItemMap.Find(Location);
-    if (Item && Item->Id != 0) {
-      // There's an orb here - check if it matches our trigger type
-      if (TriggerOrbType == EOrbType::Void) {
-        // Void type: any orb triggers positive signal
-        bMatchingOrb = true;
-      } else if (!Item->bIsCluster) {
-        // Single orb - check if type matches
-        bMatchingOrb = (Item->Single.Type == TriggerOrbType);
-      } else {
-        // Cluster - check if any orb in the cluster matches
-        // For now, check the first orb in the cluster at this position
-        for (const FOrbData &OrbData : Item->Orbs) {
-          if (OrbData.dQ == 0 && OrbData.dR == 0) {
-            // This is the orb at the cluster's root position
-            bMatchingOrb = ((EOrbType)OrbData.Type == TriggerOrbType);
-            break;
-          }
-        }
-      }
+  // Check for any orb at this location (board or held)
+  EOrbType ActualType = Sim->GetOrbTypeAtLocation(Location);
 
-      if (bMatchingOrb) {
-        // Log matching orb detection
-        // UE_LOG(LogTemp, Verbose, TEXT("TriggerTile at (%d,%d) detected
-        // matching orb ID:%d"), Q, R, Item->Id);
-      }
+  if (ActualType != EOrbType::None) {
+    if (TriggerOrbType == EOrbType::Void) {
+      // Void type: any orb triggers positive signal
+      bMatchingOrb = true;
+    } else {
+      // Check if type matches
+      bMatchingOrb = (ActualType == TriggerOrbType);
     }
-  } else {
-    // No item at this location
-    // UE_LOG(LogTemp, VeryVerbose, TEXT("TriggerTile at (%d,%d) - no item found
-    // in sim"), Q, R);
   }
 
   // Update signal state if changed

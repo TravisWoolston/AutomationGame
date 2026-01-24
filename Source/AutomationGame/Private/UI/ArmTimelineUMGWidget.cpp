@@ -31,6 +31,7 @@ UArmTimelineUMGWidget::UArmTimelineUMGWidget(
   CurrentCommandColor = FLinearColor::Yellow;
   NormalCommandColor = FLinearColor::White;
   CompletedCommandColor = FLinearColor::Green;
+  SelectedCommandColor = FLinearColor::Blue;
   ListBorderColor = FLinearColor(0.2f, 0.2f, 0.2f, 0.8f);
   ListBorderThickness = 2.0f;
   bPulseCurrentCommand = true;
@@ -595,9 +596,19 @@ void UArmTimelineUMGWidget::UpdateCommandIcon(UWidget *IconWidget,
     FLinearColor BorderColor;
     float BorderThickness = 2.0f;
 
-    if (bIsCurrent) {
+    // Command that would be removed by delete command
+    int32 IndexToRemove =
+        FMath::Clamp(CursorPosition, 0, FMath::Max(0, ArmProgram.Num() - 1));
+    bool bIsSelected =
+        (ArmProgram.Num() > 0 && Index == IndexToRemove && bIsEditingMode);
+
+    if (bIsSelected) {
+      // Selected/Affected command gets a distinct blue border
+      BorderColor = SelectedCommandColor;
+      BorderThickness = 4.0f;
+    } else if (bIsCurrent) {
       // Current command gets a bright border
-      BorderColor = FLinearColor::Yellow;
+      BorderColor = CurrentCommandColor;
       BorderThickness = 3.0f;
     } else if (bIsCompleted) {
       // Completed commands get a green border
@@ -768,6 +779,9 @@ void UArmTimelineUMGWidget::UpdateCursorIndicator() {
 
   // Apply visual position
   SetCursorIndicatorPosition();
+
+  // Refresh icon borders to show/move the selected command highlight
+  UpdateCommandIcons();
 
   // Notify Blueprint to update the cursor visual (if needed for additional
   // effects)
