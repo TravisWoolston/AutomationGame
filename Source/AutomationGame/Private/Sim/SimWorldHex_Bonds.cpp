@@ -210,14 +210,15 @@ void USimWorldHex::StepBonds() {
         continue;
 
       // Skip board-to-held bonding if the board item was moved by a belt this
-      // tick (waits one tick for visual transition to complete)
+      // tick or previous tick (waits one tick for visual transition to
+      // complete)
       if (bAIsHeld && !bBIsHeld &&
           (OrbsNewlyMovedByBelts.Contains(BId) ||
-           NewlyPlacedItems.Contains(BId)))
+           OrbsMovedLastTick.Contains(BId) || NewlyPlacedItems.Contains(BId)))
         continue;
       if (bBIsHeld && !bAIsHeld &&
           (OrbsNewlyMovedByBelts.Contains(AId) ||
-           NewlyPlacedItems.Contains(AId)))
+           OrbsMovedLastTick.Contains(AId) || NewlyPlacedItems.Contains(AId)))
         continue;
 
       // Dedup existing bond
@@ -538,12 +539,14 @@ void USimWorldHex::StepBondsSecondPass() {
       continue;
 
     // Skip board-to-held bonding if the board item was moved by a belt this
-    // tick (waits one tick for visual transition to complete)
+    // tick or previous tick (waits one tick for visual transition to complete)
     if (bAIsHeld && !bBIsHeld &&
-        (OrbsNewlyMovedByBelts.Contains(BId) || NewlyPlacedItems.Contains(BId)))
+        (OrbsNewlyMovedByBelts.Contains(BId) ||
+         OrbsMovedLastTick.Contains(BId) || NewlyPlacedItems.Contains(BId)))
       continue;
     if (bBIsHeld && !bAIsHeld &&
-        (OrbsNewlyMovedByBelts.Contains(AId) || NewlyPlacedItems.Contains(AId)))
+        (OrbsNewlyMovedByBelts.Contains(AId) ||
+         OrbsMovedLastTick.Contains(AId) || NewlyPlacedItems.Contains(AId)))
       continue;
 
     // Check if bond already exists

@@ -833,6 +833,11 @@ void USimWorldHex::ProcessOutputs() {
     if (!ItemPtr)
       continue;
 
+    // Skip items just placed by arms this tick (allows drop animation to
+    // finish)
+    if (NewlyPlacedItems.Contains(ItemPtr->Id))
+      continue;
+
     // Handle regular output tiles
     if (T.Kind == ETileKind::Output) {
       // Check if the orb type matches the output's expected type
@@ -1589,6 +1594,8 @@ void USimWorldHex::ProcessOutputs() {
           OrbAt.Add(NewHex, KindFromItem(MovingItem));
 
           ItemsMovedLastStep.Add(ItemId);
+          OrbsNewlyMovedByBelts.Add(
+              ItemId); // Ensure they wait a tick before bonding
           ProcessedOutputs.Add(OldPositions[ItemId]);
         }
 
@@ -1611,6 +1618,14 @@ void USimWorldHex::ProcessOutputs() {
 }
 
 bool USimWorldHex::TryArmPickItem(const FHex &From, FItem &OutItem) {
+  // Check if item at this location is currently in-flight/animating
+  if (const FItem *FoundCheck = ItemMap.Find(From)) {
+    if (OrbsMovedLastTick.Contains(FoundCheck->Id) ||
+        OrbsNewlyMovedByBelts.Contains(FoundCheck->Id)) {
+      return false;
+    }
+  }
+
   if (TryTakeItem(From, OutItem)) {
     if (OutItem.Id != 0)
       HeldItemLastHex.Add(OutItem.Id, From);

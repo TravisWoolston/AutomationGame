@@ -1074,6 +1074,8 @@ void USimWorldHex::StepSim() {
   SkipInputThisFrame.Reset();
   SkipOutputThisFrame.Reset();
   OrbsNewlyMovedToOutput.Reset();
+  OrbsMovedLastTick =
+      OrbsNewlyMovedByBelts; // Preserve move state for grab checks
   OrbsNewlyMovedByBelts.Reset();
 
   // pass 1 (empty at start)
@@ -1103,6 +1105,10 @@ void USimWorldHex::StepSim() {
   StepBondsSecondPass();
 
   ProcessOutputs();
+
+  // Clear newly placed items and recently dropped tracking at very end of tick
+  NewlyPlacedItems.Empty();
+  RecentlyDroppedByArm.Empty();
 
   // Debug visualization - draw bond cylinders when DebugSpheres is enabled
   DrawBondDebugLines();

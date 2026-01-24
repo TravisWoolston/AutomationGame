@@ -1511,7 +1511,5 @@ void USimWorldHex::StepBelts() {
     }
   }
 
-  // Clear newly placed items and recently dropped tracking
-  NewlyPlacedItems.Empty();
-  RecentlyDroppedByArm.Empty();
+  // NewlyPlacedItems and RecentlyDroppedByArm will be cleared in StepSim
 }
