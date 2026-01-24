@@ -2,6 +2,7 @@
 #include "Actors/HexBoardActor.h"
 #include "Actors/OrbSimDriver.h"
 #include "Components/BoxComponent.h"
+#include "Components/HexPlacementComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Data/OrbMaterialManager.h"
@@ -228,6 +229,11 @@ void AHexFactoryActor::EnsureComponents() {
   EnsureISM(BeltWaitingISM, TEXT("BeltWaitingISM_Runtime"));
   EnsureISM(BondISM, TEXT("BondISM_Runtime"));
   EnsureISM(UnbondISM, TEXT("UnbondISM_Runtime"));
+
+  EnsureISM(HighlightTileISM, TEXT("HighlightTileISM_Runtime"));
+  EnsureISM(HighlightBeltISM, TEXT("HighlightBeltISM_Runtime"));
+  EnsureISM(HighlightBondISM, TEXT("HighlightBondISM_Runtime"));
+  EnsureISM(HighlightUnbondISM, TEXT("HighlightUnbondISM_Runtime"));
 
   // Ensure type-specific output ISM components
   EnsureISM(OutputNoneISM, TEXT("OutputNoneISM_Runtime"));
@@ -564,6 +570,139 @@ FVector AHexFactoryActor::HexToWorld(const FHex &H) const {
   return AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
 }
 
+void AHexFactoryActor::UpdateGlobalHighlight(EPlaceKind Kind, bool bEnable,
+                                             int32 Level, EOrbType OrbType) {
+  bHighlightEnabled = bEnable;
+  CurrentHighlightKind = Kind;
+  HighlightLevel = Level;
+  HighlightOrbType = OrbType;
+
+  if (HighlightTileISM)
+    HighlightTileISM->ClearInstances();
+  if (HighlightBeltISM)
+    HighlightBeltISM->ClearInstances();
+  if (HighlightBondISM)
+    HighlightBondISM->ClearInstances();
+  if (HighlightUnbondISM)
+    HighlightUnbondISM->ClearInstances();
+
+  if (!bEnable || !Sim)
+    return;
+
+  const float Tile = Driver ? Driver->GetTileSize() : 100.f;
+  const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+  const EHexOrientation Ori =
+      Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+  const AActor *Anchor = GetAnchor();
+  const FVector AnchorV =
+      Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
+  auto GetYawToNeighbor = [&](const FHex &Start, uint8 Dir) -> float {
+    FHex Neighbor = HexUtil::Neighbor(Start, (EHexDir)(Dir % 6));
+    FVector PosA = Driver->MapHexToWorld(Start);
+    FVector PosB = Driver->MapHexToWorld(Neighbor);
+    FVector DirVec = (PosB - PosA).GetSafeNormal();
+    return DirVec.IsNearlyZero()
+               ? 0.f
+               : FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+  };
+
+  for (const auto &KV : Sim->TileMap) {
+    const FHex &H = KV.Key;
+    const FTile &T = KV.Value;
+
+    // Filter by level
+    if (H.Level != Level)
+      continue;
+
+    bool bMatches = false;
+    UInstancedStaticMeshComponent *TargetISM = nullptr;
+    FTransform Transform = FTransform::Identity;
+
+    const FVector2D LocalXY =
+        HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
+    const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+    const float Z = 0.f;
+    const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, Z);
+    const int32 DisplayLevel = GetDisplayLevel(H.Level);
+    const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
+
+    switch (Kind) {
+    case EPlaceKind::Belt:
+      if (T.Kind == ETileKind::Belt) {
+        bMatches = true;
+        TargetISM = HighlightBeltISM;
+        float Yaw = GetYawToNeighbor(H, T.Arg);
+        Transform = FTransform(FRotator(Pitch, Yaw, 0.f), Loc, BeltScale);
+      }
+      break;
+
+    case EPlaceKind::Input:
+    case EPlaceKind::ClusterInput:
+    case EPlaceKind::ClusterSend:
+      if (T.Kind == ETileKind::Input || T.Kind == ETileKind::ClusterInput ||
+          T.Kind == ETileKind::ClusterSend ||
+          T.Kind == ETileKind::DiscoveryClusterInput) {
+        // Only match if OrbType matches
+        if (T.Arg == (uint8)OrbType) {
+          bMatches = true;
+          TargetISM = HighlightTileISM;
+          Transform = FTransform(FRotator(Pitch, 0.f, 0.f), Loc, FVector(1.f));
+        }
+      }
+      break;
+
+    case EPlaceKind::Output:
+    case EPlaceKind::ClusterOutput:
+      if (T.Kind == ETileKind::Output || T.Kind == ETileKind::ClusterOutput ||
+          T.Kind == ETileKind::DiscoveryClusterOutput) {
+        // Only match if OrbType matches
+        if (T.Arg == (uint8)OrbType) {
+          bMatches = true;
+          TargetISM = HighlightTileISM;
+          Transform = FTransform(FRotator(Pitch, 0.f, 0.f), Loc, FVector(1.f));
+        }
+      }
+      break;
+
+    case EPlaceKind::Bond:
+      if (T.Kind == ETileKind::Bond) {
+        bMatches = true;
+        TargetISM = HighlightBondISM;
+        FVector CenterA = Driver->MapHexToWorld(H);
+        FVector CenterB =
+            Driver->MapHexToWorld(HexUtil::Neighbor(H, (EHexDir)(T.Arg % 6)));
+        FVector Mid = (CenterA + CenterB) * 0.5f;
+        FVector DirVec = (CenterB - CenterA).GetSafeNormal();
+        float Yaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+        Transform = FTransform(FRotator(Pitch, Yaw, 0.f), Mid, BondScale);
+      }
+      break;
+
+    case EPlaceKind::Unbond:
+      if (T.Kind == ETileKind::Unbond) {
+        bMatches = true;
+        TargetISM = HighlightUnbondISM;
+        FVector CenterA = Driver->MapHexToWorld(H);
+        FVector CenterB =
+            Driver->MapHexToWorld(HexUtil::Neighbor(H, (EHexDir)(T.Arg % 6)));
+        FVector Mid = (CenterA + CenterB) * 0.5f;
+        FVector DirVec = (CenterB - CenterA).GetSafeNormal();
+        float Yaw = FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+        Transform = FTransform(FRotator(Pitch, Yaw, 0.f), Mid, UnbondScale);
+      }
+      break;
+
+    default:
+      break;
+    }
+
+    if (bMatches && TargetISM) {
+      TargetISM->AddInstance(Transform);
+    }
+  }
+}
+
 void AHexFactoryActor::RebuildInternal() {
   // Note: Debug logging removed for performance
 
@@ -655,9 +794,39 @@ void AHexFactoryActor::RebuildInternal() {
   if (UnbondMaterial) {
     UnbondISM->SetMaterial(0, UnbondMaterial);
   } else if (BondMaterial) {
-    // Fallback to bond material if no unbond material is set
     UnbondISM->SetMaterial(0, BondMaterial);
   }
+
+  // Set up meshes for highlight ISMs
+  if (BaseTileMesh) {
+    HighlightTileISM->SetStaticMesh(BaseTileMesh);
+    HighlightBeltISM->SetStaticMesh(BaseTileMesh);
+  }
+  if (BeltMesh) {
+    HighlightBeltISM->SetStaticMesh(BeltMesh);
+  }
+  if (BondMesh) {
+    HighlightBondISM->SetStaticMesh(BondMesh);
+  }
+  if (UnbondMesh) {
+    HighlightUnbondISM->SetStaticMesh(UnbondMesh);
+  } else if (BondMesh) {
+    HighlightUnbondISM->SetStaticMesh(BondMesh);
+  }
+
+  // Setup highlight ISMs for outlining
+  auto SetupHighlightISM = [](UInstancedStaticMeshComponent *Comp) {
+    if (Comp) {
+      Comp->SetRenderCustomDepth(true);
+      Comp->SetCustomDepthStencilValue(1); // Outline color
+      Comp->SetRenderInMainPass(false);    // Only see outline
+      Comp->SetVisibility(true);
+    }
+  };
+  SetupHighlightISM(HighlightTileISM);
+  SetupHighlightISM(HighlightBeltISM);
+  SetupHighlightISM(HighlightBondISM);
+  SetupHighlightISM(HighlightUnbondISM);
 
   // Clear all instances
   TileISM->ClearInstances();
@@ -672,12 +841,23 @@ void AHexFactoryActor::RebuildInternal() {
   BondISM->ClearInstances();
   UnbondISM->ClearInstances();
 
+  HighlightTileISM->ClearInstances();
+  HighlightBeltISM->ClearInstances();
+  HighlightBondISM->ClearInstances();
+  HighlightUnbondISM->ClearInstances();
+
   RebuildTiles();
   RebuildBelts();
   RebuildBonds();      // NEW
   RebuildOutputs();    // NEW: Type-specific output rendering
   RebuildInputTiles(); // Render Input/ClusterInput tiles using ISM with
                        // orb-type materials
+
+  // Update global highlight if enabled
+  if (bHighlightEnabled) {
+    UpdateGlobalHighlight(CurrentHighlightKind, bHighlightEnabled,
+                          HighlightLevel, HighlightOrbType);
+  }
 
   // Note: Debug logging removed for performance
 }

@@ -3,6 +3,7 @@
 #include "Data/OrbMaterialManager.h"
 #include "GameFramework/Actor.h"
 
+
 #include "Sim/HexCoord.h"
 #include "Sim/HexTypes.h"
 #include "Sim/OrbTypes.h"
@@ -38,6 +39,10 @@ public:
   void SetBondHighlight(bool bEnable);
   UFUNCTION(BlueprintCallable, Category = "Visual")
   void SetUnbondHighlight(bool bEnable);
+
+  UFUNCTION(BlueprintCallable, Category = "Visual")
+  void UpdateGlobalHighlight(EPlaceKind Kind, bool bEnable, int32 Level,
+                             EOrbType OrbType);
 
   UFUNCTION(BlueprintCallable, Category = "Visual")
   void SetViewMode(EViewMode Mode);
@@ -141,6 +146,16 @@ protected:
   UInstancedStaticMeshComponent *InputCatalystXISM = nullptr;
   UPROPERTY(Transient) UInstancedStaticMeshComponent *InputVoidISM = nullptr;
 
+  // Highlight ISMs for global category highlighting
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HighlightTileISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HighlightBeltISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HighlightBondISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HighlightUnbondISM = nullptr;
+
   // Collision plane for line traces (more performant than individual tile
   // meshes)
   UPROPERTY(Transient) UBoxComponent *GridCollisionPlane = nullptr;
@@ -153,6 +168,12 @@ protected:
   // Revisions
   int32 LastSeenRevision = -1;
   int32 LastSeenBoardRevision = -1;
+
+  // Global highlight state
+  EPlaceKind CurrentHighlightKind = (EPlaceKind)255;
+  bool bHighlightEnabled = false;
+  int32 HighlightLevel = 0;
+  EOrbType HighlightOrbType = EOrbType::None;
 
   void EnsureComponents();
   void RebuildInternal();

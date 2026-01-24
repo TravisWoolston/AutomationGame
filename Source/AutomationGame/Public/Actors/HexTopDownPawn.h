@@ -140,6 +140,7 @@ private:
   uint8 BlueprintRotation = 0;
   int32 CurrentLevel = 0;
   EPlaceKind LastGlobalHighlightKind = (EPlaceKind)255;
+  EOrbType LastGlobalHighlightOrbType = EOrbType::None;
   TArray<TWeakObjectPtr<AActor>> GlobalHighlightedActors;
   void SetGlobalHighlightForKind(EPlaceKind Kind, bool bEnable);
 

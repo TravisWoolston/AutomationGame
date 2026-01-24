@@ -607,7 +607,20 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
 
   // 4. Handle global category highlight based on current selection
   if (Placer) {
-    if (Placer->PlaceKind != LastGlobalHighlightKind) {
+    EOrbType CurrentOrbType = EOrbType::None;
+    if (Placer->PlaceKind == EPlaceKind::Input ||
+        Placer->PlaceKind == EPlaceKind::ClusterInput) {
+      CurrentOrbType = Placer->GetCurrentInputOrbType();
+    } else if (Placer->PlaceKind == EPlaceKind::Output ||
+               Placer->PlaceKind == EPlaceKind::ClusterOutput ||
+               Placer->PlaceKind == EPlaceKind::ClusterSend) {
+      CurrentOrbType = Placer->GetCurrentOutputOrbType();
+    } else if (Placer->PlaceKind == EPlaceKind::TriggerTile) {
+      CurrentOrbType = Placer->GetCurrentTriggerOrbType();
+    }
+
+    if (Placer->PlaceKind != LastGlobalHighlightKind ||
+        CurrentOrbType != LastGlobalHighlightOrbType) {
       // Turn off old highlight
       if (LastGlobalHighlightKind != (EPlaceKind)255) {
         SetGlobalHighlightForKind(LastGlobalHighlightKind, false);
@@ -615,10 +628,12 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
       // Turn on new highlight
       SetGlobalHighlightForKind(Placer->PlaceKind, true);
       LastGlobalHighlightKind = Placer->PlaceKind;
+      LastGlobalHighlightOrbType = CurrentOrbType;
     }
   } else if (LastGlobalHighlightKind != (EPlaceKind)255) {
     SetGlobalHighlightForKind(LastGlobalHighlightKind, false);
     LastGlobalHighlightKind = (EPlaceKind)255;
+    LastGlobalHighlightOrbType = EOrbType::None;
   }
 
   // If dragging selection/blueprint, usually we don't highlight single tiles,
@@ -818,6 +833,20 @@ void AHexTopDownPawn::SetGlobalHighlightForKind(EPlaceKind Kind, bool bEnable) {
   if (!GetWorld())
     return;
 
+  // 1. Determine OrbType if applicable
+  EOrbType CurrentOrbType = EOrbType::None;
+  if (Placer) {
+    if (Kind == EPlaceKind::Input || Kind == EPlaceKind::ClusterInput) {
+      CurrentOrbType = Placer->GetCurrentInputOrbType();
+    } else if (Kind == EPlaceKind::Output ||
+               Kind == EPlaceKind::ClusterOutput ||
+               Kind == EPlaceKind::ClusterSend) {
+      CurrentOrbType = Placer->GetCurrentOutputOrbType();
+    } else if (Kind == EPlaceKind::TriggerTile) {
+      CurrentOrbType = Placer->GetCurrentTriggerOrbType();
+    }
+  }
+
   // 1. Handle HexFactory (ISM/Procedural Mesh based)
   if (!CachedHexFactory) {
     for (TActorIterator<AHexFactoryActor> It(GetWorld()); It; ++It) {
@@ -827,28 +856,9 @@ void AHexTopDownPawn::SetGlobalHighlightForKind(EPlaceKind Kind, bool bEnable) {
   }
 
   if (CachedHexFactory) {
-    switch (Kind) {
-    case EPlaceKind::Belt:
-      CachedHexFactory->SetBeltHighlight(bEnable);
-      break;
-    case EPlaceKind::Input:
-    case EPlaceKind::ClusterInput:
-    case EPlaceKind::ClusterSend:
-      CachedHexFactory->SetInputHighlight(bEnable);
-      break;
-    case EPlaceKind::Output:
-    case EPlaceKind::ClusterOutput:
-      CachedHexFactory->SetOutputHighlight(bEnable);
-      break;
-    case EPlaceKind::Bond:
-      CachedHexFactory->SetBondHighlight(bEnable);
-      break;
-    case EPlaceKind::Unbond:
-      CachedHexFactory->SetUnbondHighlight(bEnable);
-      break;
-    default:
-      break;
-    }
+    // Forward to the new global highlight system in HexFactoryActor
+    CachedHexFactory->UpdateGlobalHighlight(Kind, bEnable, CurrentLevel,
+                                            CurrentOrbType);
   }
 
   // 2. Handle Actors
@@ -860,6 +870,24 @@ void AHexTopDownPawn::SetGlobalHighlightForKind(EPlaceKind Kind, bool bEnable) {
       for (TActorIterator<AActor> It(GetWorld(), Class); It; ++It) {
         AActor *A = *It;
         if (IsValid(A)) {
+          // Filter by Level
+          int32 ActorLevel = 0;
+          if (ABasicArm *Arm = Cast<ABasicArm>(A))
+            ActorLevel = Arm->Level;
+          else if (ABasicWalker *Walker = Cast<ABasicWalker>(A))
+            ActorLevel = Walker->Level;
+          else if (ARequestBeacon *Beacon = Cast<ARequestBeacon>(A))
+            ActorLevel = Beacon->Level;
+          else if (ATriggerTile *Trigger = Cast<ATriggerTile>(A)) {
+            ActorLevel = Trigger->Level;
+            // Also filter by TriggerOrbType
+            if (Trigger->TriggerOrbType != CurrentOrbType)
+              continue;
+          }
+
+          if (ActorLevel != CurrentLevel)
+            continue;
+
           TArray<UPrimitiveComponent *> Comps;
           A->GetComponents(Comps);
           for (UPrimitiveComponent *C : Comps) {
@@ -1008,6 +1036,11 @@ void AHexTopDownPawn::SwitchGrid() {
               "(DisplayFlipped: %s)"),
          CurrentLevel,
          Driver && Driver->IsDisplayFlipped() ? TEXT("true") : TEXT("false"));
+
+  // Refresh global highlight for the new grid
+  if (LastGlobalHighlightKind != (EPlaceKind)255) {
+    SetGlobalHighlightForKind(LastGlobalHighlightKind, true);
+  }
 }
 
 void AHexTopDownPawn::RequestMoveToTile() {
