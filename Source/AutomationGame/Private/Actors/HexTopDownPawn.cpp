@@ -3738,8 +3738,26 @@ void AHexTopDownPawn::NextViewMode() {
   }
   CurrentViewMode = (EViewMode)NextMode;
 
-  UE_LOG(LogTemp, Log, TEXT("View Mode changed to: %d"),
-         (int32)CurrentViewMode);
+  FString ModeName = TEXT("Unknown");
+  switch (CurrentViewMode) {
+  case EViewMode::Standard:
+    ModeName = TEXT("Standard");
+    break;
+  case EViewMode::AdvancedFilter:
+    ModeName = TEXT("Advanced Filter");
+    break;
+  case EViewMode::OrbView:
+    ModeName = TEXT("Orb View");
+    break;
+  }
+
+  if (GEngine) {
+    GEngine->AddOnScreenDebugMessage(
+        100, 2.0f, FColor::Cyan,
+        FString::Printf(TEXT("View Mode: %s"), *ModeName));
+  }
+
+  UE_LOG(LogTemp, Log, TEXT("View Mode changed to: %s"), *ModeName);
 
   // 1. Handle Grid Visibility
   bool bGridShouldBeVisible = (CurrentViewMode != EViewMode::AdvancedFilter);

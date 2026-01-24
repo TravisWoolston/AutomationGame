@@ -12,28 +12,8 @@ void USimWorldHex::StepBelts() {
   // StepArms)
   const TSet<FHex> &HeldOrbHexes = CachedHeldOrbHexes;
 
-  // Gather all walker foot tiles
-  TSet<FHex> WalkerFootTiles;
-  for (const FWalkerState &W : Walkers) {
-    auto AddBlockingFoot = [&](const FFootState &F) {
-      // Only Planted and Lowering feet block belts.
-      // Raising and Moving (including Hovering) feet allow items to pass
-      // underneath. ALSO: Holding feet are raised and don't block belts (even
-      // if state is Planted)
-      if (F.bHoldingItem) {
-        return; // Holding feet are raised, don't block
-      }
-      if (F.StepState == EFootStepState::Planted ||
-          F.StepState == EFootStepState::Lowering) {
-        WalkerFootTiles.Add(F.CurrentTile);
-      }
-    };
-
-    AddBlockingFoot(W.DFoot);
-    AddBlockingFoot(W.LFoot);
-    AddBlockingFoot(W.RFoot);
-    AddBlockingFoot(W.UFoot);
-  }
+  // Use cached blocking walker foot tiles
+  const TSet<FHex> &WalkerFootTiles = CachedBlockingFootHexes;
 
   // Track items that need their bIsReady flag set to true at the end of this
   // tick

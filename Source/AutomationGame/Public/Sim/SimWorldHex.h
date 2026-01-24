@@ -10,7 +10,6 @@
 #include "Sim/Tiles.h"
 #include "Sim/WalkerTypes.h"
 
-
 #include "Templates/Tuple.h"
 #include "UObject/Object.h"
 // .generated.h must be last
@@ -421,6 +420,11 @@ private:
   // ============================================================
   // Hexes occupied by held orbs (arms holding items)
   TSet<FHex> CachedHeldOrbHexes;
+  // Hexes where a walker foot is physically on the ground (Planted/Lowering)
+  TSet<FHex> CachedBlockingFootHexes;
+  // Hexes where a walker foot intends to be (Current + Target) - for foot
+  // assignment
+  TSet<FHex> CachedIntendedFootHexes;
   // Hexes occupied by arm bases (static until user adds/removes arms)
   TSet<FHex> CachedArmBaseHexes;
   // Flag to indicate if arm base cache needs rebuild (set true when arms
@@ -429,6 +433,8 @@ private:
 
   // Rebuild occupancy cache for held orbs (call once per tick after StepArms)
   void UpdateHeldOrbCache();
+  // Rebuild occupancy cache for walker feet (call once per tick)
+  void UpdateWalkerFootCache();
   // Rebuild arm base cache (only when arms added/removed)
   void UpdateArmBaseCache();
 

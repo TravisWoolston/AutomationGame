@@ -1031,6 +1031,30 @@ void USimWorldHex::UpdateHeldOrbCache() {
   }
 }
 
+void USimWorldHex::UpdateWalkerFootCache() {
+  CachedBlockingFootHexes.Reset();
+  CachedIntendedFootHexes.Reset();
+  for (const FWalkerState &W : Walkers) {
+    auto AddFootToCaches = [&](const FFootState &F) {
+      if (!F.bHoldingItem) {
+        // Intended occupancy (for other walkers to avoid)
+        CachedIntendedFootHexes.Add(F.CurrentTile);
+        CachedIntendedFootHexes.Add(F.TargetTile);
+
+        // Blocking occupancy (physically on ground, for belts/items to avoid)
+        if (F.StepState == EFootStepState::Planted ||
+            F.StepState == EFootStepState::Lowering) {
+          CachedBlockingFootHexes.Add(F.CurrentTile);
+        }
+      }
+    };
+    AddFootToCaches(W.DFoot);
+    AddFootToCaches(W.LFoot);
+    AddFootToCaches(W.RFoot);
+    AddFootToCaches(W.UFoot);
+  }
+}
+
 void USimWorldHex::StepSim() {
   PrevItemHex.Empty();
   for (const auto &KV : ItemMap)
@@ -1064,6 +1088,7 @@ void USimWorldHex::StepSim() {
   // Crucial to do this AFTER StepBonds because assimilation can move orbs from
   // board to held state.
   UpdateHeldOrbCache();
+  UpdateWalkerFootCache();
 
   StepWalkers();
   StepBelts();

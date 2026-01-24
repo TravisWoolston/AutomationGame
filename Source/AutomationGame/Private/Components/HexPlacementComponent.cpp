@@ -1437,6 +1437,23 @@ bool UHexPlacementComponent::CanPlaceAt(const FHex &Hex) const {
     }
   }
 
+  // Block placement on planted walker feet (excluding holding feet which are
+  // raised)
+  for (const FWalkerState &W : Sim->Walkers) {
+    if (!W.DFoot.bHoldingItem &&
+        (W.DFoot.CurrentTile == Hex || W.DFoot.TargetTile == Hex))
+      return false;
+    if (!W.LFoot.bHoldingItem &&
+        (W.LFoot.CurrentTile == Hex || W.LFoot.TargetTile == Hex))
+      return false;
+    if (!W.RFoot.bHoldingItem &&
+        (W.RFoot.CurrentTile == Hex || W.RFoot.TargetTile == Hex))
+      return false;
+    if (!W.UFoot.bHoldingItem &&
+        (W.UFoot.CurrentTile == Hex || W.UFoot.TargetTile == Hex))
+      return false;
+  }
+
   return true;
 }
 
