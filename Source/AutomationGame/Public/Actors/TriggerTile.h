@@ -149,6 +149,10 @@ public:
   // Condition check (called from Tick)
   void CheckTriggerCondition();
 
+  /** Signal handler for simulation step completion */
+  UFUNCTION()
+  void HandleSimStepComplete(float StepSeconds);
+
   // Wave ripple and pulse visuals
   void UpdateRippleVisuals();
 

@@ -1835,9 +1835,20 @@ EOrbType USimWorldHex::GetOrbTypeAtLocation(const FHex &H) const {
     if (!A.bHolding)
       continue;
 
-    // Calculate grip hex (same logic as Sim) using sim state where possible
-    uint8 Facing = GetSimFacing(i, A);
-    int32 ArmLen = GetSimArmLen(i, A);
+    // Calculate grip hex using the most current sim position (Pending -> Sim ->
+    // Base)
+    uint8 Facing = static_cast<uint8>(A.Facing);
+    if (const uint8 *PF = PendingFacingByArm.Find(i))
+      Facing = *PF;
+    else if (const uint8 *SF = SimFacingByArm.Find(i))
+      Facing = *SF;
+
+    int32 ArmLen = A.ArmLen;
+    if (const int32 *PL = PendingArmLenByArm.Find(i))
+      ArmLen = *PL;
+    else if (const int32 *SL = SimArmLenByArm.Find(i))
+      ArmLen = *SL;
+
     FHex GripHex = A.BaseHex;
     for (int j = 0; j < ArmLen; ++j)
       GripHex = HexUtil::Neighbor(GripHex, (EHexDir)Facing);
@@ -1847,7 +1858,13 @@ EOrbType USimWorldHex::GetOrbTypeAtLocation(const FHex &H) const {
         return A.Held.Single.Type;
     } else {
       const uint8 cur = Facing % 6;
-      const int8 grab = GetSimGrabFacing(i, A);
+
+      int8 grab = A.Held.GrabFacing;
+      if (const int8 *PG = PendingGrabFacingByArm.Find(i))
+        grab = *PG;
+      else if (const int8 *SG = SimGrabFacingByArm.Find(i))
+        grab = *SG;
+
       const uint8 facingDelta =
           (grab >= 0) ? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6) : cur;
       const uint8 ccw = (uint8)((6 - facingDelta) % 6);

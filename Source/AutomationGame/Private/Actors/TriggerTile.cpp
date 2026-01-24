@@ -77,11 +77,31 @@ void ATriggerTile::BeginPlay() {
 
     // Find GameTickManager for tick rate reference
     TickManager = AGameTickManager::Get(this);
+
+    // Subscribe to simulation step completion to update signals immediately
+    // after moves
+    if (Driver) {
+      Driver->OnSimStepComplete.AddDynamic(
+          this, &ATriggerTile::HandleSimStepComplete);
+    }
   }
 
   SyncWorldLocation();
   UpdateVisuals();
   UpdateWireVisual();
+}
+
+// void ATriggerTile::Destroyed() {
+//   if (Driver) {
+//     Driver->OnSimStepComplete.RemoveAll(this);
+//   }
+//   Super::Destroyed();
+// }
+
+void ATriggerTile::HandleSimStepComplete(float StepSeconds) {
+  if (Owners.Num() > 0) {
+    CheckTriggerCondition();
+  }
 }
 
 void ATriggerTile::Tick(float DeltaTime) {
@@ -675,6 +695,9 @@ void ATriggerTile::UpdateWireVisual() {
 }
 
 void ATriggerTile::Destroyed() {
+    if (Driver) {
+    Driver->OnSimStepComplete.RemoveAll(this);
+  }
   Super::Destroyed();
 
   // Clean up all trigger signals in simulation
