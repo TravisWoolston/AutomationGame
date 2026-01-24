@@ -92,6 +92,9 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
   USkeletalMesh *ArmSkeletalMesh = nullptr;
 
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+  USkeletalMesh *UpsideDownArmSkeletalMesh = nullptr;
+
   // Animation Blueprint class for the arm
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
   TSubclassOf<UAnimInstance> ArmAnimationBlueprintClass = nullptr;
@@ -141,6 +144,11 @@ public:
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
   FVector BaseScale = FVector(1.f);
+
+  /** Scale applied to the mesh when on the ceiling (Level 1). Default (1,1,-1)
+   * flips Z. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
+  FVector CeilingVisualScale = FVector(1.f, 1.f, -1.f);
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visual")
   FVector HandScale = FVector(0.4f);

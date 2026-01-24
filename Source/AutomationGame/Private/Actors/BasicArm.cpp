@@ -440,8 +440,31 @@ void ABasicArm::EnsureComps() {
 
 void ABasicArm::RefreshMeshes() {
   if (BaseComp) {
-    BaseComp->SetSkinnedAssetAndUpdate(ArmSkeletalMesh);
-    BaseComp->SetRelativeScale3D(BaseScale);
+    // Calculate display level based on flip state
+    int32 DisplayLevel = Level;
+    if (Driver) {
+      DisplayLevel = Driver->IsDisplayFlipped() ? (1 - Level) : Level;
+    }
+
+    USkeletalMesh *TargetMesh = ArmSkeletalMesh;
+    if (DisplayLevel == 1) { // Ceiling
+      if (UpsideDownArmSkeletalMesh) {
+        TargetMesh = UpsideDownArmSkeletalMesh;
+      } else if (AHexFactoryActor *Factory =
+                     AHexFactoryActor::FindInWorld(GetWorld())) {
+        if (Factory->UpsideDownArmMesh) {
+          TargetMesh = Factory->UpsideDownArmMesh;
+        }
+      }
+    }
+
+    BaseComp->SetSkinnedAssetAndUpdate(TargetMesh);
+
+    FVector FinalScale = BaseScale;
+    if (DisplayLevel == 1) {
+      FinalScale *= CeilingVisualScale;
+    }
+    BaseComp->SetRelativeScale3D(FinalScale);
   }
 
   if (HeldOrbComp) {
@@ -548,6 +571,12 @@ void ABasicArm::RefreshPose(float InAlpha) {
   if (BaseComp) {
     BaseComp->SetWorldLocation(BaseWorld);
     BaseComp->SetWorldRotation(BaseRot);
+
+    FVector FinalScale = BaseScale;
+    if (DisplayLevel == 1) {
+      FinalScale *= CeilingVisualScale;
+    }
+    BaseComp->SetRelativeScale3D(FinalScale);
   }
 
   FVector InterpolatedHandWorld = BaseWorld;
@@ -1691,18 +1720,18 @@ void ABasicArm::UpdateHeldOrbVisual() {
 
   // Swap skeletal mesh if needed
   if (DisplayLevel != LastDisplayLevel) {
+    USkeletalMesh *TargetMesh = ArmSkeletalMesh;
     if (DisplayLevel == 1) { // Inactive/Ceiling
-      if (AHexFactoryActor *Factory =
-              AHexFactoryActor::FindInWorld(GetWorld())) {
+      if (UpsideDownArmSkeletalMesh) {
+        TargetMesh = UpsideDownArmSkeletalMesh;
+      } else if (AHexFactoryActor *Factory =
+                     AHexFactoryActor::FindInWorld(GetWorld())) {
         if (Factory->UpsideDownArmMesh) {
-          BaseComp->SetSkeletalMesh(Factory->UpsideDownArmMesh);
-        } else {
-          BaseComp->SetSkeletalMesh(ArmSkeletalMesh);
+          TargetMesh = Factory->UpsideDownArmMesh;
         }
       }
-    } else { // Active/Floor
-      BaseComp->SetSkeletalMesh(ArmSkeletalMesh);
     }
+    BaseComp->SetSkeletalMesh(TargetMesh);
   }
 
   if (!bHolding) {
