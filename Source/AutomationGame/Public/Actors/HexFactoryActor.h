@@ -142,7 +142,7 @@ public:
   FVector HelixOrbScale = FVector(0.3f);
 
   UPROPERTY(EditAnywhere, Category = "Visual|Helix")
-  FVector HelixBondScale = FVector(0.15f, 0.15f, 1.0f);
+  FVector HelixBondScale = FVector(1.0f, 0.15f, 0.15f);
 
   UPROPERTY(EditAnywhere, Category = "Visual|Helix")
   float HelixIdleRotationSpeed = 10.f; // Degrees per second

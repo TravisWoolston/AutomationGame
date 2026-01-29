@@ -169,10 +169,7 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   TMap<int32, FHex> ItemIdToHex; // Map of item ID to its hex on the board
 
   for (const FHex &TileHex : Group.MemberTiles) {
-    // Check if an orb just arrived here - if so, wait a tick for it to 'settle'
-    if (OrbsNewlyMovedToOutput.Contains(TileHex)) {
-      return false;
-    }
+    // REMOVED: OrbsNewlyMovedToOutput check to allow continuous processing
 
     const FItem *TileItem = ItemMap.Find(TileHex);
     if (!TileItem) {
@@ -218,7 +215,20 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
 
           int32 OtherId = (Bond.ItemA == Id) ? Bond.ItemB : Bond.ItemA;
           if (!OrbIdSet.Contains(OtherId)) {
-            return false;
+            // Check if it's bonded to the previous rung - if so, that's okay!
+            bool bBondedToPrevious = false;
+            if (Group.Rungs.Num() > 0) {
+              for (const FOrbData &PrevOrb : Group.Rungs[0].Orbs) {
+                if (PrevOrb.ItemId == OtherId) {
+                  bBondedToPrevious = true;
+                  break;
+                }
+              }
+            }
+
+            if (!bBondedToPrevious) {
+              return false;
+            }
           }
         }
       }
@@ -234,7 +244,8 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
 
   FHelixRung NewRung;
   NewRung.SpawnTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
-  NewRung.ZOffset = -Group.RungSpacing;
+  // Set ZOffset to 0 for smooth transition from board orbs
+  NewRung.ZOffset = 0.f;
   NewRung.TargetZOffset = 0.f;
   NewRung.RotationDegrees = 0.f;
 
@@ -277,9 +288,33 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
     }
   }
 
-  // Build bonds between orbs in this rung
-  for (int32 ItemId : OrbIdSet) {
-    if (const TArray<int32> *BondList = ItemToBonds.Find(ItemId)) {
+  // New map for previous rung lookups
+  TMap<int32, int32> PrevItemIdToOrbIndex;
+  if (Group.Rungs.Num() > 0) {
+    for (int32 i = 0; i < Group.Rungs[0].Orbs.Num(); ++i) {
+      PrevItemIdToOrbIndex.Add(Group.Rungs[0].Orbs[i].ItemId, i);
+    }
+  }
+
+  // Build bonds between orbs in this rung AND to previous rung
+  for (const auto &OrbPair : ItemIdToOrbIndex) {
+    int32 ItemId = OrbPair.Key;
+    int32 IdxA = OrbPair.Value;
+
+    // Check all IDs (including sub-orb IDs)
+    // For simplicity, we check the base ItemId's bonds
+    int32 BaseId = ItemId;
+    // If it's a sub-orb ID, we need the base item ID to look up bonds in
+    // ItemToBonds assuming sub-orbs don't have separate entries in ItemToBonds
+    // (which is true) Wait, sub-orbs share the same ID in ItemToBonds usually?
+    // Actually, ItemToBonds is at the FItem level.
+
+    // Check if this is a sub-orb ID
+    if (BaseId > 1000000) { // Simple heuristic for sub-orb IDs
+      BaseId = BaseId >> 8;
+    }
+
+    if (const TArray<int32> *BondList = ItemToBonds.Find(BaseId)) {
       for (int32 BondIdx : *BondList) {
         if (!Bonds.IsValidIndex(BondIdx))
           continue;
@@ -287,16 +322,21 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
         if (!Bond.bActive)
           continue;
 
-        int32 OtherId = (Bond.ItemA == ItemId) ? Bond.ItemB : Bond.ItemA;
+        int32 OtherId = (Bond.ItemA == BaseId) ? Bond.ItemB : Bond.ItemA;
 
-        if (ItemIdToOrbIndex.Contains(ItemId) &&
-            ItemIdToOrbIndex.Contains(OtherId)) {
-          int32 IdxA = ItemIdToOrbIndex[ItemId];
+        // Handle connections to other orbs in the SAME new cluster
+        // We need to verify if the other orb is actually part of THIS cluster's
+        // sub-orbs if both are clusters For now, simpler check:
+        if (ItemIdToOrbIndex.Contains(OtherId)) {
           int32 IdxB = ItemIdToOrbIndex[OtherId];
-
           if (IdxA < IdxB) {
-            NewRung.Bonds.Add(TPair<int32, int32>(IdxA, IdxB));
+            NewRung.Bonds.AddUnique(TPair<int32, int32>(IdxA, IdxB));
           }
+        }
+        // Handle connections to the PREVIOUS rung
+        else if (PrevItemIdToOrbIndex.Contains(OtherId)) {
+          int32 IdxB = PrevItemIdToOrbIndex[OtherId];
+          NewRung.BondsToPrevious.AddUnique(TPair<int32, int32>(IdxA, IdxB));
         }
       }
     }
@@ -305,6 +345,7 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   // Insert new rung at the beginning
   Group.Rungs.Insert(NewRung, 0);
   Group.TotalClustersProcessed++;
+  Group.LastProcessedTick = StepCounter;
 
   // Remove processed orbs from the board
   for (const FItem *Item : ItemsToProcess) {
@@ -345,42 +386,51 @@ void USimWorldHex::UpdateHelixGroups(float DeltaTime) {
     }
   }
 
-  for (FHelixOutputGroup &Group : HelixGroups) {
-    // Synchronize animation with simulation tick rate
-    float StepSec = FixedStepSec > 0.001f ? FixedStepSec : 0.5f;
-    float RiseRate = Group.RungSpacing / StepSec;     // Units per second
-    float TwistRate = Group.DegreesPerRung / StepSec; // Degrees per second
+  float Alpha = GetFrameAlpha();
 
+  for (FHelixOutputGroup &Group : HelixGroups) {
     if (bContinuous) {
-      // Continuous mode: Constantly twist and rise
-      Group.HelixRotationOffset += TwistRate * DeltaTime;
-      // Keep rotation in [0, 360) for safety
+      // Continuous mode: Constantly twist and rise using real DeltaTime
+      // Find real DeltaTime by checking if we have a world
+      float RealDeltaTime = DeltaTime;
+      // If called from FactoryActor with scaled time, we might want to un-scale
+      // it but for continuous rotation it's fine.
+
+      float StepSec = FixedStepSec > 0.001f ? FixedStepSec : 0.5f;
+      float RiseRate = Group.RungSpacing / StepSec;
+      float TwistRate = Group.DegreesPerRung / StepSec;
+
+      Group.HelixRotationOffset += TwistRate * RealDeltaTime;
       if (Group.HelixRotationOffset > 360.f) {
         Group.HelixRotationOffset -= 360.f;
       }
 
       for (FHelixRung &Rung : Group.Rungs) {
-        Rung.ZOffset += RiseRate * DeltaTime;
+        Rung.ZOffset += RiseRate * RealDeltaTime;
         Rung.TargetZOffset = Rung.ZOffset;
       }
     } else {
-      // Non-continuous: Animate rotation debt back to 0
-      // This creates the "Twist" effect only when a new rung is added
-      if (Group.HelixRotationOffset < 0.f) {
-        Group.HelixRotationOffset += TwistRate * DeltaTime;
-        if (Group.HelixRotationOffset > 0.f) {
-          Group.HelixRotationOffset = 0.f;
-        }
+      // Non-continuous: SYNCED with FrameAlpha (0 to 1)
+      // This ensures it finishes exactly when the next tick arrives.
+
+      // Animate rotation offset back to 0
+      // If we processed this tick, we go from -DegreesPerRung to 0
+      if (Group.LastProcessedTick == StepCounter) {
+        Group.HelixRotationOffset = -Group.DegreesPerRung * (1.0f - Alpha);
       } else {
-        // Clamp to 0 if positive (residue)
         Group.HelixRotationOffset = 0.f;
       }
 
-      // Elevate rungs if below target
+      // Elevate rungs
       for (FHelixRung &Rung : Group.Rungs) {
-        if (Rung.ZOffset < Rung.TargetZOffset) {
-          Rung.ZOffset = FMath::Min(Rung.ZOffset + RiseRate * DeltaTime,
-                                    Rung.TargetZOffset);
+        // If this group was processed this tick, it's animating from OldTarget
+        // to NewTarget Since NewTarget = OldTarget + Spacing, we can say:
+        // Position = NewTarget - Spacing * (1.0 - Alpha)
+        if (Group.LastProcessedTick == StepCounter) {
+          Rung.ZOffset =
+              Rung.TargetZOffset - Group.RungSpacing * (1.0f - Alpha);
+        } else {
+          Rung.ZOffset = Rung.TargetZOffset;
         }
       }
     }

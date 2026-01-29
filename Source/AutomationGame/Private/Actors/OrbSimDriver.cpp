@@ -127,6 +127,10 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds) {
 
   UE_LOG(LogTemp, VeryVerbose, TEXT("OrbSimDriver: StepSim dt=%.3f"),
          StepSeconds);
+
+  // Sync step duration to simulation for animation timing
+  Sim->FixedStepSec = StepSeconds;
+
   Sim->StepSim();
 
   // Ensure the sim's frame alpha reflects the manager's start-of-step alpha (0

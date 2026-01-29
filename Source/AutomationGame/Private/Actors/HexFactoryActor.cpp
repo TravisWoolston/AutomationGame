@@ -10,6 +10,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Framework/GameManager.h"
+#include "Rendering/OrbRenderer.h"
 #include "Sim/HexCoord.h"
 #include "Sim/OrbTypes.h"
 #include "Sim/SimWorldHex.h"
@@ -319,6 +320,15 @@ void AHexFactoryActor::EnsureComponents() {
   EnsureISM(HelixTileISM, TEXT("HelixTileISM_Runtime"));
   EnsureISM(HelixOrbISM, TEXT("HelixOrbISM_Runtime"));
   EnsureISM(HelixBondISM, TEXT("HelixBondISM_Runtime"));
+
+  // Ensure type-specific helix orb ISMs
+  EnsureISM(HelixOrbNoneISM, TEXT("HelixOrbNoneISM_Runtime"));
+  EnsureISM(HelixOrbBaseAISM, TEXT("HelixOrbBaseAISM_Runtime"));
+  EnsureISM(HelixOrbBaseBISM, TEXT("HelixOrbBaseBISM_Runtime"));
+  EnsureISM(HelixOrbBaseCISM, TEXT("HelixOrbBaseCISM_Runtime"));
+  EnsureISM(HelixOrbMetalAISM, TEXT("HelixOrbMetalAISM_Runtime"));
+  EnsureISM(HelixOrbCatalystXISM, TEXT("HelixOrbCatalystXISM_Runtime"));
+  EnsureISM(HelixOrbVoidISM, TEXT("HelixOrbVoidISM_Runtime"));
 
   InputTileISM->SetVisibility(true, true);
 
@@ -1834,6 +1844,32 @@ void AHexFactoryActor::RebuildHelixOutput() {
   // Use orb mesh for helix orbs (fallback to tile mesh if not specified)
   UStaticMesh *OrbMeshToUse = HelixOrbMesh ? HelixOrbMesh : TileMesh;
   UStaticMesh *BondMeshToUse = HelixBondMesh ? HelixBondMesh : BondMesh;
+  UMaterialInterface *BondMaterialToUse = HelixBondMaterial;
+
+  // Track the base scale and assumed mesh length for the bond
+  FVector BaseBondScale = HelixBondScale;
+  float MeshBaseLength = TileSize;
+
+  // Try to find OrbRenderer to use board bond assets if they are set
+  if (UWorld *World = GetWorld()) {
+    for (TActorIterator<AActor> It(World); It; ++It) {
+      if (UOrbRenderer *OrbRenderer =
+              It->FindComponentByClass<UOrbRenderer>()) {
+        if (OrbRenderer->BondedOrbMesh) {
+          BondMeshToUse = OrbRenderer->BondedOrbMesh;
+          // The board bond mesh (BondedOrbMesh) is assumed to be 100 units long
+          MeshBaseLength = 100.f;
+          // Use the board bond's thickness scale
+          BaseBondScale = FVector(1.0f, OrbRenderer->BondedOrbScale,
+                                  OrbRenderer->BondedOrbScale);
+        }
+        if (OrbRenderer->BondedOrbMaterial) {
+          BondMaterialToUse = OrbRenderer->BondedOrbMaterial;
+        }
+        break;
+      }
+    }
+  }
 
   // Get material manager for per-type materials
   UOrbMaterialManager *MaterialManager = UOrbMaterialManager::FindInWorld(this);
@@ -1862,8 +1898,8 @@ void AHexFactoryActor::RebuildHelixOutput() {
 
   if (BondMeshToUse && HelixBondISM) {
     HelixBondISM->SetStaticMesh(BondMeshToUse);
-    if (HelixBondMaterial) {
-      HelixBondISM->SetMaterial(0, HelixBondMaterial);
+    if (BondMaterialToUse) {
+      HelixBondISM->SetMaterial(0, BondMaterialToUse);
     }
   }
 
@@ -1918,6 +1954,8 @@ void AHexFactoryActor::RebuildHelixOutput() {
       // The cluster rotates around the helix center as it rises
       const float RungRotation = Rung.RotationDegrees + IdleRotation;
       const float RungAngleRad = FMath::DegreesToRadians(RungRotation);
+      const float CosRot = FMath::Cos(RungAngleRad);
+      const float SinRot = FMath::Sin(RungAngleRad);
 
       // Render each orb in the cluster
       for (int32 OrbIdx = 0; OrbIdx < Rung.Orbs.Num(); ++OrbIdx) {
@@ -1929,8 +1967,6 @@ void AHexFactoryActor::RebuildHelixOutput() {
             FHexAxial(OrbData.dQ, OrbData.dR), TileSize, Ori);
 
         // Rotate the local position by the rung rotation
-        const float CosRot = FMath::Cos(RungAngleRad);
-        const float SinRot = FMath::Sin(RungAngleRad);
         FVector OrbOffset;
         OrbOffset.X = OrbLocalXY.X * CosRot - OrbLocalXY.Y * SinRot;
         OrbOffset.Y = OrbLocalXY.X * SinRot + OrbLocalXY.Y * CosRot;
@@ -1963,9 +1999,6 @@ void AHexFactoryActor::RebuildHelixOutput() {
         const FVector2D OrbBLocalXY =
             HexCoord::AxialToXY(FHexAxial(OrbB.dQ, OrbB.dR), TileSize, Ori);
 
-        const float CosRot = FMath::Cos(RungAngleRad);
-        const float SinRot = FMath::Sin(RungAngleRad);
-
         FVector PosA = HelixCenter +
                        FVector(OrbALocalXY.X * CosRot - OrbALocalXY.Y * SinRot,
                                OrbALocalXY.X * SinRot + OrbALocalXY.Y * CosRot,
@@ -1978,15 +2011,63 @@ void AHexFactoryActor::RebuildHelixOutput() {
         // Bond mesh positioned at midpoint, oriented toward the other orb
         FVector Mid = (PosA + PosB) * 0.5f;
         FVector Dir = (PosB - PosA).GetSafeNormal();
-        float BondYaw = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
-        float BondLength = (PosB - PosA).Size() / TileSize;
+        float BondLength = (PosB - PosA).Size() / MeshBaseLength;
 
         if (HelixBondISM) {
-          FVector BondScaleFinal = HelixBondScale;
+          FVector BondScaleFinal = BaseBondScale;
           BondScaleFinal.X *= BondLength;
 
-          HelixBondISM->AddInstance(
-              FTransform(FRotator(0.f, BondYaw, 0.f), Mid, BondScaleFinal));
+          // Orientation: Rotate X axis toward companion orb
+          FRotator Rot = Dir.Rotation();
+
+          HelixBondISM->AddInstance(FTransform(Rot, Mid, BondScaleFinal));
+        }
+      }
+
+      // Render vertical bonds between this rung and the one above/previous
+      if (RungIdx + 1 < Group.Rungs.Num()) {
+        const USimWorldHex::FHelixRung &PrevRung = Group.Rungs[RungIdx + 1];
+        const float PrevRungRotation = PrevRung.RotationDegrees + IdleRotation;
+        const float PrevRungAngleRad =
+            FMath::DegreesToRadians(PrevRungRotation);
+        const float PrevCosRot = FMath::Cos(PrevRungAngleRad);
+        const float PrevSinRot = FMath::Sin(PrevRungAngleRad);
+
+        for (const TPair<int32, int32> &Bond : Rung.BondsToPrevious) {
+          if (Bond.Key < 0 || Bond.Key >= Rung.Orbs.Num())
+            continue;
+          if (Bond.Value < 0 || Bond.Value >= PrevRung.Orbs.Num())
+            continue;
+
+          const FOrbData &OrbA = Rung.Orbs[Bond.Key];
+          const FOrbData &OrbB = PrevRung.Orbs[Bond.Value];
+
+          FVector2D OrbALocalXY =
+              HexCoord::AxialToXY(FHexAxial(OrbA.dQ, OrbA.dR), TileSize, Ori);
+          FVector2D OrbBLocalXY =
+              HexCoord::AxialToXY(FHexAxial(OrbB.dQ, OrbB.dR), TileSize, Ori);
+
+          FVector PosA =
+              HelixCenter +
+              FVector(OrbALocalXY.X * CosRot - OrbALocalXY.Y * SinRot,
+                      OrbALocalXY.X * SinRot + OrbALocalXY.Y * CosRot,
+                      Rung.ZOffset * ZDirectionMult);
+          FVector PosB =
+              HelixCenter +
+              FVector(OrbBLocalXY.X * PrevCosRot - OrbBLocalXY.Y * PrevSinRot,
+                      OrbBLocalXY.X * PrevSinRot + OrbBLocalXY.Y * PrevCosRot,
+                      PrevRung.ZOffset * ZDirectionMult);
+
+          FVector Mid = (PosA + PosB) * 0.5f;
+          FVector Dir = (PosB - PosA).GetSafeNormal();
+          float BondLength = (PosB - PosA).Size() / MeshBaseLength;
+
+          if (HelixBondISM) {
+            FVector BondScaleFinal = BaseBondScale;
+            BondScaleFinal.X *= BondLength;
+            FRotator Rot = Dir.Rotation();
+            HelixBondISM->AddInstance(FTransform(Rot, Mid, BondScaleFinal));
+          }
         }
       }
     }
@@ -1997,8 +2078,8 @@ void AHexFactoryActor::UpdateHelixAnimation(float DeltaSeconds) {
   if (!Sim)
     return;
 
-  // Update helix group animations (continuous rotation)
-  Sim->UpdateHelixGroups(DeltaSeconds * HelixIdleRotationSpeed / 10.f);
+  // Update helix group animations (synced with GTM)
+  Sim->UpdateHelixGroups(DeltaSeconds);
 
   // ALWAYS rebuild to update visuals (rotation and elevator effect)
   RebuildHelixOutput();

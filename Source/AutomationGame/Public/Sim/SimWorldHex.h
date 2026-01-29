@@ -231,9 +231,11 @@ public:
   struct FHelixRung {
     TArray<FOrbData> Orbs; // The orbs in this cluster (with relative positions)
     TArray<TPair<int32, int32>>
-        Bonds;                   // Bonds between orbs (indices into Orbs array)
-    float SpawnTime = 0.f;       // When this cluster was added
-    float ZOffset = 0.f;         // Current vertical position
+        Bonds; // Bonds between orbs (indices into Orbs array)
+    TArray<TPair<int32, int32>> BondsToPrevious; // Bonds to the previous rung
+                                                 // (CurrentOrbIdx, PrevOrbIdx)
+    float SpawnTime = 0.f;                       // When this cluster was added
+    float ZOffset = 0.f;                         // Current vertical position
     float TargetZOffset = 0.f;   // Target vertical position (for animation)
     float RotationDegrees = 0.f; // Current rotation around helix axis
   };
@@ -248,9 +250,10 @@ public:
     float HelixRotationOffset = 0.f; // Current idle rotation for animation
 
     // Helix configuration
-    float DegreesPerRung = 36.f; // Rotation between rungs
-    float RungSpacing = 100.f;   // Vertical distance between rungs
-    int32 MaxVisibleRungs = 20;  // Max clusters before oldest is removed
+    float DegreesPerRung = 36.f;  // Rotation between rungs
+    float RungSpacing = 100.f;    // Vertical distance between rungs
+    int32 MaxVisibleRungs = 20;   // Max clusters before oldest is removed
+    int32 LastProcessedTick = -1; // Tick when the last cluster was processed
   };
 
   /** Register a helix output tile - will auto-group with adjacent helix tiles

@@ -137,9 +137,9 @@ void UOrbRenderer::EnsureISM() {
     return;
 
   // Create ISM components for each orb type
-  TArray<EOrbType> AllOrbTypes = {EOrbType::None,   EOrbType::BaseA,
-                                  EOrbType::BaseB,  EOrbType::BaseC,
-                                  EOrbType::MetalA, EOrbType::CatalystX};
+  TArray<EOrbType> AllOrbTypes = {
+      EOrbType::None,   EOrbType::BaseA,     EOrbType::BaseB, EOrbType::BaseC,
+      EOrbType::MetalA, EOrbType::CatalystX, EOrbType::Void};
 
   for (EOrbType OrbType : AllOrbTypes) {
     // Skip if already created
@@ -516,7 +516,8 @@ void UOrbRenderer::RebuildCurrPos() {
     // RebuildInstances() using Alpha No need for belt progress offset here!
 
     // Determine orb type for this item (base or cluster first orb)
-    EOrbType ItemType = EOrbType::BaseA;
+    // Determine orb type for this item (base or cluster first orb)
+    EOrbType ItemType = EOrbType::None;
     if (Item.bIsCluster && Item.Orbs.Num() > 0) {
       ItemType = (EOrbType)Item.Orbs[0].Type;
     } else if (!Item.bIsCluster) {
@@ -624,11 +625,9 @@ void UOrbRenderer::RebuildInstances() {
   // interpolation
   RenderAnimatedOrbs();
 
-  // Legacy prev->curr interpolation path
+  // Render board items (curr only + transition interpolation)
   TSet<int32> AllIds;
-  PrevPos.GetKeys(AllIds);
-  for (const auto &K : CurrPos)
-    AllIds.Add(K.Key);
+  CurrPos.GetKeys(AllIds);
 
   for (int32 Id : AllIds) {
     if (HeldIds.Contains(Id))
@@ -643,6 +642,12 @@ void UOrbRenderer::RebuildInstances() {
 
     const FVector From = A ? *A : (B ? *B : FVector::ZeroVector);
     const FVector To = B ? *B : From;
+
+    // FIX FOR MATERIAL FLASH: If it's not in CurrPos (B is null), it was
+    // outright removed from the board. Don't render it. This is seamless for
+    // Helix consumption as the Helix takes over rendering in the same frame.
+    if (!B)
+      continue;
 
     FVector P;
     // Check if this orb is currently held by an arm
@@ -747,7 +752,7 @@ void UOrbRenderer::RebuildInstances() {
     FRotator R = FMath::Lerp(RA, RB, Alpha);
 
     // Get the orb type for this item using optimized lookup
-    EOrbType OrbType = EOrbType::BaseA; // Default
+    EOrbType OrbType = EOrbType::None; // Default to None, not BaseA
     if (const EOrbType *FoundType = OrbTypes.Find(Id)) {
       OrbType = *FoundType;
     } else {
@@ -1059,7 +1064,7 @@ void UOrbRenderer::RenderAnimatedOrbs() {
     const FVector FinalPos = BasePos + FVector(0.f, 0.f, ZOffset);
 
     // Get the orb type
-    EOrbType OrbType = EOrbType::BaseA; // Default
+    EOrbType OrbType = EOrbType::None; // Default to None, not BaseA
     if (AnimatedOrb.Item.bIsCluster && AnimatedOrb.Item.Orbs.Num() > 0) {
       OrbType = (EOrbType)AnimatedOrb.Item.Orbs[0].Type;
     } else if (!AnimatedOrb.Item.bIsCluster) {
