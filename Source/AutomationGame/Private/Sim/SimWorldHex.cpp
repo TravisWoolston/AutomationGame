@@ -45,6 +45,7 @@ USimWorldHex::USimWorldHex() {
   PredictiveCollisionDebugData.Empty();
   ItemsMovedLastStep.Empty();
   PrevItemHex.Empty();
+  HelixGroups.Empty();
 }
 
 // Destructor - explicit cleanup to prevent memory corruption
@@ -86,6 +87,7 @@ USimWorldHex::~USimWorldHex() {
   PredictiveCollisionDebugData.Empty();
   ItemsMovedLastStep.Empty();
   PrevItemHex.Empty();
+  HelixGroups.Empty();
 }
 
 // Near top (after includes) add if not already in header:
@@ -118,6 +120,7 @@ void USimWorldHex::Initialize(int32 /*Radius*/) {
   PendingFacingByArm.Empty();
   PendingArmLenByArm.Empty();
   PendingGrabFacingByArm.Empty();
+  HelixGroups.Empty();
 }
 
 // ---------- NEW: Add missing definitions ----------
@@ -473,6 +476,9 @@ bool USimWorldHex::PlaceTile(const FHex &H, const FTile &T) {
         IOBondPartners.Remove(H);
       }
 
+      // Unregister helix output tile if it was one
+      UnregisterHelixOutputTile(H);
+
       ++TileRevision;
     }
     return true;
@@ -480,6 +486,11 @@ bool USimWorldHex::PlaceTile(const FHex &H, const FTile &T) {
 
   TileMap.Add(H, TileToPlace);
   ++TileRevision;
+
+  // Register helix output tiles for group tracking
+  if (TileToPlace.Kind == ETileKind::HelixOutput) {
+    RegisterHelixOutputTile(H);
+  }
 
   // ClusterOutput tiles are now directly placeable, no auto-conversion
 
@@ -1077,7 +1088,7 @@ void USimWorldHex::StepSim() {
   OrbsMovedLastTick =
       OrbsNewlyMovedByBelts; // Preserve move state for grab checks
   OrbsNewlyMovedByBelts.Reset();
-
+  ProcessUnbondsForHeldClusters();
   // pass 1 (empty at start)
   StepArms();
 
@@ -1741,11 +1752,19 @@ bool USimWorldHex::IsBeltEnabled(const FHex &BeltHex) const {
 void USimWorldHex::SetArmTriggerSignal(const FHex &TriggerHex,
                                        const FHex &ArmBaseHex, bool bPositive) {
   TMap<FHex, bool> &Signals = ArmTriggerSignals.FindOrAdd(ArmBaseHex);
+
+  // Check if signal actually changed before logging
+  bool bSignalChanged = true;
+  if (const bool *OldSignal = Signals.Find(TriggerHex)) {
+    bSignalChanged = (*OldSignal != bPositive);
+  }
+
   Signals.Add(TriggerHex, bPositive);
 
-  if (bDebugLogs) {
+  // Only log on actual state changes to reduce spam
+  if (bDebugLogs && bSignalChanged) {
     UE_LOG(LogTemp, Log,
-           TEXT("Sim: Arm at (%d,%d) received signal from (%d,%d): %s. Total "
+           TEXT("Sim: Arm at (%d,%d) signal CHANGED from (%d,%d): %s. Total "
                 "triggers: %d"),
            ArmBaseHex.Q, ArmBaseHex.R, TriggerHex.Q, TriggerHex.R,
            bPositive ? TEXT("POSITIVE") : TEXT("NEGATIVE"), Signals.Num());

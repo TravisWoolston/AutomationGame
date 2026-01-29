@@ -5,12 +5,13 @@
 #include "CoreMinimal.h"
 #include "Framework/WaveTypes.h"
 #include "GameFramework/Actor.h"
+
 #include "Sim/ArmTypes.h"
 #include "Sim/SimWorldHex.h"
 #include "Sim/WalkerTypes.h"
 #include "Templates/Tuple.h"
+// .generated.h must be last
 #include "GameManager.generated.h"
-
 /** Walker foot selection for calibration */
 UENUM(BlueprintType)
 enum class EWalkerFoot : uint8 {
@@ -179,33 +180,23 @@ public:
   UFUNCTION(CallInEditor, Category = "Walker|Calibration")
   void CancelWalkerCalibration();
 
-  UFUNCTION(CallInEditor, Category = "Walker|Calibration",
-            meta = (Tooltip = "Move each foot to the furthest tile in its assigned quadrant (debug function)"))
+  UFUNCTION(CallInEditor, Category = "Walker|Calibration")
   void FootToOuterMostTile();
 
-  UPROPERTY(
-      EditAnywhere, Category = "Walker|Calibration",
-      meta =
-          (ClampMin = "-200.0", ClampMax = "1000.0",
-           Tooltip = "Target stand height - changes are applied automatically"))
+  UPROPERTY(EditAnywhere, Category = "Walker|Calibration",
+            meta = (ClampMin = "-200.0", ClampMax = "1000.0"))
   float DesiredStandHeight = 350.f;
 
-  UPROPERTY(
-      EditAnywhere, BlueprintReadWrite, Category = "Walker|Calibration",
-      meta =
-          (Tooltip = "Current actual stand height after leg reach constraints"))
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Walker|Calibration")
   float StandHeight = 0.f;
 
   UPROPERTY(VisibleAnywhere, Category = "Walker|Calibration")
   bool bWalkerStanding = false;
 
-  UPROPERTY(EditAnywhere, Category = "Walker|Calibration",
-            meta = (Tooltip = "Horizontal offset in tiles from the body-aligned tile for foot starting positions"))
+  UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
   float StartingFootDistance = 0.f;
 
-  UPROPERTY(EditAnywhere, Category = "Walker|Calibration",
-            meta = (ClampMin = "0", ClampMax = "5",
-                    Tooltip = "Rotates the StartingFootDistance direction by N * 60 degrees around the body center"))
+  UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
   int32 StartingFootOrientation = 0;
 
   UPROPERTY(EditAnywhere, Category = "Walker|Calibration",
@@ -230,8 +221,7 @@ public:
             meta = (Tooltip = "Selected foot for step height preview"))
   EWalkerFoot ActiveFoot = EWalkerFoot::DFoot;
 
-  UPROPERTY(EditAnywhere, Category = "Walker|Calibration",
-            meta = (Tooltip = "Enable active foot preview updates (applies step height to selected foot)"))
+  UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
   bool bActiveFootPreview = false;
 
   UPROPERTY(EditAnywhere, Category = "Walker|Calibration",
@@ -245,8 +235,7 @@ public:
            Tooltip = "Minimum tile distance from the body for foot placement"))
   float MinimumReachDistance = 0.f;
 
-  UPROPERTY(EditAnywhere, Category = "Walker|Calibration",
-            meta = (Tooltip = "When true, foot goals are set manually via Event Graph instead of automatically by script"))
+  UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
   bool bManualFootGoal = false;
 
   UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
@@ -271,24 +260,14 @@ public:
 
   /** Global rotation for tile quadrants around the body center (does not change
    * which leg controls which logical quadrant) */
-  UPROPERTY(
-      EditAnywhere, Category = "Walker|Calibration",
-      meta =
-          (ClampMin = "0", ClampMax = "3",
-           Tooltip =
-               "Rotate tile quadrants clockwise around the body center by this value (0-3). 0=no rotation, 1=90deg CW, 2=180deg, 3=270deg CW"))
+  UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
   int32 TileQuadrantOffset = 0;
 
   /** Fine-tuned rotation offset in degrees for quadrant boundaries */
-  UPROPERTY(
-      EditAnywhere, Category = "Walker|Calibration",
-      meta =
-          (Tooltip =
-               "Rotate the quadrant boundaries by this many degrees clockwise. Use this to center quadrants on your model's legs."))
+  UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
   float QuadrantRotationOffset = 0.f;
 
-  UPROPERTY(EditAnywhere, Category = "Walker|Calibration",
-            meta = (Tooltip = "If true, QuadrantRotationOffset will automatically update based on body Z rotation"))
+  UPROPERTY(EditAnywhere, Category = "Walker|Calibration")
   bool bDynamicBodyRotation = true;
 
   UPROPERTY(EditAnywhere, Category = "Walker|Debug")
@@ -530,6 +509,22 @@ public:
   /** Get rotation for a Goldberg cell by index (surface normal as up). */
   UFUNCTION(BlueprintCallable, Category = "Grid|Goldberg")
   FRotator GetGoldbergCellRotation(int32 CellIndex) const;
+
+  // ------------ Helix Output Settings ------------
+  /** When true, helix output extends upward. When false, extends downward. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Helix")
+  bool bHelixExtendsUp = true;
+
+  // Helix settings
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Helix")
+  bool bHelixRequiresFullOccupancy = false;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Helix")
+  bool bHelixRequiresCompleteClusters = false;
+
+  /** When true, helix continues to ascend/descend regardless of input. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Helix")
+  bool bContinuousHelixAnimation = false;
 
   // ------------ Arm Timeline System ------------
   // NOTE: These settings control ALL arm timeline widgets globally

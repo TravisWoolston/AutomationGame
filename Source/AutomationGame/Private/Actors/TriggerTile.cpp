@@ -89,6 +89,7 @@ void ATriggerTile::BeginPlay() {
   SyncWorldLocation();
   UpdateVisuals();
   UpdateWireVisual();
+  CheckTriggerCondition();
 }
 
 // void ATriggerTile::Destroyed() {
@@ -340,11 +341,11 @@ void ATriggerTile::CheckTriggerCondition() {
   if (Variant == ETriggerVariant::Negative) {
     bFinalSignal = !bMatchingOrb;
   }
-  SetSignal(bFinalSignal);
+  SetSignal(bFinalSignal, true); // Force sync on condition check
 }
 
-void ATriggerTile::SetSignal(bool bNewSignal) {
-  if (bCurrentSignal != bNewSignal) {
+void ATriggerTile::SetSignal(bool bNewSignal, bool bForceSync) {
+  if (bCurrentSignal != bNewSignal || bForceSync) {
     bCurrentSignal = bNewSignal;
     OnSignalChanged.Broadcast(bCurrentSignal);
 
@@ -695,7 +696,7 @@ void ATriggerTile::UpdateWireVisual() {
 }
 
 void ATriggerTile::Destroyed() {
-    if (Driver) {
+  if (Driver) {
     Driver->OnSimStepComplete.RemoveAll(this);
   }
   Super::Destroyed();

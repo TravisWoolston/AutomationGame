@@ -32,7 +32,7 @@ public:
   UPROPERTY(EditAnywhere, Category = "Camera") float MoveSpeed = 1500.f;
   UPROPERTY(EditAnywhere, Category = "Camera") float ZoomSpeed = 1500.f;
   UPROPERTY(EditAnywhere, Category = "Camera") float MinArm = 600.f;
-  UPROPERTY(EditAnywhere, Category = "Camera") float MaxArm = 6000.f;
+  UPROPERTY(EditAnywhere, Category = "Camera") float MaxArm = 3000.f;
 
   /** Distance from grid center as multiple of Goldberg radius (for orbital
    * camera). */
@@ -234,6 +234,8 @@ private:
   void SetInputMode12Pressed() {
     SetInputMode12(false);
   } // Wrapper for input binding
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode13(); // HelixOutput placement
   UFUNCTION(BlueprintCallable, Category = "Input")
   void SwitchGrid();
   void RotCW() {

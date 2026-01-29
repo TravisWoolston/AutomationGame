@@ -818,7 +818,7 @@ void USimWorldHex::ProcessOutputs() {
     const FTile &T = KV.Value;
     if (T.Kind != ETileKind::Output && T.Kind != ETileKind::ClusterOutput &&
         T.Kind != ETileKind::DiscoveryClusterOutput &&
-        T.Kind != ETileKind::ClusterSend)
+        T.Kind != ETileKind::ClusterSend && T.Kind != ETileKind::HelixOutput)
       continue;
     if (OrbsNewlyMovedToOutput.Contains(H))
       continue; // Skip orbs just moved by belts this tick
@@ -1613,6 +1613,20 @@ void USimWorldHex::ProcessOutputs() {
           }
         }
       }
+    }
+    // Handle helix output tiles - skip them here, process as groups after the
+    // loop
+    else if (T.Kind == ETileKind::HelixOutput) {
+      // Helix tiles are processed as groups after this loop
+      continue;
+    }
+  }
+
+  // Process helix output groups (after main loop so we check complete clusters)
+  for (FHelixOutputGroup &Group : HelixGroups) {
+    if (TryProcessHelixCluster(Group)) {
+      // A cluster was processed and elevated
+      // The orbs were already removed from the board in TryProcessHelixCluster
     }
   }
 }

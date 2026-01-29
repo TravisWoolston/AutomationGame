@@ -15,10 +15,6 @@
 #include "Sim/SimWorldHex.h"
 #include "UObject/ConstructorHelpers.h"
 
-static FORCEINLINE int32 MakeSubOrbId(int32 ItemId, int32 SubIdx) {
-  return (ItemId << 8) | (SubIdx & 0xFF);
-}
-
 // Optional utility to rotate a raw FVector2D (not hex axial) by yaw degrees.
 static FORCEINLINE FVector2D RotateXY(const FVector2D &V, float YawDeg) {
   const float Rad = FMath::DegreesToRadians(YawDeg);

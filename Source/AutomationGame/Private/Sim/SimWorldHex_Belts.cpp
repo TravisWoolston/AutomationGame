@@ -117,6 +117,14 @@ void USimWorldHex::StepBelts() {
             break;
           }
 
+          // Don't move clusters if any orb is on a HelixOutput tile
+          if (const FTile *ItemTile = TileMap.Find(CurrentPos)) {
+            if (ItemTile->Kind == ETileKind::HelixOutput) {
+              bCanMoveCluster = false;
+              break;
+            }
+          }
+
           // Calculate destination
           FHex DestPos(CurrentPos.Q + MoveOffset.Q, CurrentPos.R + MoveOffset.R,
                        CurrentPos.Level);
@@ -372,27 +380,42 @@ void USimWorldHex::StepBelts() {
             }
           }
 
-          // Check if cluster destinations are available
+          // Check if cluster members are blocked (including HelixOutput check)
           bool bCanMoveCluster = true;
-          for (const auto &DestKV : ClusterDestinations) {
-            int32 ItemId = DestKV.Key;
-            const FHex &DestPos = DestKV.Value;
+          for (const auto &PosKV : ClusterPositions) {
+            const FHex &CurrentPos = PosKV.Value;
 
-            // Don't move clusters containing newly placed items
-            if (NewlyPlacedItems.Contains(ItemId)) {
-              bCanMoveCluster = false;
-              break;
-            }
-
-            if (HeldOrbHexes.Contains(DestPos)) {
-              bCanMoveCluster = false;
-              break;
-            }
-
-            if (const FItem *DestItem = ItemMap.Find(DestPos)) {
-              if (!InCluster.Contains(DestItem->Id)) {
+            // Don't move clusters if any orb is on a HelixOutput tile
+            if (const FTile *ItemTile = TileMap.Find(CurrentPos)) {
+              if (ItemTile->Kind == ETileKind::HelixOutput) {
                 bCanMoveCluster = false;
                 break;
+              }
+            }
+          }
+
+          if (bCanMoveCluster) {
+            // Check if cluster destinations are available
+            for (const auto &DestKV : ClusterDestinations) {
+              int32 ItemId = DestKV.Key;
+              const FHex &DestPos = DestKV.Value;
+
+              // Don't move clusters containing newly placed items
+              if (NewlyPlacedItems.Contains(ItemId)) {
+                bCanMoveCluster = false;
+                break;
+              }
+
+              if (HeldOrbHexes.Contains(DestPos)) {
+                bCanMoveCluster = false;
+                break;
+              }
+
+              if (const FItem *DestItem = ItemMap.Find(DestPos)) {
+                if (!InCluster.Contains(DestItem->Id)) {
+                  bCanMoveCluster = false;
+                  break;
+                }
               }
             }
           }
@@ -460,12 +483,11 @@ void USimWorldHex::StepBelts() {
           }
         }
       }
-    }
-
-    // Handle bond/unbond tiles with enhanced cluster logic
+    } // Handle bond/unbond tiles with enhanced cluster logic
     if (SourceTile->Kind == ETileKind::Bond ||
         SourceTile->Kind == ETileKind::Unbond ||
-        SourceTile->Kind == ETileKind::ClusterOutput) {
+        SourceTile->Kind == ETileKind::ClusterOutput ||
+        SourceTile->Kind == ETileKind::ClusterSend) {
       FItem *BondItem = ItemMap.Find(SourceHex);
       if (BondItem && BondItem->Id > 0 &&
           !RecentlyDroppedByArm.Contains(BondItem->Id)) {
@@ -492,6 +514,178 @@ void USimWorldHex::StepBelts() {
 
           // If none of the above, it's a valid candidate for output, so don't
           // pull
+          if (!bShouldPull) {
+            return false;
+          }
+        }
+        // For ClusterSend, determine if we should pull
+        else if (SourceTile->Kind == ETileKind::ClusterSend) {
+          bool bShouldPull = false;
+
+          // Find all connected ClusterSend tiles (forming a cluster)
+          TArray<FHex> ClusterSendTiles;
+          TArray<uint8> ExpectedTypes;
+          TSet<FHex> VisitedTiles;
+          TArray<FHex> ToVisit;
+
+          ClusterSendTiles.Add(SourceHex);
+          ExpectedTypes.Add(SourceTile->Arg);
+          VisitedTiles.Add(SourceHex);
+          ToVisit.Add(SourceHex);
+
+          while (ToVisit.Num() > 0) {
+            FHex CurrentHex = ToVisit.Pop();
+
+            // Check all 6 neighbors
+            for (int32 Dir = 0; Dir < 6; Dir++) {
+              FHex NeighborHex = HexUtil::Neighbor(CurrentHex, (EHexDir)Dir);
+
+              if (VisitedTiles.Contains(NeighborHex))
+                continue;
+
+              const FTile *NeighborTile = TileMap.Find(NeighborHex);
+              if (NeighborTile &&
+                  NeighborTile->Kind == ETileKind::ClusterSend) {
+                VisitedTiles.Add(NeighborHex);
+                ClusterSendTiles.Add(NeighborHex);
+                ToVisit.Add(NeighborHex);
+                ExpectedTypes.Add(NeighborTile->Arg);
+              }
+            }
+          }
+
+          // For single-tile ClusterSend: check if the orb is bonded to
+          // anything (can only send unbonded orbs)
+          if (ClusterSendTiles.Num() == 1) {
+            if (const TArray<int32> *BondList =
+                    ItemToBonds.Find(BondItem->Id)) {
+              for (int32 BondIdx : *BondList) {
+                if (Bonds.IsValidIndex(BondIdx) && Bonds[BondIdx].bActive) {
+                  bShouldPull = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Check if type mismatches for this tile (unless wildcard)
+          if (!bShouldPull && !BondItem->bIsCluster) {
+            uint8 ActualType = (uint8)BondItem->Single.Type;
+            uint8 ExpectedType = SourceTile->Arg;
+            if (ActualType != ExpectedType &&
+                ExpectedType != (uint8)EOrbType::Void) {
+              bShouldPull = true;
+            }
+          }
+
+          // Check if ANY destination in the cluster (on other level) is
+          // blocked
+          if (!bShouldPull) {
+            for (const FHex &ClusterHex : ClusterSendTiles) {
+              FHex DestHex = ClusterHex;
+              DestHex.Level = 1 - ClusterHex.Level;
+              if (ItemMap.Contains(DestHex)) {
+                bShouldPull = true;
+                break;
+              }
+            }
+          }
+
+          // For multi-tile ClusterSend: check if all tiles have correct orbs
+          // that are bonded together
+          if (!bShouldPull && ClusterSendTiles.Num() > 1) {
+            TArray<int32> OrbItemIds;
+            bool bAllTilesHaveValidOrbs = true;
+
+            for (int32 i = 0; i < ClusterSendTiles.Num(); i++) {
+              const FHex &TileHex = ClusterSendTiles[i];
+              const uint8 ExpectedType = ExpectedTypes[i];
+
+              const FItem *TileItem = ItemMap.Find(TileHex);
+              if (!TileItem) {
+                // Not all tiles have orbs - can't send, so allow pull
+                bAllTilesHaveValidOrbs = false;
+                break;
+              }
+
+              // ClusterSend tiles expect single orbs, not clusters
+              if (TileItem->bIsCluster) {
+                bAllTilesHaveValidOrbs = false;
+                break;
+              }
+
+              // Check type match
+              uint8 ActualType = (uint8)TileItem->Single.Type;
+              if (ActualType != ExpectedType &&
+                  ExpectedType != (uint8)EOrbType::Void) {
+                bAllTilesHaveValidOrbs = false;
+                break;
+              }
+
+              if (TileItem->Id > 0) {
+                OrbItemIds.Add(TileItem->Id);
+              }
+            }
+
+            // Check if orbs are all connected by bonds
+            if (bAllTilesHaveValidOrbs && OrbItemIds.Num() > 1) {
+              TSet<int32> AllConnectedOrbs;
+              TArray<int32> ToVisitItems;
+
+              AllConnectedOrbs.Add(OrbItemIds[0]);
+              ToVisitItems.Add(OrbItemIds[0]);
+
+              while (ToVisitItems.Num() > 0) {
+                int32 CurrentItemId = ToVisitItems.Pop();
+
+                if (const TArray<int32> *BondList =
+                        ItemToBonds.Find(CurrentItemId)) {
+                  for (int32 BondIdx : *BondList) {
+                    if (!Bonds.IsValidIndex(BondIdx))
+                      continue;
+                    const FBond &Bond = Bonds[BondIdx];
+                    if (!Bond.bActive)
+                      continue;
+
+                    int32 OtherItemId =
+                        (Bond.ItemA == CurrentItemId) ? Bond.ItemB : Bond.ItemA;
+                    if (!AllConnectedOrbs.Contains(OtherItemId)) {
+                      AllConnectedOrbs.Add(OtherItemId);
+                      ToVisitItems.Add(OtherItemId);
+                    }
+                  }
+                }
+              }
+
+              // Check that all orbs on the cluster are connected
+              for (int32 Id : OrbItemIds) {
+                if (!AllConnectedOrbs.Contains(Id)) {
+                  bShouldPull = true; // Not all connected, can't send
+                  break;
+                }
+              }
+
+              // Check that connected orbs don't extend beyond the cluster
+              if (!bShouldPull) {
+                TSet<int32> OrbsOnClusterTiles;
+                for (int32 Id : OrbItemIds)
+                  OrbsOnClusterTiles.Add(Id);
+
+                for (int32 ConnectedId : AllConnectedOrbs) {
+                  if (!OrbsOnClusterTiles.Contains(ConnectedId)) {
+                    bShouldPull = true; // Cluster extends beyond tiles
+                    break;
+                  }
+                }
+              }
+            } else if (!bAllTilesHaveValidOrbs) {
+              // Cluster can't send because tiles don't have valid orbs
+              bShouldPull = true;
+            }
+          }
+
+          // If none of the above, it's a valid candidate for ClusterSend, so
+          // don't pull
           if (!bShouldPull) {
             return false;
           }
@@ -683,8 +877,8 @@ void USimWorldHex::StepBelts() {
     TMap<FHex, int32> PendingDestinations; // Maps destination hex to item ID
                                            // that will move there
 
-    // Process each item that can move - either on belts or on bond/unbond tiles
-    // that can be pulled
+    // Process each item that can move - either on belts or on bond/unbond
+    // tiles that can be pulled
     for (const auto &KV : ItemMap) {
       const FHex &FromHex = KV.Key;
       const FItem &Item = KV.Value;
@@ -749,8 +943,9 @@ void USimWorldHex::StepBelts() {
           bCanMove = false;
         }
 
-        // Don't move items that were just placed this tick (by walkers, inputs,
-        // etc.) They need to spend at least one tick on their placement tile
+        // Don't move items that were just placed this tick (by walkers,
+        // inputs, etc.) They need to spend at least one tick on their
+        // placement tile
         if (NewlyPlacedItems.Contains(Item.Id)) {
           bCanMove = false;
         }
@@ -773,7 +968,8 @@ void USimWorldHex::StepBelts() {
         MoveOp.FromHex = FromHex;
         MoveOp.ToHex = ToHex;
 
-        // Set priority if this belt hasn't pushed this specific cluster ID yet
+        // Set priority if this belt hasn't pushed this specific cluster ID
+        // yet
         if (int32 *LastId = BeltLastMovedItemId.Find(FromHex)) {
           MoveOp.bIsPriority = (*LastId != Item.Id);
         } else {
@@ -850,6 +1046,15 @@ void USimWorldHex::StepBelts() {
             if (!bFoundConnected) {
               bCanMoveCluster = false;
               break;
+            }
+
+            // Don't move clusters if any orb is on a HelixOutput tile
+            if (const FTile *ConnectedTile =
+                    TileMap.Find(ConnectedCurrentHex)) {
+              if (ConnectedTile->Kind == ETileKind::HelixOutput) {
+                bCanMoveCluster = false;
+                break;
+              }
             }
 
             FHex ConnectedToHex(ConnectedCurrentHex.Q + ClusterMoveOffset.Q,
@@ -1027,6 +1232,15 @@ void USimWorldHex::StepBelts() {
                 if (!bFoundConnected) {
                   bCanPullCluster = false;
                   break;
+                }
+
+                // Don't pull clusters if any orb is on a HelixOutput tile
+                if (const FTile *ConnectedTile =
+                        TileMap.Find(ConnectedCurrentHex)) {
+                  if (ConnectedTile->Kind == ETileKind::HelixOutput) {
+                    bCanPullCluster = false;
+                    break;
+                  }
                 }
 
                 FHex ConnectedToHex(
@@ -1358,9 +1572,11 @@ void USimWorldHex::StepBelts() {
 
         if (FItem *MovingItem = MovingItems.Find(ItemId)) {
           // If moving to a bond/unbond area (primary tile or partner area),
-          // mark as not ready
+          // mark as not ready; otherwise set ready
           if (bMovingToBondArea) {
             MovingItem->bIsReady = false;
+          } else {
+            MovingItem->bIsReady = true;
           }
 
           ItemMap.Add(NewHex, *MovingItem);
@@ -1372,7 +1588,10 @@ void USimWorldHex::StepBelts() {
           // Check if moved to output tile
           const FTile *NewTile = TileMap.Find(NewHex);
           if (NewTile && (NewTile->Kind == ETileKind::Output ||
-                          NewTile->Kind == ETileKind::ClusterOutput)) {
+                          NewTile->Kind == ETileKind::ClusterOutput ||
+                          NewTile->Kind == ETileKind::DiscoveryClusterOutput ||
+                          NewTile->Kind == ETileKind::ClusterSend ||
+                          NewTile->Kind == ETileKind::HelixOutput)) {
             OrbsNewlyMovedToOutput.Add(NewHex);
           }
 

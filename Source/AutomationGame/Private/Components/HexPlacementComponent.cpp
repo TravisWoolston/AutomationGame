@@ -180,6 +180,9 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
   case EPlaceKind::Unbond:
     T = FTile{ETileKind::Unbond, (uint8)BeltDir};
     break;
+  case EPlaceKind::HelixOutput:
+    T = FTile{ETileKind::HelixOutput, 0};
+    break;
   case EPlaceKind::Arm: {
     AActor *GMActor = nullptr;
     for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -1271,22 +1274,45 @@ USkeletalMesh *UHexPlacementComponent::SelectSkeletalPreviewMesh() const {
   case EPlaceKind::Arm:
     if (bUseActualArmAssets) {
       if (UWorld *World = GetWorld()) {
+        // First try to find an existing arm actor in the world (has BP
+        // defaults)
+        for (TActorIterator<ABasicArm> ArmIt(World); ArmIt; ++ArmIt) {
+          ABasicArm *ExistingArm = *ArmIt;
+          if (ExistingArm && ExistingArm->ArmSkeletalMesh) {
+            UE_LOG(LogTemp, Log,
+                   TEXT("HexPlacementComponent: Using skeletal mesh from "
+                        "existing arm: %s"),
+                   *ExistingArm->ArmSkeletalMesh->GetName());
+            return ExistingArm->ArmSkeletalMesh;
+          }
+        }
+
+        // If no existing arm, try to get from GameManager's BasicArmClass CDO
         for (TActorIterator<AGameManager> It(World); It; ++It) {
           AGameManager *GameManager = *It;
           if (GameManager && GameManager->BasicArmClass) {
-            ABasicArm *DefaultArm =
-                GameManager->BasicArmClass->GetDefaultObject<ABasicArm>();
-            if (DefaultArm && DefaultArm->ArmSkeletalMesh) {
-              UE_LOG(LogTemp, Log,
-                     TEXT("HexPlacementComponent: Using actual arm skeletal "
-                          "mesh: %s"),
-                     *DefaultArm->ArmSkeletalMesh->GetName());
-              return DefaultArm->ArmSkeletalMesh;
-            } else {
-              UE_LOG(LogTemp, Warning,
-                     TEXT("HexPlacementComponent: BasicArm class found but "
-                          "ArmSkeletalMesh is null"));
+            // For Blueprint classes, we need to check the actual CDO which has
+            // BP values
+            if (AActor *CDO =
+                    GameManager->BasicArmClass->GetDefaultObject<AActor>()) {
+              if (ABasicArm *ArmCDO = Cast<ABasicArm>(CDO)) {
+                if (ArmCDO->ArmSkeletalMesh) {
+                  UE_LOG(LogTemp, Log,
+                         TEXT("HexPlacementComponent: Using arm skeletal mesh "
+                              "from CDO: %s"),
+                         *ArmCDO->ArmSkeletalMesh->GetName());
+                  return ArmCDO->ArmSkeletalMesh;
+                }
+              }
             }
+
+            // Last resort: try spawning a temporary instance to get defaults
+            // This is needed because Blueprint-assigned defaults may not be in
+            // CDO
+            UE_LOG(LogTemp, Warning,
+                   TEXT("HexPlacementComponent: CDO ArmSkeletalMesh is null. "
+                        "Make sure ArmSkeletalMesh is set in the BasicArm "
+                        "Blueprint class defaults."));
           } else {
             UE_LOG(LogTemp, Warning,
                    TEXT("HexPlacementComponent: GameManager or BasicArmClass "

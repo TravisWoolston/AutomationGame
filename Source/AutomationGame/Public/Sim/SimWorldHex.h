@@ -37,6 +37,9 @@ public:
   float FixedStepSec = 0.20f; // 5 Hz
 
   void StepBonds(); // Made public for BondResolver
+  void
+  ProcessUnbondsForHeldClusters(); // Process unbond tiles for held clusters
+                                   // after immediate arm execution
 
   // Mark arm base cache as needing rebuild (call when arms are added/removed)
   void MarkArmBaseCacheDirty() { bArmBaseCacheDirty = true; }
@@ -220,6 +223,61 @@ public:
   const TMap<FHex, FHex> &GetIOBondPartners() const { return IOBondPartners; }
   TMap<FHex, FHex> &GetIOBondPartnersMutable() { return IOBondPartners; }
 
+  // ============================================================
+  // HELIX OUTPUT SYSTEM - Spiral cluster elevator
+  // ============================================================
+
+  /** A single rung in the helix - represents one processed cluster */
+  struct FHelixRung {
+    TArray<FOrbData> Orbs; // The orbs in this cluster (with relative positions)
+    TArray<TPair<int32, int32>>
+        Bonds;                   // Bonds between orbs (indices into Orbs array)
+    float SpawnTime = 0.f;       // When this cluster was added
+    float ZOffset = 0.f;         // Current vertical position
+    float TargetZOffset = 0.f;   // Target vertical position (for animation)
+    float RotationDegrees = 0.f; // Current rotation around helix axis
+  };
+
+  /** A group of adjacent HelixOutput tiles that form a single helix column */
+  struct FHelixOutputGroup {
+    TArray<FHex> MemberTiles;                  // All tiles in this helix lane
+    FHex CenterHex = FHex(0, 0, 0);            // Center tile in hex coordinates
+    FVector CenterWorld = FVector::ZeroVector; // World position of helix center
+    TArray<FHelixRung> Rungs;                  // Previously processed clusters
+    int64 TotalClustersProcessed = 0;
+    float HelixRotationOffset = 0.f; // Current idle rotation for animation
+
+    // Helix configuration
+    float DegreesPerRung = 36.f; // Rotation between rungs
+    float RungSpacing = 100.f;   // Vertical distance between rungs
+    int32 MaxVisibleRungs = 20;  // Max clusters before oldest is removed
+  };
+
+  /** Register a helix output tile - will auto-group with adjacent helix tiles
+   */
+  void RegisterHelixOutputTile(const FHex &Hex);
+
+  /** Unregister a helix output tile */
+  void UnregisterHelixOutputTile(const FHex &Hex);
+
+  /** Find which helix group a tile belongs to */
+  FHelixOutputGroup *FindHelixGroupContaining(const FHex &Hex);
+  const FHelixOutputGroup *FindHelixGroupContaining(const FHex &Hex) const;
+
+  /** Get all helix groups for rendering */
+  const TArray<FHelixOutputGroup> &GetHelixGroups() const {
+    return HelixGroups;
+  }
+
+  /** Try to process helix output - checks if all helix tiles have bonded orbs
+   *  forming one complete cluster, and if so, elevates it into the helix.
+   *  Call this once per tick for each helix group. Returns true if a cluster
+   *  was processed. */
+  bool TryProcessHelixCluster(FHelixOutputGroup &Group);
+
+  /** Update helix animation (call from renderer tick) */
+  void UpdateHelixGroups(float DeltaTime);
+
   // Item helpers
   bool TryPutItem(const FHex &H, const FItem &I);
   bool TryTakeItem(const FHex &H, FItem &Out);
@@ -402,6 +460,9 @@ private:
   // Counter for auto-generated cluster template IDs (starts at 128 to avoid
   // conflicts with manual templates)
   uint8 NextAutoTemplateId = 128;
+
+  // Helix output groups - each represents a lane of adjacent HelixOutput tiles
+  TArray<FHelixOutputGroup> HelixGroups;
 
   // Pending bond formations waiting for arm rotation to complete
   struct FPendingBondFormation {

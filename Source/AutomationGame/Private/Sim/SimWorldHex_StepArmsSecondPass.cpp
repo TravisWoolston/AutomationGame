@@ -8,6 +8,10 @@ void USimWorldHex::StepArmsSecondPass() {
   // Second pass - only process arms that are trying to grab and don't have
   // anything This allows immediate grabbing of orbs that were just unbonded
 
+  // Track which arms successfully grabbed so we can execute next ops
+  // immediately
+  TSet<int32> ArmsSuccessfullyGrabbed;
+
   for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++) {
     FArmState &S = Arms[ArmIndex];
     if (S.Tape.Num() == 0)
@@ -43,10 +47,29 @@ void USimWorldHex::StepArmsSecondPass() {
     // Calculate target position
     const FHex Target = GetArmGripHex_Sim(ArmIndex);
 
-    // Try to grab again
+    // Try to grab again (with belt-transit awareness)
     FItem *Found = ItemMap.Find(Target);
+    if (!Found) {
+      // Check neighbors for orbs moving toward Target on belts
+      for (int32 Dir = 0; Dir < 6; ++Dir) {
+        FHex AdjacentHex = HexUtil::Neighbor(Target, (EHexDir)Dir);
+        const FItem *AdjacentItem = ItemMap.Find(AdjacentHex);
+        if (AdjacentItem && AdjacentItem->Id != 0) {
+          const FTile *AdjTile = TileMap.Find(AdjacentHex);
+          if (AdjTile && AdjTile->Kind == ETileKind::Belt) {
+            const uint8 BDir = (uint8)(AdjTile->Arg & 0xFF);
+            if (HexUtil::Neighbor(AdjacentHex, (EHexDir)(BDir % 6)) == Target) {
+              if (BeltProgress.Contains(AdjacentItem->Id)) {
+                Found = const_cast<FItem *>(AdjacentItem);
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
     // Don't allow grabbing orbs that just arrived or moved
-    // Allow them to visually complete their movement first
     if (Found && Found->Id > 0 &&
         (OrbsNewlyMovedByBelts.Contains(Found->Id) ||
          OrbsMovedLastTick.Contains(Found->Id))) {
@@ -71,6 +94,7 @@ void USimWorldHex::StepArmsSecondPass() {
         S.PrevHeldOrbCount = 1;
         SimGrabFacingByArm.Add(ArmIndex, int8(-1));
         S.PC = (S.PC + 1) % S.Tape.Num();
+        ArmsSuccessfullyGrabbed.Add(ArmIndex);
       }
     } else {
       // Check for bonded cluster
@@ -126,6 +150,7 @@ void USimWorldHex::StepArmsSecondPass() {
 
           // Advance PC since grab succeeded
           S.PC = (S.PC + 1) % S.Tape.Num();
+          ArmsSuccessfullyGrabbed.Add(ArmIndex);
         }
       } else {
         // Multi-item cluster - grab the whole thing
@@ -204,6 +229,7 @@ void USimWorldHex::StepArmsSecondPass() {
 
           // Advance PC
           S.PC = (S.PC + 1) % S.Tape.Num();
+          ArmsSuccessfullyGrabbed.Add(ArmIndex);
           S.bReadyForGrab = false;
         } else {
           S.bReadyForGrab = true;
@@ -377,6 +403,26 @@ void USimWorldHex::StepArmsSecondPass() {
 
       FHex Target = ComputeGripHex(S);
       FItem *Found = ItemMap.Find(Target);
+      if (!Found) {
+        // Check neighbors for orbs moving toward Target on belts
+        for (int32 Dir = 0; Dir < 6; ++Dir) {
+          FHex AdjacentHex = HexUtil::Neighbor(Target, (EHexDir)Dir);
+          const FItem *AdjacentItem = ItemMap.Find(AdjacentHex);
+          if (AdjacentItem && AdjacentItem->Id != 0) {
+            const FTile *AdjTile = TileMap.Find(AdjacentHex);
+            if (AdjTile && AdjTile->Kind == ETileKind::Belt) {
+              const uint8 BDir = (uint8)(AdjTile->Arg & 0xFF);
+              if (HexUtil::Neighbor(AdjacentHex, (EHexDir)(BDir % 6)) ==
+                  Target) {
+                if (BeltProgress.Contains(AdjacentItem->Id)) {
+                  Found = const_cast<FItem *>(AdjacentItem);
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
 
       // Don't allow grabbing orbs that just arrived or moved
       if (Found && Found->Id > 0 &&
@@ -861,6 +907,24 @@ void USimWorldHex::StepArmsSecondPass() {
     }
   };
 
+  // NEW: Execute fast ops immediately for arms that successfully grabbed
+  // This ensures Grab -> (Rotate/Drop/etc) happens in the same GTM tick
+  for (int32 ArmIndex : ArmsSuccessfullyGrabbed) {
+    // Execute up to 2 fast ops immediately (e.g., Rotate after Grab)
+    int32 executed = 0;
+    const int32 kMaxFast = 1;
+    while (executed < kMaxFast) {
+      FArmState &S = Arms[ArmIndex];
+      const int32 PrevPC = S.PC;
+      if (!ExecFastOpOnce(ArmIndex))
+        break;
+      ++executed;
+      // Safety: stop if PC didn't advance
+      if (S.PC == PrevPC)
+        break;
+    }
+  }
+
   // NEW: finalize WaitForBond in the same tick (after StepBonds ran) and
   // execute next op(s) immediately
   for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++) {
@@ -875,6 +939,17 @@ void USimWorldHex::StepArmsSecondPass() {
       continue;
     if (!S.bHolding)
       continue;
+
+    // Gate on trigger signals
+    if (!IsArmEnabled(S.BaseHex)) {
+      if (bDebugLogs) {
+        UE_LOG(LogTemp, Log,
+               TEXT("Sim (SecondPass): Arm at (%d,%d) WAITING on WaitForBond "
+                    "due to negative signal"),
+               S.BaseHex.Q, S.BaseHex.R);
+      }
+      continue;
+    }
 
     const int32 CurrentCount = S.Held.bIsCluster ? S.Held.Orbs.Num() : 1;
 
@@ -901,4 +976,9 @@ void USimWorldHex::StepArmsSecondPass() {
       }
     }
   }
+
+  // NEW: Process unbond tiles for held clusters that may have rotated during
+  // fast ops This ensures unbonding happens when the arm rotates a held cluster
+  // over an unbond tile
+  // ProcessUnbondsForHeldClusters();
 }

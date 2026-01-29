@@ -433,6 +433,99 @@ void USimWorldHex::StepBonds() {
   }
 }
 
+void USimWorldHex::ProcessUnbondsForHeldClusters() {
+  // Process unbond tiles for held clusters that may have rotated during
+  // StepArmsSecondPass or continuous rotation. This ensures unbonding happens
+  // when an arm rotates a held cluster over an unbond tile in the same GTM
+  // tick.
+
+  if (TileMap.Num() == 0)
+    return;
+
+  // Build virtual occupancy for held items using CURRENT arm positions
+  // (not sim state, which may be deferred)
+  TMap<FHex, int32> VirtualHeldItemAt;
+
+  auto Rot60 = [](FHex D, uint8 StepsCCW) {
+    for (uint8 i = 0; i < (StepsCCW % 6); ++i) {
+      int32 q = D.Q, r = D.R;
+      D.Q = -r;
+      D.R = q + r;
+    }
+    return D;
+  };
+
+  for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex) {
+    const FArmState &A = Arms[ArmIndex];
+    if (!A.bHolding)
+      continue;
+
+    // Calculate GripHex using CURRENT state (A.Facing, A.ArmLen) instead of
+    // sim state (SimFacingByArm, SimArmLenByArm). This ensures we check against
+    // the actual current position during continuous rotations.
+    const uint8 curFacing = (uint8)SimFacingByArm[ArmIndex] % 6;
+    FHex GripHex = A.BaseHex;
+    for (int32 i = 0; i < A.ArmLen; ++i) {
+      GripHex = HexUtil::Neighbor(GripHex, (EHexDir)(curFacing % 6));
+    }
+
+    // Calculate CCW steps using current A.Facing directly (not sim state)
+    int8 grab = (A.Held.bIsCluster) ? A.Held.GrabFacing : int8(-1);
+    // Check sim grab facing for freshly grabbed items
+    if (const int8 *P = SimGrabFacingByArm.Find(ArmIndex)) {
+      if (*P >= 0)
+        grab = *P;
+    }
+    const uint8 facingDelta =
+        (grab >= 0) ? (uint8)(((int32)curFacing - (int32)(grab % 6) + 6) % 6)
+                    : curFacing;
+    const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+
+    if (A.Held.bIsCluster) {
+      for (const FOrbData &Sub : A.Held.Orbs) {
+        if (Sub.ItemId <= 0)
+          continue;
+        const FHex Rot = Rot60(FHex(Sub.dQ, Sub.dR), ccw);
+        const FHex World(GripHex.Q + Rot.Q, GripHex.R + Rot.R, GripHex.Level);
+        VirtualHeldItemAt.FindOrAdd(World, Sub.ItemId);
+      }
+    } else if (A.Held.Id > 0) {
+      VirtualHeldItemAt.FindOrAdd(GripHex, A.Held.Id);
+    }
+  }
+
+  // Process unbond tiles for held items
+  for (const auto &KV : TileMap) {
+    const FTile &T = KV.Value;
+    if (T.Kind != ETileKind::Unbond)
+      continue;
+
+    const uint8 Dir = (uint8)(T.Arg & 0xFF);
+    const FHex AHex = KV.Key;
+    const FHex BHex = HexUtil::Neighbor(AHex, (EHexDir)(Dir % 6));
+
+    int32 AId = 0, BId = 0;
+
+    // Check board items first
+    if (FItem *IA = ItemMap.Find(AHex))
+      AId = IA->Id;
+    else if (int32 *HeldA = VirtualHeldItemAt.Find(AHex))
+      AId = *HeldA;
+
+    if (FItem *IB = ItemMap.Find(BHex))
+      BId = IB->Id;
+    else if (int32 *HeldB = VirtualHeldItemAt.Find(BHex))
+      BId = *HeldB;
+
+    if (AId > 0 && BId > 0) {
+      BreakBondBetween(AId, BId);
+    }
+  }
+
+  // Check for held cluster splits after breaking bonds
+  CheckAndRemoveDisconnectedOrbsFromHeldClusters();
+}
+
 void USimWorldHex::StepBondsSecondPass() {
   // Second pass for bond formation - only forms bonds for arms that have
   // pending rotations This allows bonds to form AFTER rotations complete,

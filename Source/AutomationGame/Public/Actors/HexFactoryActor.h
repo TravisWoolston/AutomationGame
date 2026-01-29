@@ -119,6 +119,34 @@ public:
   UPROPERTY(EditAnywhere, Category = "Visual|Arms")
   USkeletalMesh *UpsideDownArmMesh = nullptr;
 
+  // ----- Helix Output -----
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  UStaticMesh *HelixTileMesh = nullptr;
+
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  UMaterialInterface *HelixTileMaterial = nullptr;
+
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  UStaticMesh *HelixOrbMesh = nullptr;
+
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  UMaterialInterface *HelixOrbMaterial = nullptr;
+
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  UStaticMesh *HelixBondMesh = nullptr;
+
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  UMaterialInterface *HelixBondMaterial = nullptr;
+
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  FVector HelixOrbScale = FVector(0.3f);
+
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  FVector HelixBondScale = FVector(0.15f, 0.15f, 1.0f);
+
+  UPROPERTY(EditAnywhere, Category = "Visual|Helix")
+  float HelixIdleRotationSpeed = 10.f; // Degrees per second
+
 protected:
   // Components
   UPROPERTY(Transient) UInstancedStaticMeshComponent *TileISM = nullptr;
@@ -163,6 +191,11 @@ protected:
   UPROPERTY(Transient)
   UInstancedStaticMeshComponent *HighlightUnbondISM = nullptr;
 
+  // Helix output ISMs
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *HelixTileISM = nullptr;
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *HelixOrbISM = nullptr;
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *HelixBondISM = nullptr;
+
   // Collision plane for line traces (more performant than individual tile
   // meshes)
   UPROPERTY(Transient) UBoxComponent *GridCollisionPlane = nullptr;
@@ -194,12 +227,32 @@ protected:
                               // orb-type materials
   void DrawBeltArrow(const FVector &Center, float TileRadiusUU, float YawDeg);
   void DrawBondArrow(const FVector &A, const FVector &B);
+  void RebuildHelixOutput(); // NEW: Helix tile and rung rendering
+  void
+  UpdateHelixAnimation(float DeltaSeconds); // NEW: Helix continuous animation
 
   // Helper functions for output type management
   UInstancedStaticMeshComponent *GetOutputISMForType(EOrbType OrbType);
 
   // Helper functions for input type management
   UInstancedStaticMeshComponent *GetInputISMForType(EOrbType OrbType);
+
+  // Helper functions for helix orb type management
+  UInstancedStaticMeshComponent *GetHelixOrbISMForType(EOrbType OrbType);
+
+  // Per-type helix orb ISMs (use orb mesh with per-type materials)
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *HelixOrbNoneISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HelixOrbBaseAISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HelixOrbBaseBISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HelixOrbBaseCISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HelixOrbMetalAISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *HelixOrbCatalystXISM = nullptr;
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *HelixOrbVoidISM = nullptr;
 
   // Update the grid collision plane position to match the grid Z level
   void UpdateGridCollisionPlane();

@@ -190,6 +190,68 @@ AHexFactoryActor::AHexFactoryActor() {
       FVector(0.f, 0.f, 0.f)); // Will be positioned at grid Z level
   GridCollisionPlane->SetVisibility(false); // Invisible, collision only
   GridCollisionPlane->SetHiddenInGame(true);
+
+  // Helix output ISM components
+  HelixTileISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixTileISM"));
+  HelixTileISM->SetupAttachment(Root);
+  HelixTileISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixTileISM->SetCanEverAffectNavigation(false);
+
+  HelixOrbISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixOrbISM"));
+  HelixOrbISM->SetupAttachment(Root);
+  HelixOrbISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixOrbISM->SetCanEverAffectNavigation(false);
+
+  HelixBondISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixBondISM"));
+  HelixBondISM->SetupAttachment(Root);
+  HelixBondISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixBondISM->SetCanEverAffectNavigation(false);
+
+  // Per-type helix orb ISM components
+  HelixOrbNoneISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixOrbNoneISM"));
+  HelixOrbNoneISM->SetupAttachment(Root);
+  HelixOrbNoneISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixOrbNoneISM->SetCanEverAffectNavigation(false);
+
+  HelixOrbBaseAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixOrbBaseAISM"));
+  HelixOrbBaseAISM->SetupAttachment(Root);
+  HelixOrbBaseAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixOrbBaseAISM->SetCanEverAffectNavigation(false);
+
+  HelixOrbBaseBISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixOrbBaseBISM"));
+  HelixOrbBaseBISM->SetupAttachment(Root);
+  HelixOrbBaseBISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixOrbBaseBISM->SetCanEverAffectNavigation(false);
+
+  HelixOrbBaseCISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixOrbBaseCISM"));
+  HelixOrbBaseCISM->SetupAttachment(Root);
+  HelixOrbBaseCISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixOrbBaseCISM->SetCanEverAffectNavigation(false);
+
+  HelixOrbMetalAISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixOrbMetalAISM"));
+  HelixOrbMetalAISM->SetupAttachment(Root);
+  HelixOrbMetalAISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixOrbMetalAISM->SetCanEverAffectNavigation(false);
+
+  HelixOrbCatalystXISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixOrbCatalystXISM"));
+  HelixOrbCatalystXISM->SetupAttachment(Root);
+  HelixOrbCatalystXISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixOrbCatalystXISM->SetCanEverAffectNavigation(false);
+
+  HelixOrbVoidISM = CreateDefaultSubobject<UInstancedStaticMeshComponent>(
+      TEXT("HelixOrbVoidISM"));
+  HelixOrbVoidISM->SetupAttachment(Root);
+  HelixOrbVoidISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+  HelixOrbVoidISM->SetCanEverAffectNavigation(false);
 }
 
 void AHexFactoryActor::EnsureComponents() {
@@ -252,6 +314,11 @@ void AHexFactoryActor::EnsureComponents() {
   EnsureISM(InputMetalAISM, TEXT("InputMetalAISM_Runtime"));
   EnsureISM(InputCatalystXISM, TEXT("InputCatalystXISM_Runtime"));
   EnsureISM(InputVoidISM, TEXT("InputVoidISM_Runtime"));
+
+  // Ensure helix output ISM components
+  EnsureISM(HelixTileISM, TEXT("HelixTileISM_Runtime"));
+  EnsureISM(HelixOrbISM, TEXT("HelixOrbISM_Runtime"));
+  EnsureISM(HelixBondISM, TEXT("HelixBondISM_Runtime"));
 
   InputTileISM->SetVisibility(true, true);
 
@@ -354,6 +421,7 @@ void AHexFactoryActor::HandleSimStepComplete(float StepSeconds) {
 
 void AHexFactoryActor::Tick(float DeltaSeconds) {
   Super::Tick(DeltaSeconds);
+  UpdateHelixAnimation(DeltaSeconds);
 
   // Update collision plane position if anchor has moved
   static FVector LastAnchorLocation = FVector::ZeroVector;
@@ -383,6 +451,9 @@ void AHexFactoryActor::Tick(float DeltaSeconds) {
            Sim->TileRevision, LastSeenRevision, bBoardChanged ? 1 : 0);
     RebuildInternal();
   }
+
+  // Update helix animation continuously
+  UpdateHelixAnimation(DeltaSeconds);
 }
 
 void AHexFactoryActor::Rebuild() {
@@ -693,6 +764,14 @@ void AHexFactoryActor::UpdateGlobalHighlight(EPlaceKind Kind, bool bEnable,
       }
       break;
 
+    case EPlaceKind::HelixOutput:
+      if (T.Kind == ETileKind::HelixOutput) {
+        bMatches = true;
+        TargetISM = HighlightTileISM;
+        Transform = FTransform(FRotator(Pitch, 0.f, 0.f), Loc, FVector(1.f));
+      }
+      break;
+
     default:
       break;
     }
@@ -848,10 +927,11 @@ void AHexFactoryActor::RebuildInternal() {
 
   RebuildTiles();
   RebuildBelts();
-  RebuildBonds();      // NEW
-  RebuildOutputs();    // NEW: Type-specific output rendering
-  RebuildInputTiles(); // Render Input/ClusterInput tiles using ISM with
-                       // orb-type materials
+  RebuildBonds();       // NEW
+  RebuildOutputs();     // NEW: Type-specific output rendering
+  RebuildInputTiles();  // Render Input/ClusterInput tiles using ISM with
+                        // orb-type materials
+  RebuildHelixOutput(); // NEW: Helix output tiles and rungs
 
   // Update global highlight if enabled
   if (bHighlightEnabled) {
@@ -897,8 +977,9 @@ void AHexFactoryActor::RebuildTiles() {
     case ETileKind::Output:
     case ETileKind::ClusterOutput:
     case ETileKind::DiscoveryClusterOutput:
-      // Output tiles are handled by RebuildOutputs() with type-specific
-      // materials
+    case ETileKind::HelixOutput:
+      // Output tiles are handled by RebuildOutputs() or RebuildHelixOutput()
+      // with type-specific materials
       break;
     case ETileKind::Belt:
       if (BeltTileISM)
@@ -1546,6 +1627,28 @@ AHexFactoryActor::GetInputISMForType(EOrbType OrbType) {
   }
 }
 
+UInstancedStaticMeshComponent *
+AHexFactoryActor::GetHelixOrbISMForType(EOrbType OrbType) {
+  switch (OrbType) {
+  case EOrbType::None:
+    return HelixOrbNoneISM;
+  case EOrbType::BaseA:
+    return HelixOrbBaseAISM;
+  case EOrbType::BaseB:
+    return HelixOrbBaseBISM;
+  case EOrbType::BaseC:
+    return HelixOrbBaseCISM;
+  case EOrbType::MetalA:
+    return HelixOrbMetalAISM;
+  case EOrbType::CatalystX:
+    return HelixOrbCatalystXISM;
+  case EOrbType::Void:
+    return HelixOrbVoidISM;
+  default:
+    return HelixOrbBaseAISM; // Fallback
+  }
+}
+
 void AHexFactoryActor::RebuildInputTiles() {
   if (!Sim)
     return;
@@ -1679,4 +1782,224 @@ AHexFactoryActor *AHexFactoryActor::FindInWorld(UWorld *World) {
     return *It;
   }
   return nullptr;
+}
+
+// ============================================================
+// HELIX OUTPUT RENDERING
+// ============================================================
+
+void AHexFactoryActor::RebuildHelixOutput() {
+  // Clear existing helix instances
+  if (HelixTileISM)
+    HelixTileISM->ClearInstances();
+  if (HelixOrbISM)
+    HelixOrbISM->ClearInstances();
+  if (HelixBondISM)
+    HelixBondISM->ClearInstances();
+
+  // Clear per-type helix orb ISMs
+  if (HelixOrbNoneISM)
+    HelixOrbNoneISM->ClearInstances();
+  if (HelixOrbBaseAISM)
+    HelixOrbBaseAISM->ClearInstances();
+  if (HelixOrbBaseBISM)
+    HelixOrbBaseBISM->ClearInstances();
+  if (HelixOrbBaseCISM)
+    HelixOrbBaseCISM->ClearInstances();
+  if (HelixOrbMetalAISM)
+    HelixOrbMetalAISM->ClearInstances();
+  if (HelixOrbCatalystXISM)
+    HelixOrbCatalystXISM->ClearInstances();
+  if (HelixOrbVoidISM)
+    HelixOrbVoidISM->ClearInstances();
+
+  if (!Sim || !Driver)
+    return;
+
+  const float TileSize = Driver->GetTileSize();
+  const float GridYaw = Driver->GetGridYaw();
+  const EHexOrientation Ori = Driver->GetGridOrientation();
+  const AActor *Anchor = GetAnchor();
+  const FVector AnchorV =
+      Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
+  // Set up helix tile mesh if available
+  if (HelixTileMesh && HelixTileISM) {
+    HelixTileISM->SetStaticMesh(HelixTileMesh);
+    if (HelixTileMaterial) {
+      HelixTileISM->SetMaterial(0, HelixTileMaterial);
+    }
+  }
+
+  // Use orb mesh for helix orbs (fallback to tile mesh if not specified)
+  UStaticMesh *OrbMeshToUse = HelixOrbMesh ? HelixOrbMesh : TileMesh;
+  UStaticMesh *BondMeshToUse = HelixBondMesh ? HelixBondMesh : BondMesh;
+
+  // Get material manager for per-type materials
+  UOrbMaterialManager *MaterialManager = UOrbMaterialManager::FindInWorld(this);
+
+  // Set up per-type helix orb ISMs with orb mesh and type-specific materials
+  TArray<EOrbType> AllOrbTypes = {
+      EOrbType::None,   EOrbType::BaseA,     EOrbType::BaseB, EOrbType::BaseC,
+      EOrbType::MetalA, EOrbType::CatalystX, EOrbType::Void};
+
+  for (EOrbType OrbType : AllOrbTypes) {
+    UInstancedStaticMeshComponent *HelixOrbTypedISM =
+        GetHelixOrbISMForType(OrbType);
+    if (HelixOrbTypedISM && OrbMeshToUse) {
+      HelixOrbTypedISM->SetStaticMesh(OrbMeshToUse);
+
+      // Get per-type material
+      if (MaterialManager) {
+        UMaterialInterface *TypeMaterial =
+            MaterialManager->GetMaterialForOrbType(OrbType);
+        if (TypeMaterial) {
+          HelixOrbTypedISM->SetMaterial(0, TypeMaterial);
+        }
+      }
+    }
+  }
+
+  if (BondMeshToUse && HelixBondISM) {
+    HelixBondISM->SetStaticMesh(BondMeshToUse);
+    if (HelixBondMaterial) {
+      HelixBondISM->SetMaterial(0, HelixBondMaterial);
+    }
+  }
+
+  // Render helix output tiles
+  for (const auto &TileKV : Sim->TileMap) {
+    const FHex &H = TileKV.Key;
+    const FTile &T = TileKV.Value;
+
+    if (T.Kind != ETileKind::HelixOutput)
+      continue;
+
+    // Place tile mesh at helix output location
+    if (HelixTileISM && HelixTileMesh) {
+      const FVector2D LocalXY =
+          HexCoord::AxialToXY(FHexAxial(H.Q, H.R), TileSize, Ori);
+      const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+      const int32 DisplayLevel = GetDisplayLevel(H.Level);
+      const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
+      const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+
+      HelixTileISM->AddInstance(
+          FTransform(FRotator(Pitch, 0.f, 0.f), Loc, FVector(1.f)));
+    }
+  }
+
+  // Render helix rungs (the spiraling cluster elevator)
+  const TArray<USimWorldHex::FHelixOutputGroup> &HelixGroups =
+      Sim->GetHelixGroups();
+
+  // Get helix direction from GameManager
+  float ZDirectionMult = 1.f; // Default: extends upward
+  if (UWorld *World = GetWorld()) {
+    for (TActorIterator<AGameManager> It(World); It; ++It) {
+      if (AGameManager *GM = *It) {
+        ZDirectionMult = GM->bHelixExtendsUp ? 1.f : -1.f;
+        break;
+      }
+    }
+  }
+
+  for (const USimWorldHex::FHelixOutputGroup &Group : HelixGroups) {
+    if (Group.MemberTiles.Num() == 0)
+      continue;
+
+    const FVector HelixCenter = Group.CenterWorld;
+    const float IdleRotation = Group.HelixRotationOffset;
+
+    // Render each cluster rung in the helix (newest at bottom, oldest at top)
+    for (int32 RungIdx = 0; RungIdx < Group.Rungs.Num(); ++RungIdx) {
+      const USimWorldHex::FHelixRung &Rung = Group.Rungs[RungIdx];
+
+      // The cluster rotates around the helix center as it rises
+      const float RungRotation = Rung.RotationDegrees + IdleRotation;
+      const float RungAngleRad = FMath::DegreesToRadians(RungRotation);
+
+      // Render each orb in the cluster
+      for (int32 OrbIdx = 0; OrbIdx < Rung.Orbs.Num(); ++OrbIdx) {
+        const FOrbData &OrbData = Rung.Orbs[OrbIdx];
+
+        // Calculate orb position relative to cluster center
+        // Use hex-to-XY conversion for proper spacing
+        const FVector2D OrbLocalXY = HexCoord::AxialToXY(
+            FHexAxial(OrbData.dQ, OrbData.dR), TileSize, Ori);
+
+        // Rotate the local position by the rung rotation
+        const float CosRot = FMath::Cos(RungAngleRad);
+        const float SinRot = FMath::Sin(RungAngleRad);
+        FVector OrbOffset;
+        OrbOffset.X = OrbLocalXY.X * CosRot - OrbLocalXY.Y * SinRot;
+        OrbOffset.Y = OrbLocalXY.X * SinRot + OrbLocalXY.Y * CosRot;
+        OrbOffset.Z = Rung.ZOffset * ZDirectionMult; // Apply direction
+
+        const FVector OrbWorld = HelixCenter + OrbOffset;
+
+        // Use per-type helix orb ISM for correct mesh and material
+        EOrbType OrbType = static_cast<EOrbType>(OrbData.Type);
+        if (UInstancedStaticMeshComponent *TypedISM =
+                GetHelixOrbISMForType(OrbType)) {
+          TypedISM->AddInstance(FTransform(FRotator(0.f, RungRotation, 0.f),
+                                           OrbWorld, HelixOrbScale));
+        }
+      }
+
+      // Render bonds between orbs in this cluster
+      for (const TPair<int32, int32> &Bond : Rung.Bonds) {
+        if (Bond.Key < 0 || Bond.Key >= Rung.Orbs.Num())
+          continue;
+        if (Bond.Value < 0 || Bond.Value >= Rung.Orbs.Num())
+          continue;
+
+        const FOrbData &OrbA = Rung.Orbs[Bond.Key];
+        const FOrbData &OrbB = Rung.Orbs[Bond.Value];
+
+        // Calculate world positions for both orbs
+        const FVector2D OrbALocalXY =
+            HexCoord::AxialToXY(FHexAxial(OrbA.dQ, OrbA.dR), TileSize, Ori);
+        const FVector2D OrbBLocalXY =
+            HexCoord::AxialToXY(FHexAxial(OrbB.dQ, OrbB.dR), TileSize, Ori);
+
+        const float CosRot = FMath::Cos(RungAngleRad);
+        const float SinRot = FMath::Sin(RungAngleRad);
+
+        FVector PosA = HelixCenter +
+                       FVector(OrbALocalXY.X * CosRot - OrbALocalXY.Y * SinRot,
+                               OrbALocalXY.X * SinRot + OrbALocalXY.Y * CosRot,
+                               Rung.ZOffset * ZDirectionMult);
+        FVector PosB = HelixCenter +
+                       FVector(OrbBLocalXY.X * CosRot - OrbBLocalXY.Y * SinRot,
+                               OrbBLocalXY.X * SinRot + OrbBLocalXY.Y * CosRot,
+                               Rung.ZOffset * ZDirectionMult);
+
+        // Bond mesh positioned at midpoint, oriented toward the other orb
+        FVector Mid = (PosA + PosB) * 0.5f;
+        FVector Dir = (PosB - PosA).GetSafeNormal();
+        float BondYaw = FMath::RadiansToDegrees(FMath::Atan2(Dir.Y, Dir.X));
+        float BondLength = (PosB - PosA).Size() / TileSize;
+
+        if (HelixBondISM) {
+          FVector BondScaleFinal = HelixBondScale;
+          BondScaleFinal.X *= BondLength;
+
+          HelixBondISM->AddInstance(
+              FTransform(FRotator(0.f, BondYaw, 0.f), Mid, BondScaleFinal));
+        }
+      }
+    }
+  }
+}
+
+void AHexFactoryActor::UpdateHelixAnimation(float DeltaSeconds) {
+  if (!Sim)
+    return;
+
+  // Update helix group animations (continuous rotation)
+  Sim->UpdateHelixGroups(DeltaSeconds * HelixIdleRotationSpeed / 10.f);
+
+  // ALWAYS rebuild to update visuals (rotation and elevator effect)
+  RebuildHelixOutput();
 }

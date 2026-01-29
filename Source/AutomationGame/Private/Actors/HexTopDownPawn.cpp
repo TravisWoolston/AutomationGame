@@ -773,6 +773,7 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent *IC) {
   IC->BindAction("Kind11", IE_Pressed, this, &AHexTopDownPawn::SetInputMode11);
   IC->BindAction("Kind12", IE_Pressed, this,
                  &AHexTopDownPawn::SetInputMode12Pressed);
+  IC->BindAction("Kind13", IE_Pressed, this, &AHexTopDownPawn::SetInputMode13);
   // Type cycling (works for both Input and Output based on current placement
   // mode)
   IC->BindAction("CycleNextType", IE_Pressed, this,
@@ -980,6 +981,11 @@ void AHexTopDownPawn::SetInputMode10() {
 void AHexTopDownPawn::SetInputMode11() {
   if (Placer)
     Placer->SetPlaceKind(EPlaceKind::ClusterSend);
+}
+
+void AHexTopDownPawn::SetInputMode13() {
+  if (Placer)
+    Placer->SetPlaceKind(EPlaceKind::HelixOutput);
 }
 
 void AHexTopDownPawn::SwitchGrid() {
@@ -1458,7 +1464,7 @@ void AHexTopDownPawn::IncreaseTickSpeed() {
   }
 
   TickManager->TicksPerSecond =
-      FMath::Clamp(TickManager->TicksPerSecond + 0.5f, 0.01f, 240.0f);
+      FMath::Clamp(TickManager->TicksPerSecond + 1.f, 0.01f, 240.0f);
   UE_LOG(LogTemp, Log, TEXT("Tick speed increased to %.2f ticks/second"),
          TickManager->TicksPerSecond);
 }
@@ -1472,7 +1478,7 @@ void AHexTopDownPawn::DecreaseTickSpeed() {
   }
 
   TickManager->TicksPerSecond =
-      FMath::Clamp(TickManager->TicksPerSecond - 0.5f, 0.01f, 240.0f);
+      FMath::Clamp(TickManager->TicksPerSecond - 1.f, 0.01f, 240.0f);
   UE_LOG(LogTemp, Log, TEXT("Tick speed decreased to %.2f ticks/second"),
          TickManager->TicksPerSecond);
 }
@@ -2723,6 +2729,10 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
         UE_LOG(LogTemp, Log, TEXT("Removed IOBondPartners entry for (%d,%d)"),
                PartnerHex.Q, PartnerHex.R);
       }
+    }
+
+    if (Tile->Kind == ETileKind::HelixOutput) {
+      Sim->UnregisterHelixOutputTile(Hex);
     }
   }
 

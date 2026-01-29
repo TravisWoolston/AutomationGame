@@ -157,7 +157,7 @@ public:
   void UpdateRippleVisuals();
 
   // Internal signal update
-  void SetSignal(bool bPositive);
+  void SetSignal(bool bPositive, bool bForceSync = false);
 
   // Visuals - these can be set in a Blueprint child class
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
