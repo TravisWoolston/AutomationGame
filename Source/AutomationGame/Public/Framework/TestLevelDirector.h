@@ -245,7 +245,7 @@ public:
 
   UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
   void ToggleTriggerTileOwnerSpec(int32 Q, int32 R, int32 Level, int32 OwnerQ,
-                                  int32 OwnerR,
+                                  int32 OwnerR, int32 OwnerLevel,
                                   ETriggerTileOwnerType OwnerType);
   UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
   bool RemoveTriggerTileSpec(int32 Q, int32 R, int32 Level);

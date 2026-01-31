@@ -234,8 +234,11 @@ public:
         Bonds; // Bonds between orbs (indices into Orbs array)
     TArray<TPair<int32, int32>> BondsToPrevious; // Bonds to the previous rung
                                                  // (CurrentOrbIdx, PrevOrbIdx)
-    float SpawnTime = 0.f;                       // When this cluster was added
-    float ZOffset = 0.f;                         // Current vertical position
+    TArray<TPair<int32, int32>>
+        BondsToBoard;            // Bonds to items still on the board
+                                 // (CurrentOrbIdx, BoardItemId)
+    float SpawnTime = 0.f;       // When this cluster was added
+    float ZOffset = 0.f;         // Current vertical position
     float TargetZOffset = 0.f;   // Target vertical position (for animation)
     float RotationDegrees = 0.f; // Current rotation around helix axis
   };

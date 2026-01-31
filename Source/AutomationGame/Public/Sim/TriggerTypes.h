@@ -23,10 +23,14 @@ struct FTriggerOwner {
   int32 R = 0;
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 Level = 0;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
   ETriggerTileOwnerType Type = ETriggerTileOwnerType::Belt;
 
   bool operator==(const FTriggerOwner &Other) const {
-    return Q == Other.Q && R == Other.R && Type == Other.Type;
+    return Q == Other.Q && R == Other.R && Level == Other.Level &&
+           Type == Other.Type;
   }
   bool operator!=(const FTriggerOwner &Other) const {
     return !(*this == Other);
@@ -34,6 +38,8 @@ struct FTriggerOwner {
 };
 
 FORCEINLINE uint32 GetTypeHash(const FTriggerOwner &O) {
-  return HashCombine(HashCombine(::GetTypeHash(O.Q), ::GetTypeHash(O.R)),
-                     ::GetTypeHash((uint8)O.Type));
+  uint32 Hash = HashCombine(::GetTypeHash(O.Q), ::GetTypeHash(O.R));
+  Hash = HashCombine(Hash, ::GetTypeHash(O.Level));
+  Hash = HashCombine(Hash, ::GetTypeHash((uint8)O.Type));
+  return Hash;
 }

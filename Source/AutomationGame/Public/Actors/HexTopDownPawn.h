@@ -34,6 +34,9 @@ public:
   UPROPERTY(EditAnywhere, Category = "Camera") float MinArm = 600.f;
   UPROPERTY(EditAnywhere, Category = "Camera") float MaxArm = 3000.f;
 
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
+  bool LogSelectedTile = false;
+
   /** Distance from grid center as multiple of Goldberg radius (for orbital
    * camera). */
   UPROPERTY(EditAnywhere, Category = "Camera|Goldberg")
@@ -142,6 +145,7 @@ private:
   EPlaceKind LastGlobalHighlightKind = (EPlaceKind)255;
   EOrbType LastGlobalHighlightOrbType = EOrbType::None;
   TArray<TWeakObjectPtr<AActor>> GlobalHighlightedActors;
+  FHex LastLoggedHex = FHex(-1, -1, -1);
   void SetGlobalHighlightForKind(EPlaceKind Kind, bool bEnable);
 
   void MoveX(float V) { AxisX = V; }

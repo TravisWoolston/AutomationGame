@@ -1833,6 +1833,38 @@ void AHexFactoryActor::RebuildHelixOutput() {
   const FVector AnchorV =
       Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
 
+  // Build a lookup map of board item IDs to world positions for bond rendering
+  TMap<int32, FVector> BoardItemPositions;
+  for (const auto &KV : Sim->ItemMap) {
+    const FHex &H = KV.Key;
+    const FItem &Item = KV.Value;
+    if (Item.Id == 0)
+      continue;
+
+    const FVector2D LocalXY =
+        HexCoord::AxialToXY(FHexAxial(H.Q, H.R), TileSize, Ori);
+    const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+    const int32 DisplayLevel = GetDisplayLevel(H.Level);
+    const float BoardZ =
+        (DisplayLevel == 0) ? 0.f : 100.f; // Match orb renderer
+
+    BoardItemPositions.Add(Item.Id,
+                           AnchorV + FVector(RotXY.X, RotXY.Y, BoardZ));
+
+    // Also add sub-orb positions for clusters
+    if (Item.bIsCluster) {
+      for (int32 i = 0; i < Item.Orbs.Num(); ++i) {
+        const FOrbData &Sub = Item.Orbs[i];
+        const FVector2D SubLocalXY = HexCoord::AxialToXY(
+            FHexAxial(H.Q + Sub.dQ, H.R + Sub.dR), TileSize, Ori);
+        const FVector2D SubRotXY = HexCoord::Rotate2D(SubLocalXY, GridYaw);
+        BoardItemPositions.Add(MakeSubOrbId(Item.Id, i),
+                               AnchorV +
+                                   FVector(SubRotXY.X, SubRotXY.Y, BoardZ));
+      }
+    }
+  }
+
   // Set up helix tile mesh if available
   if (HelixTileMesh && HelixTileISM) {
     HelixTileISM->SetStaticMesh(HelixTileMesh);
@@ -2057,6 +2089,38 @@ void AHexFactoryActor::RebuildHelixOutput() {
               FVector(OrbBLocalXY.X * PrevCosRot - OrbBLocalXY.Y * PrevSinRot,
                       OrbBLocalXY.X * PrevSinRot + OrbBLocalXY.Y * PrevCosRot,
                       PrevRung.ZOffset * ZDirectionMult);
+
+          FVector Mid = (PosA + PosB) * 0.5f;
+          FVector Dir = (PosB - PosA).GetSafeNormal();
+          float BondLength = (PosB - PosA).Size() / MeshBaseLength;
+
+          if (HelixBondISM) {
+            FVector BondScaleFinal = BaseBondScale;
+            BondScaleFinal.X *= BondLength;
+            FRotator Rot = Dir.Rotation();
+            HelixBondISM->AddInstance(FTransform(Rot, Mid, BondScaleFinal));
+          }
+        }
+      }
+
+      // Render bonds connecting items in this rung to items still on the board
+      for (const TPair<int32, int32> &Bond : Rung.BondsToBoard) {
+        if (Bond.Key < 0 || Bond.Key >= Rung.Orbs.Num())
+          continue;
+
+        const FOrbData &OrbA = Rung.Orbs[Bond.Key];
+        const int32 BoardId = Bond.Value;
+
+        if (const FVector *PosBPtr = BoardItemPositions.Find(BoardId)) {
+          // Calculate orb position relative to helix
+          const FVector2D OrbALocalXY =
+              HexCoord::AxialToXY(FHexAxial(OrbA.dQ, OrbA.dR), TileSize, Ori);
+          FVector PosA =
+              HelixCenter +
+              FVector(OrbALocalXY.X * CosRot - OrbALocalXY.Y * SinRot,
+                      OrbALocalXY.X * SinRot + OrbALocalXY.Y * CosRot,
+                      Rung.ZOffset * ZDirectionMult);
+          FVector PosB = *PosBPtr;
 
           FVector Mid = (PosA + PosB) * 0.5f;
           FVector Dir = (PosB - PosA).GetSafeNormal();

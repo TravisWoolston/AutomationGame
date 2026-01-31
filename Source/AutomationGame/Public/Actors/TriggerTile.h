@@ -103,16 +103,17 @@ public:
 
   // Add a new owner (belt or arm)
   UFUNCTION(BlueprintCallable, Category = "TriggerTile")
-  void AddOwner(int32 InOwnerQ, int32 InOwnerR, ETriggerTileOwnerType InType);
+  void AddOwner(int32 InOwnerQ, int32 InOwnerR, int32 InOwnerLevel,
+                ETriggerTileOwnerType InType);
 
   // Remove an owner
   UFUNCTION(BlueprintCallable, Category = "TriggerTile")
-  void RemoveOwner(int32 InOwnerQ, int32 InOwnerR,
+  void RemoveOwner(int32 InOwnerQ, int32 InOwnerR, int32 InOwnerLevel,
                    ETriggerTileOwnerType InType);
 
   // Toggles an owner (adds if missing, removes if present)
   UFUNCTION(BlueprintCallable, Category = "TriggerTile")
-  void ToggleOwner(int32 InOwnerQ, int32 InOwnerR,
+  void ToggleOwner(int32 InOwnerQ, int32 InOwnerR, int32 InOwnerLevel,
                    ETriggerTileOwnerType InType);
 
   // DEPRECATED: set the single owner belt tile (now adds to Owners array)
@@ -131,12 +132,13 @@ public:
   UFUNCTION(BlueprintPure, Category = "TriggerTile")
   // Get the first owner hex (if any)
   FHex GetOwnerHex() const {
-    return Owners.Num() > 0 ? FHex(Owners[0].Q, Owners[0].R) : FHex(0, 0);
+    return Owners.Num() > 0 ? FHex(Owners[0].Q, Owners[0].R, Owners[0].Level)
+                            : FHex(0, 0, 0);
   }
 
   // Get the trigger hex location
   UFUNCTION(BlueprintPure, Category = "TriggerTile")
-  FHex GetTriggerHex() const { return FHex(Q, R); }
+  FHex GetTriggerHex() const { return FHex(Q, R, Level); }
 
   // Update visuals (material based on orb type)
   UFUNCTION(BlueprintCallable, Category = "TriggerTile")

@@ -190,12 +190,6 @@ void USimWorldHex::StepArms() {
       } break;
 
       case ECmd::Grab: {
-        // If already holding, just advance
-        if (S.bHolding) {
-          bContinueProcessing = true; // allow next op this tick
-          break;
-        }
-
         // 1. SIGNAL GATE: Check if arm is enabled by trigger signal
         if (!IsArmEnabled(S.BaseHex)) {
           if (bDebugLogs) {
@@ -206,6 +200,12 @@ void USimWorldHex::StepArms() {
           }
           // Wait on this Grab instruction until signal is positive
           bContinueProcessing = false;
+          break;
+        }
+
+        // If already holding, just advance
+        if (S.bHolding) {
+          bContinueProcessing = true; // allow next op this tick
           break;
         }
 
@@ -1227,16 +1227,17 @@ void USimWorldHex::StepArms() {
       case ECmd::WaitForBond:
         if (S.bHolding) {
           // Gate on trigger signals
-          if (!IsArmEnabled(S.BaseHex)) {
-            if (bDebugLogs) {
-              UE_LOG(LogTemp, Log,
-                     TEXT("Sim: Arm at (%d,%d) WAITING on WaitForBond due to "
-                          "negative signal"),
-                     S.BaseHex.Q, S.BaseHex.R);
-            }
-            bContinueProcessing = false;
-            break;
-          }
+          // if (!IsArmEnabled(S.BaseHex)) {
+          //   if (bDebugLogs) {
+          //     UE_LOG(LogTemp, Log,
+          //            TEXT("Sim: Arm at (%d,%d) WAITING on WaitForBond due to
+          //            "
+          //                 "negative signal"),
+          //            S.BaseHex.Q, S.BaseHex.R);
+          //   }
+          //   bContinueProcessing = false;
+          //   break;
+          // }
 
           const int32 CurrentCountNow =
               S.Held.bIsCluster ? S.Held.Orbs.Num() : 1;

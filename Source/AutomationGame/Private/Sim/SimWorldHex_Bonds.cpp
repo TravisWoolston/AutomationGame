@@ -62,6 +62,36 @@ void USimWorldHex::StepBonds() {
     AddFootHeldIds(W.UFoot);
   }
 
+  // Add helix items to prevent bond breakage while they are in the elevator
+  // This ensures bonds between board orbs and helix orbs (and between
+  // sequential helix rungs) persist in the global Bonds array until both sides
+  // are in the helix system.
+  for (const FHelixOutputGroup &Group : HelixGroups) {
+    for (const FHelixRung &Rung : Group.Rungs) {
+      for (const FOrbData &Orb : Rung.Orbs) {
+        if (Orb.ItemId > 0) {
+          HeldIds.Add(Orb.ItemId);
+
+          // If this is a sub-orb, also add the parent cluster ID so bonds
+          // between clusters persist
+          if (Orb.ItemId > 1000000) {
+            HeldIds.Add(Orb.ItemId >> 8);
+          }
+
+          // Use a stable virtual hex position (relative to helix center)
+          FHex VirtualPos(Group.CenterHex.Q + Orb.dQ,
+                          Group.CenterHex.R + Orb.dR, Group.CenterHex.Level);
+          HeldItemLastHex.FindOrAdd(Orb.ItemId, VirtualPos);
+
+          // Also track last position for the base ID if it's a sub-orb
+          if (Orb.ItemId > 1000000) {
+            HeldItemLastHex.FindOrAdd(Orb.ItemId >> 8, VirtualPos);
+          }
+        }
+      }
+    }
+  }
+
   CleanupBrokenBonds(HeldIds);
 
   // Mapping kept outside the loop so unbond phase can reuse it

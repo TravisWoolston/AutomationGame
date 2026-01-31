@@ -646,6 +646,13 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
 
   FHex HoverHex = Placer->GetHoverHex();
 
+  // Log selected tile if enabled and hex has changed
+  if (LogSelectedTile && !(HoverHex == LastLoggedHex)) {
+    UE_LOG(LogTemp, Log, TEXT("Hovered Tile: Q=%d, R=%d, Level=%d"), HoverHex.Q,
+           HoverHex.R, HoverHex.Level);
+    LastLoggedHex = HoverHex;
+  }
+
   // 1. Check for Arms/Walkers first for special per-actor highlight
   if (ABasicArm *Arm = FindArmAtHex(HoverHex)) {
     TArray<UPrimitiveComponent *> Comps;

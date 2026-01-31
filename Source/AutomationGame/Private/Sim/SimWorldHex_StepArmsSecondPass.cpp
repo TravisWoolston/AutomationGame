@@ -17,19 +17,25 @@ void USimWorldHex::StepArmsSecondPass() {
     if (S.Tape.Num() == 0)
       continue;
 
-    // Only process arms that are trying to grab and failed in the first pass
+    // Only process arms that are trying to grab
     const FOp &Op = S.Tape[S.PC];
-    if (Op.Cmd != ECmd::Grab || S.bHolding)
+    if (Op.Cmd != ECmd::Grab)
       continue;
 
-    // Gate on trigger signals (parity with first pass)
+    // 1. SIGNAL GATE: Parity with first pass
     if (!IsArmEnabled(S.BaseHex)) {
       if (bDebugLogs) {
         UE_LOG(LogTemp, Log,
                TEXT("Sim (SecondPass): Arm at (%d,%d) WAITING on Grab command "
-                    "due to negative signal"),
+                    "due to negative signal - Second Pass"),
                S.BaseHex.Q, S.BaseHex.R);
       }
+      continue;
+    }
+
+    // 2. SKIP IF ALREADY HOLDING (but only if enabled)
+    if (S.bHolding) {
+      S.PC = (S.PC + 1) % S.Tape.Num();
       continue;
     }
 
@@ -247,6 +253,12 @@ void USimWorldHex::StepArmsSecondPass() {
     if (S.Tape.Num() == 0)
       return false;
 
+    // Gate on trigger signals (parity with first pass)
+    // If the arm is disabled, it shouldn't execute fast sequels
+    if (!IsArmEnabled(S.BaseHex)) {
+      return false;
+    }
+
     // Local helpers
     auto RotateAxial60Fn = [](const FHex &D, uint8 StepsCCW) -> FHex {
       FHex r = D;
@@ -385,20 +397,10 @@ void USimWorldHex::StepArmsSecondPass() {
     }
 
     case ECmd::Grab: {
+      // (Signal gate is now at top of function)
       if (S.bHolding) {
         S.PC = (S.PC + 1) % S.Tape.Num();
         return true;
-      }
-
-      // Gate on trigger signals (parity with first pass)
-      if (!IsArmEnabled(S.BaseHex)) {
-        if (bDebugLogs) {
-          UE_LOG(LogTemp, Log,
-                 TEXT("Sim (FastOp): Arm at (%d,%d) WAITING on Grab command "
-                      "due to negative signal"),
-                 S.BaseHex.Q, S.BaseHex.R);
-        }
-        return false;
       }
 
       FHex Target = ComputeGripHex(S);
@@ -940,16 +942,17 @@ void USimWorldHex::StepArmsSecondPass() {
     if (!S.bHolding)
       continue;
 
-    // Gate on trigger signals
-    if (!IsArmEnabled(S.BaseHex)) {
-      if (bDebugLogs) {
-        UE_LOG(LogTemp, Log,
-               TEXT("Sim (SecondPass): Arm at (%d,%d) WAITING on WaitForBond "
-                    "due to negative signal"),
-               S.BaseHex.Q, S.BaseHex.R);
-      }
-      continue;
-    }
+    // Gate on trigger signals (parity with first pass)
+    // if (!IsArmEnabled(S.BaseHex)) {
+    //   if (bDebugLogs) {
+    //     UE_LOG(LogTemp, Log,
+    //            TEXT("Sim (SecondPass): Arm at (%d,%d) WAITING on WaitForBond
+    //            "
+    //                 "due to negative signal - Second Pass"),
+    //            S.BaseHex.Q, S.BaseHex.R);
+    //   }
+    //   continue;
+    // }
 
     const int32 CurrentCount = S.Held.bIsCluster ? S.Held.Orbs.Num() : 1;
 

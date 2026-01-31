@@ -487,20 +487,12 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
     {
       // Check if clicked tile has a belt or arm
       bool bHasValidOwner = false;
-      ETriggerTileOwnerType ValidOwnerType = ETriggerTileOwnerType::Belt;
+      ETriggerTileOwnerType ValidOwnerType = ETriggerTileOwnerType::Arm;
 
-      if (Sim && Sim->TileMap.Contains(Root)) {
-        const FTile *ClickedTile = Sim->TileMap.Find(Root);
-        if (ClickedTile && ClickedTile->Kind == ETileKind::Belt) {
-          bHasValidOwner = true;
-          ValidOwnerType = ETriggerTileOwnerType::Belt;
-        }
-      }
-
-      if (!bHasValidOwner && Sim) {
-        // Check for arms
+      // Check for arms FIRST (precedence over belts)
+      if (Sim) {
         for (const auto &ArmState : Sim->Arms) {
-          if (ArmState.BaseHex.Q == Root.Q && ArmState.BaseHex.R == Root.R) {
+          if (ArmState.BaseHex == Root) {
             bHasValidOwner = true;
             ValidOwnerType = ETriggerTileOwnerType::Arm;
             break;
@@ -508,16 +500,25 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
         }
       }
 
+      // Check for belts SECOND
+      if (!bHasValidOwner && Sim && Sim->TileMap.Contains(Root)) {
+        const FTile *ClickedTile = Sim->TileMap.Find(Root);
+        if (ClickedTile && ClickedTile->Kind == ETileKind::Belt) {
+          bHasValidOwner = true;
+          ValidOwnerType = ETriggerTileOwnerType::Belt;
+        }
+      }
+
       if (!bHasValidOwner) {
         // Cancel placement - no valid owner selected
         UE_LOG(LogTemp, Warning,
-               TEXT("HexPlacementComponent: No belt or arm at (%d,%d) - "
+               TEXT("HexPlacementComponent: No arm or belt at (%d,%d) - "
                     "canceling TriggerTile placement."),
                A.Q, A.R);
         if (GEngine) {
           GEngine->AddOnScreenDebugMessage(
               -1, 2.0f, FColor::Red,
-              TEXT("No belt or arm at selected location. TriggerTile "
+              TEXT("No arm or belt at selected location. TriggerTile "
                    "placement "
                    "canceled."));
         }
@@ -532,32 +533,33 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
 
       // Valid owner found
       if (PendingTriggerTile && IsValid(PendingTriggerTile)) {
-        PendingTriggerTile->ToggleOwner(A.Q, A.R, ValidOwnerType);
+        PendingTriggerTile->ToggleOwner(A.Q, A.R, ActiveLevel, ValidOwnerType);
 
         UE_LOG(LogTemp, Log,
-               TEXT("TriggerTile owner toggled for %s at (%d,%d)."),
+               TEXT("TriggerTile owner toggled for %s at (%d,%d) level %d."),
                ValidOwnerType == ETriggerTileOwnerType::Belt ? TEXT("belt")
                                                              : TEXT("arm"),
-               A.Q, A.R);
+               A.Q, A.R, ActiveLevel);
 
         // Save to scenario via TestLevelDirector
         if (!CachedTLD)
           CachedTLD = FindTLD(GetWorld());
         if (CachedTLD) {
           CachedTLD->ToggleTriggerTileOwnerSpec(
-              PendingTriggerTile->Q, PendingTriggerTile->R, ActiveLevel, A.Q,
-              A.R, ValidOwnerType);
+              PendingTriggerTile->Q, PendingTriggerTile->R,
+              PendingTriggerTile->Level, A.Q, A.R, ActiveLevel, ValidOwnerType);
         }
 
         if (GEngine) {
           GEngine->AddOnScreenDebugMessage(
               -1, 2.0f, FColor::Green,
-              FString::Printf(
-                  TEXT("TriggerTile at (%d,%d) toggled owner %s at (%d,%d)"),
-                  PendingTriggerTile->Q, PendingTriggerTile->R,
-                  ValidOwnerType == ETriggerTileOwnerType::Belt ? TEXT("belt")
-                                                                : TEXT("arm"),
-                  A.Q, A.R));
+              FString::Printf(TEXT("TriggerTile at (%d,%d) toggled owner %s at "
+                                   "(%d,%d) level %d"),
+                              PendingTriggerTile->Q, PendingTriggerTile->R,
+                              ValidOwnerType == ETriggerTileOwnerType::Belt
+                                  ? TEXT("belt")
+                                  : TEXT("arm"),
+                              A.Q, A.R, ActiveLevel));
         }
       }
 

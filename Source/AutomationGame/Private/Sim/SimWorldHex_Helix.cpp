@@ -149,18 +149,9 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
     return false;
   }
 
-  // Get helix settings from GameManager
-  bool bRequiresFull = false;
-  bool bRequiresComplete = false;
-  if (UWorld *World = GetWorld()) {
-    for (TActorIterator<AGameManager> It(World); It; ++It) {
-      if (AGameManager *GM = *It) {
-        bRequiresFull = GM->bHelixRequiresFullOccupancy;
-        bRequiresComplete = GM->bHelixRequiresCompleteClusters;
-        break;
-      }
-    }
-  }
+  // Hardcoded settings as requested: no occupancy/completeness requirements
+  const bool bRequiresFull = false;
+  const bool bRequiresComplete = false;
 
   // Collect orbs that ARE on helix tiles and ARE ready (not newly placed/moved)
   TSet<int32> UniqueItemIds;
@@ -169,22 +160,33 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   TMap<int32, FHex> ItemIdToHex; // Map of item ID to its hex on the board
 
   for (const FHex &TileHex : Group.MemberTiles) {
-    // REMOVED: OrbsNewlyMovedToOutput check to allow continuous processing
-
     const FItem *TileItem = ItemMap.Find(TileHex);
     if (!TileItem) {
       continue;
     }
 
     if (!UniqueItemIds.Contains(TileItem->Id)) {
-      if (!TileItem->bIsReady) {
-        return false;
-      }
-
       UniqueItemIds.Add(TileItem->Id);
       ItemsToProcess.Add(TileItem);
       OrbIdSet.Add(TileItem->Id);
-      ItemIdToHex.Add(TileItem->Id, TileHex);
+
+      // CRITICAL: Find the ROOT hex of this item if it's a cluster
+      FHex RootHex = TileHex;
+      if (TileItem->bIsCluster) {
+        bool bFoundRoot = false;
+        for (const FOrbData &Sub : TileItem->Orbs) {
+          FHex PotentialRoot(TileHex.Q - Sub.dQ, TileHex.R - Sub.dR,
+                             TileHex.Level);
+          if (const FItem *RootItem = ItemMap.Find(PotentialRoot)) {
+            if (RootItem->Id == TileItem->Id) {
+              RootHex = PotentialRoot;
+              bFoundRoot = true;
+              break;
+            }
+          }
+        }
+      }
+      ItemIdToHex.Add(TileItem->Id, RootHex);
     }
   }
 
@@ -246,11 +248,17 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   NewRung.SpawnTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
   // Set ZOffset to 0 for smooth transition from board orbs
   NewRung.ZOffset = 0.f;
-  NewRung.TargetZOffset = 0.f;
+  NewRung.TargetZOffset = Group.RungSpacing;
   NewRung.RotationDegrees = 0.f;
 
   const FHex &CenterHex = Group.CenterHex;
   TMap<int32, int32> ItemIdToOrbIndex;
+
+  // Track all board orbs to find bonds to the board
+  TMap<int32, FHex> BoardItemIdToHex;
+  for (const auto &KV : ItemMap) {
+    BoardItemIdToHex.Add(KV.Value.Id, KV.Key);
+  }
 
   for (const FItem *Item : ItemsToProcess) {
     FHex ItemHex;
@@ -288,28 +296,32 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
     }
   }
 
-  // New map for previous rung lookups
+  // Maps for previous rung lookups
   TMap<int32, int32> PrevItemIdToOrbIndex;
+  TMap<TPair<int32, int32>, int32> PrevPosToOrbIndex;
   if (Group.Rungs.Num() > 0) {
-    for (int32 i = 0; i < Group.Rungs[0].Orbs.Num(); ++i) {
-      PrevItemIdToOrbIndex.Add(Group.Rungs[0].Orbs[i].ItemId, i);
+    const FHelixRung &PrevRung = Group.Rungs[0];
+    for (int32 i = 0; i < PrevRung.Orbs.Num(); ++i) {
+      const FOrbData &O = PrevRung.Orbs[i];
+      PrevItemIdToOrbIndex.Add(O.ItemId, i);
+      PrevPosToOrbIndex.Add(TPair<int32, int32>(O.dQ, O.dR), i);
     }
   }
 
+  // Build lookup for orbs in the NEW rung
+  TMap<TPair<int32, int32>, int32> NewPosToOrbIndex;
+  for (int32 i = 0; i < NewRung.Orbs.Num(); ++i) {
+    NewPosToOrbIndex.Add(
+        TPair<int32, int32>(NewRung.Orbs[i].dQ, NewRung.Orbs[i].dR), i);
+  }
+
   // Build bonds between orbs in this rung AND to previous rung
-  for (const auto &OrbPair : ItemIdToOrbIndex) {
-    int32 ItemId = OrbPair.Key;
-    int32 IdxA = OrbPair.Value;
+  for (int32 IdxA = 0; IdxA < NewRung.Orbs.Num(); ++IdxA) {
+    const FOrbData &OrbA = NewRung.Orbs[IdxA];
+    int32 ItemId = OrbA.ItemId;
 
     // Check all IDs (including sub-orb IDs)
-    // For simplicity, we check the base ItemId's bonds
     int32 BaseId = ItemId;
-    // If it's a sub-orb ID, we need the base item ID to look up bonds in
-    // ItemToBonds assuming sub-orbs don't have separate entries in ItemToBonds
-    // (which is true) Wait, sub-orbs share the same ID in ItemToBonds usually?
-    // Actually, ItemToBonds is at the FItem level.
-
-    // Check if this is a sub-orb ID
     if (BaseId > 1000000) { // Simple heuristic for sub-orb IDs
       BaseId = BaseId >> 8;
     }
@@ -324,19 +336,86 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
 
         int32 OtherId = (Bond.ItemA == BaseId) ? Bond.ItemB : Bond.ItemA;
 
-        // Handle connections to other orbs in the SAME new cluster
-        // We need to verify if the other orb is actually part of THIS cluster's
-        // sub-orbs if both are clusters For now, simpler check:
-        if (ItemIdToOrbIndex.Contains(OtherId)) {
-          int32 IdxB = ItemIdToOrbIndex[OtherId];
+        // Determine the target coordinate in the helix spatial system
+        // ItemA is at Root, ItemB is at Root + (dQ, dR)
+        // If our current OrbA matches ItemA, other is at Pos + (dQ, dR)
+        // If our current OrbA matches ItemB, other is at Pos - (dQ, dR)
+        int32 TargetDQ =
+            (Bond.ItemA == BaseId) ? (OrbA.dQ + Bond.dQ) : (OrbA.dQ - Bond.dQ);
+        int32 TargetDR =
+            (Bond.ItemA == BaseId) ? (OrbA.dR + Bond.dR) : (OrbA.dR - Bond.dR);
+        TPair<int32, int32> TargetPos(TargetDQ, TargetDR);
+
+        // 1. Handle connections to other orbs in the SAME new rung
+        if (const int32 *FoundIdxPtr = NewPosToOrbIndex.Find(TargetPos)) {
+          int32 IdxB = *FoundIdxPtr;
           if (IdxA < IdxB) {
             NewRung.Bonds.AddUnique(TPair<int32, int32>(IdxA, IdxB));
           }
         }
-        // Handle connections to the PREVIOUS rung
-        else if (PrevItemIdToOrbIndex.Contains(OtherId)) {
-          int32 IdxB = PrevItemIdToOrbIndex[OtherId];
-          NewRung.BondsToPrevious.AddUnique(TPair<int32, int32>(IdxA, IdxB));
+        // 2. Handle connections to the PREVIOUS rung
+        else if (Group.Rungs.Num() > 0) {
+          if (const int32 *FoundPrevIdxPtr =
+                  PrevPosToOrbIndex.Find(TargetPos)) {
+            int32 IdxB = *FoundPrevIdxPtr;
+            NewRung.BondsToPrevious.AddUnique(TPair<int32, int32>(IdxA, IdxB));
+          } else if (BoardItemIdToHex.Contains(OtherId)) {
+            // 3. Handle connections to the BOARD
+            // Verify if the other side of the bond is actually at this Board
+            // hex
+            FHex TargetBoardHex(CenterHex.Q + TargetDQ, CenterHex.R + TargetDR,
+                                CenterHex.Level);
+            if (const FItem *BI = ItemMap.Find(TargetBoardHex)) {
+              if (BI->Id == OtherId ||
+                  (OtherId > 1000000 && BI->Id == (OtherId >> 8))) {
+                NewRung.BondsToBoard.AddUnique(
+                    TPair<int32, int32>(IdxA, OtherId));
+              }
+            }
+          }
+        }
+        // 3. Handle connections to the BOARD (if no previous rungs either)
+        else if (BoardItemIdToHex.Contains(OtherId)) {
+          FHex TargetBoardHex(CenterHex.Q + TargetDQ, CenterHex.R + TargetDR,
+                              CenterHex.Level);
+          if (const FItem *BI = ItemMap.Find(TargetBoardHex)) {
+            if (BI->Id == OtherId ||
+                (OtherId > 1000000 && BI->Id == (OtherId >> 8))) {
+              NewRung.BondsToBoard.AddUnique(
+                  TPair<int32, int32>(IdxA, OtherId));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Also handle internal cluster structure bonds (orbs of the same Item)
+  // For clusters, they are rigid on the board, so we replicate that in the
+  // helix.
+  for (const FItem *Item : ItemsToProcess) {
+    if (Item->bIsCluster) {
+      // Find all sub-orbs of this item in the new rung
+      TArray<int32> InRungIndices;
+      for (int32 i = 0; i < Item->Orbs.Num(); ++i) {
+        int32 SubId = MakeSubOrbId(Item->Id, i);
+        if (const int32 *IdxPtr = ItemIdToOrbIndex.Find(SubId)) {
+          InRungIndices.Add(*IdxPtr);
+        }
+      }
+
+      // Add horizontal bonds between adjacent sub-orbs
+      for (int32 i = 0; i < InRungIndices.Num(); ++i) {
+        for (int32 j = i + 1; j < InRungIndices.Num(); ++j) {
+          const FOrbData &OA = NewRung.Orbs[InRungIndices[i]];
+          const FOrbData &OB = NewRung.Orbs[InRungIndices[j]];
+
+          FHex HexA(OA.dQ, OA.dR, 0);
+          FHex HexB(OB.dQ, OB.dR, 0);
+          if (HexUtil::Dist(HexA, HexB) == 1) {
+            NewRung.Bonds.AddUnique(
+                TPair<int32, int32>(InRungIndices[i], InRungIndices[j]));
+          }
         }
       }
     }
@@ -350,19 +429,56 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   // Remove processed orbs from the board
   for (const FItem *Item : ItemsToProcess) {
     if (const FHex *HexPtr = ItemIdToHex.Find(Item->Id)) {
-      const FHex &TileHex = *HexPtr;
+      const FHex &RootHex = *HexPtr;
 
-      // Deactivate bonds
+      // Deactivate board bonds if the partner is also in the helix
       if (const TArray<int32> *BondList = ItemToBonds.Find(Item->Id)) {
         for (int32 BondIdx : *BondList) {
           if (Bonds.IsValidIndex(BondIdx)) {
-            Bonds[BondIdx].bActive = false;
+            FBond &B = Bonds[BondIdx];
+            int32 OtherId = (B.ItemA == Item->Id) ? B.ItemB : B.ItemA;
+
+            // If other item is also in this group or already in the helix
+            bool bInHelix = false;
+            if (OrbIdSet.Contains(OtherId)) {
+              bInHelix = true;
+            } else {
+              for (const FHelixOutputGroup &G : HelixGroups) {
+                for (const FHelixRung &R : G.Rungs) {
+                  for (const FOrbData &O : R.Orbs) {
+                    if (O.ItemId == OtherId ||
+                        (OtherId > 1000000 && O.ItemId == OtherId) ||
+                        (O.ItemId > 1000000 && (O.ItemId >> 8) == OtherId)) {
+                      bInHelix = true;
+                      break;
+                    }
+                  }
+                  if (bInHelix)
+                    break;
+                }
+                if (bInHelix)
+                  break;
+              }
+            }
+
+            if (bInHelix) {
+              B.bActive = false;
+            }
           }
         }
       }
 
-      ItemMap.Remove(TileHex);
-      OrbAt.Remove(TileHex);
+      // Remove ALL orbs of this item from the board
+      if (Item->bIsCluster) {
+        for (const FOrbData &Sub : Item->Orbs) {
+          FHex SubHex(RootHex.Q + Sub.dQ, RootHex.R + Sub.dR, RootHex.Level);
+          ItemMap.Remove(SubHex);
+          OrbAt.Remove(SubHex);
+        }
+      } else {
+        ItemMap.Remove(RootHex);
+        OrbAt.Remove(RootHex);
+      }
     }
   }
 
@@ -375,62 +491,57 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
 }
 
 void USimWorldHex::UpdateHelixGroups(float DeltaTime) {
-  // Find GameManager for settings
-  bool bContinuous = false;
-  if (UWorld *World = GetWorld()) {
-    for (TActorIterator<AGameManager> It(World); It; ++It) {
-      if (AGameManager *GM = *It) {
-        bContinuous = GM->bContinuousHelixAnimation;
-        break;
-      }
-    }
-  }
-
   float Alpha = GetFrameAlpha();
 
   for (FHelixOutputGroup &Group : HelixGroups) {
-    if (bContinuous) {
-      // Continuous mode: Constantly twist and rise using real DeltaTime
-      // Find real DeltaTime by checking if we have a world
-      float RealDeltaTime = DeltaTime;
-      // If called from FactoryActor with scaled time, we might want to un-scale
-      // it but for continuous rotation it's fine.
-
-      float StepSec = FixedStepSec > 0.001f ? FixedStepSec : 0.5f;
-      float RiseRate = Group.RungSpacing / StepSec;
-      float TwistRate = Group.DegreesPerRung / StepSec;
-
-      Group.HelixRotationOffset += TwistRate * RealDeltaTime;
-      if (Group.HelixRotationOffset > 360.f) {
-        Group.HelixRotationOffset -= 360.f;
-      }
-
-      for (FHelixRung &Rung : Group.Rungs) {
-        Rung.ZOffset += RiseRate * RealDeltaTime;
-        Rung.TargetZOffset = Rung.ZOffset;
-      }
+    // Non-continuous: SYNCED with FrameAlpha (0 to 1)
+    if (Group.LastProcessedTick == StepCounter) {
+      Group.HelixRotationOffset = -Group.DegreesPerRung * (1.0f - Alpha);
     } else {
-      // Non-continuous: SYNCED with FrameAlpha (0 to 1)
-      // This ensures it finishes exactly when the next tick arrives.
+      Group.HelixRotationOffset = 0.f;
+    }
 
-      // Animate rotation offset back to 0
-      // If we processed this tick, we go from -DegreesPerRung to 0
+    // Elevate rungs
+    for (FHelixRung &Rung : Group.Rungs) {
       if (Group.LastProcessedTick == StepCounter) {
-        Group.HelixRotationOffset = -Group.DegreesPerRung * (1.0f - Alpha);
+        Rung.ZOffset = Rung.TargetZOffset - Group.RungSpacing * (1.0f - Alpha);
       } else {
-        Group.HelixRotationOffset = 0.f;
+        Rung.ZOffset = Rung.TargetZOffset;
       }
+    }
 
-      // Elevate rungs
-      for (FHelixRung &Rung : Group.Rungs) {
-        // If this group was processed this tick, it's animating from OldTarget
-        // to NewTarget Since NewTarget = OldTarget + Spacing, we can say:
-        // Position = NewTarget - Spacing * (1.0 - Alpha)
-        if (Group.LastProcessedTick == StepCounter) {
-          Rung.ZOffset =
-              Rung.TargetZOffset - Group.RungSpacing * (1.0f - Alpha);
-        } else {
-          Rung.ZOffset = Rung.TargetZOffset;
+    // ALWAYS run bond cleanup and management
+    if (Group.LastProcessedTick == StepCounter) {
+      for (int32 RungIdx = 1; RungIdx < Group.Rungs.Num(); ++RungIdx) {
+        FHelixRung &R = Group.Rungs[RungIdx];
+        for (int32 i = R.BondsToBoard.Num() - 1; i >= 0; --i) {
+          int32 BoardId = R.BondsToBoard[i].Value;
+
+          // 1. Is it now in the newest cluster? (Rungs[0])
+          bool bFoundInNewest = false;
+          for (const FOrbData &O : Group.Rungs[0].Orbs) {
+            if (O.ItemId == BoardId) {
+              bFoundInNewest = true;
+              break;
+            }
+          }
+
+          if (bFoundInNewest) {
+            R.BondsToBoard.RemoveAt(i);
+          } else {
+            // 2. Is it still on the board?
+            bool bStillOnBoard = false;
+            for (const auto &KV : ItemMap) {
+              if (KV.Value.Id == BoardId) {
+                bStillOnBoard = true;
+                break;
+              }
+            }
+
+            if (!bStillOnBoard || true) { // drop if not processed next tick
+              R.BondsToBoard.RemoveAt(i);
+            }
+          }
         }
       }
     }

@@ -197,7 +197,7 @@ void ATriggerTile::UpdateRippleVisuals() {
 
     // Calculate start and end positions (at grid level)
     FVector StartPos = GetActorLocation();
-    FHex OwnerHex(TOwner.Q, TOwner.R, Level);
+    FHex OwnerHex(TOwner.Q, TOwner.R, TOwner.Level);
     FVector EndPos = Driver->MapHexToWorld(OwnerHex);
 
     // Calculate current ripple position at grid level
@@ -353,7 +353,7 @@ void ATriggerTile::SetSignal(bool bNewSignal, bool bForceSync) {
     if (Sim) {
       FHex TriggerHex(Q, R, Level);
       for (const FTriggerOwner &TOwner : Owners) {
-        FHex OwnerHex(TOwner.Q, TOwner.R, Level);
+        FHex OwnerHex(TOwner.Q, TOwner.R, TOwner.Level);
         if (TOwner.Type == ETriggerTileOwnerType::Belt) {
           Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
         } else {
@@ -397,20 +397,22 @@ void ATriggerTile::SetIsGridVisible(bool bVisible) {
 }
 
 void ATriggerTile::ToggleOwner(int32 InOwnerQ, int32 InOwnerR,
+                               int32 InOwnerLevel,
                                ETriggerTileOwnerType InType) {
   FTriggerOwner NewOwner;
   NewOwner.Q = InOwnerQ;
   NewOwner.R = InOwnerR;
+  NewOwner.Level = InOwnerLevel;
   NewOwner.Type = InType;
 
   if (Owners.Contains(NewOwner)) {
-    RemoveOwner(InOwnerQ, InOwnerR, InType);
+    RemoveOwner(InOwnerQ, InOwnerR, InOwnerLevel, InType);
   } else {
-    AddOwner(InOwnerQ, InOwnerR, InType);
+    AddOwner(InOwnerQ, InOwnerR, InOwnerLevel, InType);
   }
 }
 
-void ATriggerTile::AddOwner(int32 InOwnerQ, int32 InOwnerR,
+void ATriggerTile::AddOwner(int32 InOwnerQ, int32 InOwnerR, int32 InOwnerLevel,
                             ETriggerTileOwnerType InType) {
   if (!Sim) {
     if (UWorld *World = GetWorld()) {
@@ -423,6 +425,7 @@ void ATriggerTile::AddOwner(int32 InOwnerQ, int32 InOwnerR,
   FTriggerOwner NewOwner;
   NewOwner.Q = InOwnerQ;
   NewOwner.R = InOwnerR;
+  NewOwner.Level = InOwnerLevel;
   NewOwner.Type = InType;
 
   if (!Owners.Contains(NewOwner)) {
@@ -435,7 +438,7 @@ void ATriggerTile::AddOwner(int32 InOwnerQ, int32 InOwnerR,
     // Initialize simulation signal
     if (Sim) {
       FHex TriggerHex(Q, R, Level);
-      FHex OwnerHex(InOwnerQ, InOwnerR, Level);
+      FHex OwnerHex(InOwnerQ, InOwnerR, InOwnerLevel);
       if (InType == ETriggerTileOwnerType::Belt) {
         Sim->SetBeltTriggerSignal(TriggerHex, OwnerHex, bCurrentSignal);
       } else {
@@ -444,26 +447,29 @@ void ATriggerTile::AddOwner(int32 InOwnerQ, int32 InOwnerR,
     }
 
     UE_LOG(LogTemp, Log,
-           TEXT("TriggerTile at (%d,%d) added owner %s at (%d,%d)"), Q, R,
+           TEXT("TriggerTile at (%d,%d) added owner %s at (%d,%d) level %d"), Q,
+           R,
            InType == ETriggerTileOwnerType::Belt ? TEXT("belt") : TEXT("arm"),
-           InOwnerQ, InOwnerR);
+           InOwnerQ, InOwnerR, InOwnerLevel);
 
     UpdateWireVisual();
   }
 }
 
 void ATriggerTile::RemoveOwner(int32 InOwnerQ, int32 InOwnerR,
+                               int32 InOwnerLevel,
                                ETriggerTileOwnerType InType) {
   FTriggerOwner Target;
   Target.Q = InOwnerQ;
   Target.R = InOwnerR;
+  Target.Level = InOwnerLevel;
   Target.Type = InType;
 
   if (Owners.Contains(Target)) {
     // Clear simulation signal
     if (Sim) {
       FHex TriggerHex(Q, R, Level);
-      FHex OwnerHex(InOwnerQ, InOwnerR, Level);
+      FHex OwnerHex(InOwnerQ, InOwnerR, InOwnerLevel);
       if (InType == ETriggerTileOwnerType::Belt) {
         Sim->ClearBeltTriggerSignal(TriggerHex, OwnerHex);
       } else {
@@ -485,16 +491,17 @@ void ATriggerTile::RemoveOwner(int32 InOwnerQ, int32 InOwnerR,
     bHasOwner = Owners.Num() > 0;
 
     UE_LOG(LogTemp, Log,
-           TEXT("TriggerTile at (%d,%d) removed owner %s at (%d,%d)"), Q, R,
+           TEXT("TriggerTile at (%d,%d) removed owner %s at (%d,%d) level %d"),
+           Q, R,
            InType == ETriggerTileOwnerType::Belt ? TEXT("belt") : TEXT("arm"),
-           InOwnerQ, InOwnerR);
+           InOwnerQ, InOwnerR, InOwnerLevel);
 
     UpdateWireVisual();
   }
 }
 
 void ATriggerTile::SetOwnerBelt(int32 InOwnerQ, int32 InOwnerR) {
-  AddOwner(InOwnerQ, InOwnerR, ETriggerTileOwnerType::Belt);
+  AddOwner(InOwnerQ, InOwnerR, Level, ETriggerTileOwnerType::Belt);
 }
 
 void ATriggerTile::UpdateVisuals() {
@@ -628,7 +635,7 @@ void ATriggerTile::UpdateWireVisual() {
     Comp->SetVisibility(true);
 
     FVector StartPos = GetActorLocation();
-    FHex OwnerHex(TOwner.Q, TOwner.R, Level);
+    FHex OwnerHex(TOwner.Q, TOwner.R, TOwner.Level);
     FVector EndPos = Driver ? Driver->MapHexToWorld(OwnerHex) : StartPos;
 
     StartPos.Z += WireHeightOffset;
@@ -705,7 +712,7 @@ void ATriggerTile::Destroyed() {
   if (Sim) {
     FHex TriggerHex(Q, R, Level);
     for (const FTriggerOwner &TOwner : Owners) {
-      FHex OwnerHex(TOwner.Q, TOwner.R, Level);
+      FHex OwnerHex(TOwner.Q, TOwner.R, TOwner.Level);
       if (TOwner.Type == ETriggerTileOwnerType::Belt) {
         Sim->ClearBeltTriggerSignal(TriggerHex, OwnerHex);
       } else {
@@ -716,7 +723,7 @@ void ATriggerTile::Destroyed() {
 }
 
 void ATriggerTile::SetOwnerArm(int32 InOwnerQ, int32 InOwnerR) {
-  AddOwner(InOwnerQ, InOwnerR, ETriggerTileOwnerType::Arm);
+  AddOwner(InOwnerQ, InOwnerR, Level, ETriggerTileOwnerType::Arm);
 }
 
 void ATriggerTile::SyncWorldLocation() {

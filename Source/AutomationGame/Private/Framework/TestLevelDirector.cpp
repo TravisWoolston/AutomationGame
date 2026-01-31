@@ -622,7 +622,8 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
       TriggerSpec.Spawned->Owners.Empty();
 
       for (const FTriggerOwner &TOwner : TriggerSpec.Owners) {
-        TriggerSpec.Spawned->AddOwner(TOwner.Q, TOwner.R, TOwner.Type);
+        TriggerSpec.Spawned->AddOwner(TOwner.Q, TOwner.R, TOwner.Level,
+                                      TOwner.Type);
       }
 
       TriggerSpec.Spawned->SyncWorldLocation();
@@ -1258,7 +1259,7 @@ void ATestLevelDirector::UpsertTriggerTileSpec(int32 Q, int32 R,
 }
 
 void ATestLevelDirector::ToggleTriggerTileOwnerSpec(
-    int32 Q, int32 R, int32 Level, int32 OwnerQ, int32 OwnerR,
+    int32 Q, int32 R, int32 Level, int32 OwnerQ, int32 OwnerR, int32 OwnerLevel,
     ETriggerTileOwnerType OwnerType) {
   if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
     return;
@@ -1269,6 +1270,7 @@ void ATestLevelDirector::ToggleTriggerTileOwnerSpec(
       FTriggerOwner NewOwner;
       NewOwner.Q = OwnerQ;
       NewOwner.R = OwnerR;
+      NewOwner.Level = OwnerLevel;
       NewOwner.Type = OwnerType;
 
       if (T.Owners.Contains(NewOwner)) {

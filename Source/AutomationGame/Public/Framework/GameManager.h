@@ -515,18 +515,7 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Helix")
   bool bHelixExtendsUp = true;
 
-  // Helix settings
-  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Helix")
-  bool bHelixRequiresFullOccupancy = false;
-
-  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Helix")
-  bool bHelixRequiresCompleteClusters = false;
-
-  /** When true, helix continues to ascend/descend regardless of input. */
-  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Helix")
-  bool bContinuousHelixAnimation = false;
-
-  // ------------ Arm Timeline System ------------
+  // Command textures for arm timeline display
   // NOTE: These settings control ALL arm timeline widgets globally
   // Individual arm timeline properties are private and controlled by
   // GameManager
