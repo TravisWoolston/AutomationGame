@@ -519,13 +519,18 @@ void ABasicArm::RefreshPose(float InAlpha) {
     DisplayLevel = Driver->IsDisplayFlipped() ? (1 - Level) : Level;
   }
 
-  const float EffectiveBaseZ = (DisplayLevel == 0) ? BaseZ : -BaseZ;
+  FVector EffectiveVisualScale = FVector::OneVector;
+  if (DisplayLevel == 1) {
+    EffectiveVisualScale = CeilingVisualScale;
+  }
+
+  const float EffectiveBaseZ = BaseZ * EffectiveVisualScale.Z;
   const FVector BaseWorld =
       HexToWorld(FHex(Q, R, Level)) + FVector(0, 0, EffectiveBaseZ);
 
   // Apply different GripZOffset for ceiling arms since they reach 'up' to the
   // grid
-  float EffectiveGripZ = (DisplayLevel == 0) ? GripZOffset : -GripZOffset;
+  float EffectiveGripZ = GripZOffset * EffectiveVisualScale.Z;
 
   const float StartYaw = NormDeg(LastYawDeg);
   const float TargetYaw = NormDeg(CurrYawDeg);
@@ -611,10 +616,13 @@ void ABasicArm::RefreshPose(float InAlpha) {
       Right = FVector::CrossProduct(Up, Forward).GetSafeNormal();
     Forward = FVector::CrossProduct(Up, Right).GetSafeNormal();
     const FVector BaseGripPos =
-        BaseWorld + Forward * ReachDistance + FVector(0, 0, EffectiveGripZ);
-    const FVector RelativeOffset = Forward * GripLocationOffset.X +
-                                   Right * GripLocationOffset.Y +
-                                   Up * GripLocationOffset.Z;
+        BaseWorld + Forward * ReachDistance +
+        Right * (GripSideOffset * EffectiveVisualScale.Y) +
+        FVector(0, 0, EffectiveGripZ);
+    const FVector RelativeOffset =
+        Forward * (GripLocationOffset.X * EffectiveVisualScale.X) +
+        Right * (GripLocationOffset.Y * EffectiveVisualScale.Y) +
+        Up * (GripLocationOffset.Z * EffectiveVisualScale.Z);
     const FVector FinalGripPos = BaseGripPos + RelativeOffset;
     if (bHolding && HeldOrb.bIsCluster && HeldOrb.Orbs.Num() > 0) {
       const FOrbData *GrabbedOrb = nullptr;
@@ -633,8 +641,11 @@ void ABasicArm::RefreshPose(float InAlpha) {
             HexCoord::AxialToXY(FHexAxial(GrabbedOrb->dQ, GrabbedOrb->dR),
                                 TileSize, GridOrientation) *
             ClusterOffsetScale;
+        const float Inv = bInvertClusterVisualFacing ? -1.f : 1.f;
         InterpolatedHandWorld =
-            FinalGripPos - (Forward * HexOffset2D.X + Right * HexOffset2D.Y);
+            FinalGripPos - (Forward * HexOffset2D.X * EffectiveVisualScale.X +
+                            Right * HexOffset2D.Y * EffectiveVisualScale.Y) *
+                               Inv;
       } else {
         InterpolatedHandWorld = FinalGripPos;
       }
