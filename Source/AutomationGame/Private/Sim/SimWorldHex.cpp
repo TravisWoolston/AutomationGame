@@ -1402,6 +1402,104 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId,
   OutWorld = FMath::Lerp(CurCenter, NextCenter, VisualP);
   return true;
 }
+
+bool USimWorldHex::GetOrbVisualLocation(int32 OrbId, FVector &OutWorld) const {
+  if (OrbId <= 0)
+    return false;
+
+  // 1. Check ItemMap (on grid)
+  for (const auto &KV : ItemMap) {
+    const FItem &Item = KV.Value;
+    if (Item.Id == OrbId) {
+      // Found primary/single item
+      return GetItemVisualLocation(Item.Id, OutWorld);
+    }
+    if (Item.bIsCluster) {
+      for (const FOrbData &Sub : Item.Orbs) {
+        if (Sub.ItemId == OrbId) {
+          // Found sub-orb in a cluster on the board
+          FVector AnchorWorld;
+          if (GetItemVisualLocation(Item.Id, AnchorWorld)) {
+            const float Tile = TileSizeUU;
+            const EHexOrientation Ori = GridOrientation;
+
+            // Items on belt don't rotate their clusters (yet), so we just add
+            // world offset as if unrotated
+            FVector2D Offset2D =
+                HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, Ori);
+            OutWorld = AnchorWorld + FVector(Offset2D.X, Offset2D.Y, 0.f);
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Check Arms (being held in simulation)
+  for (int32 ArmIdx = 0; ArmIdx < Arms.Num(); ++ArmIdx) {
+    const FArmState &A = Arms[ArmIdx];
+    if (!A.bHolding)
+      continue;
+
+    if (A.Held.Id == OrbId) {
+      OutWorld = HexCenterToWorld(GetArmGripHex_Sim(ArmIdx));
+      return true;
+    }
+    if (A.Held.bIsCluster) {
+      for (const FOrbData &Sub : A.Held.Orbs) {
+        if (Sub.ItemId == OrbId) {
+          const FHex Grip = GetArmGripHex_Sim(ArmIdx);
+          const float Tile = TileSizeUU;
+          const EHexOrientation Ori = GridOrientation;
+          const uint8 ccw = GetHeldCCW_Steps_Sim(ArmIdx);
+          FHex Local(Sub.dQ, Sub.dR);
+          FHex Rot = Rot60CCW(Local, ccw);
+          FVector2D Offset2D =
+              HexCoord::AxialToXY(FHexAxial(Rot.Q, Rot.R), Tile, Ori);
+          OutWorld =
+              HexCenterToWorld(Grip) + FVector(Offset2D.X, Offset2D.Y, 0.f);
+          return true;
+        }
+      }
+    }
+  }
+
+  // 3. Check Walkers (being held in simulation)
+  for (const FWalkerState &W : Walkers) {
+    auto CheckFoot = [&](const FFootState &F) {
+      if (!F.bHoldingItem)
+        return false;
+      if (F.HeldItem.Id == OrbId) {
+        OutWorld = HexCenterToWorld(F.CurrentTile);
+        return true;
+      }
+      if (F.HeldItem.bIsCluster) {
+        for (const auto &Sub : F.HeldItem.Orbs) {
+          if (Sub.ItemId == OrbId) {
+            const float Tile = TileSizeUU;
+            const EHexOrientation Ori = GridOrientation;
+            FVector2D Offset2D =
+                HexCoord::AxialToXY(FHexAxial(Sub.dQ, Sub.dR), Tile, Ori);
+            OutWorld = HexCenterToWorld(F.CurrentTile) +
+                       FVector(Offset2D.X, Offset2D.Y, 0.f);
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    if (CheckFoot(W.DFoot))
+      return true;
+    if (CheckFoot(W.LFoot))
+      return true;
+    if (CheckFoot(W.RFoot))
+      return true;
+    if (CheckFoot(W.UFoot))
+      return true;
+  }
+
+  return false;
+}
 // AddBoardOrbToHeldCluster() and AddBoardOrbToHeldItem() moved to
 // SimWorldHex_Clusters.cpp CheckAndRemoveDisconnectedOrbsFromHeldClusters()
 // moved to SimWorldHex_Clusters.cpp

@@ -2250,3 +2250,42 @@ FVector ABasicArm::GetArmWorldPosition() const {
   // Get the arm's world position based on its hex coordinates
   return HexToWorld(FHex(Q, R, Level)) + FVector(0, 0, BaseZ);
 }
+
+bool ABasicArm::IsHoldingOrb(int32 OrbId) const {
+  if (!bHolding || OrbId == 0)
+    return false;
+  if (HeldOrb.Id == OrbId)
+    return true;
+  if (HeldOrb.bIsCluster) {
+    for (const FOrbData &Sub : HeldOrb.Orbs) {
+      if (Sub.ItemId == OrbId)
+        return true;
+    }
+  }
+  return false;
+}
+
+FVector ABasicArm::GetOrbLocation(int32 OrbId) const {
+  if (!bHolding || OrbId == 0)
+    return GetActorLocation();
+
+  if (HeldOrb.bIsCluster) {
+    for (int32 i = 0; i < HeldOrb.Orbs.Num(); ++i) {
+      if (HeldOrb.Orbs[i].ItemId == OrbId) {
+        if (HeldClusterComps.IsValidIndex(i) && HeldClusterComps[i]) {
+          return HeldClusterComps[i]->GetComponentLocation();
+        }
+        break;
+      }
+    }
+  } else if (HeldOrb.Id == OrbId) {
+    // Single orb
+    if (HeldClusterComps.Num() > 0 && HeldClusterComps[0]) {
+      return HeldClusterComps[0]->GetComponentLocation();
+    }
+    return GripPivotComp ? GripPivotComp->GetComponentLocation()
+                         : GetActorLocation();
+  }
+
+  return GetActorLocation();
+}

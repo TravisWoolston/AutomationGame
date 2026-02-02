@@ -151,6 +151,24 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
     }
   }
 
+  // Cancel OrbCam if player moves
+  if (!FMath::IsNearlyZero(AxisX) || !FMath::IsNearlyZero(AxisY) ||
+      !FMath::IsNearlyZero(AxisZoom)) {
+    if (FollowedItemId != 0) {
+      FollowedItemId = 0;
+      if (GEngine) {
+        GEngine->AddOnScreenDebugMessage(101, 2.0f, FColor::Orange,
+                                         TEXT("OrbCam: Canceled by movement"));
+      }
+    }
+  }
+
+  if (!bSmoothedTargetInitialized) {
+    CameraTargetLocation = GetActorLocation();
+    CameraTargetZoom = SpringArm->TargetArmLength;
+    bSmoothedTargetInitialized = true;
+  }
+
   const bool bGoldbergMode = (GM && GM->IsGoldbergMode());
   if (bGoldbergMode) {
     // Goldberg orbital movement - camera orbits OUTSIDE the sphere, always
@@ -201,26 +219,80 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
                      .GetSafeNormal();
     }
 
-    // Set position outside sphere at fixed orbit radius
-    SetActorLocation(GridCenter + ToCamera * OrbitRadius);
+    // Set target location outside sphere at fixed orbit radius
+    CameraTargetLocation = GridCenter + ToCamera * OrbitRadius;
 
     // Orient camera to look at grid center
     FRotator LookAtRotation = (GridCenter - GetActorLocation()).Rotation();
-    SpringArm->SetWorldRotation(LookAtRotation);
+    SpringArm->SetWorldRotation(
+        FMath::RInterpTo(SpringArm->GetComponentRotation(), LookAtRotation,
+                         DeltaSeconds, 15.0f));
+  } else if (FollowedItemId != 0) {
+    // Robust OrbCam follow logic
+    AOrbSimDriver *Driver = CachedOrbSimDriver;
+    if (!Driver && GetWorld())
+      Driver = AOrbSimDriver::Find(GetWorld());
+
+    if (Driver && Driver->GetSim()) {
+      USimWorldHex *Sim = Driver->GetSim();
+      FVector TargetWorldPos = FVector::ZeroVector;
+      bool bFound = Sim->GetOrbVisualLocation(FollowedItemId, TargetWorldPos);
+
+      // Prefer Arms for smooth interpolated location if currently held
+      for (TActorIterator<ABasicArm> It(GetWorld()); It; ++It) {
+        if (It->IsHoldingOrb(FollowedItemId)) {
+          TargetWorldPos = It->GetOrbLocation(FollowedItemId);
+          bFound = true;
+          break;
+        }
+      }
+
+      // Or Walkers for smooth interpolated location if currently held
+      if (!bFound) {
+        for (TActorIterator<ABasicWalker> It(GetWorld()); It; ++It) {
+          if (It->IsHoldingOrb(FollowedItemId)) {
+            TargetWorldPos = It->GetOrbLocation(FollowedItemId);
+            bFound = true;
+            break;
+          }
+        }
+      }
+
+      if (bFound) {
+        // Smoothly follow the item
+        CameraTargetLocation = TargetWorldPos;
+      } else {
+        // Item lost (destroyed/removed)
+        FollowedItemId = 0;
+      }
+    }
   } else {
     // Planar panning
     const FVector Right = GetActorRightVector();
     const FVector Fwd = GetActorForwardVector();
     FVector Delta = (Right * AxisX + Fwd * AxisY) * MoveSpeed * DeltaSeconds;
-    AddActorWorldOffset(Delta, true);
+    CameraTargetLocation += Delta;
   }
 
-  // Zoom (disabled when TypeSelectionActive is held)
-  if (!bTypeSelectionActive) {
-    SpringArm->TargetArmLength = FMath::Clamp(
-        SpringArm->TargetArmLength - AxisZoom * ZoomSpeed * DeltaSeconds,
-        MinArm, MaxArm);
+  // Smoothly move the actor to the target location
+  FVector CurrentLocation = GetActorLocation();
+  if (!bGoldbergMode && FollowedItemId == 0) {
+    CameraTargetLocation.Z =
+        CurrentLocation.Z; // Keep same height during panning
   }
+
+  FVector NewLocation = FMath::VInterpTo(CurrentLocation, CameraTargetLocation,
+                                         DeltaSeconds, SmoothingSpeed);
+  SetActorLocation(NewLocation);
+
+  // Smoothly zoom
+  if (!bTypeSelectionActive) {
+    CameraTargetZoom = FMath::Clamp(
+        CameraTargetZoom - AxisZoom * ZoomSpeed * DeltaSeconds, MinArm, MaxArm);
+  }
+  SpringArm->TargetArmLength =
+      FMath::FInterpTo(SpringArm->TargetArmLength, CameraTargetZoom,
+                       DeltaSeconds, SmoothingSpeed);
 
   // Update selection if active
   UpdateSelection();
@@ -275,6 +347,27 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
 
 void AHexTopDownPawn::PlacePressed() {
   bPlaceHeld = true;
+
+  if (CurrentViewMode == EViewMode::OrbView) {
+    if (Placer && Placer->IsHoverValid()) {
+      FItem Item;
+      int32 SpecificOrbId = 0;
+      FHex Anchor =
+          FindItemAnchorAt(Placer->GetHoverHex(), Item, SpecificOrbId);
+      if (Anchor.Q != -1) {
+        FollowedItemId = SpecificOrbId;
+        if (GEngine) {
+          GEngine->AddOnScreenDebugMessage(
+              101, 2.0f, FColor::Yellow,
+              FString::Printf(
+                  TEXT("OrbCam: Following Orb %d (Center of Item %d)"),
+                  FollowedItemId, Item.Id));
+        }
+        return;
+      }
+    }
+  }
+
   if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0) {
     PlaceBlueprint();
   } else if (bBlueprintMode && !bBlueprintSelectionActive) {
@@ -3837,7 +3930,9 @@ void AHexTopDownPawn::NextViewMode() {
   }
 }
 
-FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const {
+FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem,
+                                       int32 &OutOrbId) const {
+  OutOrbId = 0;
   if (!CachedOrbSimDriver || !CachedOrbSimDriver->GetSim()) {
     return FHex(-1, -1, -1);
   }
@@ -3855,6 +3950,7 @@ FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const {
     // 1. Direct hit in item map (primary anchor)
     if (FItem *Item = Sim->ItemMap.Find(TestHex)) {
       OutItem = *Item;
+      OutOrbId = Item->Id; // For singles, item id == orb id
       return TestHex;
     }
 
@@ -3870,6 +3966,7 @@ FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const {
                               Anchor.Level);
           if (AbsoluteOrbHex == TestHex) {
             OutItem = Item;
+            OutOrbId = Orb.ItemId;
             return Anchor;
           }
         }
@@ -3886,6 +3983,7 @@ FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const {
       if (!A.Held.bIsCluster) {
         if (Grip == TestHex) {
           OutItem = A.Held;
+          OutOrbId = A.Held.Id;
           return Grip; // Return grip hex as proxy anchor
         }
       } else {
@@ -3896,6 +3994,7 @@ FHex AHexTopDownPawn::FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const {
           FHex AbsOrb(Grip.Q + Rot.Q, Grip.R + Rot.R, Grip.Level);
           if (AbsOrb == TestHex) {
             OutItem = A.Held;
+            OutOrbId = Sub.ItemId;
             return Grip; // Return grip hex as proxy anchor
           }
         }
@@ -3919,7 +4018,8 @@ TArray<FHex> AHexTopDownPawn::FindItemConnectedComponent(
   USimWorldHex *Sim = CachedOrbSimDriver->GetSim();
 
   FItem StartItem;
-  FHex StartAnchor = FindItemAnchorAt(StartHex, StartItem);
+  int32 DummyOrbId = 0;
+  FHex StartAnchor = FindItemAnchorAt(StartHex, StartItem, DummyOrbId);
   if (StartAnchor.Q == -1)
     return AllOrbHexes;
 

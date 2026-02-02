@@ -59,8 +59,9 @@ public:
   UPROPERTY()
   TArray<UStaticMeshComponent *> SelectionHighlightComponents;
 
-  // Helper to find the anchor hex of an item/cluster at a given position
-  FHex FindItemAnchorAt(const FHex &Hex, FItem &OutItem) const;
+  // Helper to find the anchor hex and specific OrbId of an item/cluster at a
+  // given position
+  FHex FindItemAnchorAt(const FHex &Hex, FItem &OutItem, int32 &OutOrbId) const;
 
   // Timeline editor widget class
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
@@ -122,6 +123,9 @@ public:
 
   int32 ActiveGenerationMode = 0;
   bool bAncestralInputMode = false;
+
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
+  int32 FollowedItemId = 0;
 
   void UpdateHoverHighlight(float DeltaSeconds);
 
@@ -346,4 +350,10 @@ private:
   bool bHighlightSmoothingInitialized = false;
   UPROPERTY(EditAnywhere, Category = "Camera")
   float HighlightSmoothingSpeed = 25.0f;
+  // Position/Zoom smoothing
+  FVector CameraTargetLocation;
+  float CameraTargetZoom;
+  bool bSmoothedTargetInitialized = false;
+  UPROPERTY(EditAnywhere, Category = "Camera")
+  float SmoothingSpeed = 10.0f;
 };

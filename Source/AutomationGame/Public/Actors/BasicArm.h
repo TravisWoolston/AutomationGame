@@ -255,6 +255,15 @@ public:
   UFUNCTION(BlueprintPure, Category = "Program")
   bool IsHolding() const { return bHolding; }
 
+  /** Get whether the arm is holding a specific orb (or cluster containing it)
+   */
+  UFUNCTION(BlueprintPure, Category = "Program")
+  bool IsHoldingOrb(int32 OrbId) const;
+
+  /** Get world location of a specific orb being held */
+  UFUNCTION(BlueprintPure, Category = "Program")
+  FVector GetOrbLocation(int32 OrbId) const;
+
   /** Get the starting facing direction */
   UFUNCTION(BlueprintPure, Category = "Program")
   uint8 GetStartFacingDir() const { return StartFacingDir; }

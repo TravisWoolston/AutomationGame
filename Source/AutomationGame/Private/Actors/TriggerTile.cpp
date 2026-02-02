@@ -212,6 +212,9 @@ void ATriggerTile::UpdateRippleVisuals() {
       }
 
       if (GM) {
+        if (!GM->RippleActive)
+          continue;
+
         UTextureRenderTarget2D *RT = GM->GetRippleRenderTarget();
         UMaterialInterface *DrawMaterial = GM->RippleDrawMaterial;
 

@@ -774,6 +774,10 @@ public:
             meta = (ClampMin = "256", ClampMax = "4096"))
   int32 RippleRenderTargetSize = 1024;
 
+  /** Whether ripple render target drawing is active */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget")
+  bool RippleActive = true;
+
   /** World space size covered by the render target (in units) */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Ripple|RenderTarget",
             meta = (ClampMin = "100.0"))
@@ -848,6 +852,10 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget",
             meta = (ClampMin = "256", ClampMax = "4096"))
   int32 WaveRenderTargetSize = 2048;
+
+  /** Whether wave render target drawing is active */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget")
+  bool WaveActive = true;
 
   /** World space size covered by the wave render target (in units) */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Wave|RenderTarget",

@@ -185,8 +185,12 @@ void AGameManager::Tick(float DeltaSeconds) {
   Super::Tick(DeltaSeconds);
 
   // Clear ripple and wave render targets at start of each frame
-  ClearRippleRenderTarget();
-  ClearWaveRenderTarget();
+  if (RippleActive) {
+    ClearRippleRenderTarget();
+  }
+  if (WaveActive) {
+    ClearWaveRenderTarget();
+  }
 
   // Auto-update RT offset to follow player camera (top-down view)
   if (bAutoFollowPlayerCamera) {
@@ -291,19 +295,21 @@ void AGameManager::Tick(float DeltaSeconds) {
     // Note: ClearWaveRenderTarget() was already called at start of Tick
     // Since we use PF_FloatRGBA and correct Additive Blending logic, this sums
     // up all active waves for the frame.
-    UCanvas *Canvas;
-    FVector2D Size;
-    FDrawToRenderTargetContext Context;
-    UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(
-        GetWorld(), WaveRenderTarget, Canvas, Size, Context);
+    if (WaveActive) {
+      UCanvas *Canvas;
+      FVector2D Size;
+      FDrawToRenderTargetContext Context;
+      UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(
+          GetWorld(), WaveRenderTarget, Canvas, Size, Context);
 
-    if (Canvas) {
-      for (const FGridWaveInstance &Wave : ActiveWaves) {
-        InternalDrawWaveStamp(Canvas, Size, Wave);
+      if (Canvas) {
+        for (const FGridWaveInstance &Wave : ActiveWaves) {
+          InternalDrawWaveStamp(Canvas, Size, Wave);
+        }
       }
-    }
 
-    UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
+      UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(GetWorld(), Context);
+    }
   }
 
   if (!bAutoExpandAtRuntime)

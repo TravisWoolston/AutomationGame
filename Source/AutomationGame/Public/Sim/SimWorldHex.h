@@ -296,6 +296,7 @@ public:
   float GetFrameAlpha() const { return FrameAlpha; }
 
   bool GetItemVisualLocation(int32 ItemId, FVector &OutWorld) const;
+  bool GetOrbVisualLocation(int32 OrbId, FVector &OutWorld) const;
 
   int32 GetStepCounter() const { return StepCounter; }
 
