@@ -274,8 +274,8 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick,
     } else {
       // Instantaneous change (e.g. deletion): snap previous to current to avoid
       // ghosting
-      PrevPos = CurrPos;
-      PrevRot = CurrRot;
+      // PrevPos = CurrPos;
+      // PrevRot = CurrRot;
     }
 
     // Rebuild positions from the NEW sim state

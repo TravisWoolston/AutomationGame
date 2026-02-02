@@ -12,6 +12,20 @@ void USimWorldHex::StepArmsSecondPass() {
   // immediately
   TSet<int32> ArmsSuccessfullyGrabbed;
 
+  // Gather walker assigned tiles (current and target) to prevent arms from
+  // colliding with them
+  TSet<FHex> WalkerAssignedTiles;
+  for (const FWalkerState &W : Walkers) {
+    WalkerAssignedTiles.Add(W.DFoot.CurrentTile);
+    WalkerAssignedTiles.Add(W.DFoot.TargetTile);
+    WalkerAssignedTiles.Add(W.LFoot.CurrentTile);
+    WalkerAssignedTiles.Add(W.LFoot.TargetTile);
+    WalkerAssignedTiles.Add(W.RFoot.CurrentTile);
+    WalkerAssignedTiles.Add(W.RFoot.TargetTile);
+    WalkerAssignedTiles.Add(W.UFoot.CurrentTile);
+    WalkerAssignedTiles.Add(W.UFoot.TargetTile);
+  }
+
   for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ArmIndex++) {
     FArmState &S = Arms[ArmIndex];
     if (S.Tape.Num() == 0)
@@ -719,7 +733,6 @@ void USimWorldHex::StepArmsSecondPass() {
         }
       };
 
-      // NEW: Get predicted bond formations for Opus Magnum-style logic
       TMap<FHex, int32> PredictedBonds = GetPredictedBondFormations();
 
       auto OverlapsAny = [&](const FHex &H) -> bool {
@@ -730,7 +743,7 @@ void USimWorldHex::StepArmsSecondPass() {
                         // obstruction
         }
         return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) ||
-               OtherArmOcc.Contains(H);
+               OtherArmOcc.Contains(H) || WalkerAssignedTiles.Contains(H);
       };
 
       TArray<FHex> StartLocals, EndLocals, MidTranslateLocals, MidRotateLocals;

@@ -805,21 +805,11 @@ void UHexPlacementComponent::HandleRemove(bool bPressed) {
 }
 
 void UHexPlacementComponent::RotateCW() {
-  // When on upside-down grid (Level 1), invert rotation direction to feel
-  // natural from below
-  if (ActiveLevel == 1) {
-    BeltDir = (BeltDir + 5) % 6; // -1 mod 6
-  } else {
-    BeltDir = (BeltDir + 1) % 6; // +1 mod 6
-  }
+    BeltDir = (BeltDir + 5) % 6;
 }
 
 void UHexPlacementComponent::RotateCCW() {
-  if (ActiveLevel == 1) {
     BeltDir = (BeltDir + 1) % 6;
-  } else {
-    BeltDir = (BeltDir + 5) % 6;
-  }
 }
 
 void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) {

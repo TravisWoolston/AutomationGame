@@ -1215,7 +1215,7 @@ void USimWorldHex::StepArms() {
           // Defer simulation-held orientation to next fixed tick
           PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
         }
-        break;
+              break;
       case ECmd::RotateHeldR:
         if (S.bHolding && S.Held.bIsCluster) {
           S.bRotationCompleted = false;

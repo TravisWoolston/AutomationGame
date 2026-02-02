@@ -262,8 +262,10 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
                           (Dist * GM->DiscoveryDifficultyScale) / 20;
   }
 
-  // Handle continuous placement (painting) for belts
-  if (bPlaceHeld && Placer && Placer->PlaceKind == EPlaceKind::Belt &&
+  // Handle continuous placement (painting) for belts and cluster sends
+  if (bPlaceHeld && Placer &&
+      (Placer->PlaceKind == EPlaceKind::Belt ||
+       Placer->PlaceKind == EPlaceKind::ClusterSend) &&
       !bBlueprintMode && !bDeletionMode) {
     if (Placer->IsHoverValid()) {
       Placer->HandlePlace(true);
@@ -1613,11 +1615,15 @@ void AHexTopDownPawn::ShowTimelineEditor(bool bShow) {
         TimelineEditorWidget->AddToViewport();
 
         // Use GameAndUI mode to allow both game and widget interaction
-        // Don't lock mouse to viewport or capture focus
-        // FInputModeGameAndUI InputMode;
-        // InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-        // InputMode.SetHideCursorDuringCapture(false);
-        // PC->SetInputMode(InputMode);
+        // Explicitly set parameters to prevent the UI from 'stealing' the mouse
+        // click
+        FInputModeGameAndUI InputMode;
+        InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+        InputMode.SetHideCursorDuringCapture(false);
+        // Setting WidgetToFocus to nullptr ensures the game still receives
+        // input
+        InputMode.SetWidgetToFocus(nullptr);
+        PC->SetInputMode(InputMode);
         PC->bShowMouseCursor = true;
       }
     }
@@ -1627,13 +1633,14 @@ void AHexTopDownPawn::ShowTimelineEditor(bool bShow) {
       TimelineEditorWidget->RemoveFromParent();
       TimelineEditorWidget = nullptr;
 
-      // Keep GameAndUI mode since we might open another timeline
-      // This prevents the double-click issue
-      // FInputModeGameAndUI InputMode;
-      // InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-      // InputMode.SetHideCursorDuringCapture(false);
-      // PC->SetInputMode(InputMode);
-      // PC->bShowMouseCursor = true;
+      // When closing, ensure we return to a clean state.
+      // Keeping GameAndUI is okay if other widgets are active, but let's be
+      // explicit.
+      FInputModeGameAndUI InputMode;
+      InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+      InputMode.SetHideCursorDuringCapture(false);
+      PC->SetInputMode(InputMode);
+      PC->bShowMouseCursor = true;
     }
   }
 }
