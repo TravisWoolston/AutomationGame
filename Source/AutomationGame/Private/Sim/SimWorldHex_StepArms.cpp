@@ -44,7 +44,8 @@ void USimWorldHex::StepArms() {
 
             // Check if this is a movement command that could cause collision
             if (Op.Cmd == ECmd::RotateL || Op.Cmd == ECmd::RotateR ||
-                Op.Cmd == ECmd::Extend || Op.Cmd == ECmd::Retract) {
+                Op.Cmd == ECmd::Extend || Op.Cmd == ECmd::Retract ||
+                Op.Cmd == ECmd::RotateHeldL || Op.Cmd == ECmd::RotateHeldR) {
               WaitingArm.WaitCounter = 1;
 
               if (bDebugLogs && GEngine) {
@@ -1209,21 +1210,146 @@ void USimWorldHex::StepArms() {
       case ECmd::Repeat:
         break;
       case ECmd::RotateHeldL:
-        if (S.bHolding && S.Held.bIsCluster) {
-          S.bRotationCompleted = false;
-          S.Held.GrabFacing = (S.Held.GrabFacing + 5) % 6;
-          // Defer simulation-held orientation to next fixed tick
-          PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
+      case ECmd::RotateHeldR: {
+        if (!S.bHolding || !S.Held.bIsCluster) {
+          bContinueProcessing = true;
+          break;
         }
+
+        // If we were told to wait (from a previously blocked rotate held) count
+        // it down and retry next tick.
+        if (S.WaitCounter > 0) {
+          --S.WaitCounter;
+          // Do NOT advance PC; retry this same instruction.
+          continue;
+        }
+
+        const uint8 NewGrabFacing = (Op.Cmd == ECmd::RotateHeldL)
+                                        ? (S.Held.GrabFacing + 5) % 6
+                                        : (S.Held.GrabFacing + 1) % 6;
+
+        const FHex Grip = GetArmGripHex_Sim(ArmIndex);
+
+        // --- Collision Check (Similar to RotateL/R) ---
+        TSet<FHex> WorldOcc;
+        for (const auto &KV : ItemMap)
+          WorldOcc.Add(KV.Key);
+
+        auto ComputeGripHexLocal = [](const FArmState &A,
+                                      EHexDir Facing) -> FHex {
+          FHex G = A.BaseHex;
+          for (int i = 0; i < A.ArmLen; ++i)
+            G = HexUtil::Neighbor(G, Facing);
+          return G;
+        };
+
+        TSet<FHex> OtherHeldOcc;
+        TSet<FHex> OtherArmOcc;
+        for (int32 OtherIdx = 0; OtherIdx < Arms.Num(); ++OtherIdx) {
+          if (OtherIdx == ArmIndex)
+            continue;
+          const FArmState &O = Arms[OtherIdx];
+          OtherArmOcc.Add(O.BaseHex);
+          if (!O.bHolding)
+            continue;
+          if (O.Held.bIsCluster) {
+            const FHex OHand = ComputeGripHexLocal(O, O.Facing);
+            const uint8 cur = (uint8)O.Facing % 6;
+            const int8 grab = (int8)O.Held.GrabFacing;
+            const uint8 facingDelta =
+                (grab >= 0) ? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
+                            : cur;
+            const uint8 ccw = (uint8)((6 - facingDelta) % 6);
+            for (const FOrbData &Sub : O.Held.Orbs) {
+              if (Sub.dQ == 0 && Sub.dR == 0)
+                continue;
+              FHex RotLocal = RotateAxial60Fn(FHex(Sub.dQ, Sub.dR), ccw);
+              OtherHeldOcc.Add(FHex(OHand.Q + RotLocal.Q, OHand.R + RotLocal.R,
+                                    OHand.Level));
+            }
+          }
+        }
+
+        TMap<FHex, int32> PredictedBonds = GetPredictedBondFormations();
+        auto OverlapsAny = [&](const FHex &H) -> bool {
+          if (PredictedBonds.Contains(H))
+            return false;
+          return WorldOcc.Contains(H) || OtherHeldOcc.Contains(H) ||
+                 OtherArmOcc.Contains(H) || WalkerAssignedTiles.Contains(H);
+        };
+
+        bool bBlocked = false;
+        FHex BlockedAt;
+
+        for (const FOrbData &Sub : S.Held.Orbs) {
+          FHex Local(Sub.dQ, Sub.dR);
+
+          // Start position
+          const uint8 cur = (uint8)S.Facing % 6;
+          const int8 grabStart = (int8)S.Held.GrabFacing;
+          const uint8 deltaStart =
+              (grabStart >= 0)
+                  ? (uint8)(((int32)cur - (int32)(grabStart % 6) + 6) % 6)
+                  : cur;
+          const uint8 ccwStart = (uint8)((6 - deltaStart) % 6);
+          FHex RotStart = RotateAxial60Fn(Local, ccwStart);
+          FHex StartPos =
+              FHex(Grip.Q + RotStart.Q, Grip.R + RotStart.R, Grip.Level);
+
+          // End position
+          const int8 grabEnd = (int8)NewGrabFacing;
+          const uint8 deltaEnd =
+              (grabEnd >= 0)
+                  ? (uint8)(((int32)cur - (int32)(grabEnd % 6) + 6) % 6)
+                  : cur;
+          const uint8 ccwEnd = (uint8)((6 - deltaEnd) % 6);
+          FHex RotEnd = RotateAxial60Fn(Local, ccwEnd);
+          FHex EndPos = FHex(Grip.Q + RotEnd.Q, Grip.R + RotEnd.R, Grip.Level);
+
+          if (OverlapsAny(EndPos)) {
+            bBlocked = true;
+            BlockedAt = EndPos;
+            break;
+          }
+
+          // Intermediate sweep
+          const int32 dQ = EndPos.Q - StartPos.Q;
+          const int32 dR = EndPos.R - StartPos.R;
+          for (int32 i = 1; i <= 3; ++i) {
+            float t = (float)i / 4.0f;
+            FHex Mid(StartPos.Q + FMath::RoundToInt(dQ * t),
+                     StartPos.R + FMath::RoundToInt(dR * t), StartPos.Level);
+            if (OverlapsAny(Mid)) {
+              bBlocked = true;
+              BlockedAt = Mid;
               break;
-      case ECmd::RotateHeldR:
-        if (S.bHolding && S.Held.bIsCluster) {
-          S.bRotationCompleted = false;
-          S.Held.GrabFacing = (S.Held.GrabFacing + 1) % 6;
-          // Defer simulation-held orientation to next fixed tick
-          PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
+            }
+          }
+          if (bBlocked)
+            break;
         }
-        break;
+
+        if (bBlocked) {
+          FCollisionDebugInfo CollisionInfo;
+          CollisionInfo.ArmIndex = ArmIndex;
+          CollisionInfo.ArmBaseHex = S.BaseHex;
+          CollisionInfo.ArmGripHex = Grip;
+          CollisionInfo.BlockedHex = BlockedAt;
+          CollisionInfo.Reason = TEXT("RotateHeld blocked");
+          CollisionDebugData.Add(CollisionInfo);
+          if (S.WaitCounter == 0)
+            S.WaitCounter = 1;
+
+          // Do NOT advance PC; retry this same rotate held instruction.
+          continue;
+        }
+
+        // Commit
+        S.bRotationCompleted = false;
+        S.Held.GrabFacing = NewGrabFacing;
+        PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
+        bContinueProcessing = true;
+      } break;
       case ECmd::WaitForBond:
         if (S.bHolding) {
           // Gate on trigger signals

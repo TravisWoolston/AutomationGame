@@ -529,7 +529,9 @@ bool USimWorldHex::DoesArmSweepOverlapTiles(
   // Determine if arm is rotating, extending/retracting, or static
   bool bRotating = (Arm.PC < Arm.Tape.Num() &&
                     (Arm.Tape[Arm.PC].Cmd == ECmd::RotateL ||
-                     Arm.Tape[Arm.PC].Cmd == ECmd::RotateR) &&
+                     Arm.Tape[Arm.PC].Cmd == ECmd::RotateR ||
+                     Arm.Tape[Arm.PC].Cmd == ECmd::RotateHeldL ||
+                     Arm.Tape[Arm.PC].Cmd == ECmd::RotateHeldR) &&
                     Arm.WaitCounter == 0);
 
   bool bExtending = (Arm.PC < Arm.Tape.Num() &&
