@@ -154,6 +154,7 @@ void USimWorldHex::StepArms() {
 
     // Allow multiple operations per tick for immediate execution
     int32 OpsExecutedThisTick = 0;
+    bool bDidRotateHeldThisTick = false;
     const int32 MaxOpsPerTick = 3; // Safety limit to prevent infinite loops
     bool bContinueProcessing = true;
 
@@ -163,6 +164,17 @@ void USimWorldHex::StepArms() {
 
       const FOp &Op = S.Tape[S.PC];
       bool bResetCommandExpanded = false; // Track if Reset expanded the tape
+
+      // If we just did a RotateHeld, and this is a SECOND operation, and it's
+      // something that would hide the rotation (like Drop), then delay it for
+      // one tick to let it animate.
+      if (bDidRotateHeldThisTick && Op.Cmd != ECmd::RotateHeldL &&
+          Op.Cmd != ECmd::RotateHeldR && Op.Cmd != ECmd::Repeat) {
+        if (S.WaitCounter == 0)
+          S.WaitCounter = 1;
+        bContinueProcessing = false;
+        continue;
+      }
 
       // 166-380 was the deferred grab block - moved into main Grab case below
 
@@ -1349,6 +1361,7 @@ void USimWorldHex::StepArms() {
         S.Held.GrabFacing = NewGrabFacing;
         PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
         bContinueProcessing = true;
+        bDidRotateHeldThisTick = true;
       } break;
       case ECmd::WaitForBond:
         if (S.bHolding) {
