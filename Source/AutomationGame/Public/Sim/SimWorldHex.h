@@ -275,6 +275,9 @@ public:
     return HelixGroups;
   }
 
+  /** Check if an item (by ID) is currently within the helix output system */
+  bool IsItemInHelix(int32 ItemId) const;
+
   /** Try to process helix output - checks if all helix tiles have bonded orbs
    *  forming one complete cluster, and if so, elevates it into the helix.
    *  Call this once per tick for each helix group. Returns true if a cluster

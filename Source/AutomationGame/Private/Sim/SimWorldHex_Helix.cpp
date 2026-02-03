@@ -320,49 +320,51 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
     const FOrbData &OrbA = NewRung.Orbs[IdxA];
     int32 ItemId = OrbA.ItemId;
 
-    // Check all IDs (including sub-orb IDs)
-    int32 BaseId = ItemId;
-    if (BaseId > 1000000) { // Simple heuristic for sub-orb IDs
-      BaseId = BaseId >> 8;
+    // Check BOTH the specific sub-orb ID and the parent cluster ID for bonds
+    TArray<int32> CheckIds;
+    CheckIds.Add(ItemId);
+    if (ItemId > 1000000) {
+      CheckIds.Add(ItemId >> 8);
     }
 
-    if (const TArray<int32> *BondList = ItemToBonds.Find(BaseId)) {
-      for (int32 BondIdx : *BondList) {
-        if (!Bonds.IsValidIndex(BondIdx))
-          continue;
-        const FBond &Bond = Bonds[BondIdx];
-        if (!Bond.bActive)
-          continue;
+    for (int32 BaseId : CheckIds) {
+      if (const TArray<int32> *BondList = ItemToBonds.Find(BaseId)) {
+        for (int32 BondIdx : *BondList) {
+          if (!Bonds.IsValidIndex(BondIdx))
+            continue;
+          const FBond &Bond = Bonds[BondIdx];
+          if (!Bond.bActive)
+            continue;
 
-        int32 OtherId = (Bond.ItemA == BaseId) ? Bond.ItemB : Bond.ItemA;
+          int32 OtherId = (Bond.ItemA == BaseId) ? Bond.ItemB : Bond.ItemA;
 
-        // Determine the target coordinate in the helix spatial system
-        // ItemA is at Root, ItemB is at Root + (dQ, dR)
-        // If our current OrbA matches ItemA, other is at Pos + (dQ, dR)
-        // If our current OrbA matches ItemB, other is at Pos - (dQ, dR)
-        int32 TargetDQ =
-            (Bond.ItemA == BaseId) ? (OrbA.dQ + Bond.dQ) : (OrbA.dQ - Bond.dQ);
-        int32 TargetDR =
-            (Bond.ItemA == BaseId) ? (OrbA.dR + Bond.dR) : (OrbA.dR - Bond.dR);
-        TPair<int32, int32> TargetPos(TargetDQ, TargetDR);
+          // Determine the target coordinate in the helix spatial system
+          int32 TargetDQ = (Bond.ItemA == BaseId) ? (OrbA.dQ + Bond.dQ)
+                                                  : (OrbA.dQ - Bond.dQ);
+          int32 TargetDR = (Bond.ItemA == BaseId) ? (OrbA.dR + Bond.dR)
+                                                  : (OrbA.dR - Bond.dR);
+          TPair<int32, int32> TargetPos(TargetDQ, TargetDR);
 
-        // 1. Handle connections to other orbs in the SAME new rung
-        if (const int32 *FoundIdxPtr = NewPosToOrbIndex.Find(TargetPos)) {
-          int32 IdxB = *FoundIdxPtr;
-          if (IdxA < IdxB) {
-            NewRung.Bonds.AddUnique(TPair<int32, int32>(IdxA, IdxB));
+          // 1. Handle connections to other orbs in the SAME new rung
+          if (const int32 *FoundIdxPtr = NewPosToOrbIndex.Find(TargetPos)) {
+            int32 IdxB = *FoundIdxPtr;
+            if (IdxA < IdxB) {
+              NewRung.Bonds.AddUnique(TPair<int32, int32>(IdxA, IdxB));
+            }
           }
-        }
-        // 2. Handle connections to the PREVIOUS rung
-        else if (Group.Rungs.Num() > 0) {
-          if (const int32 *FoundPrevIdxPtr =
-                  PrevPosToOrbIndex.Find(TargetPos)) {
-            int32 IdxB = *FoundPrevIdxPtr;
-            NewRung.BondsToPrevious.AddUnique(TPair<int32, int32>(IdxA, IdxB));
-          } else if (BoardItemIdToHex.Contains(OtherId)) {
-            // 3. Handle connections to the BOARD
-            // Verify if the other side of the bond is actually at this Board
-            // hex
+
+          // 2. Handle connections to the PREVIOUS rung
+          if (Group.Rungs.Num() > 0) {
+            if (const int32 *FoundPrevIdxPtr =
+                    PrevPosToOrbIndex.Find(TargetPos)) {
+              int32 IdxB = *FoundPrevIdxPtr;
+              NewRung.BondsToPrevious.AddUnique(
+                  TPair<int32, int32>(IdxA, IdxB));
+            }
+          }
+
+          // 3. Handle connections to the BOARD
+          if (BoardItemIdToHex.Contains(OtherId)) {
             FHex TargetBoardHex(CenterHex.Q + TargetDQ, CenterHex.R + TargetDR,
                                 CenterHex.Level);
             if (const FItem *BI = ItemMap.Find(TargetBoardHex)) {
@@ -371,18 +373,6 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
                 NewRung.BondsToBoard.AddUnique(
                     TPair<int32, int32>(IdxA, OtherId));
               }
-            }
-          }
-        }
-        // 3. Handle connections to the BOARD (if no previous rungs either)
-        else if (BoardItemIdToHex.Contains(OtherId)) {
-          FHex TargetBoardHex(CenterHex.Q + TargetDQ, CenterHex.R + TargetDR,
-                              CenterHex.Level);
-          if (const FItem *BI = ItemMap.Find(TargetBoardHex)) {
-            if (BI->Id == OtherId ||
-                (OtherId > 1000000 && BI->Id == (OtherId >> 8))) {
-              NewRung.BondsToBoard.AddUnique(
-                  TPair<int32, int32>(IdxA, OtherId));
             }
           }
         }
@@ -439,29 +429,7 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
             int32 OtherId = (B.ItemA == Item->Id) ? B.ItemB : B.ItemA;
 
             // If other item is also in this group or already in the helix
-            bool bInHelix = false;
-            if (OrbIdSet.Contains(OtherId)) {
-              bInHelix = true;
-            } else {
-              for (const FHelixOutputGroup &G : HelixGroups) {
-                for (const FHelixRung &R : G.Rungs) {
-                  for (const FOrbData &O : R.Orbs) {
-                    if (O.ItemId == OtherId ||
-                        (OtherId > 1000000 && O.ItemId == OtherId) ||
-                        (O.ItemId > 1000000 && (O.ItemId >> 8) == OtherId)) {
-                      bInHelix = true;
-                      break;
-                    }
-                  }
-                  if (bInHelix)
-                    break;
-                }
-                if (bInHelix)
-                  break;
-              }
-            }
-
-            if (bInHelix) {
+            if (OrbIdSet.Contains(OtherId) || IsItemInHelix(OtherId)) {
               B.bActive = false;
             }
           }
@@ -546,4 +514,25 @@ void USimWorldHex::UpdateHelixGroups(float DeltaTime) {
       }
     }
   }
+}
+
+bool USimWorldHex::IsItemInHelix(int32 ItemId) const {
+  if (ItemId <= 0)
+    return false;
+  for (const FHelixOutputGroup &Group : HelixGroups) {
+    for (const FHelixRung &Rung : Group.Rungs) {
+      for (const FOrbData &Orb : Rung.Orbs) {
+        if (Orb.ItemId == ItemId)
+          return true;
+        // Sub-orb matching: also check if this is a parent ID of the sub-orb
+        if (Orb.ItemId > 1000000 && (Orb.ItemId >> 8) == ItemId)
+          return true;
+        // Or if ItemId is a sub-orb and Orb.ItemId is the parent (less common
+        // but for completeness)
+        if (ItemId > 1000000 && (ItemId >> 8) == Orb.ItemId)
+          return true;
+      }
+    }
+  }
+  return false;
 }

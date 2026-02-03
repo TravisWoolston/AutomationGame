@@ -113,6 +113,8 @@ void USimWorldHex::StepBelts() {
           }
 
           if (!bFound) {
+            if (IsItemInHelix(BondedId))
+              continue; // Partially in helix, allow rest of cluster to move
             bCanMoveCluster = false;
             break;
           }
@@ -1009,9 +1011,10 @@ void USimWorldHex::StepBelts() {
                 if (bFoundOnBoard) {
                   ToProcess.Add(OtherItemId);
                   InCluster.Add(OtherItemId);
-                } else {
+                } else if (!IsItemInHelix(OtherItemId)) {
                   // If a bonded item is not on the board (e.g. held by an arm
-                  // or walker), the entire cluster is immovable by belts.
+                  // or walker) and not already in the helix, the entire cluster
+                  // is immovable by belts.
                   bCanMoveCluster = false;
                   break;
                 }
@@ -1200,9 +1203,9 @@ void USimWorldHex::StepBelts() {
                     if (bFoundOnBoard) {
                       PullToProcess.Add(OtherItemId);
                       PullInCluster.Add(OtherItemId);
-                    } else {
-                      // If a bonded item is not on the board, the entire
-                      // cluster is immovable.
+                    } else if (!IsItemInHelix(OtherItemId)) {
+                      // If a bonded item is not on the board and not in the
+                      // helix, the entire cluster is immovable.
                       bCanPullCluster = false;
                       break;
                     }
