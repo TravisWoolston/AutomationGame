@@ -266,6 +266,20 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
         FollowedItemId = 0;
       }
     }
+  } else if (bOrbitActive) {
+    if (!FMath::IsNearlyZero(MouseDeltaX) ||
+        !FMath::IsNearlyZero(MouseDeltaY)) {
+      bHasOrbitMoved = true;
+
+      // Rotate actor for Yaw (affects panning direction)
+      AddActorWorldRotation(FRotator(0.f, MouseDeltaX * OrbitSpeed, 0.f));
+
+      // Rotate spring arm for Pitch
+      FRotator NewRot = SpringArm->GetRelativeRotation();
+      NewRot.Pitch =
+          FMath::Clamp(NewRot.Pitch - MouseDeltaY * OrbitSpeed, -89.9f, -10.f);
+      SpringArm->SetRelativeRotation(NewRot);
+    }
   } else {
     // Planar panning
     const FVector Right = GetActorRightVector();
@@ -407,6 +421,23 @@ void AHexTopDownPawn::PlaceReleased() {
     EndSelection();
   } else if (bDeletionMode && bDeletionSelectionActive) {
     EndDeletionSelection();
+  }
+}
+
+void AHexTopDownPawn::OrbitRotatePressed() {
+  bOrbitActive = true;
+  bHasOrbitMoved = false;
+}
+
+void AHexTopDownPawn::OrbitRotateReleased() {
+  bOrbitActive = false;
+  if (!bHasOrbitMoved) {
+    // Reset camera to straight down
+    if (SpringArm) {
+      SpringArm->SetRelativeRotation(FRotator(-90.f, 0.f, 0.f));
+    }
+    // Also reset actor rotation to default
+    SetActorRotation(FRotator(0.f, 0.f, 0.f));
   }
 }
 
@@ -828,10 +859,16 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent *IC) {
   IC->BindAxis("MoveRight", this, &AHexTopDownPawn::MoveX);
   IC->BindAxis("MoveForward", this, &AHexTopDownPawn::MoveY);
   IC->BindAxis("Zoom", this, &AHexTopDownPawn::Zoom);
+  IC->BindAxis("LookX", this, &AHexTopDownPawn::LookX);
+  IC->BindAxis("LookY", this, &AHexTopDownPawn::LookY);
 
   // Actions
   IC->BindAction("Place", IE_Pressed, this, &AHexTopDownPawn::PlacePressed);
   IC->BindAction("Place", IE_Released, this, &AHexTopDownPawn::PlaceReleased);
+  IC->BindAction("OrbitRotateCam", IE_Pressed, this,
+                 &AHexTopDownPawn::OrbitRotatePressed);
+  IC->BindAction("OrbitRotateCam", IE_Released, this,
+                 &AHexTopDownPawn::OrbitRotateReleased);
   IC->BindAction("Remove", IE_Pressed, this, &AHexTopDownPawn::RemovePressed);
 
   // Editor UI toggle (user assigns key in Project Settings)

@@ -33,6 +33,7 @@ public:
   UPROPERTY(EditAnywhere, Category = "Camera") float ZoomSpeed = 1500.f;
   UPROPERTY(EditAnywhere, Category = "Camera") float MinArm = 600.f;
   UPROPERTY(EditAnywhere, Category = "Camera") float MaxArm = 3000.f;
+  UPROPERTY(EditAnywhere, Category = "Camera") float OrbitSpeed = 2.f;
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
   bool LogSelectedTile = false;
@@ -138,6 +139,10 @@ private:
   bool bBlueprintPlacementMode = false;
   bool bContinuePlacementActive = false;
   bool bPlaceHeld = false; // Track if the Place action button is currently held
+  bool bOrbitActive = false;
+  bool bHasOrbitMoved = false;
+  float MouseDeltaX = 0.f;
+  float MouseDeltaY = 0.f;
   bool bDeletionMode = false;
   FVector2D SelectionStart;
   FVector2D SelectionEnd;
@@ -154,10 +159,14 @@ private:
 
   void MoveX(float V) { AxisX = V; }
   void MoveY(float V) { AxisY = V; }
+  void LookX(float V) { MouseDeltaX = V; }
+  void LookY(float V) { MouseDeltaY = V; }
   void Zoom(float V) { AxisZoom = V; }
 
   void PlacePressed();
   void PlaceReleased();
+  void OrbitRotatePressed();
+  void OrbitRotateReleased();
   void RemovePressed() {
     if (bBlueprintPlacementMode) {
       // Cancel blueprint placement and return to kind placement
