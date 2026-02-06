@@ -479,6 +479,9 @@ bool USimWorldHex::PlaceTile(const FHex &H, const FTile &T) {
       // Unregister helix output tile if it was one
       UnregisterHelixOutputTile(H);
 
+      // Unregister helix input tile if it was one
+      UnregisterHelixInputTile(H);
+
       ++TileRevision;
     }
     return true;
@@ -491,6 +494,9 @@ bool USimWorldHex::PlaceTile(const FHex &H, const FTile &T) {
   if (TileToPlace.Kind == ETileKind::HelixOutput) {
     RegisterHelixOutputTile(H);
   }
+
+  // Note: HelixInput tiles are registered by HexPlacementComponent
+  // since they require the output group index to pair with
 
   // ClusterOutput tiles are now directly placeable, no auto-conversion
 
@@ -1104,7 +1110,13 @@ void USimWorldHex::StepSim() {
   UpdateWalkerFootCache();
 
   StepWalkers();
+  UpdateLockedItems();
   StepBelts();
+
+  // Portal Push: Allow helix input tiles to push items outward automatically
+  // (REMOVED: This was pulling bonded clusters apart. Pushing is now handled by
+  // TryEjectHelixCluster's pre-push logic)
+
   SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
 
   // Interaction pass 2: bond things that just arrived (Inputs, moved items)
@@ -1120,6 +1132,7 @@ void USimWorldHex::StepSim() {
   // Clear newly placed items and recently dropped tracking at very end of tick
   NewlyPlacedItems.Empty();
   RecentlyDroppedByArm.Empty();
+  EjectedItems.Empty();
 
   // Debug visualization - draw bond cylinders when DebugSpheres is enabled
   DrawBondDebugLines();
@@ -1271,6 +1284,57 @@ void USimWorldHex::RemoveBondIndex(int32 Index) {
         -1, 0.75f, FColor::Red,
         FString::Printf(TEXT("Bond removed: %d-%d"), Dead.ItemA, Dead.ItemB));
   }
+
+  // Check if either item was a Void orb that now has no bonds - delete it
+  auto CheckAndDeleteVoidOrb = [&](int32 ItemId) {
+    if (ItemId <= 0)
+      return;
+
+    // Check if this item still has any bonds
+    if (const TArray<int32> *BondList = ItemToBonds.Find(ItemId)) {
+      if (BondList->Num() > 0) {
+        return; // Still has bonds, don't delete
+      }
+    }
+
+    // Find the item on the board
+    for (auto It = ItemMap.CreateIterator(); It; ++It) {
+      FItem &Item = It->Value;
+      if (Item.Id == ItemId) {
+        // Check if it's a Void type orb
+        bool bIsVoid = false;
+        if (Item.bIsCluster) {
+          // Check if any orb in the cluster is Void
+          for (const FOrbData &Orb : Item.Orbs) {
+            if (Orb.Type == (uint8)EOrbType::Void) {
+              bIsVoid = true;
+              break;
+            }
+          }
+        } else {
+          bIsVoid = (Item.Single.Type == EOrbType::Void);
+        }
+
+        if (bIsVoid) {
+          // Delete the void orb from the board
+          FHex HexToRemove = It->Key;
+          OrbAt.Remove(HexToRemove);
+          It.RemoveCurrent();
+
+          if (GEngine && bDevDebugBonds) {
+            GEngine->AddOnScreenDebugMessage(
+                -1, 1.0f, FColor::Purple,
+                FString::Printf(TEXT("Void orb deleted (no bonds): %d"),
+                                ItemId));
+          }
+        }
+        return;
+      }
+    }
+  };
+
+  CheckAndDeleteVoidOrb(Dead.ItemA);
+  CheckAndDeleteVoidOrb(Dead.ItemB);
 }
 
 FVector USimWorldHex::HexCenterToWorld(const FHex &H) const {
@@ -1313,8 +1377,18 @@ bool USimWorldHex::GetItemVisualLocation(int32 ItemId,
   const FHex CurHex = *CurHexPtr;
   const FVector CurCenter = HexCenterToWorld(CurHex);
 
-  // If this item advanced exactly one belt hex this logical step, interpolate
-  // previous->current
+  // 1. Check if this item just exited a helix
+  if (EjectedItems.Contains(ItemId)) {
+    const FEjectedItemInfo &Info = EjectedItems[ItemId];
+    float Alpha = FMath::Clamp(FrameAlpha, 0.f, 1.f);
+    // Oldest rung was at the top of the helix column
+    FVector StartPos = Info.Center + FVector(0.f, 0.f, Info.StartZ);
+    OutWorld = FMath::Lerp(StartPos, CurCenter, Alpha);
+    return true;
+  }
+
+  // 2. If this item advanced exactly one belt hex this logical step,
+  // interpolate previous->current
   if (ItemsMovedLastStep.Contains(ItemId)) {
     if (const FHex *PrevHex = PrevItemHex.Find(ItemId)) {
       if (*PrevHex != CurHex) {

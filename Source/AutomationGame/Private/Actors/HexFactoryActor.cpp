@@ -988,6 +988,7 @@ void AHexFactoryActor::RebuildTiles() {
     case ETileKind::ClusterOutput:
     case ETileKind::DiscoveryClusterOutput:
     case ETileKind::HelixOutput:
+    case ETileKind::HelixInput:
       // Output tiles are handled by RebuildOutputs() or RebuildHelixOutput()
       // with type-specific materials
       break;
@@ -1935,12 +1936,12 @@ void AHexFactoryActor::RebuildHelixOutput() {
     }
   }
 
-  // Render helix output tiles
+  // Render helix output and input tiles
   for (const auto &TileKV : Sim->TileMap) {
     const FHex &H = TileKV.Key;
     const FTile &T = TileKV.Value;
 
-    if (T.Kind != ETileKind::HelixOutput)
+    if (T.Kind != ETileKind::HelixOutput && T.Kind != ETileKind::HelixInput)
       continue;
 
     // Place tile mesh at helix output location

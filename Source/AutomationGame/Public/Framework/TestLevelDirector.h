@@ -113,6 +113,17 @@ struct FTriggerTileSpec {
 };
 
 USTRUCT(BlueprintType)
+struct FHelixPairSpec {
+  GENERATED_BODY()
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FHex> OutputTiles;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FHex> InputTiles;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex OutputCenter;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) FHex InputCenter;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 TransitTime = 5;
+};
+
+USTRUCT(BlueprintType)
 struct FScenarioSpec {
   GENERATED_BODY()
 
@@ -126,6 +137,8 @@ struct FScenarioSpec {
   TArray<FRequestBeaconSpec> Beacons;
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   TArray<FTriggerTileSpec> TriggerTiles;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FHelixPairSpec> HelixPairs;
   UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bAutoPlay = true;
 };
 

@@ -35,6 +35,35 @@ struct AUTOMATIONGAME_API FHex {
                       FMath::Abs(dq + dr));
   }
 
+  FORCEINLINE FHex operator-(const FHex &Other) const {
+    return FHex(Q - Other.Q, R - Other.R, Level);
+  }
+  FORCEINLINE FHex operator+(const FHex &Other) const {
+    return FHex(Q + Other.Q, R + Other.R, Level);
+  }
+
+  FORCEINLINE FHex GetStepDir() const {
+    // Return the unit direction closest to this offset vector
+    // Using inline constants since HexUtil is defined after FHex
+    static const FHex kDir[6] = {FHex(+1, 0, 0),  FHex(+1, -1, 0),
+                                 FHex(0, -1, 0),  FHex(-1, 0, 0),
+                                 FHex(-1, +1, 0), FHex(0, +1, 0)};
+    int32 BestDist = 999;
+    FHex BestDir(0, 0, 0);
+    for (uint8 i = 0; i < 6; ++i) {
+      // Calculate distance from this to the step direction
+      int32 dq = Q - kDir[i].Q;
+      int32 dr = R - kDir[i].R;
+      int32 d = FMath::Max(FMath::Max(FMath::Abs(dq), FMath::Abs(dr)),
+                           FMath::Abs(dq + dr));
+      if (d < BestDist) {
+        BestDist = d;
+        BestDir = kDir[i];
+      }
+    }
+    return BestDir;
+  }
+
   FORCEINLINE FHex RotateCCW(int32 Steps) const {
     FHex Res = *this;
     int32 N = ((Steps % 6) + 6) % 6;

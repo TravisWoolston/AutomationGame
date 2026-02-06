@@ -19,7 +19,8 @@ enum class ETileKind : uint8 {
                           // required)
   DiscoveryClusterOutput, // NEW: Unlocks grid radius and removes itself once
                           // complete
-  HelixOutput // NEW: Outputs clusters into a spiraling DNA helix formation
+  HelixOutput, // NEW: Outputs clusters into a spiraling DNA helix formation
+  HelixInput   // NEW: Receives processed clusters from a paired helix output
 };
 
 USTRUCT(BlueprintType)

@@ -1,5 +1,8 @@
 #pragma once
+
 #include "AutomationGameMinimal.h"
+#include "Sim/HexTypes.h"
+// .generate must be last
 #include "OrbTypes.generated.h"
 
 static FORCEINLINE int32 MakeSubOrbId(int32 ItemId, int32 SubIdx) {
@@ -82,8 +85,12 @@ struct AUTOMATIONGAME_API FItem {
   UPROPERTY()
   int8 GrabFacing = -1;
 
+  // NEW: flag to track if this item is "anchored" or "locked" (cannot be moved
+  // by hands/belts)
+  UPROPERTY()
+  bool bIsLocked = false;
+
   // NEW: flag to track if this item has been moved by belts this tick (prevents
-  // double-movement)
   UPROPERTY()
   bool LocationUpdatedThisTick = false;
 
@@ -100,4 +107,80 @@ struct AUTOMATIONGAME_API FItem {
     I.Single = O;
     return I;
   }
+};
+
+/** A single rung in the helix - represents one processed cluster */
+USTRUCT(BlueprintType)
+struct AUTOMATIONGAME_API FHelixRung {
+  GENERATED_BODY();
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FOrbData> Orbs; // The orbs in this cluster (with relative positions)
+
+  // Bonds (not exposed to BP due to TPair)
+  TArray<TPair<int32, int32>> Bonds;
+  TArray<TPair<int32, int32>> BondsToPrevious;
+  TArray<TPair<int32, int32>> BondsToBoard;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float SpawnTime = 0.f;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 SpawnTick = 0;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float ZOffset = 0.f;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float TargetZOffset = 0.f;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float RotationDegrees = 0.f;
+
+  /** Direction (0-5) items were pushed INTO the helix - used for portal exit
+   * direction */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  uint8 EntryDirection = 0;
+};
+
+/** A group of adjacent HelixOutput tiles that form a single helix column */
+USTRUCT(BlueprintType)
+struct AUTOMATIONGAME_API FHelixOutputGroup {
+  GENERATED_BODY();
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FHex> MemberTiles;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  FHex CenterHex = FHex(0, 0, 0);
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  FVector CenterWorld = FVector::ZeroVector;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FHelixRung> Rungs;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int64 TotalClustersProcessed = 0;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float HelixRotationOffset = 0.f;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FHex> PairedInputTiles;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  FHex PairedInputCenter = FHex(0, 0, 0);
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  FVector PairedInputCenterWorld = FVector::ZeroVector;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  bool bHasPairedInput = false;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float DegreesPerRung = 36.f;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float RungSpacing = 100.f;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 MaxVisibleRungs = 20;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 LastProcessedTick = -1;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 LastEnteredItemId = 0;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 LastEnteredItemTick = -1;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 RungTransitTime = 20;
+
+  static constexpr int32 MinPairDistance = 3;
 };

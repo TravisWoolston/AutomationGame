@@ -180,9 +180,69 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
   case EPlaceKind::Unbond:
     T = FTile{ETileKind::Unbond, (uint8)BeltDir};
     break;
-  case EPlaceKind::HelixOutput:
+  case EPlaceKind::HelixOutput: {
+    // Check if clicking on an existing HelixOutput tile to enter pairing mode
+    if (Sim) {
+      int32 OutputGroupIndex = Sim->GetHelixOutputGroupIndexAt(Root);
+      if (OutputGroupIndex >= 0) {
+        // Clicked on existing helix output - enter pairing mode for HelixInput
+        StartHelixInputPairing(OutputGroupIndex);
+        if (GEngine) {
+          GEngine->AddOnScreenDebugMessage(
+              -1, 3.0f, FColor::Cyan,
+              TEXT("Helix Output selected. Click to place paired Input tiles "
+                   "(must be at least 3 tiles away)."));
+        }
+        return;
+      }
+    }
     T = FTile{ETileKind::HelixOutput, 0};
     break;
+  }
+  case EPlaceKind::HelixInput: {
+    // Only valid if we're in pairing mode
+    if (PendingHelixOutputGroupIndex < 0 || HelixInputLayout.Num() == 0) {
+      if (GEngine) {
+        GEngine->AddOnScreenDebugMessage(
+            -1, 2.0f, FColor::Red,
+            TEXT("Select a HelixOutput tile first to create paired input."));
+      }
+      return;
+    }
+
+    // Validate that all tiles in the set can be placed
+    if (!CanPlaceHelixInputSetAt(Root)) {
+      if (GEngine) {
+        GEngine->AddOnScreenDebugMessage(
+            -1, 2.0f, FColor::Orange,
+            TEXT("Invalid location - must be far enough from output center "
+                 "and all tiles must be placeable."));
+      }
+      return;
+    }
+
+    // Place all HelixInput tiles at once
+    TArray<FHex> InputHexes = GetHelixInputPreviewHexes(Root);
+    for (const FHex &InputHex : InputHexes) {
+      FTile InputTile{ETileKind::HelixInput,
+                      (uint8)PendingHelixOutputGroupIndex};
+      Sim->PlaceTile(InputHex, InputTile);
+      Sim->RegisterHelixInputTile(InputHex, PendingHelixOutputGroupIndex);
+    }
+
+    if (GEngine) {
+      GEngine->AddOnScreenDebugMessage(
+          -1, 2.0f, FColor::Green,
+          FString::Printf(TEXT("Placed %d HelixInput tiles centered at "
+                               "(%d,%d) paired to output group %d"),
+                          InputHexes.Num(), Root.Q, Root.R,
+                          PendingHelixOutputGroupIndex));
+    }
+
+    // Exit pairing mode after successful placement
+    CancelHelixInputPairing();
+    return; // Skip normal tile placement flow
+  }
   case EPlaceKind::Arm: {
     AActor *GMActor = nullptr;
     for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -804,13 +864,9 @@ void UHexPlacementComponent::HandleRemove(bool bPressed) {
     DoRemoveAt(World);
 }
 
-void UHexPlacementComponent::RotateCW() {
-    BeltDir = (BeltDir + 5) % 6;
-}
+void UHexPlacementComponent::RotateCW() { BeltDir = (BeltDir + 5) % 6; }
 
-void UHexPlacementComponent::RotateCCW() {
-    BeltDir = (BeltDir + 1) % 6;
-}
+void UHexPlacementComponent::RotateCCW() { BeltDir = (BeltDir + 1) % 6; }
 
 void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) {
   if (PlaceKind == EPlaceKind::RequestBeacon &&
@@ -832,6 +888,13 @@ void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) {
     }
     TriggerTilePlacementStep = 0;
   }
+
+  // Clear helix pairing state when switching away from HelixInput mode
+  if (PlaceKind == EPlaceKind::HelixInput &&
+      NewKind != EPlaceKind::HelixInput) {
+    CancelHelixInputPairing();
+  }
+
   PlaceKind = NewKind;
 }
 
@@ -1256,6 +1319,12 @@ UStaticMesh *UHexPlacementComponent::SelectPreviewMesh() const {
     return GenericTilePreviewMesh;
   }
 
+  case EPlaceKind::HelixOutput:
+  case EPlaceKind::HelixInput:
+    // For now, use generic tile mesh for helix tiles
+    // TODO: Add dedicated helix tile mesh in GameManager
+    return GenericTilePreviewMesh;
+
   default:
     return GenericTilePreviewMesh;
   }
@@ -1619,8 +1688,22 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
   }
 
   // Outline (keep single hex for non-bond, two for bond/unbond, multiple for
-  // ClusterOutput)
-  if (PlaceKind != EPlaceKind::Bond && PlaceKind != EPlaceKind::Unbond) {
+  // ClusterOutput and HelixInput)
+  if (PlaceKind == EPlaceKind::HelixInput && HelixInputLayout.Num() > 0) {
+    // Draw all tiles in the HelixInput set
+    const bool bSetOK = CanPlaceHelixInputSetAt(HoverHex);
+    const FColor Col = bSetOK ? FColor(0, 200, 40) : FColor(200, 20, 20);
+    TArray<FHex> PreviewHexes = GetHelixInputPreviewHexes(HoverHex);
+    for (const FHex &PreviewHex : PreviewHexes) {
+      const FVector PreviewCenter =
+          HexToWorld(PreviewHex) + FVector(0, 0, PreviewZOffset);
+      DrawDebugCircle(GetWorld(), PreviewCenter, Tile * 0.95f, 6, Col, false,
+                      0.f, 0, 2.5f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+    }
+    // Also draw the center marker
+    DrawDebugCircle(GetWorld(), CenterA, Tile * 0.5f, 6, FColor::Cyan, false,
+                    0.f, 0, 3.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+  } else if (PlaceKind != EPlaceKind::Bond && PlaceKind != EPlaceKind::Unbond) {
     DrawDebugCircle(GetWorld(), CenterA, Tile * 0.95f, 6,
                     bPlaceOK ? FColor(0, 200, 40) : FColor(200, 20, 20), false,
                     0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
@@ -2076,4 +2159,105 @@ void UHexPlacementComponent::CancelPlacement() {
   // Reset TriggerTile state
   TriggerTilePlacementStep = 0;
   PendingTriggerTile = nullptr;
+
+  // Reset HelixInput pairing state
+  CancelHelixInputPairing();
+}
+
+void UHexPlacementComponent::StartHelixInputPairing(int32 OutputGroupIndex) {
+  if (!Sim || OutputGroupIndex < 0 ||
+      OutputGroupIndex >= Sim->GetHelixGroups().Num()) {
+    return;
+  }
+
+  PendingHelixOutputGroupIndex = OutputGroupIndex;
+  PlaceKind = EPlaceKind::HelixInput;
+
+  // Cache the relative hex offsets from the output group's center
+  const USimWorldHex::FHelixOutputGroup &Group =
+      Sim->GetHelixGroups()[OutputGroupIndex];
+  HelixInputLayout.Empty();
+
+  for (const FHex &MemberHex : Group.MemberTiles) {
+    // Compute offset from center
+    FHex Offset;
+    Offset.Q = MemberHex.Q - Group.CenterHex.Q;
+    Offset.R = MemberHex.R - Group.CenterHex.R;
+    Offset.Level = 0; // Same level
+    HelixInputLayout.Add(Offset);
+  }
+
+  if (GEngine) {
+    GEngine->AddOnScreenDebugMessage(
+        -1, 3.0f, FColor::Cyan,
+        FString::Printf(TEXT("Entered HelixInput pairing mode: %d tiles. "
+                             "Click to place paired input set."),
+                        HelixInputLayout.Num()));
+  }
+}
+
+void UHexPlacementComponent::CancelHelixInputPairing() {
+  if (PendingHelixOutputGroupIndex >= 0) {
+    PendingHelixOutputGroupIndex = -1;
+    HelixInputLayout.Empty();
+    // Only reset PlaceKind if we're actually in HelixInput mode
+    // (SetPlaceKind handles this before calling us when switching modes)
+    if (PlaceKind == EPlaceKind::HelixInput) {
+      PlaceKind = EPlaceKind::HelixOutput;
+    }
+  }
+}
+
+TArray<FHex>
+UHexPlacementComponent::GetHelixInputPreviewHexes(const FHex &Center) const {
+  TArray<FHex> Result;
+  for (const FHex &Offset : HelixInputLayout) {
+    FHex TargetHex;
+    TargetHex.Q = Center.Q + Offset.Q;
+    TargetHex.R = Center.R + Offset.R;
+    TargetHex.Level = Center.Level;
+    Result.Add(TargetHex);
+  }
+  return Result;
+}
+
+bool UHexPlacementComponent::CanPlaceHelixInputSetAt(const FHex &Center) const {
+  if (!Sim || PendingHelixOutputGroupIndex < 0 ||
+      PendingHelixOutputGroupIndex >= Sim->GetHelixGroups().Num()) {
+    return false;
+  }
+
+  const USimWorldHex::FHelixOutputGroup &OutputGroup =
+      Sim->GetHelixGroups()[PendingHelixOutputGroupIndex];
+
+  // Check minimum distance from output center to input center
+  int32 Distance = OutputGroup.CenterHex.Distance(Center);
+  if (Distance < USimWorldHex::FHelixOutputGroup::MinPairDistance) {
+    return false;
+  }
+
+  // Get all input hex positions
+  TArray<FHex> InputHexes = GetHelixInputPreviewHexes(Center);
+
+  // Check that none of the input hexes overlap with output tiles
+  for (const FHex &InputHex : InputHexes) {
+    // Check against output group tiles
+    if (OutputGroup.MemberTiles.Contains(InputHex)) {
+      return false;
+    }
+
+    // Check that tile location is not already occupied by something blocking
+    if (const FTile *ExistingTile = Sim->TileMap.Find(InputHex)) {
+      if (ExistingTile->Kind != ETileKind::Empty) {
+        return false;
+      }
+    }
+
+    // Check discovery mode radius
+    if (!CanPlaceAt(InputHex)) {
+      return false;
+    }
+  }
+
+  return true;
 }

@@ -105,6 +105,10 @@ void USimWorldHex::StepBelts() {
           bool bFound = false;
           for (const auto &BoardKV : ItemMap) {
             if (BoardKV.Value.Id == BondedId) {
+              if (BoardKV.Value.bIsLocked) {
+                bCanMoveCluster = false;
+                break;
+              }
               CurrentPos = BoardKV.Key;
               ClusterPositions.Add(BondedId, CurrentPos);
               bFound = true;

@@ -1628,6 +1628,12 @@ void USimWorldHex::ProcessOutputs() {
       // A cluster was processed and elevated
       // The orbs were already removed from the board in TryProcessHelixCluster
     }
+
+    // Also try to eject mature clusters from the helix at the paired input
+    // tiles
+    if (TryEjectHelixCluster(Group)) {
+      // A cluster was ejected onto the board at the input tiles
+    }
   }
 }
 
@@ -1635,7 +1641,8 @@ bool USimWorldHex::TryArmPickItem(const FHex &From, FItem &OutItem) {
   // Check if item at this location is currently in-flight/animating
   if (const FItem *FoundCheck = ItemMap.Find(From)) {
     if (OrbsMovedLastTick.Contains(FoundCheck->Id) ||
-        OrbsNewlyMovedByBelts.Contains(FoundCheck->Id)) {
+        OrbsNewlyMovedByBelts.Contains(FoundCheck->Id) ||
+        FoundCheck->bIsLocked) {
       return false;
     }
   }

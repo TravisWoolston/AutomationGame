@@ -1,0 +1,26 @@
+﻿Using bundled DotNet SDK version: 8.0.300
+Running UnrealBuildTool: dotnet "..\..\Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.dll" AutomationGame Win64 Development -project=C:\UEProjects\AutomationGame\AutomationGame.uproject -WaitMutex
+Log file: C:\Users\Travi\AppData\Local\UnrealBuildTool\Log.txt
+Using 'git status' to determine working set for adaptive non-unity build (C:\UEProjects\AutomationGame).
+Building AutomationGame...
+Using Visual Studio 2022 14.38.33145 toolchain (C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.38.33130) and Windows 10.0.22621.0 SDK (C:\Program Files (x86)\Windows Kits\10).
+[Upgrade]
+[Upgrade] Using backward-compatible include order. The latest version of UE has changed the order of includes, which may require code changes. The current setting is:
+[Upgrade]     IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_3
+[Upgrade] Suppress this message by setting 'IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_5;' in AutomationGame.Target.cs.
+[Upgrade] Alternatively you can set this to 'EngineIncludeOrderVersion.Latest' to always use the latest include order. This will potentially cause compile errors when integrating new versions of the engine.
+[Upgrade]
+[Adaptive Build] Excluded from AutomationGame unity file: HexFactoryActor.cpp, HexTopDownPawn.cpp, HexPlacementComponent.cpp, SimWorldHex.cpp, SimWorldHex_Belts.cpp, SimWorldHex_BondedArms.cpp, SimWorldHex_Clusters.cpp, SimWorldHex_Helix.cpp, SimWorldHex_InputOutput.cpp, SimWorldHex_PredictiveCollision.cpp, SimWorldHex_Safety.cpp, SimWorldHex_StepWalkers.cpp, SimWorldHex_StepWalkers_Body.cpp, SimWorldHex_StepWalkers_FootHandling.cpp, SimWorldHex_StepWalkers_Tick.cpp
+Determining max actions to execute in parallel (8 physical cores, 16 logical cores)
+  Executing up to 8 processes, one per physical core
+Using Unreal Build Accelerator local executor to run 3 action(s)
+  Storage capacity 40Gb
+---- Starting trace: 260126_222820 ----
+UbaSessionServer - Disable remote execution (remote sessions will finish current processes)
+------ Building 3 action(s) started ------
+[1/3] Compile [x64] SimWorldHex_InputOutput.cpp
+C:\UEProjects\AutomationGame\Source\AutomationGame\Private\Sim\SimWorldHex_InputOutput.cpp(1621): error C4456: declaration of 'ItemPtr' hides previous local declaration
+C:\UEProjects\AutomationGame\Source\AutomationGame\Private\Sim\SimWorldHex_InputOutput.cpp(832): note: see declaration of 'ItemPtr'
+Trace file written to C:/Users/Travi/AppData/Local/UnrealBuildTool/Log.uba with size 2.5kb
+Total time in Unreal Build Accelerator local executor: 2.10 seconds
+Total execution time: 2.53 seconds

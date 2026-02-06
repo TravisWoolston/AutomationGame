@@ -398,6 +398,23 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
     }
 
     // ClusterOutput tiles are now handled directly without merged relationships
+
+    // Re-apply Helix Pairings after tiles are placed
+    for (const FHelixPairSpec &Pair : S.HelixPairs) {
+      // Find the group index for this center
+      int32 GroupIdx = -1;
+      for (int32 i = 0; i < Sim->HelixGroups.Num(); ++i) {
+        if (Sim->HelixGroups[i].CenterHex == Pair.OutputCenter) {
+          GroupIdx = i;
+          break;
+        }
+      }
+
+      if (GroupIdx != -1) {
+        Sim->PairHelixInput(GroupIdx, Pair.InputTiles, Pair.InputCenter);
+        Sim->HelixGroups[GroupIdx].RungTransitTime = Pair.TransitTime;
+      }
+    }
   }
 
   for (FArmSpawnSpec &A : const_cast<TArray<FArmSpawnSpec> &>(S.Arms)) {
@@ -1636,6 +1653,20 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       NewTriggerSpec.Spawned = TriggerTile;
 
       Scenario.TriggerTiles.Add(NewTriggerSpec);
+    }
+
+    // Capture Helix Groups
+    Scenario.HelixPairs.Empty();
+    for (const auto &Group : Sim->HelixGroups) {
+      if (Group.bHasPairedInput) {
+        FHelixPairSpec Pair;
+        Pair.OutputTiles = Group.MemberTiles;
+        Pair.InputTiles = Group.PairedInputTiles;
+        Pair.OutputCenter = Group.CenterHex;
+        Pair.InputCenter = Group.PairedInputCenter;
+        Pair.TransitTime = Group.RungTransitTime;
+        Scenario.HelixPairs.Add(Pair);
+      }
     }
   }
 }

@@ -32,7 +32,8 @@ enum class EPlaceKind : uint8 {
   RequestBeacon, // place a RequestBeacon (e.g. Relocate)
   TriggerTile,   // place a TriggerTile (sends signals based on orb presence)
   ClusterSend,   // place a ClusterSend tile
-  HelixOutput // place a HelixOutput tile (clusters spiral upward in DNA helix)
+  HelixOutput, // place a HelixOutput tile (clusters spiral upward in DNA helix)
+  HelixInput // place a HelixInput tile paired to an existing HelixOutput group
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of
@@ -329,4 +330,29 @@ public:
   /** Get the current orb type for TriggerTile placement */
   UFUNCTION(BlueprintPure, Category = "Place|TriggerTile")
   EOrbType GetCurrentTriggerOrbType() const;
+
+  // HelixInput pairing state
+  UPROPERTY(Transient)
+  int32 PendingHelixOutputGroupIndex = -1; // Index of output group being paired
+
+  // Cached relative hex offsets from center of the output group
+  // Used for preview and placement of matching HelixInput tiles
+  TArray<FHex> HelixInputLayout;
+
+  /** Start pairing mode for placing HelixInput tiles */
+  void StartHelixInputPairing(int32 OutputGroupIndex);
+
+  /** Cancel helix input pairing mode */
+  void CancelHelixInputPairing();
+
+  /** Check if currently in helix input pairing mode */
+  bool IsInHelixInputPairingMode() const {
+    return PendingHelixOutputGroupIndex >= 0;
+  }
+
+  /** Get the hex positions for HelixInput preview at given center */
+  TArray<FHex> GetHelixInputPreviewHexes(const FHex &Center) const;
+
+  /** Check if all HelixInput tiles can be placed at given center */
+  bool CanPlaceHelixInputSetAt(const FHex &Center) const;
 };

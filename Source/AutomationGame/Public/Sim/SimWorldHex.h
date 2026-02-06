@@ -15,16 +15,144 @@
 // .generated.h must be last
 #include "SimWorldHex.generated.h"
 
+class ATestLevelDirector;
+class AHexTopDownPawn;
+class UOrbRenderer;
+class UBondResolver;
+class UOrbSpatialManager;
+class AHexFactoryActor;
+class UHexPlacementComponent;
+class AOrbSimDriver;
+class AGameManager;
+
 /** Authoritative deterministic hex simulation world. */
 UCLASS(BlueprintType)
 class AUTOMATIONGAME_API USimWorldHex : public UObject {
   GENERATED_BODY()
   friend class AHexTopDownPawn;
+  friend class ATestLevelDirector;
+  friend class UOrbRenderer;
+  friend class UBondResolver;
+  friend class UOrbSpatialManager;
+  friend class AHexFactoryActor;
+  friend class UHexPlacementComponent;
+  friend class AOrbSimDriver;
+  friend class AGameManager;
+  friend class ARequestBeacon;
+  friend class ABasicArm;
+  friend class ABasicWalker;
+  friend class UArmTimelineUMGWidget;
+  friend struct FSimWorldHexSaveLoad;
 
 public:
+  /** Representation of a physical bond between two items on the board. */
+  struct FBond {
+    int32 ItemA = 0;
+    int32 ItemB = 0;
+    /** Visual root of the bond (location of Item A). */
+    FHex Root;
+    /** Relative axial offset from Item A to Item B. */
+    int32 dQ = 0;
+    int32 dR = 0;
+    bool bActive = true;
+  };
+
+  /** Animated appearance of an orb moving between states. */
+  struct FAnimatedOrb {
+    FItem Item;
+    FHex Hex;
+    int32 StartStep = 0;
+    int32 CompletionStep = 0;
+    bool bIsInput = false;
+    bool bActive = true;
+    bool bIsBonded = false;
+    FHex PartnerHex;
+    int32 PartnerItemId = 0;
+  };
+
+  /** Bond formation that is visually animating before becoming a simulation
+   * bond. */
+  struct FPendingBondFormation {
+    int32 ArmIndex = -1;
+    FHex BoardItemHex;
+    int32 BoardItemId = 0;
+    float TimeRemaining = 0.f;
+  };
+
+  /** Debug information for simulated collisions. */
+  struct FCollisionDebugInfo {
+    int32 ArmIndex = -1;
+    FHex ArmBaseHex;
+    FHex ArmGripHex;
+    FHex BlockedHex;
+    FString Reason;
+  };
+
+  /** Information about a predictive collision between two arms or an arm and
+   * the world. */
+  struct FPredictiveCollisionInfo {
+    int32 ArmIndexA = -1;
+    int32 ArmIndexB = -1;
+    FString Reason;
+    FHex CollisionHex;
+  };
+
+  /** Tracks a pair of arms that are physically bonded via the items they hold.
+   */
+  struct FBondedArmPair {
+    int32 ArmIndexA = -1;
+    int32 ArmIndexB = -1;
+    int32 BondIndex = -1;
+    bool bActive = true;
+  };
+
+  /** A single rung in the helix - represents one processed cluster */
+  struct FHelixRung {
+    TArray<FOrbData> Orbs;
+    TArray<TPair<int32, int32>> Bonds;
+    TArray<TPair<int32, int32>> BondsToPrevious;
+    TArray<TPair<int32, int32>> BondsToBoard;
+    float SpawnTime = 0.f;
+    int32 SpawnTick = 0;
+    float ZOffset = 0.f;
+    float TargetZOffset = 0.f;
+    float RotationDegrees = 0.f;
+    uint8 EntryDirection =
+        0; // Direction items were pushed INTO the helix (for portal exit)
+  };
+
+  /** A group of adjacent HelixOutput tiles that form a single helix column */
+  struct FHelixOutputGroup {
+    TArray<FHex> MemberTiles;
+    FHex CenterHex = FHex(0, 0, 0);
+    FVector CenterWorld = FVector::ZeroVector;
+    TArray<FHelixRung> Rungs;
+    int64 TotalClustersProcessed = 0;
+    float HelixRotationOffset = 0.f;
+
+    TArray<FHex> PairedInputTiles;
+    FHex PairedInputCenter = FHex(0, 0, 0);
+    FVector PairedInputCenterWorld = FVector::ZeroVector;
+    bool bHasPairedInput = false;
+
+    float DegreesPerRung = 36.f;
+    float RungSpacing = 100.f;
+    int32 MaxVisibleRungs = 20;
+    int32 LastProcessedTick = -1;
+
+    int32 LastEnteredItemId = 0;
+    int32 LastEnteredItemTick = -1;
+    int32 RungTransitTime = 20;
+
+    static constexpr int32 MinPairDistance = 3;
+  };
+
   // Constructor and destructor
   USimWorldHex();
   virtual ~USimWorldHex();
+
+  void Initialize(int32 Radius);
+
   // Config
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
   float TileSizeUU = 120.f;
@@ -36,16 +164,16 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
   float FixedStepSec = 0.20f; // 5 Hz
 
-  void StepBonds(); // Made public for BondResolver
-  void
-  ProcessUnbondsForHeldClusters(); // Process unbond tiles for held clusters
-                                   // after immediate arm execution
+  void StepBonds();
+  void ProcessUnbondsForHeldClusters();
 
   // Mark arm base cache as needing rebuild (call when arms are added/removed)
   void MarkArmBaseCacheDirty() { bArmBaseCacheDirty = true; }
+
   // Debug toggles
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
   bool bDebugLogs = false;
+
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
   bool bDebugSpheres = false;
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
@@ -53,93 +181,88 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Debug")
   bool bDebugBonds = false;
 
-  // Collision debug tracking
-  struct FCollisionDebugInfo {
-    int32 ArmIndex = -1;
-    FHex BlockedHex;
-    FString Reason;
-    FHex ArmBaseHex;
-    FHex ArmGripHex;
-  };
+  void StepSim();
 
-  // Collision debug data (cleared each frame, populated during arm stepping)
-  TArray<FCollisionDebugInfo> CollisionDebugData;
+  // World state accessors
+  const TMap<FHex, FItem> &GetItems() const { return ItemMap; }
+  TMap<FHex, FItem> &GetItemsMutable() { return ItemMap; }
 
-  // Accessor for collision debug data
-  const TArray<FCollisionDebugInfo> &GetCollisionDebugData() const {
-    return CollisionDebugData;
+  const TArray<FArmState> &GetArms() const { return Arms; }
+  TArray<FArmState> &GetArmsMutable() { return Arms; }
+
+  const TArray<FWalkerState> &GetWalkers() const { return Walkers; }
+  TArray<FWalkerState> &GetWalkersMutable() { return Walkers; }
+
+  const TMap<FHex, FTile> &GetTiles() const { return TileMap; }
+  TMap<FHex, FTile> &GetTilesMutable() { return TileMap; }
+
+  const TMap<FHex, uint8> &GetOrbAt() const { return OrbAt; }
+
+  const TMap<FHex, FHex> &GetIOBondPartners() const { return IOBondPartners; }
+  TMap<FHex, FHex> &GetIOBondPartnersMutable() { return IOBondPartners; }
+
+  /** Register a helix output tile - will auto-group with adjacent helix tiles
+   */
+  void RegisterHelixOutputTile(const FHex &Hex);
+
+  /** Unregister a helix output tile */
+  void UnregisterHelixOutputTile(const FHex &Hex);
+
+  /** Register a helix input tile - pairs with an existing output group */
+  void RegisterHelixInputTile(const FHex &Hex, int32 OutputGroupIndex);
+
+  /** Unregister a helix input tile */
+  void UnregisterHelixInputTile(const FHex &Hex);
+
+  /** Explicitly pair a helix output group with an input layout */
+  void PairHelixInput(int32 OutputGroupIndex, const TArray<FHex> &InputTiles,
+                      const FHex &Center);
+
+  /** Check if a hex position is valid for placing paired helix input tiles */
+  bool CanPlaceHelixInputAt(const FHex &Hex, int32 OutputGroupIndex) const;
+
+  /** Get the output group index that a hex would be paired with, or -1 if none
+   */
+  int32 GetHelixOutputGroupIndexAt(const FHex &Hex) const;
+
+  /** Find which helix group a tile belongs to */
+  FHelixOutputGroup *FindHelixGroupContaining(const FHex &Hex);
+  const FHelixOutputGroup *FindHelixGroupContaining(const FHex &Hex) const;
+
+  /** Find which helix group's INPUT tiles contain this hex */
+  FHelixOutputGroup *FindHelixGroupWithInputContaining(const FHex &Hex);
+  const FHelixOutputGroup *
+  FindHelixGroupWithInputContaining(const FHex &Hex) const;
+
+  /** Get all helix groups for rendering */
+  const TArray<FHelixOutputGroup> &GetHelixGroups() const {
+    return HelixGroups;
   }
 
-  // Predictive collision debug info struct (declared before use)
-  struct FPredictiveCollisionInfo {
-    int32 ArmIndexA = -1;
-    int32 ArmIndexB = -1;
-    FHex CollisionHex;
-    FString Reason;
-  };
+  /** Check if an item (by ID) is currently within the helix output system */
+  bool IsItemInHelix(int32 ItemId) const;
 
-  // Predictive collision debug data (cleared each frame, populated during
-  // predictive collision check)
-  TArray<FPredictiveCollisionInfo> PredictiveCollisionDebugData;
-  // Accessor for predictive collision debug data
-  const TArray<FPredictiveCollisionInfo> &
-  GetPredictiveCollisionDebugData() const {
-    return PredictiveCollisionDebugData;
-  }
-  // ---- Arm <-> Item API ----
-  struct FBond {
-    int32 ItemA = 0;
-    int32 ItemB = 0;
-    FHex Root;
-    int8 dQ = 0;
-    int8 dR = 0;
-    bool bActive = true;
-  };
+  /** Try to process helix output */
+  UFUNCTION(BlueprintCallable, Category = "Sim|Helix")
+  bool TryProcessHelixCluster(FHelixOutputGroup &Group);
 
-  UFUNCTION(BlueprintCallable, Category = "Sim|Arm")
-  bool TryArmPickItem(const FHex &From, FItem &OutItem);
-  UFUNCTION(BlueprintCallable, Category = "Sim|Arm")
-  bool TryArmPlaceItem(const FHex &To, const FItem &InItem);
-  UFUNCTION(BlueprintCallable, Category = "Sim|Arm")
-  bool PeekItemAt(const FHex &H, FItem &OutItem) const;
+  /** Try to eject a mature cluster from the helix */
+  UFUNCTION(BlueprintCallable, Category = "Sim|Helix")
+  bool TryEjectHelixCluster(FHelixOutputGroup &Group,
+                            bool bIsForcedByPush = false);
 
-  TArray<FBond> Bonds;
-  TMap<int32, TArray<int32>> ItemToBonds; // ItemId -> list of bond indices
+  /** Update current portal-locked status (DNA strand anchoring) */
+  void UpdateLockedItems();
 
-  // ---- Orbs overlay ----
-  UFUNCTION(BlueprintCallable, Category = "Sim|Orbs")
-  bool TryPlaceOrbAt(const FHex &Hex, uint8 Kind);
-  UFUNCTION(BlueprintCallable, Category = "Sim|Orbs")
-  bool TryPickupOrbAt(const FHex &Hex, uint8 &OutKind);
-  UFUNCTION(BlueprintCallable, Category = "Sim|Arm")
-  bool HasOrbAt(const FHex &H) const;
-  UFUNCTION(BlueprintPure, Category = "Sim|Orbs")
-  bool GetOrbKindAt(const FHex &Hex, uint8 &OutKind) const;
+  /** Update helix animation */
+  void UpdateHelixGroups(float DeltaTime);
 
-  /** Returns the type of orb at the given location, checking board items and
-   * held items. */
-  UFUNCTION(BlueprintPure, Category = "Sim|Orbs")
-  EOrbType GetOrbTypeAtLocation(const FHex &H) const;
+  /** Get world position of a helix center */
+  FVector GetHelixCenterWorld(int32 GroupIndex) const;
 
-  // Maps
-  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim")
-  TMap<FHex, FTile> TileMap;
-  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim")
-  TMap<FHex, FItem> ItemMap;
-  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim")
-  TArray<FArmState> Arms;
-  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim")
-  TArray<FWalkerState> Walkers;
-
-  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim")
-  int32 OutputCount = 0;
+  /** Revision counter for tile map changes to trigger visual updates. */
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Sim")
   int32 TileRevision = 0;
-
-  // World lifecycle
-  UFUNCTION(BlueprintCallable, Category = "Sim")
-  void Initialize(int32 Radius = 20);
-  UFUNCTION(BlueprintCallable, Category = "Sim") void StepSim();
 
   // Build API
   UFUNCTION(BlueprintCallable, Category = "Build")
@@ -156,33 +279,22 @@ public:
   bool RequestWalkerMoveTo(int32 WalkerIndex, const FHex &TargetHex,
                            int32 Priority = 0);
 
-  // TriggerTile signal API - controls belt enable/disable based on trigger
-  // signals
+  // TriggerTile signals
   void SetBeltTriggerSignal(const FHex &TriggerHex, const FHex &BeltOwnerHex,
                             bool bPositive);
   void ClearBeltTriggerSignal(const FHex &TriggerHex, const FHex &BeltOwnerHex);
   bool IsBeltEnabled(const FHex &BeltHex) const;
 
-  // TriggerTile signal API - controls arm enable/disable based on trigger
-  // signals
   void SetArmTriggerSignal(const FHex &TriggerHex, const FHex &ArmBaseHex,
                            bool bPositive);
   void ClearArmTriggerSignal(const FHex &TriggerHex, const FHex &ArmBaseHex);
   bool IsArmEnabled(const FHex &ArmBaseHex) const;
 
-  // Cluster template API (C++ only - TPair is not Blueprint-compatible)
-  // Cluster template structure (must be public for external access)
+  // Cluster template API
   struct FClusterTemplate {
-    // Orbs in the cluster with their relative positions
     TArray<FOrbData> Orbs;
-
-    // Bond connections between orbs (pairs of indices into Orbs array)
     TArray<TPair<int32, int32>> Bonds;
-
-    // Name/ID for this template
     FString Name;
-
-    // Whether this template should auto-rotate to match output orientation
     bool bAutoRotate = false;
   };
 
@@ -192,107 +304,34 @@ public:
   bool ValidateClusterAgainstTemplate(const FItem &Cluster,
                                       uint8 TemplateId) const;
 
-  // Auto-generate a cluster template for two adjacent output tiles
   uint8 AutoGenerateClusterTemplateForOutputs(const FHex &Hex1,
                                               const FHex &Hex2, uint8 OrbType1,
                                               uint8 OrbType2);
 
-  // Expand an existing cluster template to include additional tiles
   uint8 ExpandClusterTemplate(uint8 ExistingTemplateId, const FHex &OldBaseHex,
                               const FHex &NewBaseHex,
                               const TArray<FHex> &AllClusterHexes,
                               const TMap<FHex, uint8> &HexToOrbType);
 
-  // Generate a new unique template ID
   uint8 GenerateNewTemplateId() { return NextAutoTemplateId++; }
 
-  // Find all tiles that are part of a cluster (connected via IOBondPartners)
   TArray<FHex> FindAllTilesInCluster(const FHex &StartHex) const;
-
-  // Helper function to find all connected ClusterInput tiles in a chain
   TArray<FHex>
   FindClusterInputChain(const FHex &StartHex,
                         const TSet<FHex> &ExcludeHexes = TSet<FHex>()) const;
 
-  // Get cluster templates map for template ID lookup
   const TMap<uint8, FClusterTemplate> &GetClusterTemplates() const {
     return ClusterTemplates;
   }
-
-  // Get IO bond partners map (for ClusterOutput partnerships)
-  const TMap<FHex, FHex> &GetIOBondPartners() const { return IOBondPartners; }
-  TMap<FHex, FHex> &GetIOBondPartnersMutable() { return IOBondPartners; }
-
-  // ============================================================
-  // HELIX OUTPUT SYSTEM - Spiral cluster elevator
-  // ============================================================
-
-  /** A single rung in the helix - represents one processed cluster */
-  struct FHelixRung {
-    TArray<FOrbData> Orbs; // The orbs in this cluster (with relative positions)
-    TArray<TPair<int32, int32>>
-        Bonds; // Bonds between orbs (indices into Orbs array)
-    TArray<TPair<int32, int32>> BondsToPrevious; // Bonds to the previous rung
-                                                 // (CurrentOrbIdx, PrevOrbIdx)
-    TArray<TPair<int32, int32>>
-        BondsToBoard;            // Bonds to items still on the board
-                                 // (CurrentOrbIdx, BoardItemId)
-    float SpawnTime = 0.f;       // When this cluster was added
-    float ZOffset = 0.f;         // Current vertical position
-    float TargetZOffset = 0.f;   // Target vertical position (for animation)
-    float RotationDegrees = 0.f; // Current rotation around helix axis
-  };
-
-  /** A group of adjacent HelixOutput tiles that form a single helix column */
-  struct FHelixOutputGroup {
-    TArray<FHex> MemberTiles;                  // All tiles in this helix lane
-    FHex CenterHex = FHex(0, 0, 0);            // Center tile in hex coordinates
-    FVector CenterWorld = FVector::ZeroVector; // World position of helix center
-    TArray<FHelixRung> Rungs;                  // Previously processed clusters
-    int64 TotalClustersProcessed = 0;
-    float HelixRotationOffset = 0.f; // Current idle rotation for animation
-
-    // Helix configuration
-    float DegreesPerRung = 36.f;  // Rotation between rungs
-    float RungSpacing = 100.f;    // Vertical distance between rungs
-    int32 MaxVisibleRungs = 20;   // Max clusters before oldest is removed
-    int32 LastProcessedTick = -1; // Tick when the last cluster was processed
-  };
-
-  /** Register a helix output tile - will auto-group with adjacent helix tiles
-   */
-  void RegisterHelixOutputTile(const FHex &Hex);
-
-  /** Unregister a helix output tile */
-  void UnregisterHelixOutputTile(const FHex &Hex);
-
-  /** Find which helix group a tile belongs to */
-  FHelixOutputGroup *FindHelixGroupContaining(const FHex &Hex);
-  const FHelixOutputGroup *FindHelixGroupContaining(const FHex &Hex) const;
-
-  /** Get all helix groups for rendering */
-  const TArray<FHelixOutputGroup> &GetHelixGroups() const {
-    return HelixGroups;
-  }
-
-  /** Check if an item (by ID) is currently within the helix output system */
-  bool IsItemInHelix(int32 ItemId) const;
-
-  /** Try to process helix output - checks if all helix tiles have bonded orbs
-   *  forming one complete cluster, and if so, elevates it into the helix.
-   *  Call this once per tick for each helix group. Returns true if a cluster
-   *  was processed. */
-  bool TryProcessHelixCluster(FHelixOutputGroup &Group);
-
-  /** Update helix animation (call from renderer tick) */
-  void UpdateHelixGroups(float DeltaTime);
 
   // Item helpers
   bool TryPutItem(const FHex &H, const FItem &I);
   bool TryTakeItem(const FHex &H, FItem &Out);
 
+  /** Convert hex coordinate to world position */
   FVector HexCenterToWorld(const FHex &H) const;
-  // ----- Visual interpolation (belt smoothing) -----
+
+  // Visual interpolation
   void SetFrameAlpha(float InAlpha) {
     FrameAlpha = FMath::Clamp(InAlpha, 0.f, 1.f);
   }
@@ -303,7 +342,6 @@ public:
 
   int32 GetStepCounter() const { return StepCounter; }
 
-  // External world transform (optional)
   void SetWorldTransform(const FVector &InAnchor, float InGridYawDeg,
                          EHexOrientation InOrientation) {
     WorldAnchor = InAnchor;
@@ -311,10 +349,8 @@ public:
     GridOrientation = InOrientation;
   }
 
-  /** Get the bonds array for rendering purposes */
   const TArray<FBond> &GetBonds() const { return Bonds; }
 
-  /** Get belt progress for an item (for sub-tile interpolation in renderer) */
   float GetBeltProgress(int32 ItemId) const {
     if (const float *Progress = BeltProgress.Find(ItemId)) {
       return *Progress;
@@ -322,42 +358,14 @@ public:
     return 0.f;
   }
 
-  /** Animated orb structure for input/output animations */
-  struct FAnimatedOrb {
-    FItem Item;
-    FHex Hex;
-    int32 StartStep = 0;      // Step counter when animation started
-    int32 CompletionStep = 0; // Step counter when animation should complete
-
-    bool bIsInput =
-        false; // true for input (ascending), false for output (descending)
-    bool bActive = true;
-    bool bIsBonded =
-        false; // true if this animated orb should show a bond to a partner
-    FHex PartnerHex; // hex of the bonded partner (if bIsBonded is true)
-    int32 PartnerItemId =
-        0; // item ID of the bonded partner (if bIsBonded is true)
-  };
-
-  /** Get animated orbs for rendering */
   const TArray<FAnimatedOrb> &GetAnimatedOrbs() const { return AnimatedOrbs; }
-
-  /** Update animated orbs (call from renderer) */
   void UpdateAnimatedOrbs(float DeltaTime);
-
-  /** Process pending bond formations (call from renderer) */
   void ProcessPendingBondFormations(float DeltaTime);
 
-  /** Notify that an arm has finished its visual rotation */
   void OnArmRotationComplete(int32 ArmIndex);
-
-  /** Notify that an arm has fully completed its visual rotation (100%) */
   void OnArmRotationFullyComplete(int32 ArmIndex);
-
-  /** Cancel pending bond formations for a specific arm (when arm drops item) */
   void CancelPendingBondFormationsForArm(int32 ArmIndex);
 
-  // Sim-state accessors (used by StepBonds and other sim-only logic)
   FORCEINLINE uint8 GetSimFacing(int32 ArmIndex, const FArmState &A) const {
     if (const uint8 *V = SimFacingByArm.Find(ArmIndex))
       return *V;
@@ -374,205 +382,140 @@ public:
     return A.Held.bIsCluster ? A.Held.GrabFacing : int8(-1);
   }
 
-  /** Set of items that have been rejected by ClusterOutput validation */
   UPROPERTY(Transient)
   TSet<int32> ItemsRejectedByClusterOutput;
 
-  /** Per-tile orb types for Discovery tiles (since FTile only stores TemplateId
-   * in Arg) */
+  void UpdateArmBaseCache();
+  void UpdateHeldOrbCache();
+  void UpdateWalkerFootCache();
+  bool PeekItemAt(const FHex &H, FItem &OutItem) const;
+  EOrbType GetOrbTypeAtLocation(const FHex &H) const;
+  bool TryPlaceOrbAt(const FHex &Hex, uint8 Kind);
+  bool TryPickupOrbAt(const FHex &Hex, uint8 &OutKind);
+  bool GetOrbKindAt(const FHex &Hex, uint8 &OutKind) const;
+
+  const TArray<FCollisionDebugInfo> &GetCollisionDebugData() const {
+    return CollisionDebugData;
+  }
+  const TArray<FPredictiveCollisionInfo> &
+  GetPredictiveCollisionDebugData() const {
+    return PredictiveCollisionDebugData;
+  }
+
   UPROPERTY(Transient)
   TMap<FHex, uint8> DiscoveryTileOrbTypes;
 
+  UPROPERTY(VisibleAnywhere, Category = "Spatial")
+  TObjectPtr<class UOrbSpatialManager> SpatialManager;
+
+  UPROPERTY(VisibleAnywhere, Category = "Spatial")
+  TObjectPtr<class UBondResolver> BondResolver;
+
+  // Track items moved by belts this step
+  TSet<int32> ItemsMovedLastStep;
+
 private:
-  /** Helper function to check if an item matches an output's expected orb type
-   */
   bool DoesItemMatchOutputType(const FItem &Item,
                                const FTile &OutputTile) const;
-  bool bDevDebugArms = true; // set true to see arm/hand debug messages
+  bool bDevDebugArms = true;
   float FrameAlpha = 0.f;
   int32 StepCounter = 0;
   int32 MAX_ARM_LEN = 6;
-  // Cached world transform
   FVector WorldAnchor = FVector::ZeroVector;
   float GridYawDeg = 0.f;
   EHexOrientation GridOrientation = EHexOrientation::PointyTop;
   int OUTPUT_DESCEND_TICKS = 100;
-  // One-frame skip sets
+  int32 OutputCount = 0;
+
   TSet<FHex> SkipInputThisFrame;
   TSet<FHex> SkipOutputThisFrame;
-
-  // Track newly placed items that should wait a tick before being moved by
-  // belts
   TSet<int32> NewlyPlacedItems;
 
-  // Track arms that are ready for unbond processing (rotation complete)
-  // Maps arm index to the facing direction when rotation completed
+  struct FEjectedItemInfo {
+    FVector Center;
+    float StartZ;
+  };
+  TMap<int32, FEjectedItemInfo> EjectedItems;
+
   TMap<int32, uint8> ArmsReadyForUnbond;
-
-  // Track arms that need unbond processing after a 1-tick delay
-  // Maps arm index to the facing direction when rotation completed
   TMap<int32, uint8> PendingUnbonds;
-
-  // Track orbs recently dropped by arms to prevent immediate re-grabbing
-  // Maps item ID to arm index that dropped it
   TMap<int32, int32> RecentlyDroppedByArm;
-
-  // Hexes where orbs were newly moved to an output tile this tick
   TSet<FHex> OrbsNewlyMovedToOutput;
-
   TSet<int32> OrbsNewlyMovedByBelts;
-
-  // Item IDs of orbs that were moved in the PREVIOUS tick
-  // Grab logic must check this to wait for visual movement to finish
   TSet<int32> OrbsMovedLastTick;
-
-  // Output tile gates - tracks whether output tiles are open for new orbs
-  // True = open for new orbs, False = blocked (incorrect type orb on tile)
   TMap<FHex, bool> OutputTileGates;
-
-  // TriggerTile signals - tracks whether belts are enabled based on TriggerTile
-  // signals Outer Key = belt hex location (owner), Inner Key = trigger tile
-  // hex, Value = true if positive signal If a belt has no entries for any
-  // trigger, it is enabled by default
   TMap<FHex, TMap<FHex, bool>> BeltTriggerSignals;
-
-  /** Track the ID of the last item/cluster moved by a belt at a specific
-   * location. Used to give priority to belts that haven't pushed their current
-   * occupant yet. */
   TMap<FHex, int32> BeltLastMovedItemId;
-
-  // TriggerTile signals - tracks whether arms are enabled based on TriggerTile
-  // signals Outer Key = arm base hex location, Inner Key = trigger tile hex,
-  // Value = true if positive signal If an arm has no entries for any trigger,
-  // it is enabled by default
   TMap<FHex, TMap<FHex, bool>> ArmTriggerSignals;
 
-  // UI overlay
   UPROPERTY() TMap<FHex, uint8> OrbAt;
-
-  // Animated orbs for input/output effects
   TArray<FAnimatedOrb> AnimatedOrbs;
-
-  // Held items last board position (for future bond persistence if needed)
   TMap<int32, FHex> HeldItemLastHex;
-
-  // Input/Output bond tiles - maps tile hex to partner hex
-  // For InputBond tiles: both input tiles spawn orbs pre-bonded
-  // For OutputBond tiles: both output tiles require bonded orbs
   TMap<FHex, FHex> IOBondPartners;
-
-  // Cluster templates mapped by template ID (Tile.Arg stores the template ID)
   TMap<uint8, FClusterTemplate> ClusterTemplates;
-
-  // Track which cluster output tiles have accepted clusters (for gating)
   TMap<FHex, bool> ClusterOutputGates;
-
-  // Counter for auto-generated cluster template IDs (starts at 128 to avoid
-  // conflicts with manual templates)
   uint8 NextAutoTemplateId = 128;
 
-  // Helix output groups - each represents a lane of adjacent HelixOutput tiles
+  UPROPERTY()
   TArray<FHelixOutputGroup> HelixGroups;
 
-  // Pending bond formations waiting for arm rotation to complete
-  struct FPendingBondFormation {
-    int32 HeldItemId = 0;
-    int32 BoardItemId = 0;
-    FHex BoardItemHex;
-    int32 ArmIndex = -1;
-    float TimeRemaining = 0.f; // Time to wait before forming bond
-  };
-  TArray<FPendingBondFormation> PendingBondFormations;
+  TMap<FHex, FTile> TileMap;
+  TMap<FHex, FItem> ItemMap;
+  TArray<FArmState> Arms;
+  TArray<FWalkerState> Walkers;
+  TArray<FBond> Bonds;
+  TMap<int32, TArray<int32>> ItemToBonds;
 
-  // Pending grab tracking to prevent multiple arms from grabbing the same
-  // cluster
-  struct FPendingGrab {
-    int32 ArmIndex = -1;
-    FHex TargetHex;
-    int32 ClusterId = 0;
-  };
-  TArray<FPendingGrab> PendingGrabs;
-
-  // ============================================================
-  // OCCUPANCY CACHE - computed once per tick, shared across steps
-  // ============================================================
-  // Hexes occupied by held orbs (arms holding items)
-  TSet<FHex> CachedHeldOrbHexes;
-  // Hexes where a walker foot is physically on the ground (Planted/Lowering)
-  TSet<FHex> CachedBlockingFootHexes;
-  // Hexes where a walker foot intends to be (Current + Target) - for foot
-  // assignment
-  TSet<FHex> CachedIntendedFootHexes;
-  // Hexes occupied by arm bases (static until user adds/removes arms)
   TSet<FHex> CachedArmBaseHexes;
-  // Flag to indicate if arm base cache needs rebuild (set true when arms
-  // added/removed)
   bool bArmBaseCacheDirty = true;
+  TSet<FHex> CachedHeldOrbHexes;
+  TSet<FHex> CachedBlockingFootHexes;
+  TSet<FHex> CachedIntendedFootHexes;
 
-  // Rebuild occupancy cache for held orbs (call once per tick after StepArms)
-  void UpdateHeldOrbCache();
-  // Rebuild occupancy cache for walker feet (call once per tick)
-  void UpdateWalkerFootCache();
-  // Rebuild arm base cache (only when arms added/removed)
-  void UpdateArmBaseCache();
+  bool HasOrbAt(const FHex &H) const;
 
-  // Bonded arm pair tracking for cross-arm cluster management
-  struct FBondedArmPair {
-    int32 ArmIndexA = -1;
-    int32 ArmIndexB = -1;
-    int32 BondIndex = -1;
-    bool bActive = false;
-  };
-  TArray<FBondedArmPair> BondedArmPairs;
+  uint8 KindFromOrbAt(const FHex &H) const {
+    if (const FItem *Item = ItemMap.Find(H))
+      return KindFromItem(*Item);
+    return 0;
+  }
 
-  // Pending held-to-held cluster merges (processed when arms finish rotating)
   struct FPendingHeldMerge {
-    int32 ReceiverArmIndex = -1; // Arm that will receive the items
-    int32 DonorArmIndex = -1;    // Arm that will lose its items
-    int32 ItemIdA = -1;          // Item in receiver arm
-    int32 ItemIdB = -1;          // Item in donor arm
+    int32 ReceiverArmIndex = -1;
+    int32 DonorArmIndex = -1;
+    int32 ItemIdA = -1;
+    int32 ItemIdB = -1;
   };
   TArray<FPendingHeldMerge> PendingHeldMerges;
 
-  // Item Id generator
   int32 NextItemId = 1;
 
-  // Core step pieces
   void StepArms();
-  void StepArmsSecondPass();  // Second pass for immediate grab after unbonding
-  void StepBondsSecondPass(); // Second pass for bond formation after rotations
-                              // complete
+  void StepArmsSecondPass();
+  void StepBondsSecondPass();
   void StepBelts();
   void StepWalkers();
 
-  // Opus Magnum-style bond prediction for rotation obstruction
   TMap<FHex, int32> GetPredictedBondFormations() const;
   void StepGlyphs();
 
   static uint8 KindFromItem(const FItem &Item) {
-    if (Item.bIsCluster && Item.Orbs.Num() > 0) {
+    if (Item.bIsCluster && Item.Orbs.Num() > 0)
       return (uint8)Item.Orbs[0].Type;
-    } else {
-      return (uint8)Item.Single.Type;
-    }
+    return (uint8)Item.Single.Type;
   }
 
-  // Belt progress
   UPROPERTY()
-  TMap<int32, float> BeltProgress; // ItemId -> progress [0,1)
-
+  TMap<int32, float> BeltProgress;
   float BeltBlockedClamp = 0.98f;
 
   void TryFormBondAt(const FHex &Root, uint8 Dir, const TSet<int32> &HeldIds,
                      TSet<int32> &NewlyBondedItems);
   void CleanupBrokenBonds(const TSet<int32> &HeldIds);
   void RemoveBondIndex(int32 Index);
-
-  // Helpers for multi-bond bookkeeping
   void AddItemBondLink(int32 ItemId, int32 BondIndex);
   void RemoveItemBondLink(int32 ItemId, int32 BondIndex);
 
-  // Walker helpers
   bool IsHexOccupied(const FHex &H, const TSet<FHex> &HeldOrbHexes,
                      const TSet<FHex> &ArmBaseHexes,
                      const TSet<FHex> &HoldingFootHexes = TSet<FHex>()) const;
@@ -585,7 +528,6 @@ private:
                             int32 ReachDistance, float MinReach,
                             float RotationOffsetDeg) const;
 
-  // Walker simulation components
   void ProcessWalkerRequestAssignment(
       const TArray<class ARequestBeacon *> &AllBeacons,
       const TMap<FHex, class ARequestBeacon *> &BeaconCache);
@@ -634,42 +576,17 @@ private:
   void AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId,
                              const FHex &BoardOrbHex);
 
-  // Check for disconnected orbs in held clusters and remove them
   void CheckAndRemoveDisconnectedOrbsFromHeldClusters();
-
-  // Process unbonds for a specific arm's held cluster (called when arm rotation
-  // completes)
   void ProcessUnbondsForHeldCluster(int32 ArmIndex);
-
-  // Process held cluster unbonds for arms that completed rotation
   void ProcessHeldClusterUnbonds();
-
-  // Process held-to-held cluster merge
   void ProcessHeldToHeldMerge(int32 ReceiverArmIndex, int32 DonorArmIndex);
-
-  // Helper to calculate arm grip position
   FHex CalculateArmGripPosition(const FArmState &ArmState) const;
 
-  // Debug visualization
   void DrawBondDebugLines();
 
   UPROPERTY(EditAnywhere, Category = "Debug")
   bool bDevDebugBonds = false;
 
-  // === SIMPLIFIED SPATIAL SYSTEM ===
-
-  /** Spatial manager - single source of truth for orb positions */
-  UPROPERTY(VisibleAnywhere, Category = "Spatial")
-  TObjectPtr<class UOrbSpatialManager> SpatialManager;
-
-  /** Bond resolver - unified bond formation system */
-  UPROPERTY(VisibleAnywhere, Category = "Spatial")
-  TObjectPtr<class UBondResolver> BondResolver;
-
-  // Track items moved by belts this step (for spatial system bond timing)
-  TSet<int32> ItemsMovedLastStep;
-
-  // ---- Bond control (glyphs will call these later) ----
   UFUNCTION(BlueprintCallable, Category = "Sim|Bond")
   bool BreakBondBetween(int32 ItemA, int32 ItemB);
 
@@ -678,11 +595,9 @@ private:
 
   bool IsItemBonded(int32 ItemId) const {
     if (const TArray<int32> *L = ItemToBonds.Find(ItemId)) {
-      // Check if any of the bonds are actually active
       for (int32 BondIdx : *L) {
-        if (Bonds.IsValidIndex(BondIdx) && Bonds[BondIdx].bActive) {
+        if (Bonds.IsValidIndex(BondIdx) && Bonds[BondIdx].bActive)
           return true;
-        }
       }
     }
     return false;
@@ -699,31 +614,24 @@ private:
   void MoveBondedItemRecursive(int32 ItemId, const FHex &FromHex, int32 dQ,
                                int32 dR, TMap<int32, FHex> &ItemHex);
 
-  // Bonded arm management functions
   void CheckForNewBondedArmPairs();
   void PauseBondedArms();
   void ResumeArmsWhenBondsBroken();
   bool IsArmBonded(int32 ArmIndex) const;
 
-  // Committed simulation properties (consumed by StepBonds)
-  // Values update only at fixed-tick boundaries to avoid mid-anim bonds.
-  TMap<int32, uint8> SimFacingByArm;    // 0..5
-  TMap<int32, int32> SimArmLenByArm;    // reach
-  TMap<int32, int8> SimGrabFacingByArm; // -1 for single held
+  TMap<int32, uint8> SimFacingByArm;
+  TMap<int32, int32> SimArmLenByArm;
+  TMap<int32, int8> SimGrabFacingByArm;
 
-  // Pending values to commit next fixed tick (written by
-  // Rotate*/Extend/Retract)
   TMap<int32, uint8> PendingFacingByArm;
   TMap<int32, int32> PendingArmLenByArm;
   TMap<int32, int8> PendingGrabFacingByArm;
 
-  // --- NEW: sim-space helpers for held clusters ---
   FHex GetArmGripHex_Sim(int32 ArmIndex) const;
   uint8 GetHeldCCW_Steps_Sim(int32 ArmIndex) const;
   static FHex Rot60CCW(FHex D, uint8 StepsCCW);
   static FHex Rot60CW(FHex D, uint8 StepsCW);
 
-  // --- Predictive collision detection for simultaneous arm movements ---
   struct FPredictiveArmState {
     FHex BaseHex;
     uint8 Facing;
@@ -737,53 +645,46 @@ private:
     FPredictiveArmState()
         : BaseHex(0, 0), Facing(0), ArmLen(1), bHolding(false), WaitCounter(0),
           PC(0), bRotationCompleted(false) {}
-    FPredictiveArmState(const FArmState &ArmState)
-        : BaseHex(ArmState.BaseHex),
-          Facing(static_cast<uint8>(ArmState.Facing)), ArmLen(ArmState.ArmLen),
-          bHolding(ArmState.bHolding), Held(ArmState.Held),
-          WaitCounter(ArmState.WaitCounter), PC(ArmState.PC),
-          bRotationCompleted(ArmState.bRotationCompleted) {}
+    FPredictiveArmState(const FArmState &S)
+        : BaseHex(S.BaseHex), Facing(static_cast<uint8>(S.Facing)),
+          ArmLen(S.ArmLen), bHolding(S.bHolding), Held(S.Held),
+          WaitCounter(S.WaitCounter), PC(S.PC),
+          bRotationCompleted(S.bRotationCompleted) {}
   };
 
-  // Check if executing all arms' current commands simultaneously would cause
-  // held cluster overlap
   bool WouldCauseHeldClusterOverlap();
-
-  // Simulate what would happen if all arms executed their current commands (one
-  // tick ahead only)
   TArray<FPredictiveArmState> SimulateAllArmsExecution();
-
-  // Check if two held clusters would overlap given their predicted positions
-  bool WouldHeldClustersOverlap(const FPredictiveArmState &ArmA,
-                                const FPredictiveArmState &ArmB,
-                                const FArmState &CurrentA,
-                                const FArmState &CurrentB);
-
-  // Get all positions that would be occupied by a held cluster in a given state
-  TArray<FHex> GetHeldClusterPositions(const FPredictiveArmState &ArmState);
-
-  // Check if two arms' rotation sweeps would cause held clusters to overlap
-  bool WouldRotationSweepsOverlap(const FArmState &ArmA, const FArmState &ArmB,
-                                  const FPredictiveArmState &PredictedA,
-                                  const FPredictiveArmState &PredictedB);
-
-  // Check if a rotating arm's sweep would overlap with a static arm's held
-  // cluster
-  bool
-  WouldRotationSweepOverlapStatic(const FArmState &RotatingArm,
-                                  const FPredictiveArmState &PredictedRotating,
-                                  const FArmState &StaticArm);
-
-  // Check if an arm's movement (rotation sweep or extend/retract) would overlap
-  // with any of the given tiles
-  bool DoesArmSweepOverlapTiles(const FArmState &Arm,
-                                const FPredictiveArmState &Predicted,
+  bool WouldHeldClustersOverlap(const FPredictiveArmState &A,
+                                const FPredictiveArmState &B,
+                                const FArmState &CurrA, const FArmState &CurrB);
+  TArray<FHex> GetHeldClusterPositions(const FPredictiveArmState &S);
+  bool WouldRotationSweepsOverlap(const FArmState &A, const FArmState &B,
+                                  const FPredictiveArmState &PredA,
+                                  const FPredictiveArmState &PredB);
+  bool WouldRotationSweepOverlapStatic(const FArmState &RotArm,
+                                       const FPredictiveArmState &PredRot,
+                                       const FArmState &StaticArm);
+  bool DoesArmSweepOverlapTiles(const FArmState &A,
+                                const FPredictiveArmState &P,
                                 const TSet<FHex> &Tiles);
 
-  // Safety and validation methods
   UFUNCTION(BlueprintCallable, Category = "Sim|Debug")
   bool ValidateDataIntegrity() const;
 
   UFUNCTION(BlueprintCallable, Category = "Sim|Debug")
   void CleanupCorruptedData();
+
+  bool TryArmPickItem(const FHex &From, FItem &OutItem);
+  bool TryArmPlaceItem(const FHex &To, const FItem &Item);
+
+  TArray<FPendingBondFormation> PendingBondFormations;
+  TArray<FBondedArmPair> BondedArmPairs;
+  TArray<FCollisionDebugInfo> CollisionDebugData;
+  TArray<FPredictiveCollisionInfo> PredictiveCollisionDebugData;
+
+  struct FPendingGrab {
+    int32 ArmIndex;
+    FHex Target;
+  };
+  TArray<FPendingGrab> PendingGrabs;
 };
