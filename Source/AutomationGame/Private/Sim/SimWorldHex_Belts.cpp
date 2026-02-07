@@ -59,34 +59,12 @@ void USimWorldHex::StepBelts() {
         if (OrbsMovedThisTick.Contains(InputItem->Id))
           return false;
         // Check if this item is part of a bonded cluster
-        TSet<int32> BondedClusterIds;
-        TArray<int32> Stack;
-        Stack.Add(InputItem->Id);
-        BondedClusterIds.Add(InputItem->Id);
-
-        // BFS to find all bonded items
-        while (Stack.Num() > 0) {
-          int32 CurrentId = Stack.Pop();
-          if (const TArray<int32> *BondList = ItemToBonds.Find(CurrentId)) {
-            for (int32 BondIdx : *BondList) {
-              if (!Bonds.IsValidIndex(BondIdx))
-                continue;
-              const FBond &Bond = Bonds[BondIdx];
-              if (!Bond.bActive)
-                continue;
-
-              int32 OtherId =
-                  (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
-              if (OtherId > 0 && !BondedClusterIds.Contains(OtherId)) {
-                BondedClusterIds.Add(OtherId);
-                Stack.Add(OtherId);
-              }
-            }
-          }
-        }
+        TSet<int32> BondedClusterIds = GetFullClusterParentIds(InputItem->Id);
 
         // Calculate move offset for the entire cluster
         FHex MoveOffset(BeltHex.Q - SourceHex.Q, BeltHex.R - SourceHex.R);
+
+        // ... (rest of movement logic using BondedClusterIds)
 
         // Check if all bonded items can move together
         bool bCanMoveCluster = true;
@@ -95,7 +73,7 @@ void USimWorldHex::StepBelts() {
 
         for (int32 BondedId : BondedClusterIds) {
           // Don't move clusters containing newly placed items
-          if (NewlyPlacedItems.Contains(BondedId)) {
+          if (NewlyPlacedItems.Contains(BondedId) || IsItemInHelix(BondedId)) {
             bCanMoveCluster = false;
             break;
           }
@@ -116,9 +94,14 @@ void USimWorldHex::StepBelts() {
             }
           }
 
+          if (!bCanMoveCluster)
+            break;
+
           if (!bFound) {
-            if (IsItemInHelix(BondedId))
-              continue; // Partially in helix, allow rest of cluster to move
+            if (IsItemInHelix(BondedId)) {
+              bCanMoveCluster = false;
+              break;
+            }
             bCanMoveCluster = false;
             break;
           }
@@ -174,20 +157,48 @@ void USimWorldHex::StepBelts() {
             }
           }
 
-          // Update bond positions
+          // Update bond positions for all orbs in the cluster
           for (int32 ItemId : BondedClusterIds) {
-            if (const TArray<int32> *BondList = ItemToBonds.Find(ItemId)) {
-              for (int32 BondIdx : *BondList) {
-                if (!Bonds.IsValidIndex(BondIdx))
-                  continue;
-                FBond &Bond = Bonds[BondIdx];
-                if (!Bond.bActive)
-                  continue;
+            // Find ALL orbs for this parent item
+            TArray<int32> AllOrbs;
+            AllOrbs.Add(ItemId);
+            if (const FItem *ParentItem = MovingItems.Find(ItemId)) {
+              if (ParentItem->bIsCluster) {
+                for (const auto &Sub : ParentItem->Orbs)
+                  AllOrbs.Add(Sub.ItemId);
+              }
+            }
 
-                // Update bond root if this item is ItemA
-                if (Bond.ItemA == ItemId) {
-                  if (FHex *NewPos = ClusterDestinations.Find(ItemId)) {
-                    Bond.Root = *NewPos;
+            for (int32 OrbId : AllOrbs) {
+              if (const TArray<int32> *BondList = ItemToBonds.Find(OrbId)) {
+                for (int32 BondIdx : *BondList) {
+                  if (!Bonds.IsValidIndex(BondIdx))
+                    continue;
+                  FBond &Bond = Bonds[BondIdx];
+                  if (!Bond.bActive)
+                    continue;
+
+                  // Update bond root if this orb is ItemA
+                  if (Bond.ItemA == OrbId) {
+                    // ItemA always belongs to the parent ItemId in this context
+                    if (FHex *NewRootPos = ClusterDestinations.Find(ItemId)) {
+                      // Root is relative to the parent item's root
+                      // Find the orb's offset
+                      FHex Offset(0, 0);
+                      if (const FItem *ParentItem = MovingItems.Find(ItemId)) {
+                        if (ParentItem->bIsCluster) {
+                          for (const auto &Sub : ParentItem->Orbs) {
+                            if (Sub.ItemId == OrbId) {
+                              Offset = FHex(Sub.dQ, Sub.dR);
+                              break;
+                            }
+                          }
+                        }
+                      }
+                      Bond.Root =
+                          FHex(NewRootPos->Q + Offset.Q,
+                               NewRootPos->R + Offset.R, NewRootPos->Level);
+                    }
                   }
                 }
               }
@@ -323,45 +334,8 @@ void USimWorldHex::StepBelts() {
             return false;
           }
 
-          // Build cluster - same logic as main movement
-          TArray<int32> ConnectedItemIds;
-          TSet<int32> InCluster;
-          TArray<int32> ToProcess;
-
-          ToProcess.Add(PullItem->Id);
-          InCluster.Add(PullItem->Id);
-          ConnectedItemIds.Add(PullItem->Id);
-
-          while (ToProcess.Num() > 0) {
-            int32 CurrentId = ToProcess.Pop();
-
-            if (const TArray<int32> *BondList = ItemToBonds.Find(CurrentId)) {
-              for (int32 BondIdx : *BondList) {
-                if (!Bonds.IsValidIndex(BondIdx))
-                  continue;
-                const FBond &Bond = Bonds[BondIdx];
-                if (!Bond.bActive)
-                  continue;
-
-                int32 OtherId =
-                    (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
-                if (OtherId > 0 && !InCluster.Contains(OtherId)) {
-                  // Only include items that are on the board
-                  bool bFoundOnBoard = false;
-                  for (const auto &ItemKV : ItemMap) {
-                    if (ItemKV.Value.Id == OtherId &&
-                        !RecentlyDroppedByArm.Contains(OtherId)) {
-                      ConnectedItemIds.Add(OtherId);
-                      InCluster.Add(OtherId);
-                      ToProcess.Add(OtherId);
-                      bFoundOnBoard = true;
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-          }
+          TSet<int32> InCluster = GetFullClusterParentIds(PullItem->Id);
+          TArray<int32> ConnectedItemIds = InCluster.Array();
 
           // Calculate cluster movement offset
           FHex ClusterMoveOffset(BeltHex.Q - SourceHex.Q,
@@ -371,9 +345,15 @@ void USimWorldHex::StepBelts() {
           TMap<int32, FHex> ClusterPositions;
           TMap<int32, FHex> ClusterDestinations;
 
+          bool bCanMoveCluster = true;
           for (int32 ConnectedId : ConnectedItemIds) {
+            bool bFound = false;
             for (const auto &BoardKV : ItemMap) {
               if (BoardKV.Value.Id == ConnectedId) {
+                if (BoardKV.Value.bIsLocked) {
+                  bCanMoveCluster = false;
+                  break;
+                }
                 FHex CurrentPos = BoardKV.Key;
                 FHex DestPos(CurrentPos.Q + ClusterMoveOffset.Q,
                              CurrentPos.R + ClusterMoveOffset.R,
@@ -381,21 +361,25 @@ void USimWorldHex::StepBelts() {
 
                 ClusterPositions.Add(ConnectedId, CurrentPos);
                 ClusterDestinations.Add(ConnectedId, DestPos);
+                bFound = true;
                 break;
               }
             }
+            if (!bCanMoveCluster || !bFound) {
+              bCanMoveCluster = false;
+              break;
+            }
           }
 
-          // Check if cluster members are blocked (including HelixOutput check)
-          bool bCanMoveCluster = true;
-          for (const auto &PosKV : ClusterPositions) {
-            const FHex &CurrentPos = PosKV.Value;
-
-            // Don't move clusters if any orb is on a HelixOutput tile
-            if (const FTile *ItemTile = TileMap.Find(CurrentPos)) {
-              if (ItemTile->Kind == ETileKind::HelixOutput) {
-                bCanMoveCluster = false;
-                break;
+          if (bCanMoveCluster) {
+            for (const auto &PosKV : ClusterPositions) {
+              const FHex &CurrentPos = PosKV.Value;
+              // Don't move clusters if any orb is on a HelixOutput tile
+              if (const FTile *ItemTile = TileMap.Find(CurrentPos)) {
+                if (ItemTile->Kind == ETileKind::HelixOutput) {
+                  bCanMoveCluster = false;
+                  break;
+                }
               }
             }
           }
@@ -702,46 +686,9 @@ void USimWorldHex::StepBelts() {
           return false;
         }
 
-        // Build cluster - same logic as main movement
-        TArray<int32> ConnectedItemIds;
-        TSet<int32> InCluster;
-        TArray<int32> ToProcess;
-
-        ToProcess.Add(BondItem->Id);
-        InCluster.Add(BondItem->Id);
-        ConnectedItemIds.Add(BondItem->Id);
-
-        while (ToProcess.Num() > 0) {
-          int32 CurrentId = ToProcess.Pop();
-
-          if (const TArray<int32> *BondList = ItemToBonds.Find(CurrentId)) {
-            for (int32 BondIdx : *BondList) {
-              if (!Bonds.IsValidIndex(BondIdx))
-                continue;
-              const FBond &Bond = Bonds[BondIdx];
-              if (!Bond.bActive)
-                continue;
-
-              int32 OtherId =
-                  (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
-              if (OtherId > 0 && !InCluster.Contains(OtherId)) {
-                // Only include items that are on the board and not recently
-                // dropped Find the item in ItemMap
-                bool bFoundOnBoard = false;
-                for (const auto &ItemKV : ItemMap) {
-                  if (ItemKV.Value.Id == OtherId &&
-                      !RecentlyDroppedByArm.Contains(OtherId)) {
-                    ConnectedItemIds.Add(OtherId);
-                    InCluster.Add(OtherId);
-                    ToProcess.Add(OtherId);
-                    bFoundOnBoard = true;
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        }
+        TSet<int32> InClusterSet = GetFullClusterParentIds(BondItem->Id);
+        TArray<int32> ConnectedItemIds = InClusterSet.Array();
+        TSet<int32> InCluster = InClusterSet;
 
         // Calculate cluster movement offset
         FHex ClusterMoveOffset(BeltHex.Q - SourceHex.Q,
@@ -751,9 +698,15 @@ void USimWorldHex::StepBelts() {
         TMap<int32, FHex> ClusterPositions;
         TMap<int32, FHex> ClusterDestinations;
 
+        bool bCanMoveCluster = true;
         for (int32 ConnectedId : ConnectedItemIds) {
+          bool bFound = false;
           for (const auto &BoardKV : ItemMap) {
             if (BoardKV.Value.Id == ConnectedId) {
+              if (BoardKV.Value.bIsLocked) {
+                bCanMoveCluster = false;
+                break;
+              }
               FHex CurrentPos = BoardKV.Key;
               FHex DestPos(CurrentPos.Q + ClusterMoveOffset.Q,
                            CurrentPos.R + ClusterMoveOffset.R,
@@ -761,32 +714,51 @@ void USimWorldHex::StepBelts() {
 
               ClusterPositions.Add(ConnectedId, CurrentPos);
               ClusterDestinations.Add(ConnectedId, DestPos);
+              bFound = true;
               break;
+            }
+          }
+          if (!bCanMoveCluster || !bFound) {
+            bCanMoveCluster = false;
+            break;
+          }
+        }
+
+        if (bCanMoveCluster) {
+          for (const auto &PosKV : ClusterPositions) {
+            const FHex &CurrentPos = PosKV.Value;
+            // Don't move clusters if any orb is on a HelixOutput tile
+            if (const FTile *ItemTile = TileMap.Find(CurrentPos)) {
+              if (ItemTile->Kind == ETileKind::HelixOutput) {
+                bCanMoveCluster = false;
+                break;
+              }
             }
           }
         }
 
-        // Check if cluster destinations are available
-        bool bCanMoveCluster = true;
-        for (const auto &DestKV : ClusterDestinations) {
-          int32 ItemId = DestKV.Key;
-          const FHex &DestPos = DestKV.Value;
+        if (bCanMoveCluster) {
+          // Check if cluster destinations are available
+          for (const auto &DestKV : ClusterDestinations) {
+            int32 ItemId = DestKV.Key;
+            const FHex &DestPos = DestKV.Value;
 
-          // Don't move clusters containing newly placed items
-          if (NewlyPlacedItems.Contains(ItemId)) {
-            bCanMoveCluster = false;
-            break;
-          }
-
-          if (HeldOrbHexes.Contains(DestPos)) {
-            bCanMoveCluster = false;
-            break;
-          }
-
-          if (const FItem *DestItem = ItemMap.Find(DestPos)) {
-            if (!InCluster.Contains(DestItem->Id)) {
+            // Don't move clusters containing newly placed items
+            if (NewlyPlacedItems.Contains(ItemId)) {
               bCanMoveCluster = false;
               break;
+            }
+
+            if (HeldOrbHexes.Contains(DestPos)) {
+              bCanMoveCluster = false;
+              break;
+            }
+
+            if (const FItem *DestItem = ItemMap.Find(DestPos)) {
+              if (!InCluster.Contains(DestItem->Id)) {
+                bCanMoveCluster = false;
+                break;
+              }
             }
           }
         }
@@ -983,49 +955,25 @@ void USimWorldHex::StepBelts() {
         }
 
         // Find all bonded items that must move together
-        TArray<int32> ToProcess;
-        TSet<int32> InCluster;
-        ToProcess.Add(Item.Id);
-        InCluster.Add(Item.Id);
+        TSet<int32> InCluster = GetFullClusterParentIds(Item.Id);
+        MoveOp.ConnectedItemIds = InCluster.Array();
 
         bool bCanMoveCluster = true;
-        while (ToProcess.Num() > 0) {
-          int32 CurrentId = ToProcess.Pop();
-          MoveOp.ConnectedItemIds.Add(CurrentId);
-
-          if (const TArray<int32> *BondList = ItemToBonds.Find(CurrentId)) {
-            for (int32 BondIdx : *BondList) {
-              if (!Bonds.IsValidIndex(BondIdx))
-                continue;
-              const FBond &Bond = Bonds[BondIdx];
-              if (!Bond.bActive)
-                continue;
-
-              int32 OtherItemId =
-                  (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
-              if (!InCluster.Contains(OtherItemId)) {
-                bool bFoundOnBoard = false;
-                for (const auto &BoardKV : ItemMap) {
-                  if (BoardKV.Value.Id == OtherItemId) {
-                    bFoundOnBoard = true;
-                    break;
-                  }
-                }
-
-                if (bFoundOnBoard) {
-                  ToProcess.Add(OtherItemId);
-                  InCluster.Add(OtherItemId);
-                } else if (!IsItemInHelix(OtherItemId)) {
-                  // If a bonded item is not on the board (e.g. held by an arm
-                  // or walker) and not already in the helix, the entire cluster
-                  // is immovable by belts.
-                  bCanMoveCluster = false;
-                  break;
-                }
+        for (int32 ClusterId : MoveOp.ConnectedItemIds) {
+          // Verify item is on board or in helix (not held by arm/walker)
+          bool bFound = IsItemInHelix(ClusterId);
+          if (!bFound) {
+            for (const auto &KV2 : ItemMap) {
+              if (KV2.Value.Id == ClusterId) {
+                bFound = true;
+                break;
               }
             }
-            if (!bCanMoveCluster)
-              break;
+          }
+
+          if (!bFound) {
+            bCanMoveCluster = false;
+            break;
           }
         }
 
@@ -1040,27 +988,64 @@ void USimWorldHex::StepBelts() {
               break;
             }
 
+            // Find current position and check if locked
             FHex ConnectedCurrentHex;
             bool bFoundConnected = false;
             for (const auto &BoardKV : ItemMap) {
               if (BoardKV.Value.Id == ConnectedId) {
+                // bIsLocked is set by the helix system.
+                // We should only respect it if the item is ALREADY fully
+                // processed OR if it's not being pushed by a belt onto the
+                // mouth. However, we have a specific "bAllOnMouth" check below
+                // that is more precise. So we only block here if the item is
+                // locked for some OTHER reason (future proofing). For now,
+                // let's ignore bIsLocked here and let the helix mouth check
+                // handle it.
                 ConnectedCurrentHex = BoardKV.Key;
                 bFoundConnected = true;
                 break;
               }
             }
 
-            if (!bFoundConnected) {
+            if (!bCanMoveCluster || !bFoundConnected) {
               bCanMoveCluster = false;
               break;
             }
 
-            // Don't move clusters if any orb is on a HelixOutput tile
+            // Don't move if any part is on a HelixOutput tile, UNLESS some part
+            // is still outside. This allows clusters to finish pushing into
+            // the mouth.
             if (const FTile *ConnectedTile =
                     TileMap.Find(ConnectedCurrentHex)) {
               if (ConnectedTile->Kind == ETileKind::HelixOutput) {
-                bCanMoveCluster = false;
-                break;
+                // Check if the ENTIRE cluster is already on mouth tiles.
+                bool bAllOnMouth = true;
+                for (int32 CheckId : MoveOp.ConnectedItemIds) {
+                  // Find position of CheckId
+                  bool bFoundPos = false;
+                  for (const auto &BoardKV2 : ItemMap) {
+                    if (BoardKV2.Value.Id == CheckId) {
+                      bFoundPos = true;
+                      if (const FTile *T = TileMap.Find(BoardKV2.Key)) {
+                        if (T->Kind != ETileKind::HelixOutput) {
+                          bAllOnMouth = false;
+                          break;
+                        }
+                      } else {
+                        bAllOnMouth = false;
+                        break;
+                      }
+                      break;
+                    }
+                  }
+                  if (!bAllOnMouth)
+                    break;
+                }
+
+                if (bAllOnMouth) {
+                  bCanMoveCluster = false;
+                  break;
+                }
               }
             }
 

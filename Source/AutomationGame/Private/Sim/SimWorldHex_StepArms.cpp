@@ -78,26 +78,9 @@ void USimWorldHex::StepArms() {
 
   // --- Local helpers (can access private FBond type through this) ---
   auto GatherBondedClusterFn = [&](int32 RootId, TSet<int32> &OutIds) {
-    if (RootId == 0 || OutIds.Contains(RootId))
+    if (RootId == 0)
       return;
-    TArray<int32> Stack;
-    Stack.Add(RootId);
-    OutIds.Add(RootId);
-    while (Stack.Num()) {
-      int32 Cur = Stack.Pop(EAllowShrinking::No);
-      if (const TArray<int32> *BondList = ItemToBonds.Find(Cur)) {
-        for (int32 BondIdx : *BondList) {
-          if (!Bonds.IsValidIndex(BondIdx))
-            continue;
-          const FBond &B = Bonds[BondIdx];
-          const int32 Other = (B.ItemA == Cur) ? B.ItemB : B.ItemA;
-          if (Other != 0 && !OutIds.Contains(Other)) {
-            OutIds.Add(Other);
-            Stack.Add(Other);
-          }
-        }
-      }
-    }
+    OutIds.Append(GetFullClusterParentIds(RootId));
   };
 
   auto RotateAxial60Fn = [](const FHex &D, int32 StepsCCW) -> FHex {

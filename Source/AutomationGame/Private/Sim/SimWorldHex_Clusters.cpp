@@ -4,7 +4,6 @@
 #include "Rendering/OrbRenderer.h"
 #include "Sim/SimWorldHex.h"
 
-
 // Cluster management functions
 void USimWorldHex::AddBoardOrbToHeldCluster(int32 HeldOrbId, int32 BoardOrbId,
                                             const FHex &BoardOrbHex) {
@@ -485,4 +484,63 @@ void USimWorldHex::ProcessHeldToHeldMerge(int32 ReceiverArmIndex,
   DonorArm.bWaitingForBond = false;
   DonorArm.WaitForBondInitialCount = 0;
   DonorArm.PrevHeldOrbCount = 0;
+}
+
+TSet<int32> USimWorldHex::GetFullClusterParentIds(int32 StartItemId) const {
+  TSet<int32> BondedParentIds;
+  if (StartItemId <= 0)
+    return BondedParentIds;
+
+  TArray<int32> Stack;
+  Stack.Add(StartItemId);
+  BondedParentIds.Add(StartItemId);
+
+  while (Stack.Num() > 0) {
+    int32 CurrentParentId = Stack.Pop();
+
+    // 1. Identify all Orb IDs belonging to this parent item
+    TArray<int32> AllOrbsInItem;
+    AllOrbsInItem.Add(CurrentParentId);
+
+    // Find the item to check for its sub-orbs
+    const FItem *ItemPtr = nullptr;
+    for (const auto &KV : ItemMap) {
+      if (KV.Value.Id == CurrentParentId) {
+        ItemPtr = &KV.Value;
+        break;
+      }
+    }
+
+    if (ItemPtr && ItemPtr->bIsCluster) {
+      for (const auto &Sub : ItemPtr->Orbs) {
+        AllOrbsInItem.Add(Sub.ItemId);
+      }
+    }
+
+    // 2. Check all bonds from all orbs in this item
+    for (int32 OrbId : AllOrbsInItem) {
+      if (const TArray<int32> *BondList = ItemToBonds.Find(OrbId)) {
+        for (int32 BondIdx : *BondList) {
+          if (!Bonds.IsValidIndex(BondIdx))
+            continue;
+          const FBond &Bond = Bonds[BondIdx];
+          if (!Bond.bActive)
+            continue;
+
+          int32 OtherOrbId = (Bond.ItemA == OrbId) ? Bond.ItemB : Bond.ItemA;
+          if (OtherOrbId > 0) {
+            // Map back to parent item ID
+            int32 OtherParentId =
+                (OtherOrbId > 1000000) ? (OtherOrbId >> 8) : OtherOrbId;
+            if (!BondedParentIds.Contains(OtherParentId)) {
+              BondedParentIds.Add(OtherParentId);
+              Stack.Add(OtherParentId);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return BondedParentIds;
 }

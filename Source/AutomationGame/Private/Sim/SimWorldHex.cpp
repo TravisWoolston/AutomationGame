@@ -869,41 +869,7 @@ void USimWorldHex::MoveBondedClusterOnBelt(int32 SeedItemId,
 
   // First, gather all bonded items that need to be moved as part of this
   // cluster
-  TSet<int32> ClusterItemIds;
-  TArray<int32> Stack;
-  Stack.Add(SeedItemId);
-  ClusterItemIds.Add(SeedItemId);
-
-  // Use BFS to find all connected items through bonds
-  while (Stack.Num() > 0) {
-    int32 CurrentId = Stack.Pop();
-    if (const TArray<int32> *BondList = ItemToBonds.Find(CurrentId)) {
-      for (int32 BondIdx : *BondList) {
-        if (!Bonds.IsValidIndex(BondIdx))
-          continue;
-        const FBond &Bond = Bonds[BondIdx];
-        if (!Bond.bActive)
-          continue;
-
-        int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
-        if (OtherId > 0 && !ClusterItemIds.Contains(OtherId)) {
-          // Check if this item is on the board and on a belt
-          const FHex *OtherHex = ItemHex.Find(OtherId);
-          if (OtherHex) {
-            const FTile *OtherTile = TileMap.Find(*OtherHex);
-            if (OtherTile && OtherTile->Kind == ETileKind::Belt) {
-              FItem *OtherItem = ItemMap.Find(*OtherHex);
-              if (OtherItem && OtherItem->Id == OtherId &&
-                  !OtherItem->LocationUpdatedThisTick) {
-                ClusterItemIds.Add(OtherId);
-                Stack.Add(OtherId);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+  TSet<int32> ClusterItemIds = GetFullClusterParentIds(SeedItemId);
 
   // Check if all destination hexes are available
   bool bCanMoveCluster = true;
@@ -916,7 +882,14 @@ void USimWorldHex::MoveBondedClusterOnBelt(int32 SeedItemId,
       break;
     }
 
-    FHex DestHex(CurrentHex->Q + dQ, CurrentHex->R + dR);
+    // Check if item is locked (e.g. by helix portal)
+    FItem *ItemPtr = ItemMap.Find(*CurrentHex);
+    if (ItemPtr && ItemPtr->bIsLocked) {
+      bCanMoveCluster = false;
+      break;
+    }
+
+    FHex DestHex(CurrentHex->Q + dQ, CurrentHex->R + dR, CurrentHex->Level);
 
     // Check if destination is blocked by non-cluster items
     if (ItemMap.Contains(DestHex)) {

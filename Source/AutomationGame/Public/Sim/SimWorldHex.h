@@ -254,6 +254,11 @@ public:
   /** Update current portal-locked status (DNA strand anchoring) */
   void UpdateLockedItems();
 
+  /** Helper to find all parent item IDs in a bonded cluster, starting from one
+   * item ID. Correctly handles bonds attached to sub-orbs of clusters.
+   */
+  TSet<int32> GetFullClusterParentIds(int32 StartItemId) const;
+
   /** Update helix animation */
   void UpdateHelixGroups(float DeltaTime);
 

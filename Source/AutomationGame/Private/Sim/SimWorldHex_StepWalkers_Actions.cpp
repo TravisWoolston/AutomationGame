@@ -4,7 +4,6 @@
 #include "Sim/SimWorldHex.h"
 #include "Sim/WalkerTypes.h"
 
-
 void USimWorldHex::TryWalkerPickUp(
     FWalkerState &W, FFootState &Foot, int32 WalkerIndex, int32 FootIndex,
     const TMap<FHex, ARequestBeacon *> &BeaconCache,
@@ -36,34 +35,14 @@ void USimWorldHex::TryWalkerPickUp(
   FItem PickedItem;
   bool bPickedSuccessfully = false;
 
-  TSet<int32> ClusterIds;
-  if (ItemToBonds.Contains(Found->Id)) {
-    TArray<int32> Stack;
-    Stack.Add(Found->Id);
-    ClusterIds.Add(Found->Id);
-    while (Stack.Num() > 0) {
-      int32 CurrentId = Stack.Pop();
-      if (const TArray<int32> *BondList = ItemToBonds.Find(CurrentId)) {
-        for (int32 BondIdx : *BondList) {
-          if (!Bonds.IsValidIndex(BondIdx))
-            continue;
-          const FBond &Bond = Bonds[BondIdx];
-          if (!Bond.bActive)
-            continue;
-          int32 OtherId = (Bond.ItemA == CurrentId) ? Bond.ItemB : Bond.ItemA;
-          if (OtherId > 0 && !ClusterIds.Contains(OtherId)) {
-            ClusterIds.Add(OtherId);
-            Stack.Add(OtherId);
-          }
-        }
-      }
-    }
-  }
+  TSet<int32> ClusterIds = GetFullClusterParentIds(Found->Id);
 
   if (ClusterIds.Num() <= 1) {
-    // Don't allow picking up orbs that just arrived or moved
+    // Don't allow picking up orbs that just arrived or moved, or are
+    // locked/in-helix
     if (OrbsMovedLastTick.Contains(Found->Id) ||
-        OrbsNewlyMovedByBelts.Contains(Found->Id))
+        OrbsNewlyMovedByBelts.Contains(Found->Id) || Found->bIsLocked ||
+        IsItemInHelix(Found->Id))
       return;
 
     if (TryTakeItem(Foot.TargetTile, PickedItem)) {
@@ -84,11 +63,20 @@ void USimWorldHex::TryWalkerPickUp(
 
     bool bAllFound = true;
     for (int32 ItemId : ClusterIds) {
-      // Don't allow picking up clusters where any member just arrived or moved
+      // Don't allow picking up clusters where any member just arrived, moved,
+      // or is locked/in-helix
       if (OrbsMovedLastTick.Contains(ItemId) ||
-          OrbsNewlyMovedByBelts.Contains(ItemId)) {
+          OrbsNewlyMovedByBelts.Contains(ItemId) || IsItemInHelix(ItemId)) {
         bAllFound = false;
         break;
+      }
+
+      // Check the item directly for the lock flag
+      if (const FItem *ItemAtHex = ItemMap.Find(Foot.TargetTile)) {
+        if (ItemAtHex->Id == ItemId && ItemAtHex->bIsLocked) {
+          bAllFound = false;
+          break;
+        }
       }
 
       FHex ItemHex;
