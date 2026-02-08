@@ -67,6 +67,11 @@ struct FOrbData {
   // NEW: original item Id for this orb (preserved while held so bonds stay
   // valid)
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly) int32 ItemId = 0;
+
+  // NEW: Previous board hex location (for smooth transition animation into
+  // helix)
+  UPROPERTY(Transient)
+  FHex PreviousBoardHex = FHex(0, 0, 0);
 };
 
 /** Item on a tile: either a single orb or a bonded cluster. */

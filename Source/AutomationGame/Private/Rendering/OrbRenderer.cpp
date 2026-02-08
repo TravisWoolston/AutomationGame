@@ -922,12 +922,21 @@ void UOrbRenderer::RebuildBondedOrbs() {
     const FHexAxial A1(AnimatedOrb.Hex.Q, AnimatedOrb.Hex.R);
     const FVector2D LocalXY1 = HexCoord::AxialToXY(A1, Tile, Ori);
     const FVector2D RotXY1 = HexCoord::Rotate2D(LocalXY1, Yaw);
-    const FVector BasePos1 = AnchorV + FVector(RotXY1.X, RotXY1.Y, 0.f);
 
     const FHexAxial A2(PartnerOrb.Hex.Q, PartnerOrb.Hex.R);
     const FVector2D LocalXY2 = HexCoord::AxialToXY(A2, Tile, Ori);
     const FVector2D RotXY2 = HexCoord::Rotate2D(LocalXY2, Yaw);
-    const FVector BasePos2 = AnchorV + FVector(RotXY2.X, RotXY2.Y, 0.f);
+    // Calculate Z offset based on level
+    auto GetLevelZ = [&](const FHex &H) -> float {
+      return (H.Level == 0) ? (Sim ? Sim->OrbZOffset : 50.f)
+                            : -(Sim ? Sim->OrbZOffset : 50.f);
+    };
+
+    const float LevelZ1 = GetLevelZ(AnimatedOrb.Hex);
+    const float LevelZ2 = GetLevelZ(PartnerOrb.Hex);
+
+    const FVector BasePos1 = AnchorV + FVector(RotXY1.X, RotXY1.Y, LevelZ1);
+    const FVector BasePos2 = AnchorV + FVector(RotXY2.X, RotXY2.Y, LevelZ2);
 
     // Calculate animation progress for both orbs
     const int32 CurrentStep = Sim->GetStepCounter();
@@ -1022,7 +1031,13 @@ void UOrbRenderer::RenderAnimatedOrbs() {
     const FHexAxial A(AnimatedOrb.Hex.Q, AnimatedOrb.Hex.R);
     const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
     const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, Yaw);
-    const FVector BasePos = AnchorV + FVector(RotXY.X, RotXY.Y, 0.f);
+
+    // Calculate base Z level
+    const float LevelZ = (AnimatedOrb.Hex.Level == 0)
+                             ? (Sim ? Sim->OrbZOffset : 50.f)
+                             : -(Sim ? Sim->OrbZOffset : 50.f);
+
+    const FVector BasePos = AnchorV + FVector(RotXY.X, RotXY.Y, LevelZ);
 
     // Calculate animation progress (0.0 to 1.0)
     const int32 CurrentStep = Sim->GetStepCounter();

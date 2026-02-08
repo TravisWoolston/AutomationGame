@@ -180,16 +180,18 @@ AOrbSimDriver *AOrbSimDriver::Find(UWorld *World) {
 
 void AOrbSimDriver::SetGridParameters(EHexOrientation InOrientation,
                                       float InYawDeg, float InTileSizeUU,
-                                      AActor *InAnchor) {
+                                      float InOrbZOffset, AActor *InAnchor) {
   // Only update and log if values actually changed
   const bool bOrientationChanged = GridOrientation != InOrientation;
   const bool bYawChanged = !FMath::IsNearlyEqual(GridYawDeg, InYawDeg, 0.01f);
   const bool bTileSizeChanged =
       !FMath::IsNearlyEqual(TileSizeUU, InTileSizeUU, 0.01f);
+  const bool bOrbZOffsetChanged =
+      !FMath::IsNearlyEqual(OrbZOffset, InOrbZOffset, 0.01f);
   const bool bAnchorChanged = GridAnchor != InAnchor;
 
   if (!bOrientationChanged && !bYawChanged && !bTileSizeChanged &&
-      !bAnchorChanged) {
+      !bOrbZOffsetChanged && !bAnchorChanged) {
     // No changes, skip update and logging
     return;
   }
@@ -197,17 +199,19 @@ void AOrbSimDriver::SetGridParameters(EHexOrientation InOrientation,
   GridOrientation = InOrientation;
   GridYawDeg = InYawDeg;
   TileSizeUU = InTileSizeUU;
+  OrbZOffset = InOrbZOffset;
   GridAnchor = InAnchor;
   if (Sim) {
     Sim->TileSizeUU = TileSizeUU;
+    Sim->OrbZOffset = OrbZOffset;
     const FVector AnchorLoc =
         InAnchor ? InAnchor->GetActorLocation() : FVector::ZeroVector;
     Sim->SetWorldTransform(AnchorLoc, GridYawDeg, GridOrientation);
   }
   UE_LOG(LogTemp, Log,
          TEXT("OrbSimDriver: Grid parameters updated - Orientation=%d Yaw=%.1f "
-              "TileSize=%.1f"),
-         (int32)GridOrientation, GridYawDeg, TileSizeUU);
+              "TileSize=%.1f OrbZOffset=%.1f"),
+         (int32)GridOrientation, GridYawDeg, TileSizeUU, OrbZOffset);
 }
 
 // Deprecated legacy function kept for BP compatibility (now calls

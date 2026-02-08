@@ -2007,6 +2007,36 @@ void AHexFactoryActor::RebuildHelixOutput() {
 
         const FVector OrbWorld = HelixCenter + OrbOffset;
 
+        // NEW: specific handling for just-spawned items to interpolate from
+        // their previous board position
+        FVector FinalOrbWorld = OrbWorld;
+        if (Rung.SpawnTick == Sim->StepCounter && Sim) {
+          // We are in the entry step. The item is logically in the helix (at
+          // Z=0), but visually we want to slide it from where it was on the
+          // board.
+          if (OrbData.PreviousBoardHex != FHex(0, 0, 0)) {
+            // Calculate previous world position
+            const FVector2D PrevLocalXY =
+                HexCoord::AxialToXY(FHexAxial(OrbData.PreviousBoardHex.Q,
+                                              OrbData.PreviousBoardHex.R),
+                                    TileSize, Ori);
+            const FVector2D PrevRotXY =
+                HexCoord::Rotate2D(PrevLocalXY, GridYaw);
+
+            const int32 PrevDisplayLevel =
+                GetDisplayLevel(OrbData.PreviousBoardHex.Level);
+            const float PrevZ =
+                (PrevDisplayLevel == 0) ? 0.f : 100.f; // Match generic board Z
+
+            const FVector PrevWorldPos =
+                AnchorV + FVector(PrevRotXY.X, PrevRotXY.Y, PrevZ);
+
+            // Interpolate
+            FinalOrbWorld =
+                FMath::Lerp(PrevWorldPos, OrbWorld, Sim->FrameAlpha);
+          }
+        }
+
         // Use per-type helix orb ISM for correct mesh and material
         EOrbType OrbType = static_cast<EOrbType>(OrbData.Type);
         if (UInstancedStaticMeshComponent *TypedISM =

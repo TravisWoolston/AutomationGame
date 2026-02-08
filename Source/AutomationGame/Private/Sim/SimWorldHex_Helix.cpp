@@ -1,5 +1,6 @@
 #include "EngineUtils.h"
 #include "Framework/GameManager.h"
+#include "HelixUtils.h"
 #include "Sim/SimWorldHex.h"
 
 // ============================================================
@@ -14,29 +15,7 @@ void USimWorldHex::RegisterHelixOutputTile(const FHex &Hex) {
 
   // Helper lambda to find the center-most hex from a list of tiles
   auto FindCenterHex = [this](const TArray<FHex> &Tiles) -> FHex {
-    if (Tiles.Num() == 0)
-      return FHex(0, 0, 0);
-    if (Tiles.Num() == 1)
-      return Tiles[0];
-
-    // Calculate average world position
-    FVector AvgPos = FVector::ZeroVector;
-    for (const FHex &H : Tiles) {
-      AvgPos += HexCenterToWorld(H);
-    }
-    AvgPos /= Tiles.Num();
-
-    // Find tile closest to average
-    FHex BestHex = Tiles[0];
-    float BestDist = FLT_MAX;
-    for (const FHex &H : Tiles) {
-      float Dist = FVector::DistSquared(HexCenterToWorld(H), AvgPos);
-      if (Dist < BestDist) {
-        BestDist = Dist;
-        BestHex = H;
-      }
-    }
-    return BestHex;
+    return FindCenterHexRobust(this, Tiles);
   };
 
   // Find adjacent helix groups to merge with
@@ -100,23 +79,8 @@ void USimWorldHex::UnregisterHelixOutputTile(const FHex &Hex) {
       if (Group.MemberTiles.Num() == 0) {
         HelixGroups.RemoveAt(GroupIdx);
       } else {
-        // Recalculate center - find center-most hex
-        FVector AvgPos = FVector::ZeroVector;
-        for (const FHex &MemberHex : Group.MemberTiles) {
-          AvgPos += HexCenterToWorld(MemberHex);
-        }
-        AvgPos /= Group.MemberTiles.Num();
-
-        FHex BestHex = Group.MemberTiles[0];
-        float BestDist = FLT_MAX;
-        for (const FHex &H : Group.MemberTiles) {
-          float Dist = FVector::DistSquared(HexCenterToWorld(H), AvgPos);
-          if (Dist < BestDist) {
-            BestDist = Dist;
-            BestHex = H;
-          }
-        }
-        Group.CenterHex = BestHex;
+        // Recalculate center - find center-most hex using robust logic
+        Group.CenterHex = FindCenterHexRobust(this, Group.MemberTiles);
         Group.CenterWorld = HexCenterToWorld(Group.CenterHex);
       }
       return;
@@ -140,24 +104,10 @@ void USimWorldHex::RegisterHelixInputTile(const FHex &Hex,
   Group.PairedInputTiles.Add(Hex);
   Group.bHasPairedInput = true;
 
-  // Recalculate input center
-  FVector AvgPos = FVector::ZeroVector;
-  for (const FHex &InputHex : Group.PairedInputTiles) {
-    AvgPos += HexCenterToWorld(InputHex);
-  }
-  AvgPos /= Group.PairedInputTiles.Num();
+  // Recalculate input center using robust logic
+  Group.PairedInputCenter = FindCenterHexRobust(this, Group.PairedInputTiles);
+  Group.PairedInputCenterWorld = HexCenterToWorld(Group.PairedInputCenter);
 
-  // Find center-most hex
-  FHex BestHex = Group.PairedInputTiles[0];
-  float BestDist = FLT_MAX;
-  for (const FHex &H : Group.PairedInputTiles) {
-    float Dist = FVector::DistSquared(HexCenterToWorld(H), AvgPos);
-    if (Dist < BestDist) {
-      BestDist = Dist;
-      BestHex = H;
-    }
-  }
-  Group.PairedInputCenter = BestHex;
   Group.PairedInputCenterWorld = HexCenterToWorld(Group.PairedInputCenter);
 }
 
@@ -165,33 +115,21 @@ void USimWorldHex::UnregisterHelixInputTile(const FHex &Hex) {
   for (FHelixOutputGroup &Group : HelixGroups) {
     int32 TileIdx = Group.PairedInputTiles.Find(Hex);
     if (TileIdx != INDEX_NONE) {
-      Group.PairedInputTiles.RemoveAt(TileIdx);
+      // If ANY input tile is removed, we must remove the ENTIRE paired set.
+      // This prevents "zombie" input tiles that persist across reloads or
+      // edits, and ensures the set is always valid and complete. The user will
+      // re-place them as a fresh set.
 
-      if (Group.PairedInputTiles.Num() == 0) {
-        Group.bHasPairedInput = false;
-        Group.PairedInputCenter = FHex(0, 0, 0);
-        Group.PairedInputCenterWorld = FVector::ZeroVector;
-      } else {
-        // Recalculate input center
-        FVector AvgPos = FVector::ZeroVector;
-        for (const FHex &InputHex : Group.PairedInputTiles) {
-          AvgPos += HexCenterToWorld(InputHex);
-        }
-        AvgPos /= Group.PairedInputTiles.Num();
+      // Clear the paired input tiles completely
+      Group.PairedInputTiles.Empty();
+      Group.bHasPairedInput = false;
+      Group.PairedInputCenter = FHex(0, 0, 0);
+      Group.PairedInputCenterWorld = FVector::ZeroVector;
 
-        FHex BestHex = Group.PairedInputTiles[0];
-        float BestDist = FLT_MAX;
-        for (const FHex &H : Group.PairedInputTiles) {
-          float Dist = FVector::DistSquared(HexCenterToWorld(H), AvgPos);
-          if (Dist < BestDist) {
-            BestDist = Dist;
-            BestHex = H;
-          }
-        }
-        Group.PairedInputCenter = BestHex;
-        Group.PairedInputCenterWorld =
-            HexCenterToWorld(Group.PairedInputCenter);
-      }
+      UE_LOG(LogTemp, Warning,
+             TEXT("Helix: Input tile removed at (%d,%d), clearing entire "
+                  "paired input set for group."),
+             Hex.Q, Hex.R);
       return;
     }
   }
@@ -205,6 +143,31 @@ void USimWorldHex::PairHelixInput(int32 OutputGroupIndex,
   }
 
   FHelixOutputGroup &Group = HelixGroups[OutputGroupIndex];
+
+  // Clean up any existing claims on these input tiles by other groups
+  for (const FHex &InputHex : InputTiles) {
+    for (int32 i = 0; i < HelixGroups.Num(); ++i) {
+      if (i == OutputGroupIndex)
+        continue;
+
+      FHelixOutputGroup &OtherGroup = HelixGroups[i];
+      if (OtherGroup.PairedInputTiles.Contains(InputHex)) {
+        // Found a conflict. Clear the ENTIRE paired input set for the other
+        // group to maintain consistency (as we do in UnregisterHelixInputTile).
+        // It's safer to break the old link completely than leave a partial set.
+        OtherGroup.PairedInputTiles.Empty();
+        OtherGroup.bHasPairedInput = false;
+        OtherGroup.PairedInputCenter = FHex(0, 0, 0);
+        OtherGroup.PairedInputCenterWorld = FVector::ZeroVector;
+
+        UE_LOG(LogTemp, Warning,
+               TEXT("Helix: Re-pairing input tiles. Cleared old paired input "
+                    "set for group %d because tile (%d,%d) was reassigned."),
+               i, InputHex.Q, InputHex.R);
+      }
+    }
+  }
+
   Group.PairedInputTiles = InputTiles;
   Group.PairedInputCenter = Center;
   Group.PairedInputCenterWorld = HexCenterToWorld(Center);
@@ -373,7 +336,7 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   NewRung.SpawnTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
   NewRung.SpawnTick = StepCounter;
   NewRung.ZOffset = 0.f;
-  NewRung.TargetZOffset = Group.RungSpacing;
+  NewRung.TargetZOffset = 0.f; // Start at 0 (on board) for the first step
   NewRung.RotationDegrees = Group.DegreesPerRung;
 
   // 5. Detect entry direction (based on belt pointing into ANY mouth hex)
@@ -433,6 +396,14 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
     FOrbData RungOrb = Info.Data;
     RungOrb.dQ = Hex.Q - Group.CenterHex.Q;
     RungOrb.dR = Hex.R - Group.CenterHex.R;
+
+    // Populate PreviousBoardHex from PrevItemHex for smooth entry animation
+    if (const FHex *PrevHex = PrevItemHex.Find(RungOrb.ItemId)) {
+      RungOrb.PreviousBoardHex = *PrevHex;
+    } else {
+      RungOrb.PreviousBoardHex = Hex; // Fallback to current hex
+    }
+
     NewRung.Orbs.Add(RungOrb);
   }
 
@@ -562,7 +533,14 @@ void USimWorldHex::UpdateHelixGroups(float DeltaTime) {
     for (int32 i = 0; i < Group.Rungs.Num(); ++i) {
       FHelixRung &Rung = Group.Rungs[i];
       if (Group.LastProcessedTick == StepCounter) {
-        Rung.ZOffset = Rung.TargetZOffset - Group.RungSpacing * (1.0f - Alpha);
+        if (Rung.SpawnTick == StepCounter) {
+          // New items stay at target Z (0) to slide in horizontally
+          Rung.ZOffset = Rung.TargetZOffset;
+        } else {
+          // Existing items lift to their new target
+          Rung.ZOffset =
+              Rung.TargetZOffset - Group.RungSpacing * (1.0f - Alpha);
+        }
       } else {
         Rung.ZOffset = Rung.TargetZOffset;
       }
@@ -656,8 +634,8 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
     FHex TargetHex(InputCenter.Q + Orb.dQ, InputCenter.R + Orb.dR,
                    InputCenter.Level);
     // UE_LOG(LogTemp, Warning,
-           TEXT("  Orb[%d]: dQ=%d, dR=%d -> TargetHex=(%d,%d)"), i, Orb.dQ,
-           Orb.dR, TargetHex.Q, TargetHex.R);
+    //  TEXT("  Orb[%d]: dQ=%d, dR=%d -> TargetHex=(%d,%d)"), i, Orb.dQ,
+    //  Orb.dR, TargetHex.Q, TargetHex.R);
   }
   for (int32 i = 0; i < Group.PairedInputTiles.Num(); ++i) {
     // UE_LOG(LogTemp, Warning, TEXT("  InputTile[%d]: (%d,%d)"), i,
@@ -735,9 +713,9 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
         if (CachedHeldOrbHexes.Contains(PushDest) ||
             CachedBlockingFootHexes.Contains(PushDest)) {
           bCanPrePush = false;
-          UE_LOG(LogTemp, Warning,
-                 TEXT("  Helix Eject: Push BLOCKED by arm/walker at (%d,%d)"),
-                 PushDest.Q, PushDest.R);
+          // UE_LOG(LogTemp, Warning,
+          //        TEXT("  Helix Eject: Push BLOCKED by arm/walker at
+          //        (%d,%d)"), PushDest.Q, PushDest.R);
           break;
         }
 
@@ -746,10 +724,10 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
           if (DestTile->Kind == ETileKind::Output &&
               DestTile->Kind != ETileKind::HelixOutput) {
             bCanPrePush = false;
-            UE_LOG(
-                LogTemp, Warning,
-                TEXT("  Helix Eject: Push BLOCKED by Output tile at (%d,%d)"),
-                PushDest.Q, PushDest.R);
+            // UE_LOG(
+            //     LogTemp, Warning,
+            //     TEXT("  Helix Eject: Push BLOCKED by Output tile at
+            //     (%d,%d)"), PushDest.Q, PushDest.R);
             break;
           }
         }
@@ -802,15 +780,15 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
         }
       }
     }
-    UE_LOG(LogTemp, Warning,
-           TEXT("  Helix Eject: Pre-push successful for %d items"),
-           MovedItemIds.Num());
+    // UE_LOG(LogTemp, Warning,
+    //        TEXT("  Helix Eject: Pre-push successful for %d items"),
+    //        MovedItemIds.Num());
   }
 
   // --- EXECUTE EJECTION ---
-  UE_LOG(LogTemp, Warning,
-         TEXT("Helix Eject: Executing ejection of rung with %d orbs"),
-         OldestRung.Orbs.Num());
+  // UE_LOG(LogTemp, Warning,
+  //        TEXT("Helix Eject: Executing ejection of rung with %d orbs"),
+  //        OldestRung.Orbs.Num());
 
   TMap<int32, int32> RungIdxToItemId;
 

@@ -221,14 +221,30 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
       return;
     }
 
+    // Remove previously paired input tiles (if any)
+    if (Sim->GetHelixGroups().IsValidIndex(PendingHelixOutputGroupIndex)) {
+      // Copy array because PlaceTile will modify the source array via
+      // UnregisterHelixInputTile
+      TArray<FHex> OldTiles =
+          Sim->GetHelixGroups()[PendingHelixOutputGroupIndex].PairedInputTiles;
+      for (const FHex &OldHex : OldTiles) {
+        Sim->PlaceTile(OldHex, FTile{ETileKind::Empty, 0});
+      }
+    }
+
     // Place all HelixInput tiles at once
     TArray<FHex> InputHexes = GetHelixInputPreviewHexes(Root);
     for (const FHex &InputHex : InputHexes) {
       FTile InputTile{ETileKind::HelixInput,
                       (uint8)PendingHelixOutputGroupIndex};
       Sim->PlaceTile(InputHex, InputTile);
-      Sim->RegisterHelixInputTile(InputHex, PendingHelixOutputGroupIndex);
+      // We will call PairHelixInput below to register them all and set the
+      // correct center
     }
+
+    // Link the group to the new input tiles and explicitly set the center to
+    // align with placement (Root)
+    Sim->PairHelixInput(PendingHelixOutputGroupIndex, InputHexes, Root);
 
     if (GEngine) {
       GEngine->AddOnScreenDebugMessage(
@@ -2249,7 +2265,21 @@ bool UHexPlacementComponent::CanPlaceHelixInputSetAt(const FHex &Center) const {
     // Check that tile location is not already occupied by something blocking
     if (const FTile *ExistingTile = Sim->TileMap.Find(InputHex)) {
       if (ExistingTile->Kind != ETileKind::Empty) {
-        return false;
+        // Allow overlap if it's an existing HelixInput tile belonging to the
+        // same group (we're replacing it)
+        bool bIsSelfOverlap = false;
+        if (ExistingTile->Kind == ETileKind::HelixInput &&
+            Sim->GetHelixGroups().IsValidIndex(PendingHelixOutputGroupIndex)) {
+          const auto &Group =
+              Sim->GetHelixGroups()[PendingHelixOutputGroupIndex];
+          if (Group.PairedInputTiles.Contains(InputHex)) {
+            bIsSelfOverlap = true;
+          }
+        }
+
+        if (!bIsSelfOverlap) {
+          return false;
+        }
       }
     }
 

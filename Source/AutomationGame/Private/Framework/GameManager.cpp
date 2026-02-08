@@ -1078,6 +1078,7 @@ void AGameManager::SyncOrbSimDriverParameters() {
   static EHexOrientation PrevOrientation = EHexOrientation::PointyTop;
   static float PrevYaw = 0.f;
   static float PrevTileSize = 0.f;
+  static float PrevOrbZOffset = 0.f;
   static float PrevGoldbergR = 0.f;
   static EGridMode PrevGridMode = EGridMode::Planar;
 
@@ -1085,25 +1086,28 @@ void AGameManager::SyncOrbSimDriverParameters() {
       (PrevOrientation != GridOrientation) ||
       !FMath::IsNearlyEqual(PrevYaw, GridYawDeg, 0.01f) ||
       !FMath::IsNearlyEqual(PrevTileSize, TileSizeUU, 0.01f) ||
+      !FMath::IsNearlyEqual(PrevOrbZOffset, OrbZOffset, 0.01f) ||
       !FMath::IsNearlyEqual(PrevGoldbergR, GoldbergRadius, 0.01f) ||
       (PrevGridMode != GridMode);
 
   OrbSimDriver->SetGridParameters(GridOrientation, GridYawDeg, TileSizeUU,
-                                  GridAnchor);
+                                  OrbZOffset, GridAnchor);
   OrbSimDriver->SetGoldbergMode(IsGoldbergMode(), GoldbergGrid);
 
   // Only log if parameters actually changed
   if (bParamsChanged) {
-    UE_LOG(LogTemp, Log,
-           TEXT("GameManager: Synced OrbSimDriver params Orientation=%d "
-                "Yaw=%.1f TileSpacing=%.1f GridMode=%d GoldbergR=%.1f"),
-           (int32)GridOrientation, GridYawDeg, TileSizeUU, (int32)GridMode,
-           GoldbergRadius);
+    UE_LOG(
+        LogTemp, Log,
+        TEXT("GameManager: Synced OrbSimDriver params Orientation=%d "
+             "Yaw=%.1f TileSpacing=%.1f ZOff=%.1f GridMode=%d GoldbergR=%.1f"),
+        (int32)GridOrientation, GridYawDeg, TileSizeUU, OrbZOffset,
+        (int32)GridMode, GoldbergRadius);
 
     // Update stored values
     PrevOrientation = GridOrientation;
     PrevYaw = GridYawDeg;
     PrevTileSize = TileSizeUU;
+    PrevOrbZOffset = OrbZOffset;
     PrevGoldbergR = GoldbergRadius;
     PrevGridMode = GridMode;
   }
