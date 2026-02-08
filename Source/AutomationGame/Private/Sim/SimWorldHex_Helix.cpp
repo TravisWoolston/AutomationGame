@@ -332,6 +332,13 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   TArray<FHex> OrbsOnMouth;
   for (const FHex &TileHex : Group.MemberTiles) {
     if (OrbToParent.Contains(TileHex)) {
+      const FOccupantInfo &Info = OrbToParent[TileHex];
+
+      // Process immediately when it arrives on the mouth.
+      // Easing/animation logic in UpdateHelixGroups will handle the visual
+      // transition from the mouth center upward.
+      OrbsOnMouth.Add(TileHex);
+
       OrbsOnMouth.Add(TileHex);
     }
   }
@@ -340,10 +347,17 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   if (OrbsOnMouth.Num() == 0)
     return false;
 
+  // UE_LOG(LogTemp, Warning,
+  //        TEXT("Helix: Entering incremental process - %d orbs on mouth."),
+  //        OrbsOnMouth.Num());
+
   // 3. PRESSURE-BASED EJECTION:
   // If the helix is full, we MUST eject the oldest cluster to make room.
   if (Group.Rungs.Num() >= Group.MaxVisibleRungs) {
     if (!TryEjectHelixCluster(Group, true)) {
+      // UE_LOG(LogTemp, Warning,
+      //        TEXT("Helix: Entry blocked because ejection path is
+      //        obstructed."));
       return false;
     }
   }
@@ -360,7 +374,7 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   NewRung.SpawnTick = StepCounter;
   NewRung.ZOffset = 0.f;
   NewRung.TargetZOffset = Group.RungSpacing;
-  NewRung.RotationDegrees = 0.f;
+  NewRung.RotationDegrees = Group.DegreesPerRung;
 
   // 5. Detect entry direction (based on belt pointing into ANY mouth hex)
   uint8 DetectedEntryDir = 0;
@@ -382,6 +396,10 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
           if (BeltDest == HelixTile) {
             DetectedEntryDir = BeltDir;
             bFoundEntryDir = true;
+            // UE_LOG(
+            //     LogTemp, Warning,
+            //     TEXT("Helix: Detected entry direction %d from belt at
+            //     (%d,%d)"), DetectedEntryDir, NeighborHex.Q, NeighborHex.R);
             break;
           }
         }
@@ -389,6 +407,12 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
     }
   }
   NewRung.EntryDirection = DetectedEntryDir;
+  if (!bFoundEntryDir) {
+    // UE_LOG(
+    //     LogTemp, Warning,
+    //     TEXT("Helix: No incoming belt found, defaulting entry direction to
+    //     0"));
+  }
 
   // 6. Group board-side removals and populate rung orbs
   TMap<FHex, TSet<int32>> RootToRemovingSubIndices;
@@ -515,6 +539,11 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
       AllRemovedOrbIds.Num() > 0 ? *AllRemovedOrbIds.CreateConstIterator() : 0;
   Group.LastEnteredItemTick = StepCounter;
 
+  // UE_LOG(LogTemp, Warning,
+  //        TEXT("Helix: Successfully entered new rung with %d orbs. Total "
+  //             "processed: %lld"),
+  //        NewRung.Orbs.Num(), Group.TotalClustersProcessed);
+
   return true;
 }
 
@@ -530,7 +559,8 @@ void USimWorldHex::UpdateHelixGroups(float DeltaTime) {
     }
 
     // Elevate rungs
-    for (FHelixRung &Rung : Group.Rungs) {
+    for (int32 i = 0; i < Group.Rungs.Num(); ++i) {
+      FHelixRung &Rung = Group.Rungs[i];
       if (Group.LastProcessedTick == StepCounter) {
         Rung.ZOffset = Rung.TargetZOffset - Group.RungSpacing * (1.0f - Alpha);
       } else {
@@ -611,7 +641,28 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
   uint8 PortalExitDir = OldestRung.EntryDirection;
   FHex StepDir = HexUtil::Step(PortalExitDir);
 
+  // Check what's currently on the target hexes
   const FHex &InputCenter = Group.PairedInputCenter;
+
+  // UE_LOG(LogTemp, Warning,
+  //        TEXT("Helix Eject: OutputCenter=(%d,%d), InputCenter=(%d,%d), "
+  //             "PortalExitDir=%d, StepDir=(%d,%d)"),
+  //        Group.CenterHex.Q, Group.CenterHex.R, InputCenter.Q, InputCenter.R,
+  //        PortalExitDir, StepDir.Q, StepDir.R);
+  // UE_LOG(LogTemp, Warning, TEXT("  InputTiles count=%d, Rung orbs count=%d"),
+  //        Group.PairedInputTiles.Num(), OldestRung.Orbs.Num());
+  for (int32 i = 0; i < OldestRung.Orbs.Num(); ++i) {
+    const FOrbData &Orb = OldestRung.Orbs[i];
+    FHex TargetHex(InputCenter.Q + Orb.dQ, InputCenter.R + Orb.dR,
+                   InputCenter.Level);
+    // UE_LOG(LogTemp, Warning,
+           TEXT("  Orb[%d]: dQ=%d, dR=%d -> TargetHex=(%d,%d)"), i, Orb.dQ,
+           Orb.dR, TargetHex.Q, TargetHex.R);
+  }
+  for (int32 i = 0; i < Group.PairedInputTiles.Num(); ++i) {
+    // UE_LOG(LogTemp, Warning, TEXT("  InputTile[%d]: (%d,%d)"), i,
+    //        Group.PairedInputTiles[i].Q, Group.PairedInputTiles[i].R);
+  }
   TArray<FHex> TargetHexes;
   TSet<int32> BlockingItemIds;
 
@@ -627,6 +678,11 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
 
   // If any target hex has an item, we need to push those items first
   if (BlockingItemIds.Num() > 0) {
+    // UE_LOG(
+    //     LogTemp, Warning,
+    //     TEXT("Helix Eject: %d items blocking input tiles, pushing them
+    //     first"),
+    //     BlockingItemIds.Num());
 
     TSet<int32> ItemsToPrePush;
     for (int32 Id : BlockingItemIds) {
@@ -664,6 +720,11 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
         // Check for external blockers
         if (const FItem *BlockingItem = ItemMap.Find(PushDest)) {
           if (!ItemsToPrePush.Contains(BlockingItem->Id)) {
+            // UE_LOG(LogTemp, Warning,
+            //        TEXT("  Helix Eject: Expanding push set to include blocker
+            //        "
+            //             "%d at (%d,%d)"),
+            //        BlockingItem->Id, PushDest.Q, PushDest.R);
             ItemsToPrePush.Append(GetFullClusterParentIds(BlockingItem->Id));
             bNeedRestart = true;
             break;
@@ -674,6 +735,9 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
         if (CachedHeldOrbHexes.Contains(PushDest) ||
             CachedBlockingFootHexes.Contains(PushDest)) {
           bCanPrePush = false;
+          UE_LOG(LogTemp, Warning,
+                 TEXT("  Helix Eject: Push BLOCKED by arm/walker at (%d,%d)"),
+                 PushDest.Q, PushDest.R);
           break;
         }
 
@@ -682,6 +746,10 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
           if (DestTile->Kind == ETileKind::Output &&
               DestTile->Kind != ETileKind::HelixOutput) {
             bCanPrePush = false;
+            UE_LOG(
+                LogTemp, Warning,
+                TEXT("  Helix Eject: Push BLOCKED by Output tile at (%d,%d)"),
+                PushDest.Q, PushDest.R);
             break;
           }
         }
@@ -734,9 +802,15 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
         }
       }
     }
+    UE_LOG(LogTemp, Warning,
+           TEXT("  Helix Eject: Pre-push successful for %d items"),
+           MovedItemIds.Num());
   }
 
   // --- EXECUTE EJECTION ---
+  UE_LOG(LogTemp, Warning,
+         TEXT("Helix Eject: Executing ejection of rung with %d orbs"),
+         OldestRung.Orbs.Num());
 
   TMap<int32, int32> RungIdxToItemId;
 
@@ -844,6 +918,19 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
   }
 
   Group.Rungs.RemoveAt(Group.Rungs.Num() - 1);
+
+  // visual interpolation tracking
+  for (int32 i = 0; i < RungIdxToItemId.Num(); ++i) {
+    if (const int32 *IdPtr = RungIdxToItemId.Find(i)) {
+      FEjectedItemInfo Info;
+      Info.Center = Group.PairedInputCenterWorld;
+      // The oldest rung was at (MaxVisibleRungs-1) spacing before the gulp
+      // shift. Since it was just removed, its ghost starts from that height.
+      Info.StartZ = (Group.MaxVisibleRungs - 1) * Group.RungSpacing;
+      EjectedItems.Add(*IdPtr, Info);
+    }
+  }
+
   return true;
 }
 

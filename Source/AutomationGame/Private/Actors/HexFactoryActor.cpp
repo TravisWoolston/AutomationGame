@@ -1892,9 +1892,9 @@ void AHexFactoryActor::RebuildHelixOutput() {
           BondMeshToUse = OrbRenderer->BondedOrbMesh;
           // The board bond mesh (BondedOrbMesh) is assumed to be 100 units long
           MeshBaseLength = 100.f;
-          // Use the board bond's thickness scale
-          BaseBondScale = FVector(1.0f, OrbRenderer->BondedOrbScale,
-                                  OrbRenderer->BondedOrbScale);
+          // Use the board bond's thickness scale (Z-aligned for orb bonds)
+          BaseBondScale = FVector(OrbRenderer->BondedOrbScale,
+                                  OrbRenderer->BondedOrbScale, 1.0f);
         }
         if (OrbRenderer->BondedOrbMaterial) {
           BondMaterialToUse = OrbRenderer->BondedOrbMaterial;
@@ -2048,10 +2048,25 @@ void AHexFactoryActor::RebuildHelixOutput() {
 
         if (HelixBondISM) {
           FVector BondScaleFinal = BaseBondScale;
-          BondScaleFinal.X *= BondLength;
+          // Scale along Z if using board assets (100 units), otherwise X
+          if (MeshBaseLength == 100.f)
+            BondScaleFinal.Z *= BondLength;
+          else
+            BondScaleFinal.X *= BondLength;
 
-          // Orientation: Rotate X axis toward companion orb
-          FRotator Rot = Dir.Rotation();
+          // Orientation: Mesh Z (Up) -> Dir if board assets, otherwise Mesh X
+          FRotator Rot;
+          if (MeshBaseLength == 100.f) {
+            FVector Up = Dir;
+            FVector Right =
+                FVector::CrossProduct(Up, FVector::UpVector).GetSafeNormal();
+            if (Right.IsNearlyZero())
+              Right = FVector::RightVector;
+            FVector Forward = FVector::CrossProduct(Right, Up).GetSafeNormal();
+            Rot = FRotationMatrix::MakeFromXY(Forward, Right).Rotator();
+          } else {
+            Rot = Dir.Rotation();
+          }
 
           HelixBondISM->AddInstance(FTransform(Rot, Mid, BondScaleFinal));
         }
@@ -2097,8 +2112,24 @@ void AHexFactoryActor::RebuildHelixOutput() {
 
           if (HelixBondISM) {
             FVector BondScaleFinal = BaseBondScale;
-            BondScaleFinal.X *= BondLength;
-            FRotator Rot = Dir.Rotation();
+            if (MeshBaseLength == 100.f)
+              BondScaleFinal.Z *= BondLength;
+            else
+              BondScaleFinal.X *= BondLength;
+
+            FRotator Rot;
+            if (MeshBaseLength == 100.f) {
+              FVector Up = Dir;
+              FVector Right =
+                  FVector::CrossProduct(Up, FVector::UpVector).GetSafeNormal();
+              if (Right.IsNearlyZero())
+                Right = FVector::RightVector;
+              FVector Forward =
+                  FVector::CrossProduct(Right, Up).GetSafeNormal();
+              Rot = FRotationMatrix::MakeFromXY(Forward, Right).Rotator();
+            } else {
+              Rot = Dir.Rotation();
+            }
             HelixBondISM->AddInstance(FTransform(Rot, Mid, BondScaleFinal));
           }
         }
@@ -2129,8 +2160,24 @@ void AHexFactoryActor::RebuildHelixOutput() {
 
           if (HelixBondISM) {
             FVector BondScaleFinal = BaseBondScale;
-            BondScaleFinal.X *= BondLength;
-            FRotator Rot = Dir.Rotation();
+            if (MeshBaseLength == 100.f)
+              BondScaleFinal.Z *= BondLength;
+            else
+              BondScaleFinal.X *= BondLength;
+
+            FRotator Rot;
+            if (MeshBaseLength == 100.f) {
+              FVector Up = Dir;
+              FVector Right =
+                  FVector::CrossProduct(Up, FVector::UpVector).GetSafeNormal();
+              if (Right.IsNearlyZero())
+                Right = FVector::RightVector;
+              FVector Forward =
+                  FVector::CrossProduct(Right, Up).GetSafeNormal();
+              Rot = FRotationMatrix::MakeFromXY(Forward, Right).Rotator();
+            } else {
+              Rot = Dir.Rotation();
+            }
             HelixBondISM->AddInstance(FTransform(Rot, Mid, BondScaleFinal));
           }
         }

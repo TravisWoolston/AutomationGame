@@ -653,7 +653,7 @@ void ABasicArm::RefreshPose(float InAlpha) {
       InterpolatedHandWorld = FinalGripPos;
     }
   }
-  if (GripPivotComp && !bUseGripSocket) {
+  if (GripPivotComp) {
     GripPivotComp->SetWorldLocation(InterpolatedHandWorld);
 
     // For skeletal mesh, use the actual bone rotation instead of BaseRot
@@ -1179,7 +1179,7 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent &Event) {
     }
   }
 
-  if (GIsPlayInEditorWorld && !bUseGripSocket && GripPivotComp) {
+  if (GIsPlayInEditorWorld && GripPivotComp) {
     // PropName = Event.Property ? Event.Property->GetFName() : NAME_None;
     if (PropName ==
             GET_MEMBER_NAME_CHECKED(ABasicArm, GripPivotLocalRotation) ||
@@ -1522,8 +1522,7 @@ void ABasicArm::AttachHeldOrb() {
 
   USceneComponent *ParentForHeld = nullptr;
 
-  if (bUseGripSocket && BaseComp &&
-      BaseComp->DoesSocketExist(TEXT("GripSocket"))) {
+  if (BaseComp && BaseComp->DoesSocketExist(TEXT("GripSocket"))) {
     ParentForHeld = BaseComp;
     HeldOrbComp->AttachToComponent(
         BaseComp, FAttachmentTransformRules::SnapToTargetIncludingScale,
@@ -1531,7 +1530,7 @@ void ABasicArm::AttachHeldOrb() {
   } else {
     // Fallback: procedural pivot
     ParentForHeld = GripPivotComp ? GripPivotComp : BaseComp;
-    if (GripPivotComp && !bUseGripSocket) {
+    if (GripPivotComp) {
       GripPivotComp->SetRelativeLocation(ComputeGripLocalOffset());
     }
     HeldOrbComp->AttachToComponent(
@@ -1994,7 +1993,7 @@ void ABasicArm::GenerateBondedOrbMeshes() {
 
       // Scale the cylinder to fit the bond length
       float BondedOrbScale = GetBondedOrbScale();
-      FVector Scale = FVector(BondedOrbScale, BondedOrbScale, 1.f);
+      FVector Scale = FVector(BondedOrbScale, BondedOrbScale, Distance / 100.f);
 
       // Set the transform
       BondMesh->SetRelativeLocation(Midpoint);

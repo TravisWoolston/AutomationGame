@@ -487,11 +487,6 @@ public:
   UPROPERTY(EditAnywhere, Category = "Arm|Grip")
   FVector GripLocationOffset = FVector::ZeroVector;
 
-  // If true we still try to use a socket; if false we force procedural pivot
-  // usage
-  UPROPERTY(EditAnywhere, Category = "Arm|Grip")
-  bool bUseGripSocket = false;
-
   /** If the authored arm mesh forward is flipped, invert cluster visual layout
    * (does not affect logic). */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Visuals")

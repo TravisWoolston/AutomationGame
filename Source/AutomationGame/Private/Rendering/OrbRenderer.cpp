@@ -882,8 +882,8 @@ void UOrbRenderer::RebuildBondedOrbs() {
 
       // Scale the cylinder to fit the bond length
       // The cylinder's length is along its Z-axis, so we scale Z by the
-      // distance
-      FVector Scale = FVector(BondedOrbScale, BondedOrbScale, 1.f);
+      // distance (assuming mesh base length is 100 units)
+      FVector Scale = FVector(BondedOrbScale, BondedOrbScale, Distance / 100.f);
 
       // Add the bonded orb instance
       BondedOrbISM->AddInstance(FTransform(Rotation, Midpoint, Scale));
@@ -982,7 +982,7 @@ void UOrbRenderer::RebuildBondedOrbs() {
       FRotator Rotation = FQuat(RotationMatrix).Rotator();
 
       // Use same scale as static bonds and held cluster bonds
-      FVector Scale = FVector(BondedOrbScale, BondedOrbScale, 1.f);
+      FVector Scale = FVector(BondedOrbScale, BondedOrbScale, Distance / 100.f);
 
       BondedOrbISM->AddInstance(FTransform(Rotation, Midpoint, Scale));
     }

@@ -136,7 +136,7 @@ public:
     bool bHasPairedInput = false;
 
     float DegreesPerRung = 36.f;
-    float RungSpacing = 100.f;
+    float RungSpacing = 150.f;
     int32 MaxVisibleRungs = 20;
     int32 LastProcessedTick = -1;
 
@@ -448,6 +448,7 @@ private:
   TSet<FHex> OrbsNewlyMovedToOutput;
   TSet<int32> OrbsNewlyMovedByBelts;
   TSet<int32> OrbsMovedLastTick;
+
   TMap<FHex, bool> OutputTileGates;
   TMap<FHex, TMap<FHex, bool>> BeltTriggerSignals;
   TMap<FHex, int32> BeltLastMovedItemId;

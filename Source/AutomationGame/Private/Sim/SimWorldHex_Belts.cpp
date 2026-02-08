@@ -1007,7 +1007,16 @@ void USimWorldHex::StepBelts() {
               }
             }
 
-            if (!bCanMoveCluster || !bFoundConnected) {
+            if (!bCanMoveCluster) {
+              // UE_LOG(LogTemp, Warning,
+              //        TEXT("  Belt move blocked: Cluster %d check failed"),
+              //        ConnectedId);
+              break;
+            }
+            if (!bFoundConnected) {
+              // UE_LOG(LogTemp, Warning,
+              //        TEXT("  Belt move blocked: Cluster member not found at "
+              //             "expected position"));
               bCanMoveCluster = false;
               break;
             }
@@ -1044,6 +1053,10 @@ void USimWorldHex::StepBelts() {
 
                 if (bAllOnMouth) {
                   bCanMoveCluster = false;
+                  // UE_LOG(LogTemp, Warning,
+                  //        TEXT("  Belt move blocked: Cluster %d fully on helix "
+                  //             "mouth"),
+                  //        ConnectedId);
                   break;
                 }
               }
@@ -1053,9 +1066,20 @@ void USimWorldHex::StepBelts() {
                                 ConnectedCurrentHex.R + ClusterMoveOffset.R,
                                 ConnectedCurrentHex.Level);
 
-            if (HeldOrbHexes.Contains(ConnectedToHex) ||
-                WalkerFootTiles.Contains(ConnectedToHex)) {
+            if (HeldOrbHexes.Contains(ConnectedToHex)) {
               bCanMoveCluster = false;
+              // UE_LOG(LogTemp, Warning,
+              //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by "
+              //             "held orb at (%d,%d)"),
+              //        ConnectedId, ConnectedToHex.Q, ConnectedToHex.R);
+              break;
+            }
+            if (WalkerFootTiles.Contains(ConnectedToHex)) {
+              bCanMoveCluster = false;
+              // UE_LOG(LogTemp, Warning,
+              //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by "
+              //             "walker foot at (%d,%d)"),
+              //        ConnectedId, ConnectedToHex.Q, ConnectedToHex.R);
               break;
             }
 
@@ -1073,12 +1097,21 @@ void USimWorldHex::StepBelts() {
               }
               if (!bOutputGateOpen) {
                 bCanMoveCluster = false;
+                // UE_LOG(LogTemp, Warning,
+                //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by "
+                //             "closed output gate at (%d,%d)"),
+                //        ConnectedId, ConnectedToHex.Q, ConnectedToHex.R);
                 break;
               }
             } else if (const FItem *DestItem = ItemMap.Find(ConnectedToHex)) {
               if (!InCluster.Contains(DestItem->Id)) {
                 // Destination is blocked
                 bCanMoveCluster = false;
+                // UE_LOG(LogTemp, Warning,
+                //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by "
+                //             "Board Item %d at (%d,%d)"),
+                //        ConnectedId, DestItem->Id, ConnectedToHex.Q,
+                //        ConnectedToHex.R);
                 break;
               }
             }
@@ -1086,6 +1119,10 @@ void USimWorldHex::StepBelts() {
             // Check if another pending move already claimed this destination
             if (PendingDestinations.Contains(ConnectedToHex)) {
               bCanMoveCluster = false;
+              // UE_LOG(LogTemp, Warning,
+              //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by "
+              //             "pending destination claim at (%d,%d)"),
+              //        ConnectedId, ConnectedToHex.Q, ConnectedToHex.R);
               break;
             }
           }

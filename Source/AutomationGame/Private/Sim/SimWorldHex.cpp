@@ -1067,6 +1067,8 @@ void USimWorldHex::StepSim() {
   OrbsMovedLastTick =
       OrbsNewlyMovedByBelts; // Preserve move state for grab checks
   OrbsNewlyMovedByBelts.Reset();
+  EjectedItems.Empty();
+
   ProcessUnbondsForHeldClusters();
   // pass 1 (empty at start)
   StepArms();
