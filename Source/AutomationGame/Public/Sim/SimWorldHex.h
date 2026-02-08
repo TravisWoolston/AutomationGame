@@ -139,9 +139,11 @@ public:
     float RungSpacing = 150.f;
     int32 MaxVisibleRungs = 20;
     int32 LastProcessedTick = -1;
+    int32 LastAnimatedTick = -1;
 
     int32 LastEnteredItemId = 0;
     int32 LastEnteredItemTick = -1;
+    int32 LastArrivedItemId = 0;
     int32 RungTransitTime = 20;
 
     static constexpr int32 MinPairDistance = 3;

@@ -310,34 +310,59 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
   if (OrbsOnMouth.Num() == 0)
     return false;
 
-  // UE_LOG(LogTemp, Warning,
-  //        TEXT("Helix: Entering incremental process - %d orbs on mouth."),
-  //        OrbsOnMouth.Num());
+  // 3. ARRIVAL DETECTION & ANIMATION TRIGGER
+  // Check if any of these orbs just moved onto the mouth this tick via belt or
+  // ClusterSend
+  bool bAnyNewlyArrived = false;
+  int32 BatchId = OrbToParent[OrbsOnMouth[0]].ParentItemId;
 
-  // 3. PRESSURE-BASED EJECTION:
-  // If the helix is full, we MUST eject the oldest cluster to make room.
-  if (Group.Rungs.Num() >= Group.MaxVisibleRungs) {
-    if (!TryEjectHelixCluster(Group, true)) {
-      // UE_LOG(LogTemp, Warning,
-      //        TEXT("Helix: Entry blocked because ejection path is
-      //        obstructed."));
-      return false;
+  for (const FHex &Hex : OrbsOnMouth) {
+    int32 Id = OrbToParent[Hex].ParentItemId;
+    if (ItemsMovedLastStep.Contains(Id) || OrbsNewlyMovedByBelts.Contains(Id)) {
+      bAnyNewlyArrived = true;
+      break;
     }
   }
 
-  // 4. Prepare new rung
-  for (FHelixRung &Rung : Group.Rungs) {
-    Rung.TargetZOffset += Group.RungSpacing;
-    Rung.RotationDegrees += Group.DegreesPerRung;
-  }
-  Group.HelixRotationOffset -= Group.DegreesPerRung;
+  // Determine if we need to trigger the lift/twist animation for this set.
+  // We trigger strictly once per batch arrival.
+  bool bNeedsAnimationTrigger = (Group.LastArrivedItemId != BatchId);
 
+  if (bNeedsAnimationTrigger) {
+    Group.LastArrivedItemId = BatchId;
+    // PRESSURE-BASED EJECTION:
+    // If the helix is full, we MUST eject the oldest cluster to make room.
+    if (Group.Rungs.Num() >= Group.MaxVisibleRungs) {
+      if (!TryEjectHelixCluster(Group, true)) {
+        // UE_LOG(LogTemp, Warning,
+        //        TEXT("Helix: Entry blocked because ejection path is
+        //        obstructed."));
+        return false;
+      }
+    }
+
+    // Prepare for new rung by elevating existing ones
+    for (FHelixRung &Rung : Group.Rungs) {
+      Rung.TargetZOffset += Group.RungSpacing;
+      Rung.RotationDegrees += Group.DegreesPerRung;
+    }
+    Group.HelixRotationOffset -= Group.DegreesPerRung;
+    Group.LastAnimatedTick = StepCounter;
+  }
+
+  // If newly arrived, wait one tick to complete the board-side movement before
+  // linking
+  if (bAnyNewlyArrived) {
+    return false;
+  }
+
+  // 4. Prepare new rung
   FHelixRung NewRung;
   NewRung.SpawnTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
   NewRung.SpawnTick = StepCounter;
   NewRung.ZOffset = 0.f;
   NewRung.TargetZOffset = 0.f; // Start at 0 (on board) for the first step
-  NewRung.RotationDegrees = Group.DegreesPerRung;
+  NewRung.RotationDegrees = 0.f;
 
   // 5. Detect entry direction (based on belt pointing into ANY mouth hex)
   uint8 DetectedEntryDir = 0;
@@ -523,7 +548,7 @@ void USimWorldHex::UpdateHelixGroups(float DeltaTime) {
 
   for (FHelixOutputGroup &Group : HelixGroups) {
     // Non-continuous: SYNCED with FrameAlpha (0 to 1)
-    if (Group.LastProcessedTick == StepCounter) {
+    if (Group.LastAnimatedTick == StepCounter) {
       Group.HelixRotationOffset = -Group.DegreesPerRung * (1.0f - Alpha);
     } else {
       Group.HelixRotationOffset = 0.f;
@@ -532,7 +557,7 @@ void USimWorldHex::UpdateHelixGroups(float DeltaTime) {
     // Elevate rungs
     for (int32 i = 0; i < Group.Rungs.Num(); ++i) {
       FHelixRung &Rung = Group.Rungs[i];
-      if (Group.LastProcessedTick == StepCounter) {
+      if (Group.LastAnimatedTick == StepCounter) {
         if (Rung.SpawnTick == StepCounter) {
           // New items stay at target Z (0) to slide in horizontally
           Rung.ZOffset = Rung.TargetZOffset;

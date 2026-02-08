@@ -1985,7 +1985,7 @@ void AHexFactoryActor::RebuildHelixOutput() {
       const USimWorldHex::FHelixRung &Rung = Group.Rungs[RungIdx];
 
       // The cluster rotates around the helix center as it rises
-      const float RungRotation = Rung.RotationDegrees + IdleRotation;
+      const float RungRotation = GridYaw + Rung.RotationDegrees + IdleRotation;
       const float RungAngleRad = FMath::DegreesToRadians(RungRotation);
       const float CosRot = FMath::Cos(RungAngleRad);
       const float SinRot = FMath::Sin(RungAngleRad);
@@ -2105,7 +2105,8 @@ void AHexFactoryActor::RebuildHelixOutput() {
       // Render vertical bonds between this rung and the one above/previous
       if (RungIdx + 1 < Group.Rungs.Num()) {
         const USimWorldHex::FHelixRung &PrevRung = Group.Rungs[RungIdx + 1];
-        const float PrevRungRotation = PrevRung.RotationDegrees + IdleRotation;
+        const float PrevRungRotation =
+            GridYaw + PrevRung.RotationDegrees + IdleRotation;
         const float PrevRungAngleRad =
             FMath::DegreesToRadians(PrevRungRotation);
         const float PrevCosRot = FMath::Cos(PrevRungAngleRad);
