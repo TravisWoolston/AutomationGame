@@ -292,6 +292,7 @@ private:
 
   void SyncPreviewEditsIntoScenarioFiltered(
       FScenarioSpec &Scenario); // filtered version
+  void InvalidateHelixPairingAt(FScenarioSpec &Scenario, const FHex &Hex);
 
 #if WITH_EDITOR
   void HandlePreBeginPIE(bool bIsSimulating);

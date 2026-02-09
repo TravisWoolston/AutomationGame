@@ -2015,21 +2015,8 @@ void AHexFactoryActor::RebuildHelixOutput() {
           // Z=0), but visually we want to slide it from where it was on the
           // board.
           if (OrbData.PreviousBoardHex != FHex(0, 0, 0)) {
-            // Calculate previous world position
-            const FVector2D PrevLocalXY =
-                HexCoord::AxialToXY(FHexAxial(OrbData.PreviousBoardHex.Q,
-                                              OrbData.PreviousBoardHex.R),
-                                    TileSize, Ori);
-            const FVector2D PrevRotXY =
-                HexCoord::Rotate2D(PrevLocalXY, GridYaw);
-
-            const int32 PrevDisplayLevel =
-                GetDisplayLevel(OrbData.PreviousBoardHex.Level);
-            const float PrevZ =
-                (PrevDisplayLevel == 0) ? 0.f : 100.f; // Match generic board Z
-
             const FVector PrevWorldPos =
-                AnchorV + FVector(PrevRotXY.X, PrevRotXY.Y, PrevZ);
+                Sim->HexCenterToWorld(OrbData.PreviousBoardHex);
 
             // Interpolate
             FinalOrbWorld =
@@ -2042,7 +2029,7 @@ void AHexFactoryActor::RebuildHelixOutput() {
         if (UInstancedStaticMeshComponent *TypedISM =
                 GetHelixOrbISMForType(OrbType)) {
           TypedISM->AddInstance(FTransform(FRotator(0.f, RungRotation, 0.f),
-                                           OrbWorld, HelixOrbScale));
+                                           FinalOrbWorld, HelixOrbScale));
         }
       }
 
@@ -2070,6 +2057,18 @@ void AHexFactoryActor::RebuildHelixOutput() {
                        FVector(OrbBLocalXY.X * CosRot - OrbBLocalXY.Y * SinRot,
                                OrbBLocalXY.X * SinRot + OrbBLocalXY.Y * CosRot,
                                Rung.ZOffset * ZDirectionMult);
+
+        // Apply interpolation for just-spawned rungs
+        if (Rung.SpawnTick == Sim->StepCounter && Sim) {
+          if (OrbA.PreviousBoardHex != FHex(0, 0, 0)) {
+            PosA = FMath::Lerp(Sim->HexCenterToWorld(OrbA.PreviousBoardHex),
+                               PosA, Sim->FrameAlpha);
+          }
+          if (OrbB.PreviousBoardHex != FHex(0, 0, 0)) {
+            PosB = FMath::Lerp(Sim->HexCenterToWorld(OrbB.PreviousBoardHex),
+                               PosB, Sim->FrameAlpha);
+          }
+        }
 
         // Bond mesh positioned at midpoint, oriented toward the other orb
         FVector Mid = (PosA + PosB) * 0.5f;
@@ -2137,6 +2136,14 @@ void AHexFactoryActor::RebuildHelixOutput() {
                       OrbBLocalXY.X * PrevSinRot + OrbBLocalXY.Y * PrevCosRot,
                       PrevRung.ZOffset * ZDirectionMult);
 
+          // Interpolate the new orb's position for vertical bonds
+          if (Rung.SpawnTick == Sim->StepCounter && Sim) {
+            if (OrbA.PreviousBoardHex != FHex(0, 0, 0)) {
+              PosA = FMath::Lerp(Sim->HexCenterToWorld(OrbA.PreviousBoardHex),
+                                 PosA, Sim->FrameAlpha);
+            }
+          }
+
           FVector Mid = (PosA + PosB) * 0.5f;
           FVector Dir = (PosB - PosA).GetSafeNormal();
           float BondLength = (PosB - PosA).Size() / MeshBaseLength;
@@ -2183,6 +2190,14 @@ void AHexFactoryActor::RebuildHelixOutput() {
               FVector(OrbALocalXY.X * CosRot - OrbALocalXY.Y * SinRot,
                       OrbALocalXY.X * SinRot + OrbALocalXY.Y * CosRot,
                       Rung.ZOffset * ZDirectionMult);
+
+          // Apply interpolation for just-spawned rungs (helix-side orb)
+          if (Rung.SpawnTick == Sim->StepCounter && Sim) {
+            if (OrbA.PreviousBoardHex != FHex(0, 0, 0)) {
+              PosA = FMath::Lerp(Sim->HexCenterToWorld(OrbA.PreviousBoardHex),
+                                 PosA, Sim->FrameAlpha);
+            }
+          }
           FVector PosB = *PosBPtr;
 
           FVector Mid = (PosA + PosB) * 0.5f;

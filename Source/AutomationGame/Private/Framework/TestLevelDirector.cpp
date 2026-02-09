@@ -767,6 +767,7 @@ void ATestLevelDirector::UpsertTileSpec(const FHex &Hex, ETileKind Kind,
   NewSpec.Kind = Kind;
   NewSpec.Dir = Dir;
   Sc.Tiles.Add(NewSpec);
+  InvalidateHelixPairingAt(Sc, Hex);
   MarkActiveScenarioDirty();
 #if WITH_EDITOR
   MirrorScenarioEditsToEditor();
@@ -798,6 +799,7 @@ void ATestLevelDirector::UpsertClusterOutputTileSpec(const FHex &Hex,
   NewSpec.Dir = TemplateId;
   NewSpec.OrbType = OrbType;
   Sc.Tiles.Add(NewSpec);
+  InvalidateHelixPairingAt(Sc, Hex);
   MarkActiveScenarioDirty();
 #if WITH_EDITOR
   MirrorScenarioEditsToEditor();
@@ -896,6 +898,7 @@ bool ATestLevelDirector::RemoveTileSpec(const FHex &Hex) {
     if (Sc.Tiles[i].Hex.Q == Hex.Q && Sc.Tiles[i].Hex.R == Hex.R &&
         Sc.Tiles[i].Hex.Level == Hex.Level) {
       Sc.Tiles.RemoveAt(i);
+      InvalidateHelixPairingAt(Sc, Hex);
       MarkActiveScenarioDirty();
 #if WITH_EDITOR
       MirrorScenarioEditsToEditor();
@@ -1667,6 +1670,33 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
         Pair.TransitTime = Group.RungTransitTime;
         Scenario.HelixPairs.Add(Pair);
       }
+    }
+  }
+}
+
+void ATestLevelDirector::InvalidateHelixPairingAt(FScenarioSpec &Scenario,
+                                                  const FHex &Hex) {
+  // If a tile is modified or removed, any helix pairings that included that hex
+  // must be cleared to ensure the spec remains valid.
+  for (int32 i = Scenario.HelixPairs.Num() - 1; i >= 0; --i) {
+    bool bMatched = false;
+    for (const FHex &H : Scenario.HelixPairs[i].OutputTiles) {
+      if (H.Q == Hex.Q && H.R == Hex.R && H.Level == Hex.Level) {
+        bMatched = true;
+        break;
+      }
+    }
+    if (!bMatched) {
+      for (const FHex &H : Scenario.HelixPairs[i].InputTiles) {
+        if (H.Q == Hex.Q && H.R == Hex.R && H.Level == Hex.Level) {
+          bMatched = true;
+          break;
+        }
+      }
+    }
+
+    if (bMatched) {
+      Scenario.HelixPairs.RemoveAt(i);
     }
   }
 }

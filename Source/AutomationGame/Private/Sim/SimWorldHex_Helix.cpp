@@ -350,12 +350,6 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
     Group.LastAnimatedTick = StepCounter;
   }
 
-  // If newly arrived, wait one tick to complete the board-side movement before
-  // linking
-  if (bAnyNewlyArrived) {
-    return false;
-  }
-
   // 4. Prepare new rung
   FHelixRung NewRung;
   NewRung.SpawnTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
@@ -422,9 +416,18 @@ bool USimWorldHex::TryProcessHelixCluster(FHelixOutputGroup &Group) {
     RungOrb.dQ = Hex.Q - Group.CenterHex.Q;
     RungOrb.dR = Hex.R - Group.CenterHex.R;
 
-    // Populate PreviousBoardHex from PrevItemHex for smooth entry animation
-    if (const FHex *PrevHex = PrevItemHex.Find(RungOrb.ItemId)) {
-      RungOrb.PreviousBoardHex = *PrevHex;
+    // Populate PreviousBoardHex for smooth entry animation.
+    // We need the ACTUAL previous hex of this specific orb.
+    if (const FHex *PrevRoot = PrevItemHex.Find(Info.ParentItemId)) {
+      if (Info.SubIndex == -1) {
+        RungOrb.PreviousBoardHex = *PrevRoot;
+      } else {
+        // For cluster sub-orbs, the previous hex is the previous root + sub
+        // offset
+        RungOrb.PreviousBoardHex =
+            FHex(PrevRoot->Q + Info.Data.dQ, PrevRoot->R + Info.Data.dR,
+                 PrevRoot->Level);
+      }
     } else {
       RungOrb.PreviousBoardHex = Hex; // Fallback to current hex
     }

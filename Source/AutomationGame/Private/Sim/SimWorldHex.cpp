@@ -462,31 +462,34 @@ bool USimWorldHex::PlaceTile(const FHex &H, const FTile &T) {
     IOBondPartners.Add(H, Partner);
     IOBondPartners.Add(Partner, H);
   }
-  if (TileToPlace.Kind == ETileKind::Empty) {
-    const bool bHad = TileMap.Remove(H) > 0;
-    if (bHad) {
-      // NOTE: We NO LONGER remove bonds whose Root == H.
-      // Bonds now persist until explicitly broken by a glyph.
+  // --- OVERWRITE CLEANUP ---
+  // If we're placing a new tile (including Empty), we must unregister any
+  // legacy metadata associated with the previous tile at this location.
+  if (TileMap.Contains(H)) {
+    // Remove any IO bond partnerships
+    if (const FHex *Partner = IOBondPartners.Find(H)) {
+      IOBondPartners.Remove(*Partner);
+      IOBondPartners.Remove(H);
+    }
+
+    // Unregister helix associations
+    UnregisterHelixOutputTile(H);
+    UnregisterHelixInputTile(H);
+
+    // If we're placing Empty, finish here
+    if (TileToPlace.Kind == ETileKind::Empty) {
+      TileMap.Remove(H);
       ItemMap.Remove(H);
       OrbAt.Remove(H);
-
-      // Remove any IO bond partnerships
-      if (const FHex *Partner = IOBondPartners.Find(H)) {
-        IOBondPartners.Remove(*Partner);
-        IOBondPartners.Remove(H);
-      }
-
-      // Unregister helix output tile if it was one
-      UnregisterHelixOutputTile(H);
-
-      // Unregister helix input tile if it was one
-      UnregisterHelixInputTile(H);
-
       ++TileRevision;
+      return true;
     }
+  } else if (TileToPlace.Kind == ETileKind::Empty) {
+    // Already empty
     return true;
   }
 
+  // --- EXECUTE PLACEMENT ---
   TileMap.Add(H, TileToPlace);
   ++TileRevision;
 
