@@ -155,6 +155,9 @@ public:
 
   void Initialize(int32 Radius);
 
+  /** Broadcast after StepArms() to allow mid-tick trigger updates */
+  FSimpleMulticastDelegate OnArmsStepped;
+
   // Config
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
   float TileSizeUU = 120.f;

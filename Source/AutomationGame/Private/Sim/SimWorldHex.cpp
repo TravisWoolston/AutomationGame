@@ -1075,6 +1075,7 @@ void USimWorldHex::StepSim() {
   ProcessUnbondsForHeldClusters();
   // pass 1 (empty at start)
   StepArms();
+  OnArmsStepped.Broadcast();
 
   // Interaction pass 1: bond things sitting from last tick (including
   // ClusterSend arrivals)

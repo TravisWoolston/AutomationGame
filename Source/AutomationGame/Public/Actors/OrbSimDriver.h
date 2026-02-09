@@ -39,6 +39,9 @@ public:
   UPROPERTY(BlueprintAssignable, Category = "Simulation")
   FOnSimStepComplete OnSimStepComplete;
 
+  /** Update trigger tile signals immediately after arms move */
+  void HandleMidStepTriggerUpdate();
+
   // ---------------------------------------------------------------------
   // Grid / environment knobs (consumed by placement & rendering)
   // ---------------------------------------------------------------------
@@ -116,15 +119,11 @@ public:
   float GetStepAlpha() const { return StepAlpha; }
 
   UFUNCTION(BlueprintCallable, Category = "Grid")
-  AActor *GetGridAnchor() const {
-    return GridAnchor;
-  }
+  AActor *GetGridAnchor() const { return GridAnchor; }
   UFUNCTION(BlueprintCallable, Category = "Grid")
   float GetGridPlaneZ(const AActor *FallbackOwner) const;
   UFUNCTION(BlueprintCallable, Category = "Grid")
-  EHexOrientation GetGridOrientation() const {
-    return GridOrientation;
-  }
+  EHexOrientation GetGridOrientation() const { return GridOrientation; }
   UFUNCTION(BlueprintCallable, Category = "Grid") float GetGridYaw() const {
     return GridYawDeg;
   }
@@ -190,13 +189,9 @@ public:
   float GetDebugSizeForOrbType(uint8 OrbType, bool bIsSubOrb) const;
 
   UFUNCTION(BlueprintCallable, Category = "Belts")
-  int32 GetBeltVisualOffset() const {
-    return BeltVisualDirOffset;
-  }
+  int32 GetBeltVisualOffset() const { return BeltVisualDirOffset; }
   UFUNCTION(BlueprintCallable, Category = "Belts")
-  bool IsBeltYawClockwise() const {
-    return bBeltYawClockwise;
-  }
+  bool IsBeltYawClockwise() const { return bBeltYawClockwise; }
 
   /** Utility to find the first driver in the world. */
   static AOrbSimDriver *Find(UWorld *World);

@@ -70,7 +70,6 @@ void AOrbSimDriver::BeginPlay() {
   // Sync debug settings to all arms
   SyncDebugSettingsToArms();
 
-  // Subscribe to fixed tick
   if (AGameTickManager *M = AGameTickManager::Get(this)) {
     if (!bSubscribed) {
       M->OnFixedTick.AddDynamic(this, &AOrbSimDriver::HandleFixedTickSeconds);
@@ -80,6 +79,12 @@ void AOrbSimDriver::BeginPlay() {
     UE_LOG(LogTemp, Warning,
            TEXT("OrbSimDriver: No GameTickManager found. Simulation will not "
                 "advance."));
+  }
+
+  // Subscribe to mid-simulation update for trigger tiles
+  if (Sim) {
+    Sim->OnArmsStepped.AddUObject(this,
+                                  &AOrbSimDriver::HandleMidStepTriggerUpdate);
   }
 }
 
@@ -150,6 +155,20 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds) {
 
   // Broadcast that simulation has completed this step
   OnSimStepComplete.Broadcast(StepSeconds);
+}
+
+void AOrbSimDriver::HandleMidStepTriggerUpdate() {
+  // Update all trigger tile signals IMMEDIATELY after arms move.
+  // This avoids the common race condition where a belt pushes on the same tick
+  // that a trigger signal changed from green to red.
+  if (UWorld *World = GetWorld()) {
+    for (TActorIterator<ATriggerTile> It(World); It; ++It) {
+      ATriggerTile *Trigger = *It;
+      if (Trigger && Trigger->Owners.Num() > 0) {
+        Trigger->CheckTriggerCondition();
+      }
+    }
+  }
 }
 
 float AOrbSimDriver::GetGridPlaneZ(const AActor *FallbackOwner) const {
