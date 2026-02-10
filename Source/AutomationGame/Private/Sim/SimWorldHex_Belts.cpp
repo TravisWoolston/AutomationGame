@@ -1054,7 +1054,8 @@ void USimWorldHex::StepBelts() {
                 if (bAllOnMouth) {
                   bCanMoveCluster = false;
                   // UE_LOG(LogTemp, Warning,
-                  //        TEXT("  Belt move blocked: Cluster %d fully on helix "
+                  //        TEXT("  Belt move blocked: Cluster %d fully on helix
+                  //        "
                   //             "mouth"),
                   //        ConnectedId);
                   break;
@@ -1098,7 +1099,8 @@ void USimWorldHex::StepBelts() {
               if (!bOutputGateOpen) {
                 bCanMoveCluster = false;
                 // UE_LOG(LogTemp, Warning,
-                //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by "
+                //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by
+                //        "
                 //             "closed output gate at (%d,%d)"),
                 //        ConnectedId, ConnectedToHex.Q, ConnectedToHex.R);
                 break;
@@ -1108,7 +1110,8 @@ void USimWorldHex::StepBelts() {
                 // Destination is blocked
                 bCanMoveCluster = false;
                 // UE_LOG(LogTemp, Warning,
-                //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by "
+                //        TEXT("  Belt move blocked: Cluster %d path BLOCKED by
+                //        "
                 //             "Board Item %d at (%d,%d)"),
                 //        ConnectedId, DestItem->Id, ConnectedToHex.Q,
                 //        ConnectedToHex.R);
