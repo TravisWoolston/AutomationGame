@@ -55,15 +55,6 @@ void UArmTimelineUMGWidget::NativeConstruct() {
   }
 
   InitializeWidget();
-
-  // Ensure cursor is in front and doesn't block input
-  if (CursorIndicator) {
-    if (UCanvasPanelSlot *CanvasSlot =
-            Cast<UCanvasPanelSlot>(CursorIndicator->Slot)) {
-      CanvasSlot->SetZOrder(100);
-    }
-    CursorIndicator->SetVisibility(ESlateVisibility::HitTestInvisible);
-  }
 }
 
 void UArmTimelineUMGWidget::NativeTick(const FGeometry &MyGeometry,
@@ -83,10 +74,33 @@ void UArmTimelineUMGWidget::NativeTick(const FGeometry &MyGeometry,
 
       IconScrollContainer->SetRenderTranslation(FVector2D(OffsetX, 0.0f));
     }
-
-    // Keep cursor aligned during smooth scroll
-    SetCursorIndicatorPosition();
   }
+}
+
+void UArmTimelineUMGWidget::SynchronizeProperties() {
+  Super::SynchronizeProperties();
+
+  // If we are in the designer and have no program, add some mock data for
+  // preview
+  if (IsDesignTime()) {
+    if (ArmProgram.Num() == 0) {
+      TArray<FArmInstr> MockProgram;
+      MockProgram.Add({EArmCmd::Grab, 0});
+      MockProgram.Add({EArmCmd::RotateCW, 1});
+      MockProgram.Add({EArmCmd::Extend, 1});
+      MockProgram.Add({EArmCmd::Drop, 0});
+      MockProgram.Add({EArmCmd::Reset, 0});
+
+      // Don't call SetArmProgram as it triggers callbacks we might not want in
+      // designer
+      ArmProgram = MockProgram;
+    }
+
+    // Force icon recreation in designer to reflect property changes immediately
+    bIconsCreated = false;
+  }
+
+  UpdateWidgetContent();
 }
 
 void UArmTimelineUMGWidget::NativeDestruct() {
@@ -122,6 +136,32 @@ void UArmTimelineUMGWidget::SetArmProgram(const TArray<FArmInstr> &Program) {
 
     UpdateWidgetContent();
     OnProgramChanged();
+  }
+}
+
+void UArmTimelineUMGWidget::ToggleCursorPreview() {
+  if (bIsEditingMode) {
+    DisableEditingMode();
+  } else {
+    EnableEditingMode();
+  }
+}
+
+void UArmTimelineUMGWidget::InsertDummyCommand() {
+  if (bIsEditingMode) {
+    InsertCommandAtCursor(EArmCmd::NoOp);
+  }
+}
+
+void UArmTimelineUMGWidget::PreviewMoveCursorLeft() {
+  if (bIsEditingMode) {
+    MoveCursorLeft();
+  }
+}
+
+void UArmTimelineUMGWidget::PreviewMoveCursorRight() {
+  if (bIsEditingMode) {
+    MoveCursorRight();
   }
 }
 
@@ -694,7 +734,6 @@ bool UArmTimelineUMGWidget::InsertCommandAtCursor(EArmCmd Command, int32 Arg) {
 
   // Update the widget content (check if recreation is needed)
   UpdateWidgetContent();
-  UpdateCursorIndicator();
 
   return true;
 }
@@ -723,7 +762,6 @@ bool UArmTimelineUMGWidget::RemoveCommandAt(int32 Index) {
   // Update the widget content
   bIconsCreated = false;
   UpdateWidgetContent();
-  UpdateCursorIndicator();
 
   return true;
 }
@@ -738,47 +776,23 @@ FArmInstr UArmTimelineUMGWidget::GetCommandAt(int32 Index) const {
 
 void UArmTimelineUMGWidget::MoveCursorLeft() {
   if (CursorPosition > 0) {
-    CursorPosition--;
-    UpdateCursorIndicator();
+    SetCursorPosition(CursorPosition - 1);
   }
 }
 
 void UArmTimelineUMGWidget::MoveCursorRight() {
   if (CursorPosition < ArmProgram.Num()) {
-    CursorPosition++;
-    UpdateCursorIndicator();
+    SetCursorPosition(CursorPosition + 1);
   } else {
-    CursorPosition = 0;
-    UpdateCursorIndicator();
+    SetCursorPosition(0);
   }
 }
 
 void UArmTimelineUMGWidget::SetCursorPosition(int32 Position) {
   CursorPosition = FMath::Clamp(Position, 0, ArmProgram.Num());
-  UpdateCursorIndicator();
-}
-
-int32 UArmTimelineUMGWidget::GetCursor() const { return CursorPosition; }
-
-void UArmTimelineUMGWidget::EnableEditingMode() {
-  bIsEditingMode = true;
-  UpdateCursorIndicator();
-}
-
-void UArmTimelineUMGWidget::DisableEditingMode() {
-  bIsEditingMode = false;
-  UpdateCursorIndicator();
-}
-
-void UArmTimelineUMGWidget::UpdateCursorIndicator() {
-  // Clamp cursor position to valid range
-  CursorPosition = FMath::Clamp(CursorPosition, 0, ArmProgram.Num());
 
   // Update scroll target to follow cursor
   UpdateScrollTarget();
-
-  // Apply visual position
-  SetCursorIndicatorPosition();
 
   // Refresh icon borders to show/move the selected command highlight
   UpdateCommandIcons();
@@ -788,30 +802,16 @@ void UArmTimelineUMGWidget::UpdateCursorIndicator() {
   OnCursorPositionChanged(CursorPosition);
 }
 
-void UArmTimelineUMGWidget::SetCursorIndicatorPosition() {
-  if (!CursorIndicator)
-    return;
+int32 UArmTimelineUMGWidget::GetCursor() const { return CursorPosition; }
 
-  // Position index relative to the CURRENTLY instantiated sliding window
-  // If StartIndex changed, icons will be recreated, but if we are just
-  // scrolling fractional, we use VisibleStartIndex as our anchor.
-  float RelativePos = (float)CursorPosition - (float)VisibleStartIndex;
+void UArmTimelineUMGWidget::EnableEditingMode() {
+  bIsEditingMode = true;
+  UpdateWidgetContent();
+}
 
-  // Base X position: Border Padding + (RelativeIndex * UnitWidth) - HalfSpacing
-  // We subtract half spacing because the cursor sits BETWEEN icons
-  float BaseX = CommandListLeftPadding + RelativePos * GetUnitWidth() -
-                (IconSpacing * 0.5f);
-
-  // Apply smooth scroll offset
-  float Fraction = CurrentScrollIndex - (float)VisibleStartIndex;
-  float ScrollShift = -Fraction * GetUnitWidth();
-
-  CursorIndicator->SetRenderTranslation(FVector2D(BaseX + ScrollShift, 0.0f));
-
-  // Show cursor only in editing mode
-  CursorIndicator->SetVisibility(bIsEditingMode
-                                     ? ESlateVisibility::SelfHitTestInvisible
-                                     : ESlateVisibility::Collapsed);
+void UArmTimelineUMGWidget::DisableEditingMode() {
+  bIsEditingMode = false;
+  UpdateWidgetContent();
 }
 
 void UArmTimelineUMGWidget::UpdateScrollTarget() {
@@ -845,10 +845,6 @@ void UArmTimelineUMGWidget::SetAssociatedArm(ABasicArm *Arm) {
 
   // Refresh content to show arm properties
   UpdateWidgetContent();
-}
-
-UBorder *UArmTimelineUMGWidget::GetCursorLine() const {
-  return Cast<UBorder>(CursorIndicator);
 }
 
 void UArmTimelineUMGWidget::TriggerImmediateReset() {
@@ -1031,12 +1027,12 @@ void UArmTimelineUMGWidget::CreateResetButton() {
   UTextBlock *ButtonText = NewObject<UTextBlock>(this);
   if (ButtonText) {
     ButtonText->SetText(FText::FromString(TEXT("Reset")));
-    ButtonText->SetColorAndOpacity(FLinearColor::White);
+    ButtonText->SetColorAndOpacity(LabelTextColor);
     ButtonText->SetJustification(ETextJustify::Center);
 
     // Set font size
     FSlateFontInfo FontInfo = ButtonText->GetFont();
-    FontInfo.Size = 18;
+    FontInfo.Size = LabelFontSize;
     ButtonText->SetFont(FontInfo);
 
     ResetButton->AddChild(ButtonText);
@@ -1053,7 +1049,7 @@ void UArmTimelineUMGWidget::CreateResetButton() {
     if (ButtonSlot) {
       ButtonSlot->SetHorizontalAlignment(HAlign_Center);
       ButtonSlot->SetVerticalAlignment(VAlign_Top);
-      ButtonSlot->SetPadding(FMargin(4.0f, 8.0f, 4.0f, 4.0f));
+      ButtonSlot->SetPadding(ResetButtonPadding);
 
       // Set button size
       ButtonSlot->SetSize(FSlateChildSize(ESlateSizeRule::Automatic));
@@ -1124,6 +1120,10 @@ void UArmTimelineUMGWidget::SyncProgramToArm() {
 
   AssociatedArm->SetProgram(ArmProgram, AssociatedArm->bLoopProgram);
 
+  // Force a pose refresh so the arm visibly resets to the start of the new
+  // program
+  AssociatedArm->RefreshPose(1.0f);
+
   UE_LOG(
       LogTemp, Log,
       TEXT("SyncProgramToArm: After SetProgram, arm Program has %d commands"),
@@ -1159,23 +1159,25 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
   const FTextBlockStyle &DefaultStyle =
       CoreStyle.GetWidgetStyle<FTextBlockStyle>("NormalText");
   LabelFont = DefaultStyle.Font;
-  LabelFont.Size = 16;
+  LabelFont.Size = LabelFontSize;
 
   // Reach Input
   UVerticalBox *ReachVBox = NewObject<UVerticalBox>(this);
   UTextBlock *ReachLabel = NewObject<UTextBlock>(this);
   ReachLabel->SetText(FText::FromString(TEXT("Start Reach")));
   ReachLabel->SetFont(LabelFont);
+  ReachLabel->SetColorAndOpacity(LabelTextColor);
   ReachVBox->AddChildToVerticalBox(ReachLabel);
 
   ReachInput = NewObject<UEditableTextBox>(this);
   ReachInput->SetToolTipText(FText::FromString(TEXT("Starting Reach (1-6)")));
+  ReachInput->WidgetStyle.BackgroundColor = FSlateColor(InputBackgroundColor);
   ReachInput->OnTextCommitted.AddDynamic(
       this, &UArmTimelineUMGWidget::OnReachCommitted);
 
   // Constrain width of input boxes
   USizeBox *ReachSizeBox = NewObject<USizeBox>(this);
-  ReachSizeBox->SetWidthOverride(100.0f);
+  ReachSizeBox->SetWidthOverride(InputBoxWidth);
   ReachSizeBox->SetHeightOverride(40.0f);
   ReachSizeBox->SetContent(ReachInput);
   ReachSizeBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
@@ -1200,17 +1202,20 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
   UTextBlock *RotationLabel = NewObject<UTextBlock>(this);
   RotationLabel->SetText(FText::FromString(TEXT("Start Rot")));
   RotationLabel->SetFont(LabelFont);
+  RotationLabel->SetColorAndOpacity(LabelTextColor);
   RotationVBox->AddChildToVerticalBox(RotationLabel);
 
   RotationInput = NewObject<UEditableTextBox>(this);
   RotationInput->SetToolTipText(
       FText::FromString(TEXT("Starting Rotation (0-5)")));
+  RotationInput->WidgetStyle.BackgroundColor =
+      FSlateColor(InputBackgroundColor);
   RotationInput->OnTextCommitted.AddDynamic(
       this, &UArmTimelineUMGWidget::OnRotationCommitted);
 
   // Constrain width of input boxes
   USizeBox *RotationSizeBox = NewObject<USizeBox>(this);
-  RotationSizeBox->SetWidthOverride(100.0f);
+  RotationSizeBox->SetWidthOverride(InputBoxWidth);
   RotationSizeBox->SetHeightOverride(40.0f);
   RotationSizeBox->SetContent(RotationInput);
   RotationSizeBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
@@ -1234,7 +1239,7 @@ void UArmTimelineUMGWidget::CreatePropertyInputs() {
   UVerticalBoxSlot *InputSlot =
       ParentVerticalBox->AddChildToVerticalBox(InputHBox);
   if (InputSlot) {
-    InputSlot->SetPadding(FMargin(12.0f, 12.0f, 12.0f, 16.0f));
+    InputSlot->SetPadding(PropertyInputPadding);
     InputSlot->SetHorizontalAlignment(HAlign_Center);
   }
 

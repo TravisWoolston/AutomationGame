@@ -457,6 +457,17 @@ void AGameManager::PostEditChangeProperty(
       UE_LOG(LogTemp, Log,
              TEXT("GameManager: MinimumReachDistance updated to %.2f"),
              MinimumReachDistance);
+    } else if (PropName.ToString().Contains(TEXT("Timeline")) ||
+               PropName ==
+                   GET_MEMBER_NAME_CHECKED(AGameManager, bShowArmTimelines) ||
+               PropName ==
+                   GET_MEMBER_NAME_CHECKED(AGameManager, CommandTextures) ||
+               PropName == GET_MEMBER_NAME_CHECKED(AGameManager,
+                                                   ArmTimelineWidgetClass)) {
+      UpdateAllArmTimelineWidgets();
+      UE_LOG(LogTemp, Log,
+             TEXT("GameManager: Arm Timeline settings updated - refreshed all "
+                  "arm widgets"));
     }
   }
 }

@@ -311,6 +311,11 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Program")
   void RebuildTapeFromProgram(); // runtime/editor safe manual push
 
+  /** Force a visual update of the arm's pose and hand position based on current
+   * state. */
+  UFUNCTION(BlueprintCallable, Category = "Visual")
+  void RefreshPose(float InAlpha = 1.0f);
+
   /** Update StartingReach and sync to sim/visuals */
   UFUNCTION(BlueprintCallable, Category = "Program")
   void SetStartingReach(int32 NewReach);
@@ -410,7 +415,6 @@ private:
   // Helpers
   void EnsureComps();
   void RefreshMeshes();
-  void RefreshPose(float InAlpha); // update transforms
   void
   UpdateBoneRotations(float InAlpha); // update skeletal mesh bone rotations
 
@@ -504,6 +508,7 @@ public:
 
   /** Timeline widget component for displaying command sequence (controlled by
    * GameManager) */
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Timeline")
   UArmTimelineWidget *TimelineWidget = nullptr;
 
   /** Whether to show the timeline widget (controlled by GameManager) */

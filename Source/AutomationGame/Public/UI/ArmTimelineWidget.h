@@ -5,8 +5,8 @@
 #include "Framework/GameTickManager.h"
 #include "Sim/ArmTypes.h"
 #include "UMG.h"
+//.generated.h must be last
 #include "ArmTimelineWidget.generated.h"
-
 class UUserWidget;
 class UTexture2D;
 
@@ -30,6 +30,11 @@ public:
   /** Handle simulation step events for performance optimization */
   UFUNCTION()
   void OnSimulationStep(float StepSeconds);
+
+#if WITH_EDITOR
+  virtual void
+  PostEditChangeProperty(FPropertyChangedEvent &PropertyChangedEvent) override;
+#endif
 
   /** Set the arm program to display */
   UFUNCTION(BlueprintCallable, Category = "Arm Timeline")

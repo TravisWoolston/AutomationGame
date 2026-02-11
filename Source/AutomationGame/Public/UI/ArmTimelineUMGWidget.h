@@ -7,6 +7,7 @@
 #include "CoreMinimal.h"
 #include "Sim/ArmTypes.h"
 #include "UMG.h"
+
 // .generated.h must be the last include
 #include "ArmTimelineUMGWidget.generated.h"
 
@@ -27,6 +28,7 @@ public:
   virtual void NativeDestruct() override;
   virtual void NativeTick(const FGeometry &MyGeometry,
                           float InDeltaTime) override;
+  virtual void SynchronizeProperties() override;
 
   /** Set the arm program to display */
   UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
@@ -89,6 +91,22 @@ public:
   /** Set the completed command color */
   UFUNCTION(BlueprintCallable, Category = "Arm Timeline")
   void SetCompletedCommandColor(const FLinearColor &CompletedColor);
+
+  /** Editor-only: Toggle cursor visibility for preview */
+  UFUNCTION(CallInEditor, Category = "Arm Timeline|Editor Preview")
+  void ToggleCursorPreview();
+
+  /** Editor-only: Insert a dummy command for preview */
+  UFUNCTION(CallInEditor, Category = "Arm Timeline|Editor Preview")
+  void InsertDummyCommand();
+
+  /** Editor-only: Move cursor left */
+  UFUNCTION(CallInEditor, Category = "Arm Timeline|Editor Preview")
+  void PreviewMoveCursorLeft();
+
+  /** Editor-only: Move cursor right */
+  UFUNCTION(CallInEditor, Category = "Arm Timeline|Editor Preview")
+  void PreviewMoveCursorRight();
 
 protected:
   /** Called when the widget is constructed */
@@ -159,11 +177,11 @@ public:
   FLinearColor NormalCommandColor = FLinearColor::White;
 
   /** Completed command color */
-  UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
   FLinearColor CompletedCommandColor = FLinearColor::Green;
 
   /** Border color for the command that would be deleted (selected) */
-  UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Arm Timeline")
   FLinearColor SelectedCommandColor = FLinearColor::Blue;
 
   /** Size of command icons */
@@ -197,6 +215,32 @@ public:
   /** Cached first visible index (used by sliding window) */
   UPROPERTY(BlueprintReadOnly, Category = "Arm Timeline")
   int32 VisibleStartIndex = 0;
+
+  /** --- Editor UI Customization --- */
+
+  /** Offset for the property input box (Reach/Rotation) relative to icons */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+  FMargin PropertyInputPadding = FMargin(12.0f, 12.0f, 12.0f, 16.0f);
+
+  /** Offset for the Reset button relative to icons */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+  FMargin ResetButtonPadding = FMargin(4.0f, 8.0f, 4.0f, 4.0f);
+
+  /** Color for property input text labels */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+  FLinearColor LabelTextColor = FLinearColor::White;
+
+  /** Font size for property input labels */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+  float LabelFontSize = 16.0f;
+
+  /** Background color for text input boxes */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+  FLinearColor InputBackgroundColor = FLinearColor(0.1f, 0.1f, 0.1f, 0.8f);
+
+  /** Width for text input boxes */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Timeline Editor")
+  float InputBoxWidth = 100.0f;
 
   /** Insert a command at the cursor position */
   UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
@@ -233,10 +277,6 @@ public:
   /** Disable editing mode */
   UFUNCTION(BlueprintCallable, Category = "Timeline Editor")
   void DisableEditingMode();
-
-  /** Get the cursor visual line widget */
-  UFUNCTION(BlueprintPure, Category = "Timeline Editor")
-  class UBorder *GetCursorLine() const;
 
   /** Width of one command cell (icon + spacing) for cursor math */
   UFUNCTION(BlueprintPure, Category = "Timeline Editor")
@@ -281,15 +321,6 @@ public:
   /** Horizontal box containing command icons */
   UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
   UHorizontalBox *CommandIconsBox = nullptr;
-
-  /** Cursor indicator widget (visual line showing where commands will be
-   * inserted) */
-  UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
-  UWidget *CursorIndicator = nullptr;
-
-  /** Horizontal box for cursor indicator */
-  UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
-  UHorizontalBox *CursorBox = nullptr;
 
   /** Reset button to immediately trigger reset command (created
    * programmatically) */
@@ -348,13 +379,6 @@ private:
 
   /** Update command icon widgets */
   void UpdateCommandIcons();
-
-  /** Update the cursor indicator position (including smooth scrolling offset)
-   */
-  void UpdateCursorIndicator();
-
-  /** Update the cursor indicator position */
-  void SetCursorIndicatorPosition();
 
   /** Create the reset button programmatically */
   void CreateResetButton();

@@ -49,6 +49,35 @@ void UArmTimelineWidget::BeginPlay() {
   InitializeWidget();
 }
 
+#if WITH_EDITOR
+void UArmTimelineWidget::PostEditChangeProperty(
+    FPropertyChangedEvent &PropertyChangedEvent) {
+  Super::PostEditChangeProperty(PropertyChangedEvent);
+
+  if (PropertyChangedEvent.Property) {
+    const FName PropName = PropertyChangedEvent.Property->GetFName();
+    if (PropName ==
+        GET_MEMBER_NAME_CHECKED(UArmTimelineWidget, bTimelineVisible)) {
+      SetTimelineWidgetVisible(bTimelineVisible);
+    } else if (PropName ==
+               GET_MEMBER_NAME_CHECKED(UArmTimelineWidget, TimelineScale)) {
+      SetTimelineScale(TimelineScale);
+    } else if (PropName ==
+               GET_MEMBER_NAME_CHECKED(UArmTimelineWidget, TimelineOffset)) {
+      SetTimelineOffset(TimelineOffset);
+    } else if (PropName == GET_MEMBER_NAME_CHECKED(UArmTimelineWidget,
+                                                   TimelineWidgetClass)) {
+      SetTimelineWidgetClass(TimelineWidgetClass);
+    } else if (PropName ==
+                   GET_MEMBER_NAME_CHECKED(UArmTimelineWidget, IconSize) ||
+               PropName == GET_MEMBER_NAME_CHECKED(UArmTimelineWidget,
+                                                   MaxDisplayedCommands)) {
+      UpdateWidgetContent();
+    }
+  }
+}
+#endif
+
 void UArmTimelineWidget::TickComponent(
     float DeltaTime, ELevelTick TickType,
     FActorComponentTickFunction *ThisTickFunction) {

@@ -89,6 +89,13 @@ void ABasicArm::OnConstruction(const FTransform &Transform) {
 
   EffectiveReachStart = EffectiveReachEnd = ComputeEffectiveReach(ReachTiles);
   LastExtensionSegmentMultiplier = ExtensionSegmentMultiplier;
+
+#if WITH_EDITOR
+  // Initialize timeline for editor preview
+  if (!GetWorld()->IsGameWorld()) {
+    InitializeTimelineWidget();
+  }
+#endif
 }
 
 void ABasicArm::BeginPlay() {
@@ -1082,8 +1089,9 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent &Event) {
 
   if (HasAnyFlags(RF_ClassDefaultObject))
     return;
-  if (!GIsPlayInEditorWorld)
-    return; // only care while PIE is running
+
+  // We care about changes in the editor even if PIE is not running
+  // so the user can see an "editable preview" of the timeline
 
   const FName PropName =
       Event.Property ? Event.Property->GetFName() : NAME_None;
@@ -1126,6 +1134,7 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent &Event) {
         LogAGArm, Verbose,
         TEXT("Arm '%s': Program edit -> tape rebuilt (Len=%d ChangeType=%d)"),
         *GetName(), Program.Num(), (int32)Event.ChangeType);
+    RefreshPose(1.f);
   } else if (bLoopChanged) {
     // If Sim supports a loop flag, set it here (pseudo:
     // Sim->Arms[SimArmIndex].bLoop = bLoopProgram).
@@ -1140,6 +1149,7 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent &Event) {
   } else if (bReachOrFacingChanged) {
     CurrYawDeg = DirToYaw(FacingDir);
     PushRuntimePropertiesToSim();
+    RefreshPose(1.f);
   } else if (bStartingRotationChanged || bStartingReachChanged) {
     // When starting values change, immediately update current values and
     // restart program
@@ -1179,7 +1189,7 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent &Event) {
     }
   }
 
-  if (GIsPlayInEditorWorld && GripPivotComp) {
+  if (GripPivotComp) {
     // PropName = Event.Property ? Event.Property->GetFName() : NAME_None;
     if (PropName ==
             GET_MEMBER_NAME_CHECKED(ABasicArm, GripPivotLocalRotation) ||
@@ -1189,6 +1199,9 @@ void ABasicArm::PostEditChangeProperty(FPropertyChangedEvent &Event) {
       GripPivotComp->SetRelativeLocation(ComputeGripLocalOffset());
       GripPivotComp->SetRelativeRotation(GripPivotLocalRotation);
     }
+
+    // Always update timeline widget visual in editor
+    UpdateTimelineWidget();
   }
 }
 #endif
@@ -1241,8 +1254,8 @@ void ABasicArm::ApplyRotateSteps(int32 StepsSigned) {
 
 FHex ABasicArm::DirStep(uint8 Dir) const {
   const uint8 D = Dir % 6;
-  // Pointy-top neighbors (q,r): E(1,0), NE(1,-1), NW(0,-1), W(-1,0), SW(-1,1),
-  // SE(0,1)
+  // Pointy-top neighbors (q,r): E(1,0), NE(1,-1), NW(0,-1), W(-1,0),
+  // SW(-1,1), SE(0,1)
   static const FHex Pointy[6] = {FHex(1, 0),  FHex(1, -1), FHex(0, -1),
                                  FHex(-1, 0), FHex(-1, 1), FHex(0, 1)};
   // Flat-top (only used if you switch orientation)
@@ -1273,7 +1286,8 @@ void ABasicArm::ExpandResetAtPC() {
     Expansion.Add({EArmCmd::Drop, 0});
   }
 
-  // Handle reach reset: calculate difference between current and starting reach
+  // Handle reach reset: calculate difference between current and starting
+  // reach
   const int32 CurrentReach = ReachTiles;
   const int32 TargetReach = FMath::Clamp(StartingReach, 1, 6);
   const int32 ReachDiff = TargetReach - CurrentReach;
@@ -1384,10 +1398,10 @@ void ABasicArm::ShowHeldOrb(bool bShow) {
     // HeldOrbComp->SetVisibility(true, true);
   } else {
     if (bShow) {
-      UE_LOG(
-          LogAGArm, Warning,
-          TEXT("Arm '%s': Tried to show held orb, but HeldOrb.Orbs.Num() == 0"),
-          *GetName());
+      UE_LOG(LogAGArm, Warning,
+             TEXT("Arm '%s': Tried to show held orb, but HeldOrb.Orbs.Num() "
+                  "== 0"),
+             *GetName());
     }
     HeldOrbComp->DetachFromComponent(
         FDetachmentTransformRules::KeepWorldTransform);
@@ -1652,8 +1666,8 @@ void ABasicArm::AttachHeldOrb() {
       HeldOrbComp->SetRelativeRotation(
           FRotator(0.f, HeldClusterFacingEndDeg, 0.f));
     } else {
-      // We're in the middle of a rotation and cluster composition changed (bond
-      // formed) Preserve the current interpolated angle
+      // We're in the middle of a rotation and cluster composition changed
+      // (bond formed) Preserve the current interpolated angle
       const float CurrentAngle =
           NormDeg(HeldClusterFacingStartDeg +
                   FMath::FindDeltaAngleDegrees(HeldClusterFacingStartDeg,
@@ -1800,8 +1814,8 @@ void ABasicArm::UpdateHeldClusterOnly() {
     return;
   }
 
-  // Only update the held orb data and visual, don't touch orientation or other
-  // state
+  // Only update the held orb data and visual, don't touch orientation or
+  // other state
   const FArmState &SimState = Sim->Arms[SimArmIndex];
 
   // Update holding state and item payload only
@@ -1814,7 +1828,8 @@ void ABasicArm::UpdateHeldClusterOnly() {
     HeldOrb = FItem();
   }
 
-  // Only update visual if holding state changed or cluster composition changed
+  // Only update visual if holding state changed or cluster composition
+  // changed
   const int32 NewOrbCount = bHolding ? HeldOrb.Orbs.Num() : 0;
   const bool bClusterChanged = (NewOrbCount != LastHeldOrbCount);
 
@@ -1849,7 +1864,8 @@ void ABasicArm::UpdateHeldClusterTransforms(float InAlpha) {
   const float DeltaDeg = FMath::FindDeltaAngleDegrees(StartDeg, EndDeg);
   const float ClusterYawDeg = NormDeg(StartDeg + DeltaDeg * InAlpha);
 
-  // Apply as a local rotation on the held container so the whole cluster spins
+  // Apply as a local rotation on the held container so the whole cluster
+  // spins
   if (HeldOrbComp) {
     HeldOrbComp->SetRelativeRotation(FRotator(0.f, ClusterYawDeg, 0.f));
   }
@@ -2049,7 +2065,8 @@ void ABasicArm::InitializeTimelineWidget() {
   }
 
   // Set up the timeline widget
-  // Get program from simulation state if available, otherwise use local Program
+  // Get program from simulation state if available, otherwise use local
+  // Program
   TArray<FArmInstr> ProgramToUse = Program;
   if (Sim && SimArmIndex >= 0 && SimArmIndex < Sim->Arms.Num()) {
     const FArmState &SimState = Sim->Arms[SimArmIndex];
@@ -2229,7 +2246,8 @@ void ABasicArm::UpdateTimelineWidget() {
 
   TimelineWidget->SetCurrentCommand(CurrentCommandIndex, CommandProgress);
 
-  // Update position to ensure widgets stay with arms (in case of any movement)
+  // Update position to ensure widgets stay with arms (in case of any
+  // movement)
   FVector ArmWorldPosition = GetArmWorldPosition();
   TimelineWidget->UpdateWidgetPosition(ArmWorldPosition, GetActorRotation());
 }
