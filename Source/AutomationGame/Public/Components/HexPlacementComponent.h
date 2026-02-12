@@ -33,7 +33,8 @@ enum class EPlaceKind : uint8 {
   TriggerTile,   // place a TriggerTile (sends signals based on orb presence)
   ClusterSend,   // place a ClusterSend tile
   HelixOutput, // place a HelixOutput tile (clusters spiral upward in DNA helix)
-  HelixInput // place a HelixInput tile paired to an existing HelixOutput group
+  HelixInput, // place a HelixInput tile paired to an existing HelixOutput group
+  GatherScatter // place a GatherScatter beacon pair (Gather + Scatter)
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of
@@ -355,4 +356,32 @@ public:
 
   /** Check if all HelixInput tiles can be placed at given center */
   bool CanPlaceHelixInputSetAt(const FHex &Center) const;
+
+  // GatherScatter beacon placement state
+  UPROPERTY(Transient)
+  int32 GatherScatterPlacementStep = 0; // 0 = Gather, 1 = Gather Radius Drag, 2
+                                        // = Scatter, 3 = Scatter Radius Drag
+
+  UPROPERTY(Transient)
+  ARequestBeacon *PendingGatherBeacon = nullptr;
+
+  UPROPERTY(Transient)
+  ARequestBeacon *PendingScatterBeacon = nullptr;
+
+  UPROPERTY(Transient)
+  int32 GatherScatterRadius = 10; // Current radius being configured
+
+  // Mouse position when Place was pressed (for radius drag)
+  float GatherRadiusDragOriginX = 0.f;
+  int32 GatherRadiusDragStartRadius = 10;
+  bool bGatherRadiusDragging = false;
+
+  // Orb type index for GatherScatter filter (cycles through valid orb types)
+  UPROPERTY(EditAnywhere, Category = "GatherScatter",
+            meta = (ClampMin = "0", ClampMax = "6"))
+  int32 CurrentGatherOrbTypeIndex = 0;
+
+  /** Get the current orb type for GatherScatter filter */
+  UFUNCTION(BlueprintPure, Category = "Place|GatherScatter")
+  EOrbType GetCurrentGatherOrbType() const;
 };

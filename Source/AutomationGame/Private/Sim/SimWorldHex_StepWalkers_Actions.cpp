@@ -558,3 +558,343 @@ bool USimWorldHex::TryWalkerDropOff(
   }
   return false;
 }
+
+// ===== GATHER (PickupSingles) =====
+// Collects unbonded single orbs of a specific type from within the Gather
+// beacon's radius
+void USimWorldHex::TryWalkerGather(
+    FWalkerState &W, FFootState &Foot, int32 WalkerIndex, int32 FootIndex,
+    const TMap<FHex, ARequestBeacon *> &BeaconCache,
+    const TArray<FFootState *> &AllFeet) {
+  // Find the Gather beacon at current target
+  ARequestBeacon *GatherBeacon = nullptr;
+  if (ARequestBeacon *const *BeaconPtr = BeaconCache.Find(Foot.CurrentTile)) {
+    if ((*BeaconPtr)->BeaconRole == EBeaconRole::Gather &&
+        (*BeaconPtr)->BeaconState == EBeaconState::InProgress) {
+      GatherBeacon = *BeaconPtr;
+    }
+  }
+  // Also check current target hex if foot is on adjacent tile
+  if (!GatherBeacon) {
+    if (ARequestBeacon *const *BeaconPtr =
+            BeaconCache.Find(W.CurrentTargetHex)) {
+      if ((*BeaconPtr)->BeaconRole == EBeaconRole::Gather &&
+          (*BeaconPtr)->BeaconState == EBeaconState::InProgress) {
+        GatherBeacon = *BeaconPtr;
+      }
+    }
+  }
+
+  if (!GatherBeacon)
+    return;
+
+  // Check that no other foot is already holding
+  for (int32 i = 0; i < AllFeet.Num(); ++i) {
+    if (i != FootIndex && AllFeet[i]->bHoldingItem) {
+      return;
+    }
+  }
+
+  FHex Center(GatherBeacon->Q, GatherBeacon->R, GatherBeacon->Level);
+  int32 MaxCount = GatherBeacon->MaxGatherCount;
+  uint8 FilterType = GatherBeacon->FilterOrbType;
+  int32 SearchRadius = GatherBeacon->Radius;
+
+  // Collect qualifying orbs
+  TArray<FHex> OrbHexes;
+  for (int32 q = -SearchRadius; q <= SearchRadius; ++q) {
+    for (int32 r = -SearchRadius; r <= SearchRadius; ++r) {
+      FHex TestHex(Center.Q + q, Center.R + r, Center.Level);
+      int32 dist = HexUtil::Dist(Center, TestHex);
+      if (dist == 0 || dist > SearchRadius)
+        continue;
+
+      if (const FItem *Item = ItemMap.Find(TestHex)) {
+        if (Item->Id == 0)
+          continue;
+        if (Item->bIsCluster)
+          continue;
+        if (Item->bIsLocked)
+          continue;
+        if (FilterType > 0 && (uint8)Item->Single.Type != FilterType)
+          continue;
+
+        // Check unbonded
+        if (IsItemBonded(Item->Id))
+          continue;
+
+        OrbHexes.Add(TestHex);
+        if (OrbHexes.Num() >= MaxCount)
+          break;
+      }
+    }
+    if (OrbHexes.Num() >= MaxCount)
+      break;
+  }
+
+  if (OrbHexes.Num() == 0) {
+    UE_LOG(LogTemp, Warning,
+           TEXT("Walker %d: Gather at (%d,%d) - no qualifying orbs found"),
+           WalkerIndex, Center.Q, Center.R);
+    // Set beacon back to NotReady and cancel request
+    GatherBeacon->SetState(EBeaconState::NotReady);
+    if (W.Requests.Num() > 0)
+      W.Requests.RemoveAt(0);
+    W.bProcessingRequest = false;
+    W.CurrentTargetHex = W.BaseHex;
+    return;
+  }
+
+  // Pick up all qualifying orbs
+  Foot.GatheredOrbs.Empty();
+  Foot.bGathering = true;
+  Foot.ScatterDroppedCount = 0;
+
+  for (const FHex &OrbHex : OrbHexes) {
+    FItem TakenItem;
+    if (TryTakeItem(OrbHex, TakenItem)) {
+      Foot.GatheredOrbs.Add(TakenItem);
+    }
+  }
+
+  if (Foot.GatheredOrbs.Num() == 0) {
+    UE_LOG(LogTemp, Warning,
+           TEXT("Walker %d: Gather at (%d,%d) - failed to take any orbs"),
+           WalkerIndex, Center.Q, Center.R);
+    Foot.bGathering = false;
+    GatherBeacon->SetState(EBeaconState::NotReady);
+    if (W.Requests.Num() > 0)
+      W.Requests.RemoveAt(0);
+    W.bProcessingRequest = false;
+    W.CurrentTargetHex = W.BaseHex;
+    return;
+  }
+
+  // Mark as holding
+  Foot.bHoldingItem = true;
+  Foot.HeldItem = Foot.GatheredOrbs[0]; // Primary held item for visual purposes
+  Foot.CurrentTile = Foot.TargetTile;
+  Foot.TargetTile = Foot.CurrentTile;
+  Foot.StepState = EFootStepState::Planted;
+  Foot.StepProgress = 0;
+  Foot.HeightOffset = W.StepHeight;
+
+  // Track source beacon
+  Foot.SourcePickUpHex = Center;
+  Foot.bHasSourcePickUp = true;
+
+  UE_LOG(LogTemp, Log,
+         TEXT("Walker %d: Gathered %d orbs from radius %d around (%d,%d)"),
+         WalkerIndex, Foot.GatheredOrbs.Num(), SearchRadius, Center.Q,
+         Center.R);
+
+  // Set up drop-off at paired Scatter beacon
+  if (GatherBeacon->PairedBeacon) {
+    FHex ScatterHex(GatherBeacon->PairedBeacon->Q,
+                    GatherBeacon->PairedBeacon->R,
+                    GatherBeacon->PairedBeacon->Level);
+    Foot.DesignatedDropOffHex = ScatterHex;
+    Foot.bHasDesignatedDropOff = true;
+
+    // Calculate body target (same logic as standard drop-off)
+    FString Quad;
+    switch (FootIndex) {
+    case 0:
+      Quad = TEXT("S");
+      break;
+    case 1:
+      Quad = TEXT("W");
+      break;
+    case 2:
+      Quad = TEXT("E");
+      break;
+    case 3:
+      Quad = TEXT("N");
+      break;
+    }
+    int32 ReachDist = W.ReachDistance;
+    FHex WalkerTarget = GetQuadrantCenterHex(ScatterHex, FootIndex, ReachDist,
+                                             1.0f, W.QuadrantRotationOffset);
+
+    W.Requests.Empty();
+    FWalkerRequest ScatterReq;
+    ScatterReq.TargetHex = WalkerTarget;
+    ScatterReq.Priority = 2000;
+    W.Requests.Add(ScatterReq);
+
+    // Mark scatter beacon InProgress
+    GatherBeacon->PairedBeacon->SetState(EBeaconState::InProgress);
+
+    UE_LOG(LogTemp, Log,
+           TEXT("Walker %d: Moving to Scatter beacon at (%d,%d), body target "
+                "(%d,%d)"),
+           WalkerIndex, ScatterHex.Q, ScatterHex.R, WalkerTarget.Q,
+           WalkerTarget.R);
+  } else {
+    UE_LOG(LogTemp, Error,
+           TEXT("Walker %d: Gather beacon at (%d,%d) has no paired Scatter "
+                "beacon!"),
+           WalkerIndex, Center.Q, Center.R);
+    if (W.Requests.Num() > 0)
+      W.Requests.RemoveAt(0);
+  }
+
+  W.bProcessingRequest = false;
+  W.CurrentTargetHex = W.BaseHex;
+}
+
+// ===== SCATTER (DropoffSingles) =====
+// Places gathered orbs one at a time onto separate empty tiles within the
+// Scatter beacon's radius
+bool USimWorldHex::TryWalkerScatter(
+    FWalkerState &W, FFootState &Foot, int32 WalkerIndex, int32 FootIndex,
+    const TSet<FHex> &HeldOrbHexes, const TSet<FHex> &ArmBaseHexes,
+    const TSet<FHex> &HoldingFootHexes,
+    const TMap<FHex, ARequestBeacon *> &BeaconCache) {
+  if (!Foot.bHoldingItem || !Foot.bGathering || Foot.GatheredOrbs.Num() == 0)
+    return false;
+  if (!Foot.bHasDesignatedDropOff)
+    return false;
+
+  // Find the Scatter beacon
+  ARequestBeacon *ScatterBeacon = nullptr;
+  if (ARequestBeacon *const *BeaconPtr =
+          BeaconCache.Find(Foot.DesignatedDropOffHex)) {
+    if ((*BeaconPtr)->BeaconRole == EBeaconRole::Scatter) {
+      ScatterBeacon = *BeaconPtr;
+    }
+  }
+
+  if (!ScatterBeacon) {
+    UE_LOG(LogTemp, Error,
+           TEXT("Walker %d: No Scatter beacon found at designated (%d,%d)"),
+           WalkerIndex, Foot.DesignatedDropOffHex.Q,
+           Foot.DesignatedDropOffHex.R);
+    return false;
+  }
+
+  // Check if walker body is in range of scatter beacon
+  FHex DropOffCenter = Foot.DesignatedDropOffHex;
+  int32 BodyToScatterDist = HexUtil::Dist(W.BaseHex, DropOffCenter);
+  bool bBodyInRange =
+      BodyToScatterDist <= W.ReachDistance + ScatterBeacon->Radius;
+
+  if (!bBodyInRange) {
+    // Need to reposition body closer to scatter beacon
+    FHex BodyTarget =
+        GetQuadrantCenterHex(DropOffCenter, FootIndex, W.ReachDistance, 1.0f,
+                             W.QuadrantRotationOffset);
+    if (W.BaseHex != BodyTarget) {
+      if (W.Requests.Num() == 0 ||
+          (W.Requests.Num() > 0 && W.Requests[0].TargetHex != BodyTarget)) {
+        W.Requests.Empty();
+        FWalkerRequest MoveReq;
+        MoveReq.TargetHex = BodyTarget;
+        MoveReq.Priority = 2000;
+        W.Requests.Add(MoveReq);
+        W.CurrentTargetHex = BodyTarget;
+        W.bProcessingRequest = true;
+      }
+    }
+    return true; // Allow step to complete so we can reposition
+  }
+
+  // Ready to place an orb! Find an empty tile within the Scatter beacon's
+  // radius
+  int32 ScatterRadius = ScatterBeacon->Radius;
+  FHex ScatterCenter(ScatterBeacon->Q, ScatterBeacon->R, ScatterBeacon->Level);
+
+  FHex PlacementHex = FHex(0, 0, -999); // sentinel
+  int32 BestDist = MAX_int32;
+
+  // Search for closest empty tile to the foot's current position within Scatter
+  // radius
+  for (int32 q = -ScatterRadius; q <= ScatterRadius; ++q) {
+    for (int32 r = -ScatterRadius; r <= ScatterRadius; ++r) {
+      FHex TestHex(ScatterCenter.Q + q, ScatterCenter.R + r,
+                   ScatterCenter.Level);
+      int32 dist = HexUtil::Dist(ScatterCenter, TestHex);
+      if (dist == 0 || dist > ScatterRadius)
+        continue;
+
+      // Must be empty
+      if (ItemMap.Contains(TestHex))
+        continue;
+      // Not occupied by arm base
+      if (ArmBaseHexes.Contains(TestHex))
+        continue;
+      // Not occupied by another holding foot
+      if (HoldingFootHexes.Contains(TestHex))
+        continue;
+
+      // Prefer tiles closer to foot position
+      int32 footDist = HexUtil::Dist(Foot.CurrentTile, TestHex);
+      if (footDist < BestDist) {
+        BestDist = footDist;
+        PlacementHex = TestHex;
+      }
+    }
+  }
+
+  if (PlacementHex.Level == -999) {
+    UE_LOG(
+        LogTemp, Warning,
+        TEXT("Walker %d: Scatter - no empty tiles in radius %d around (%d,%d)"),
+        WalkerIndex, ScatterRadius, ScatterCenter.Q, ScatterCenter.R);
+    return true; // Stay in current state, will retry next tick
+  }
+
+  // Place one orb
+  FItem OrbToPlace = Foot.GatheredOrbs[0];
+  OrbToPlace.Id = NextItemId++;
+  OrbToPlace.LocationUpdatedThisTick = false;
+  OrbToPlace.bIsLocked = false;
+  OrbToPlace.bIsReady = true;
+
+  bool bPlaced = TryPutItem(PlacementHex, OrbToPlace);
+  if (bPlaced) {
+    Foot.GatheredOrbs.RemoveAt(0);
+    Foot.ScatterDroppedCount++;
+
+    UE_LOG(
+        LogTemp, Log, TEXT("Walker %d: Scattered orb at (%d,%d), %d remaining"),
+        WalkerIndex, PlacementHex.Q, PlacementHex.R, Foot.GatheredOrbs.Num());
+
+    if (Foot.GatheredOrbs.Num() == 0) {
+      // All orbs scattered! Reset everything
+      Foot.bHoldingItem = false;
+      Foot.bGathering = false;
+      Foot.bHasDesignatedDropOff = false;
+      Foot.bHasSourcePickUp = false;
+      Foot.HeldItem = FItem();
+      Foot.ScatterDroppedCount = 0;
+      ScatterBeacon->SetState(EBeaconState::NotReady);
+
+      // Also set the paired Gather beacon to NotReady
+      if (ScatterBeacon->PairedBeacon) {
+        ScatterBeacon->PairedBeacon->SetState(EBeaconState::NotReady);
+      }
+
+      Foot.CurrentTile = Foot.TargetTile;
+      Foot.StepState = EFootStepState::Lowering;
+      Foot.StepProgress = 0;
+
+      if (W.Requests.Num() > 0)
+        W.Requests.RemoveAt(0);
+      W.bProcessingRequest = false;
+      W.CurrentTargetHex = W.BaseHex;
+
+      UE_LOG(LogTemp, Log,
+             TEXT("Walker %d: Scatter complete! All %d orbs placed."),
+             WalkerIndex, Foot.ScatterDroppedCount);
+      return true;
+    } else {
+      // More orbs to scatter — keep the foot in place for next tick
+      // Update HeldItem to reflect current primary orb for visuals
+      Foot.HeldItem = Foot.GatheredOrbs[0];
+      return true;
+    }
+  }
+
+  return true; // Keep trying
+}

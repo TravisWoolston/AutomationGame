@@ -579,6 +579,15 @@ private:
                         const TSet<FHex> &ArmBaseHexes,
                         const TSet<FHex> &HoldingFootHexes,
                         const TMap<FHex, ARequestBeacon *> &BeaconCache);
+  void TryWalkerGather(FWalkerState &W, FFootState &Foot, int32 WalkerIndex,
+                       int32 FootIndex,
+                       const TMap<FHex, ARequestBeacon *> &BeaconCache,
+                       const TArray<FFootState *> &AllFeet);
+  bool TryWalkerScatter(FWalkerState &W, FFootState &Foot, int32 WalkerIndex,
+                        int32 FootIndex, const TSet<FHex> &HeldOrbHexes,
+                        const TSet<FHex> &ArmBaseHexes,
+                        const TSet<FHex> &HoldingFootHexes,
+                        const TMap<FHex, ARequestBeacon *> &BeaconCache);
   void UpdateWalkerBodyPosition(struct FWalkerState &W, int32 WalkerIndex);
   void ProcessWalkerInstructions(struct FWalkerState &W, int32 WalkerIndex);
 

@@ -254,6 +254,8 @@ private:
   UFUNCTION(BlueprintCallable, Category = "Input")
   void SetInputMode13(); // HelixOutput placement
   UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode14(); // GatherScatter placement
+  UFUNCTION(BlueprintCallable, Category = "Input")
   void SwitchGrid();
   void RotCW() {
     if (bBlueprintPlacementMode && BlueprintTiles.Num() > 0) {

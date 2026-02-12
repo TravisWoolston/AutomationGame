@@ -5,127 +5,136 @@
 #include "RequestBeacon.generated.h"
 
 UENUM(BlueprintType)
-enum class EBeaconType : uint8
-{
-	Relocate,
-	// Add more types here as needed
+enum class EBeaconType : uint8 {
+  Relocate,
+  GatherScatter, // Gather unbonded singles of a specific type, scatter them at
+                 // drop-off
 };
 
 UENUM(BlueprintType)
-enum class EBeaconState : uint8
-{
-	Ready,
-	InProgress,
-	NotReady
-};
+enum class EBeaconState : uint8 { Ready, InProgress, NotReady };
 
 UENUM(BlueprintType)
-enum class EBeaconRole : uint8
-{
-	None,
-	PickUp,
-	DropOff
+enum class EBeaconRole : uint8 {
+  None,
+  PickUp,
+  DropOff,
+  Gather, // Gather unbonded singles within radius
+  Scatter // Scatter held singles within radius
 };
 
 // Grid visibility delegate
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGridVisibilityChanged, bool, bIsVisible);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnGridVisibilityChanged, bool,
+                                            bIsVisible);
 
 // State change delegate
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStateChanged, EBeaconState, NewState);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStateChanged, EBeaconState,
+                                            NewState);
 
 UCLASS()
-class AUTOMATIONGAME_API ARequestBeacon : public AActor
-{
-	GENERATED_BODY()
+class AUTOMATIONGAME_API ARequestBeacon : public AActor {
+  GENERATED_BODY()
 
 public:
-	ARequestBeacon();
+  ARequestBeacon();
 
 protected:
-	virtual void BeginPlay() override;
-	virtual void OnConstruction(const FTransform& Transform) override;
+  virtual void BeginPlay() override;
+  virtual void OnConstruction(const FTransform &Transform) override;
 
 public:
-	// Components
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	class USceneComponent* RootComp;
+  // Components
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+  class USceneComponent *RootComp;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	class UStaticMeshComponent* MeshComp;
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+  class UStaticMeshComponent *MeshComp;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-	class UDecalComponent* DecalComp;
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+  class UDecalComponent *DecalComp;
 
-	// Properties
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon")
-	EBeaconType BeaconType = EBeaconType::Relocate;
+  // Properties
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon")
+  EBeaconType BeaconType = EBeaconType::Relocate;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon")
-	EBeaconState BeaconState = EBeaconState::NotReady;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon")
+  EBeaconState BeaconState = EBeaconState::NotReady;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon")
-	EBeaconRole BeaconRole = EBeaconRole::None;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon")
+  EBeaconRole BeaconRole = EBeaconRole::None;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon")
-	ARequestBeacon* PairedBeacon;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon")
+  ARequestBeacon *PairedBeacon;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
-	int32 Q = 0;
+  // Gather/Scatter specific: orb type filter (EOrbType cast to uint8)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon|GatherScatter")
+  uint8 FilterOrbType = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
-	int32 R = 0;
+  // Gather/Scatter specific: radius of influence (in hex tiles)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon|GatherScatter")
+  int32 Radius = 10;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
-	int32 Level = 0;
+  // Gather/Scatter specific: max orbs a walker can carry per trip
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Beacon|GatherScatter")
+  int32 MaxGatherCount = 10;
 
-	UPROPERTY(BlueprintAssignable, Category = "Beacon")
-	FOnGridVisibilityChanged OnGridVisibilityChanged;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+  int32 Q = 0;
 
-	UPROPERTY(BlueprintAssignable, Category = "Beacon")
-	FOnStateChanged OnStateChanged;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+  int32 R = 0;
 
-	// Grid visibility getter
-	UFUNCTION(BlueprintPure, Category = "Beacon")
-	bool GetIsGridVisible() const { return IsGridVisible; }
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid")
+  int32 Level = 0;
 
-	// Grid visibility setter (fires delegate)
-	UFUNCTION(BlueprintCallable, Category = "Beacon")
-	void SetIsGridVisible(bool bVisible);
+  UPROPERTY(BlueprintAssignable, Category = "Beacon")
+  FOnGridVisibilityChanged OnGridVisibilityChanged;
 
-	// Sync world location from Q, R, Level using Driver
-	UFUNCTION(BlueprintCallable, Category = "Grid")
-	void SyncWorldLocation();
+  UPROPERTY(BlueprintAssignable, Category = "Beacon")
+  FOnStateChanged OnStateChanged;
 
-	// Visuals
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UMaterialInterface* ReadyMaterial;
+  // Grid visibility getter
+  UFUNCTION(BlueprintPure, Category = "Beacon")
+  bool GetIsGridVisible() const { return IsGridVisible; }
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UMaterialInterface* InProgressMaterial;
+  // Grid visibility setter (fires delegate)
+  UFUNCTION(BlueprintCallable, Category = "Beacon")
+  void SetIsGridVisible(bool bVisible);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UMaterialInterface* NotReadyMaterial;
+  // Sync world location from Q, R, Level using Driver
+  UFUNCTION(BlueprintCallable, Category = "Grid")
+  void SyncWorldLocation();
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UMaterialInterface* PickupDecalMaterial;
+  // Visuals
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UMaterialInterface *ReadyMaterial;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-	UMaterialInterface* DropOffDecalMaterial;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UMaterialInterface *InProgressMaterial;
 
-	// Functions
-	UFUNCTION(BlueprintCallable, Category = "Beacon")
-	void SetState(EBeaconState NewState);
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UMaterialInterface *NotReadyMaterial;
 
-	UFUNCTION(BlueprintCallable, Category = "Beacon")
-	void UpdateVisuals();
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UMaterialInterface *PickupDecalMaterial;
 
-	// Handle destruction to remove paired beacon
-	virtual void Destroyed() override;
-	virtual void Tick(float DeltaTime) override;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
+  UMaterialInterface *DropOffDecalMaterial;
+
+  // Functions
+  UFUNCTION(BlueprintCallable, Category = "Beacon")
+  void SetState(EBeaconState NewState);
+
+  UFUNCTION(BlueprintCallable, Category = "Beacon")
+  void UpdateVisuals();
+
+  // Handle destruction to remove paired beacon
+  virtual void Destroyed() override;
+  virtual void Tick(float DeltaTime) override;
 
 private:
-	void CheckReadiness();
-	class AOrbSimDriver* Driver = nullptr;
-	class USimWorldHex* Sim = nullptr;
-	bool IsGridVisible = true;
+  void CheckReadiness();
+  class AOrbSimDriver *Driver = nullptr;
+  class USimWorldHex *Sim = nullptr;
+  bool IsGridVisible = true;
 };

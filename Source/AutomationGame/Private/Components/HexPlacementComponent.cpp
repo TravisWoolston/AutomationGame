@@ -465,6 +465,132 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
     }
     return;
   }
+  case EPlaceKind::GatherScatter: {
+    // Find GameManager
+    AGameManager *GM = nullptr;
+    for (TActorIterator<AGameManager> It(GetWorld()); It; ++It) {
+      GM = *It;
+      break;
+    }
+
+    if (!GM) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("HexPlacementComponent: cannot spawn GatherScatter Beacon "
+                  "(no GameManager)."));
+      return;
+    }
+
+    // Calculate rotation to match grid orientation
+    FRotator BeaconRotation = FRotator::ZeroRotator;
+    if (Driver) {
+      BeaconRotation.Yaw = Driver->GetGridYaw();
+      if (Driver->GetGridOrientation() == EHexOrientation::FlatTop) {
+        BeaconRotation.Yaw += 30.f;
+      }
+    }
+
+    if (GatherScatterPlacementStep == 0) // Gather Beacon
+    {
+      // Check no arm at location
+      bool bHasArmAtLoc = false;
+      if (Sim) {
+        for (const FArmState &ArmState : Sim->Arms) {
+          if (ArmState.BaseHex.Q == A.Q && ArmState.BaseHex.R == A.R) {
+            bHasArmAtLoc = true;
+            break;
+          }
+        }
+      }
+      if (bHasArmAtLoc) {
+        UE_LOG(LogTemp, Warning,
+               TEXT("HexPlacementComponent: Cannot place Gather Beacon - arm "
+                    "present."));
+        return;
+      }
+
+      // Spawn Gather Beacon
+      UClass *BeaconClass = GM->RequestBeaconClass
+                                ? GM->RequestBeaconClass.Get()
+                                : ARequestBeacon::StaticClass();
+      FVector CenteredLocation = HexToWorld(Root);
+      ARequestBeacon *Beacon = GetWorld()->SpawnActor<ARequestBeacon>(
+          BeaconClass, CenteredLocation, BeaconRotation);
+      if (Beacon) {
+        Beacon->Q = A.Q;
+        Beacon->R = A.R;
+        Beacon->Level = ActiveLevel;
+        Beacon->SyncWorldLocation();
+        Beacon->BeaconType = EBeaconType::GatherScatter;
+        Beacon->BeaconRole = EBeaconRole::Gather;
+        Beacon->Radius = GatherScatterRadius;
+        Beacon->MaxGatherCount = 10;
+        // Set orb filter type from cycling
+        Beacon->FilterOrbType = (uint8)GetCurrentGatherOrbType();
+        Beacon->SetState(EBeaconState::NotReady);
+
+        PendingGatherBeacon = Beacon;
+        GatherScatterPlacementStep = 1; // Move to radius drag step
+        UE_LOG(LogTemp, Log,
+               TEXT("Placed Gather Beacon at (%d,%d). Hold Place to set "
+                    "radius."),
+               A.Q, A.R);
+        if (GEngine) {
+          GEngine->AddOnScreenDebugMessage(
+              200, 3.0f, FColor::Yellow,
+              TEXT("Gather placed. Hold Place key + drag mouse to set "
+                   "radius."));
+        }
+      }
+    } else if (GatherScatterPlacementStep == 2) // Scatter Beacon
+    {
+      // Spawn Scatter Beacon
+      UClass *BeaconClass = GM->RequestBeaconClass
+                                ? GM->RequestBeaconClass.Get()
+                                : ARequestBeacon::StaticClass();
+      FVector CenteredLocation = HexToWorld(Root);
+      ARequestBeacon *Beacon = GetWorld()->SpawnActor<ARequestBeacon>(
+          BeaconClass, CenteredLocation, BeaconRotation);
+      if (Beacon) {
+        Beacon->Q = A.Q;
+        Beacon->R = A.R;
+        Beacon->Level = ActiveLevel;
+        Beacon->SyncWorldLocation();
+        Beacon->BeaconType = EBeaconType::GatherScatter;
+        Beacon->BeaconRole = EBeaconRole::Scatter;
+        Beacon->Radius = GatherScatterRadius;
+        // Copy orb filter from Gather beacon
+        if (PendingGatherBeacon && IsValid(PendingGatherBeacon)) {
+          Beacon->FilterOrbType = PendingGatherBeacon->FilterOrbType;
+          Beacon->MaxGatherCount = PendingGatherBeacon->MaxGatherCount;
+        }
+        Beacon->SetState(EBeaconState::Ready);
+
+        // Link beacons
+        if (PendingGatherBeacon && IsValid(PendingGatherBeacon)) {
+          Beacon->PairedBeacon = PendingGatherBeacon;
+          PendingGatherBeacon->PairedBeacon = Beacon;
+          PendingGatherBeacon->UpdateVisuals();
+        } else {
+          Beacon->Destroy();
+          return;
+        }
+
+        PendingScatterBeacon = Beacon;
+        GatherScatterPlacementStep = 3; // Move to scatter radius drag step
+        UE_LOG(LogTemp, Log,
+               TEXT("Placed Scatter Beacon at (%d,%d). Hold Place to set "
+                    "radius."),
+               A.Q, A.R);
+        if (GEngine) {
+          GEngine->AddOnScreenDebugMessage(
+              201, 3.0f, FColor::Yellow,
+              TEXT("Scatter placed. Hold Place key + drag mouse to set "
+                   "radius."));
+        }
+      }
+    }
+    return;
+  }
   case EPlaceKind::TriggerTile: {
     // Find GameManager
     AGameManager *GM = nullptr;
@@ -911,6 +1037,21 @@ void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) {
     CancelHelixInputPairing();
   }
 
+  // Clear GatherScatter state when switching away
+  if (PlaceKind == EPlaceKind::GatherScatter &&
+      NewKind != EPlaceKind::GatherScatter) {
+    if (PendingGatherBeacon && IsValid(PendingGatherBeacon)) {
+      PendingGatherBeacon->Destroy();
+      PendingGatherBeacon = nullptr;
+    }
+    if (PendingScatterBeacon && IsValid(PendingScatterBeacon)) {
+      PendingScatterBeacon->Destroy();
+      PendingScatterBeacon = nullptr;
+    }
+    GatherScatterPlacementStep = 0;
+    bGatherRadiusDragging = false;
+  }
+
   PlaceKind = NewKind;
 }
 
@@ -941,6 +1082,22 @@ void UHexPlacementComponent::CycleNextType() {
     }
     CurrentTriggerOrbTypeIndex =
         (CurrentTriggerOrbTypeIndex + 1) % TriggerTypes.Num();
+  } else if (PlaceKind == EPlaceKind::GatherScatter) {
+    // GatherScatter cycles through orb types (0 = any/unfiltered)
+    TArray<EOrbType> GatherTypes;
+    GatherTypes.Add(EOrbType::None); // None = any orb
+    GatherTypes.Append(ValidTypes);
+    CurrentGatherOrbTypeIndex =
+        (CurrentGatherOrbTypeIndex + 1) % GatherTypes.Num();
+    if (GEngine) {
+      EOrbType SelectedType = GatherTypes[CurrentGatherOrbTypeIndex];
+      GEngine->AddOnScreenDebugMessage(
+          201, 2.0f, FColor::Cyan,
+          FString::Printf(TEXT("Gather Filter: %s"),
+                          SelectedType == EOrbType::None
+                              ? TEXT("Any")
+                              : *UEnum::GetValueAsString(SelectedType)));
+    }
   }
 }
 
@@ -989,6 +1146,22 @@ void UHexPlacementComponent::CyclePreviousType() {
     CurrentTriggerOrbTypeIndex =
         (CurrentTriggerOrbTypeIndex - 1 + TriggerTypes.Num()) %
         TriggerTypes.Num();
+  } else if (PlaceKind == EPlaceKind::GatherScatter) {
+    // GatherScatter cycles through orb types (0 = any/unfiltered)
+    TArray<EOrbType> GatherTypes;
+    GatherTypes.Add(EOrbType::None); // None = any orb
+    GatherTypes.Append(ValidTypes);
+    CurrentGatherOrbTypeIndex =
+        (CurrentGatherOrbTypeIndex - 1 + GatherTypes.Num()) % GatherTypes.Num();
+    if (GEngine) {
+      EOrbType SelectedType = GatherTypes[CurrentGatherOrbTypeIndex];
+      GEngine->AddOnScreenDebugMessage(
+          201, 2.0f, FColor::Cyan,
+          FString::Printf(TEXT("Gather Filter: %s"),
+                          SelectedType == EOrbType::None
+                              ? TEXT("Any")
+                              : *UEnum::GetValueAsString(SelectedType)));
+    }
   }
 }
 
@@ -1006,6 +1179,17 @@ void UHexPlacementComponent::CycleGlyphType() {
 }
 
 void UHexPlacementComponent::CycleInputOrbType() { CycleNextType(); }
+
+EOrbType UHexPlacementComponent::GetCurrentGatherOrbType() const {
+  TArray<EOrbType> GatherTypes;
+  GatherTypes.Add(EOrbType::None); // None = any orb
+  GatherTypes.Append(GetValidOrbTypes());
+  if (CurrentGatherOrbTypeIndex >= 0 &&
+      CurrentGatherOrbTypeIndex < GatherTypes.Num()) {
+    return GatherTypes[CurrentGatherOrbTypeIndex];
+  }
+  return EOrbType::None;
+}
 
 TArray<EOrbType> UHexPlacementComponent::GetValidOrbTypes() const {
   TArray<EOrbType> ValidTypes;
@@ -1719,6 +1903,49 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
     // Also draw the center marker
     DrawDebugCircle(GetWorld(), CenterA, Tile * 0.5f, 6, FColor::Cyan, false,
                     0.f, 0, 3.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
+  } else if (PlaceKind == EPlaceKind::GatherScatter) {
+    FHex Center = HoverHex;
+    int32 Radius = GatherScatterRadius;
+
+    // Determine center based on placement step
+    if ((GatherScatterPlacementStep == 1 || GatherScatterPlacementStep == 2) &&
+        PendingGatherBeacon) {
+      Center = FHex(PendingGatherBeacon->Q, PendingGatherBeacon->R,
+                    PendingGatherBeacon->Level);
+    } else if (GatherScatterPlacementStep == 3 && PendingScatterBeacon) {
+      Center = FHex(PendingScatterBeacon->Q, PendingScatterBeacon->R,
+                    PendingScatterBeacon->Level);
+    }
+
+    // Draw hexagonal outline if radius > 0
+    if (Radius > 0) {
+      static const FHex Corners[6] = {FHex(1, 0, 0),  FHex(1, -1, 0),
+                                      FHex(0, -1, 0), FHex(-1, 0, 0),
+                                      FHex(-1, 1, 0), FHex(0, 1, 0)};
+
+      FVector PrevCornerWorld;
+      bool bFirst = true;
+      const FColor RadiusCol =
+          (GatherScatterPlacementStep < 2) ? FColor::Cyan : FColor::Orange;
+
+      for (int32 i = 0; i <= 6; ++i) {
+        FHex CornerHex = Center + Corners[i % 6] * Radius;
+        FVector CornerWorld =
+            HexToWorld(CornerHex) + FVector(0, 0, PreviewZOffset + 5.0f);
+
+        if (!bFirst) {
+          DrawDebugLine(GetWorld(), PrevCornerWorld, CornerWorld, RadiusCol,
+                        false, 0.f, 0, 4.0f);
+        }
+        PrevCornerWorld = CornerWorld;
+        bFirst = false;
+      }
+    }
+
+    // Also draw individual hex circle at hover
+    DrawDebugCircle(GetWorld(), CenterA, Tile * 0.95f, 6,
+                    bPlaceOK ? FColor(0, 200, 40) : FColor(200, 20, 20), false,
+                    0.f, 0, 2.f, FVector(1, 0, 0), FVector(0, 1, 0), false);
   } else if (PlaceKind != EPlaceKind::Bond && PlaceKind != EPlaceKind::Unbond) {
     DrawDebugCircle(GetWorld(), CenterA, Tile * 0.95f, 6,
                     bPlaceOK ? FColor(0, 200, 40) : FColor(200, 20, 20), false,
@@ -1768,7 +1995,8 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
       PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond ||
       PlaceKind == EPlaceKind::RequestBeacon ||
       PlaceKind == EPlaceKind::TriggerTile ||
-      PlaceKind == EPlaceKind::ClusterSend) {
+      PlaceKind == EPlaceKind::ClusterSend ||
+      PlaceKind == EPlaceKind::GatherScatter) {
 
     // For now, use static mesh preview for arms (ArmBasePreviewMesh)
     if (PlaceKind == EPlaceKind::Arm) {
@@ -2178,6 +2406,12 @@ void UHexPlacementComponent::CancelPlacement() {
 
   // Reset HelixInput pairing state
   CancelHelixInputPairing();
+
+  // Reset GatherScatter state
+  GatherScatterPlacementStep = 0;
+  PendingGatherBeacon = nullptr;
+  PendingScatterBeacon = nullptr;
+  bGatherRadiusDragging = false;
 }
 
 void UHexPlacementComponent::StartHelixInputPairing(int32 OutputGroupIndex) {

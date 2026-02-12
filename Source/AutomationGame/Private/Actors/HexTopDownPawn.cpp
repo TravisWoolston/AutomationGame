@@ -357,6 +357,38 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
       Placer->HandlePlace(true);
     }
   }
+
+  // Handle GatherScatter radius drag (while Place is held during step 1 or 3)
+  if (Placer && Placer->bGatherRadiusDragging &&
+      Placer->PlaceKind == EPlaceKind::GatherScatter) {
+    APlayerController *PC = Cast<APlayerController>(GetController());
+    if (PC) {
+      float MouseX, MouseY;
+      PC->GetMousePosition(MouseX, MouseY);
+      float DeltaX = MouseX - Placer->GatherRadiusDragOriginX;
+      // Every 40 pixels = 1 radius unit
+      int32 RadiusDelta = (int32)(DeltaX / 40.f);
+      Placer->GatherScatterRadius = FMath::Clamp(
+          Placer->GatherRadiusDragStartRadius + RadiusDelta, 1, 10);
+
+      if (Placer->GatherScatterPlacementStep == 1 &&
+          Placer->PendingGatherBeacon) {
+        Placer->PendingGatherBeacon->Radius = Placer->GatherScatterRadius;
+        Placer->PendingGatherBeacon->UpdateVisuals();
+      } else if (Placer->GatherScatterPlacementStep == 3 &&
+                 Placer->PendingScatterBeacon) {
+        Placer->PendingScatterBeacon->Radius = Placer->GatherScatterRadius;
+        Placer->PendingScatterBeacon->UpdateVisuals();
+      }
+
+      if (GEngine) {
+        GEngine->AddOnScreenDebugMessage(
+            200, 0.f, FColor::Cyan,
+            FString::Printf(TEXT("Gather/Scatter Radius: %d"),
+                            Placer->GatherScatterRadius));
+      }
+    }
+  }
 }
 
 void AHexTopDownPawn::PlacePressed() {
@@ -403,6 +435,9 @@ void AHexTopDownPawn::PlacePressed() {
         if (Placer->PlaceKind == EPlaceKind::RequestBeacon &&
             Placer->BeaconPlacementStep > 0)
           bInMultiStepPlacement = true;
+        if (Placer->PlaceKind == EPlaceKind::GatherScatter &&
+            Placer->GatherScatterPlacementStep > 0)
+          bInMultiStepPlacement = true;
 
         if (!bInMultiStepPlacement) {
           // Toggle the individual arm's timeline
@@ -411,13 +446,93 @@ void AHexTopDownPawn::PlacePressed() {
         }
       }
     }
-    Placer->HandlePlace(true);
+
+    // GatherScatter: on first click, place Gather and start drag; on release
+    // finalize and move to Scatter; on third click place Scatter and start
+    // drag; on release finalize sequence.
+    if (Placer->PlaceKind == EPlaceKind::GatherScatter) {
+      if (Placer->GatherScatterPlacementStep == 0) {
+        // Step 0: Place Gather beacon
+        Placer->HandlePlace(true);
+        // Start radius drag immediately
+        APlayerController *PlacePC = Cast<APlayerController>(GetController());
+        if (PlacePC) {
+          float MX, MY;
+          PlacePC->GetMousePosition(MX, MY);
+          Placer->GatherRadiusDragOriginX = MX;
+          Placer->GatherRadiusDragStartRadius = 10;
+          Placer->GatherScatterRadius = 10;
+          Placer->bGatherRadiusDragging = true;
+        }
+      } else if (Placer->GatherScatterPlacementStep == 2) {
+        // Step 2: Place Scatter beacon
+        Placer->HandlePlace(true);
+        // Start radius drag immediately
+        APlayerController *PlacePC = Cast<APlayerController>(GetController());
+        if (PlacePC) {
+          float MX, MY;
+          PlacePC->GetMousePosition(MX, MY);
+          Placer->GatherRadiusDragOriginX = MX;
+          Placer->GatherRadiusDragStartRadius = 10;
+          Placer->GatherScatterRadius = 10;
+          Placer->bGatherRadiusDragging = true;
+        }
+      }
+    } else {
+      Placer->HandlePlace(true);
+    }
   }
 }
 
 void AHexTopDownPawn::PlaceReleased() {
   bPlaceHeld = false;
-  if (bBlueprintMode && bBlueprintSelectionActive) {
+
+  // Finalize GatherScatter radius drag
+  if (Placer && Placer->bGatherRadiusDragging &&
+      Placer->PlaceKind == EPlaceKind::GatherScatter) {
+    if (Placer->GatherScatterPlacementStep == 1) {
+      Placer->bGatherRadiusDragging = false;
+      // Finalize Gather radius
+      if (Placer->PendingGatherBeacon && IsValid(Placer->PendingGatherBeacon)) {
+        Placer->PendingGatherBeacon->Radius = Placer->GatherScatterRadius;
+        Placer->PendingGatherBeacon->UpdateVisuals();
+      }
+      // Advance to step 2 (place Scatter)
+      Placer->GatherScatterPlacementStep = 2;
+      if (GEngine) {
+        GEngine->AddOnScreenDebugMessage(
+            200, 3.0f, FColor::Green,
+            FString::Printf(
+                TEXT("Gather Radius set to %d. Place Scatter beacon next."),
+                Placer->GatherScatterRadius));
+      }
+    } else if (Placer->GatherScatterPlacementStep == 3) {
+      Placer->bGatherRadiusDragging = false;
+      // Finalize Scatter radius
+      if (Placer->PendingScatterBeacon &&
+          IsValid(Placer->PendingScatterBeacon)) {
+        Placer->PendingScatterBeacon->Radius = Placer->GatherScatterRadius;
+        Placer->PendingScatterBeacon->UpdateVisuals();
+      }
+      // Pair complete!
+      ARequestBeacon *Gather = Placer->PendingGatherBeacon;
+      ARequestBeacon *Scatter = Placer->PendingScatterBeacon;
+      if (Gather && Scatter) {
+        Gather->PairedBeacon = Scatter;
+        Scatter->PairedBeacon = Gather;
+        Gather->UpdateVisuals();
+        Scatter->UpdateVisuals();
+      }
+
+      Placer->PendingGatherBeacon = nullptr;
+      Placer->PendingScatterBeacon = nullptr;
+      Placer->GatherScatterPlacementStep = 0;
+      if (GEngine) {
+        GEngine->AddOnScreenDebugMessage(
+            201, 3.0f, FColor::Cyan, TEXT("GatherScatter sequence complete!"));
+      }
+    }
+  } else if (bBlueprintMode && bBlueprintSelectionActive) {
     EndSelection();
   } else if (bDeletionMode && bDeletionSelectionActive) {
     EndDeletionSelection();
@@ -913,6 +1028,7 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent *IC) {
   IC->BindAction("Kind12", IE_Pressed, this,
                  &AHexTopDownPawn::SetInputMode12Pressed);
   IC->BindAction("Kind13", IE_Pressed, this, &AHexTopDownPawn::SetInputMode13);
+  IC->BindAction("Kind14", IE_Pressed, this, &AHexTopDownPawn::SetInputMode14);
   // Type cycling (works for both Input and Output based on current placement
   // mode)
   IC->BindAction("CycleNextType", IE_Pressed, this,
@@ -1048,6 +1164,7 @@ void AHexTopDownPawn::SetGlobalHighlightForKind(EPlaceKind Kind, bool bEnable) {
       HighlightActors(ABasicWalker::StaticClass());
       break;
     case EPlaceKind::RequestBeacon:
+    case EPlaceKind::GatherScatter:
       HighlightActors(ARequestBeacon::StaticClass());
       break;
     case EPlaceKind::TriggerTile:
@@ -1125,6 +1242,13 @@ void AHexTopDownPawn::SetInputMode11() {
 void AHexTopDownPawn::SetInputMode13() {
   if (Placer)
     Placer->SetPlaceKind(EPlaceKind::HelixOutput);
+}
+
+void AHexTopDownPawn::SetInputMode14() {
+  if (Placer) {
+    Placer->SetPlaceKind(EPlaceKind::GatherScatter);
+    Placer->GatherScatterRadius = 10;
+  }
 }
 
 void AHexTopDownPawn::SwitchGrid() {
