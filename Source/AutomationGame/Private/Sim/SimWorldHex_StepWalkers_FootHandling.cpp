@@ -113,33 +113,55 @@ void USimWorldHex::HandleFootPlanted(
     const TSet<FHex> &HoldingFootHexes,
     const TMap<FHex, ARequestBeacon *> &BeaconCache, bool bIsPivoting,
     int32 &RaisedCount, TArray<int32> &RaisedIndices) {
-  // CRITICAL: If holding foot is Planted, trigger drop-off or scatter.
-  if (Foot.bHoldingItem && Foot.bHasDesignatedDropOff) {
-    if (Foot.bGathering && Foot.GatheredOrbs.Num() > 0) {
-      // Scatter mode: foot doesn't need to be on the scatter beacon hex.
-      // The walker body just needs to be near the scatter area.
-      // TryWalkerScatter handles range/quadrant checks internally.
+  // CRITICAL: If gathering (or holding foot is Planted), trigger gather/scatter
+  // step or drop-off.
+  if (Foot.bGatherPhaseActive ||
+      (Foot.bHoldingItem && Foot.bHasDesignatedDropOff)) {
+    // Active gather phase: foot has landed on an orb tile (or not), trigger
+    // a Raising step so UpdateFootHorizontalTarget can direct it to the next
+    // orb.
+    if (Foot.bGatherPhaseActive) {
+      Foot.TargetTile = Foot.CurrentTile; // Provisional target
+      Foot.StepState =
+          EFootStepState::Raising; // Allow UpdateFootHorizontalTarget to
+                                   // redirect
+      Foot.StepProgress = 0;
+      RaisedCount++;
+      RaisedIndices.Add(FootIndex);
+      return;
+    }
+    // Active scatter phase: trigger Raising to redirect to empty tile
+    if (Foot.bScatterPhaseActive && Foot.bGathering &&
+        Foot.GatheredOrbs.Num() > 0) {
+      Foot.TargetTile = Foot.CurrentTile;
+      Foot.StepState = EFootStepState::Raising;
+      Foot.StepProgress = 0;
+      RaisedCount++;
+      RaisedIndices.Add(FootIndex);
+      return;
+    }
+    // Scatter (not in active scatter phase yet — body needs to get close)
+    if (Foot.bGathering && Foot.GatheredOrbs.Num() > 0 &&
+        Foot.bHasDesignatedDropOff) {
       int32 bodyDistToScatter =
           HexUtil::Dist(W.BaseHex, Foot.DesignatedDropOffHex);
 
-      // Look up scatter beacon radius
-      int32 ScatterRadius = 3; // Default
+      int32 ScatterRadius = 3;
       if (ARequestBeacon *const *BPtr =
               BeaconCache.Find(Foot.DesignatedDropOffHex)) {
         ScatterRadius = (*BPtr)->Radius;
       }
 
-      // Body is reasonably close (within reach + scatter radius)
       if (bodyDistToScatter <= W.ReachDistance + ScatterRadius) {
         Foot.TargetTile = Foot.CurrentTile;
-        Foot.StepState = EFootStepState::Moving;
+        Foot.StepState = EFootStepState::Raising; // Redirectable
         Foot.StepProgress = 0;
-        Foot.CurrentMoveDurationTicks = 0.f; // Finish immediately
         RaisedCount++;
         RaisedIndices.Add(FootIndex);
         return;
       }
-    } else if (Foot.CurrentTile == Foot.DesignatedDropOffHex) {
+    } else if (!Foot.bGathering &&
+               Foot.CurrentTile == Foot.DesignatedDropOffHex) {
       // Standard drop-off: foot must be exactly on the drop-off hex
       int32 dist = HexUtil::Dist(W.BaseHex, Foot.DesignatedDropOffHex);
       bool bInRange = (dist <= W.ReachDistance);
@@ -165,12 +187,10 @@ void USimWorldHex::HandleFootPlanted(
           DropOffQuad.Equals(FootQuad, ESearchCase::CaseSensitive);
 
       if (bInRange && bInCorrectQuadrant) {
-        // Ready to place! Start a step toward the same tile to trigger
-        // TryWalkerDropOff
         Foot.TargetTile = Foot.CurrentTile;
-        Foot.StepState = EFootStepState::Moving;
+        Foot.StepState = EFootStepState::Moving; // Standard dropoff is precise
         Foot.StepProgress = 0;
-        Foot.CurrentMoveDurationTicks = 0.f; // Finish immediately
+        Foot.CurrentMoveDurationTicks = 0.f;
         RaisedCount++;
         RaisedIndices.Add(FootIndex);
         return;
@@ -207,27 +227,34 @@ void USimWorldHex::HandleFootPlanted(
           return;
         }
       }
-      // Gather beacon
-      else if ((*BeaconPtr)->BeaconRole == EBeaconRole::Gather &&
-               (*BeaconPtr)->BeaconState == EBeaconState::InProgress) {
-        TArray<FFootState *> AllFeet = GetAllFeet(W);
-        bool bAnotherFootHolding = false;
-        for (int32 i = 0; i < AllFeet.Num(); ++i) {
-          if (i != FootIndex && AllFeet[i]->bHoldingItem) {
-            bAnotherFootHolding = true;
-            break;
-          }
-        }
+    }
+  }
 
-        if (!bAnotherFootHolding) {
-          // Ready to gather! Start a step to trigger TryWalkerGather
-          Foot.TargetTile = Foot.CurrentTile;
-          Foot.StepState = EFootStepState::Moving;
-          Foot.StepProgress = 0;
-          Foot.CurrentMoveDurationTicks = 0.f; // Finish immediately
-          RaisedCount++;
-          RaisedIndices.Add(FootIndex);
-          return;
+  // Initial Gather Trigger: Each foot scans for an available Gather beacon.
+  // We only start the gather phase once an orb enters THIS foot's quadrant
+  // (handled inside TryWalkerGather).
+  if (!Foot.bHoldingItem && !Foot.bGathering) {
+    // Scan all active beacons to see if any are Gather and in reach.
+    for (const auto &Pair : BeaconCache) {
+      ARequestBeacon *B = Pair.Value;
+      if (B && B->BeaconRole == EBeaconRole::Gather &&
+          B->BeaconState == EBeaconState::InProgress) {
+        FHex BHex(B->Q, B->R, B->Level);
+        if (HexUtil::Dist(W.BaseHex, BHex) <= W.ReachDistance) {
+          // Attempt task assignment. TryWalkerGather will only set
+          // bGatherPhaseActive if it finds a qualifying orb in THIS foot's
+          // quadrant.
+          TryWalkerGather(W, Foot, WalkerIndex, FootIndex, BeaconCache,
+                          GetAllFeet(W));
+
+          if (Foot.bGatherPhaseActive) {
+            Foot.TargetTile = Foot.CurrentTile;
+            Foot.StepState = EFootStepState::Raising;
+            Foot.StepProgress = 0;
+            RaisedCount++;
+            RaisedIndices.Add(FootIndex);
+            return;
+          }
         }
       }
     }
@@ -471,9 +498,11 @@ void USimWorldHex::HandleFootPlanted(
           if (ARequestBeacon *const *B = BeaconCache.Find(TestHex))
             if ((*B)->BeaconRole == EBeaconRole::PickUp ||
                 (*B)->BeaconRole == EBeaconRole::DropOff ||
-                (*B)->BeaconRole == EBeaconRole::Gather ||
                 (*B)->BeaconRole == EBeaconRole::Scatter)
               bTestIsTarget = true;
+          // NOTE: Gather beacons intentionally excluded — the foot doesn't
+          // need to step on the beacon center; the walker body just needs
+          // to be within reach distance.
         }
 
         if (!bTestIsTarget && IsHexOccupied(TestHex, HeldOrbHexes, ArmBaseHexes,
@@ -515,19 +544,33 @@ void USimWorldHex::HandleFootMoving(
     const TSet<FHex> &HeldOrbHexes, const TSet<FHex> &ArmBaseHexes,
     const TSet<FHex> &HoldingFootHexes,
     const TMap<FHex, ARequestBeacon *> &BeaconCache, bool bIsPivoting) {
+
   Foot.StepProgress++;
   if (Foot.StepProgress >=
       (int32)FMath::CeilToFloat(Foot.CurrentMoveDurationTicks)) {
     if (!Foot.bHoldingItem) {
-      // Check if this is a Gather beacon before trying standard PickUp
       bool bTriedGather = false;
-      if (ARequestBeacon *const *BeaconPtr =
-              BeaconCache.Find(Foot.CurrentTile)) {
-        if ((*BeaconPtr)->BeaconRole == EBeaconRole::Gather &&
-            (*BeaconPtr)->BeaconState == EBeaconState::InProgress) {
+      // Gather/Scatter Trigger
+      if (Foot.bGathering || Foot.bGatherPhaseActive ||
+          Foot.bScatterPhaseActive) {
+        if (Foot.bScatterPhaseActive) {
+          TryWalkerScatter(W, Foot, WalkerIndex, FootIndex, HeldOrbHexes,
+                           ArmBaseHexes, HoldingFootHexes, BeaconCache);
+        } else {
           TryWalkerGather(W, Foot, WalkerIndex, FootIndex, BeaconCache,
                           GetAllFeet(W));
-          bTriedGather = true;
+        }
+        bTriedGather = true;
+      } else if (W.bProcessingRequest) {
+        // Check if we just landed on a gather beacon for the first time
+        if (ARequestBeacon *const *B =
+                BeaconCache.Find(W.Requests[0].TargetHex)) {
+          if ((*B)->BeaconRole == EBeaconRole::Gather &&
+              (*B)->BeaconState == EBeaconState::InProgress) {
+            TryWalkerGather(W, Foot, WalkerIndex, FootIndex, BeaconCache,
+                            GetAllFeet(W));
+            bTriedGather = true;
+          }
         }
       }
       if (!bTriedGather) {
@@ -535,8 +578,13 @@ void USimWorldHex::HandleFootMoving(
                         GetAllFeet(W));
       }
     } else {
-      // Check if this is a Scatter (Gather mode) or standard DropOff
-      if (Foot.bGathering) {
+      // Holding item: check if we're still in gather phase or scatter phase
+      if (Foot.bGatherPhaseActive) {
+        // Still gathering orbs step-by-step — call TryWalkerGather
+        TryWalkerGather(W, Foot, WalkerIndex, FootIndex, BeaconCache,
+                        GetAllFeet(W));
+      } else if (Foot.bGathering) {
+        // Done gathering, now scattering
         if (!TryWalkerScatter(W, Foot, WalkerIndex, FootIndex, HeldOrbHexes,
                               ArmBaseHexes, HoldingFootHexes, BeaconCache)) {
           return; // Blocked, keep trying
@@ -719,15 +767,31 @@ void USimWorldHex::UpdateFootHorizontalTarget(
     }
   }
 
+  // TASK OVERRIDES: If gathering or scattering, the ideal point is the specific
+  // target orb/tile assigned to this foot.
+  if (Foot.bGatherPhaseActive && Foot.GatherTargetHexes.Num() > 0) {
+    IdealQ = (float)Foot.GatherTargetHexes[0].Q;
+    IdealR = (float)Foot.GatherTargetHexes[0].R;
+    IdealX = 1.7320508f * IdealQ + 0.8660254f * IdealR;
+    IdealY = 1.5f * IdealR;
+  } else if (Foot.bScatterPhaseActive && Foot.ScatterTargetHexes.Num() > 0) {
+    IdealQ = (float)Foot.ScatterTargetHexes[0].Q;
+    IdealR = (float)Foot.ScatterTargetHexes[0].R;
+    IdealX = 1.7320508f * IdealQ + 0.8660254f * IdealR;
+    IdealY = 1.5f * IdealR;
+  }
+
   // Commitment guard: only lock if we are actually at the intended task spot
   bool bTargetIsTask = false;
   if (Foot.TargetTile == W.CurrentTargetHex) {
     if (ARequestBeacon *const *BeaconPtr = BeaconCache.Find(Foot.TargetTile)) {
       if ((*BeaconPtr)->BeaconRole == EBeaconRole::PickUp ||
-          (*BeaconPtr)->BeaconRole == EBeaconRole::DropOff)
+          (*BeaconPtr)->BeaconRole == EBeaconRole::DropOff) {
         bTargetIsTask = true;
+      }
     }
   }
+
   if (!bTargetIsTask && Foot.bHoldingItem && Foot.bHasDesignatedDropOff &&
       Foot.TargetTile == Foot.DesignatedDropOffHex)
     bTargetIsTask = true;
@@ -744,7 +808,7 @@ void USimWorldHex::UpdateFootHorizontalTarget(
     HysteresisThreshold = 0.2f * HEX_SCALE;
   }
 
-  // In mid-air, use full axial search for precision
+  // Standard Search
   for (int32 q = -W.ReachDistance; q <= W.ReachDistance; ++q) {
     for (int32 r = -W.ReachDistance; r <= W.ReachDistance; ++r) {
       FHex TestHex(W.BaseHex.Q + q, W.BaseHex.R + r, W.BaseHex.Level);
@@ -753,35 +817,70 @@ void USimWorldHex::UpdateFootHorizontalTarget(
           (float)dist < W.MinimumReachDistance)
         continue;
 
-      bool bIsDesignatedDropOff =
-          (Foot.bHoldingItem && Foot.bHasDesignatedDropOff &&
-           TestHex == Foot.DesignatedDropOffHex);
-      if (!bIsDesignatedDropOff &&
+      // Quadrant Enforcement
+      bool bIsTaskTarget = false;
+      FHex SelectionHex = TestHex;
+
+      auto CheckTaskTarget = [&](const FHex &Test) -> bool {
+        // Check Gather targets
+        if (Foot.bGatherPhaseActive && Foot.GatherTargetHexes.Num() > 0) {
+          if (Test.Q == Foot.GatherTargetHexes[0].Q &&
+              Test.R == Foot.GatherTargetHexes[0].R) {
+            SelectionHex = Foot.GatherTargetHexes[0];
+            return true;
+          }
+        }
+        // Check Scatter targets
+        if (Foot.bScatterPhaseActive && Foot.ScatterTargetHexes.Num() > 0) {
+          if (Test.Q == Foot.ScatterTargetHexes[0].Q &&
+              Test.R == Foot.ScatterTargetHexes[0].R) {
+            SelectionHex = Foot.ScatterTargetHexes[0];
+            return true;
+          }
+        }
+        // Check DropOff
+        if (Foot.bHoldingItem && Foot.bHasDesignatedDropOff) {
+          if (Test.Q == Foot.DesignatedDropOffHex.Q &&
+              Test.R == Foot.DesignatedDropOffHex.R) {
+            SelectionHex = Foot.DesignatedDropOffHex;
+            return true;
+          }
+        }
+        return false;
+      };
+
+      bIsTaskTarget = CheckTaskTarget(TestHex);
+
+      // Standard quadrant check (unless it's our designated task target)
+      if (!bIsTaskTarget &&
           !GetFixedQuadrantFromHex(W.BaseHex, TestHex, W.QuadrantRotationOffset)
                .Equals(FootQuadrant))
         continue;
 
-      bool bTestIsTarget = false;
-      if (TestHex == W.CurrentTargetHex || bIsDesignatedDropOff) {
+      bool bTestIsBodyTarget = false;
+      if (TestHex == W.CurrentTargetHex) {
         if (ARequestBeacon *const *B = BeaconCache.Find(TestHex))
           if ((*B)->BeaconRole == EBeaconRole::PickUp ||
               (*B)->BeaconRole == EBeaconRole::DropOff)
-            bTestIsTarget = true;
+            bTestIsBodyTarget = true;
       }
 
-      if (!bTestIsTarget &&
-          IsHexOccupied(TestHex, HeldOrbHexes, ArmBaseHexes, HoldingFootHexes))
+      if (!bIsTaskTarget && !bTestIsBodyTarget &&
+          IsHexOccupied(SelectionHex, HeldOrbHexes, ArmBaseHexes,
+                        HoldingFootHexes))
         continue;
-      float Score = GetScore(TestHex);
-      if (bTestIsTarget)
-        Score -= 100.f;
+
+      float Score = GetScore(SelectionHex);
+      if (bIsTaskTarget || bTestIsBodyTarget)
+        Score -= 100.f; // Massive priority for task hexes
+
       if (Score < BestScore - HysteresisThreshold) {
         BestScore = Score;
         // Foot target changed - reset timeout counter
-        if (Foot.TargetTile != TestHex) {
+        if (Foot.TargetTile != SelectionHex) {
           W.TicksSinceLastFootTargetChange = 0;
         }
-        Foot.TargetTile = TestHex;
+        Foot.TargetTile = SelectionHex;
 
         // Update dynamic move duration when target changes mid-flight
         float MoveDist =

@@ -60,6 +60,13 @@ public:
   UPROPERTY()
   TArray<UStaticMeshComponent *> SelectionHighlightComponents;
 
+  // Components for highlighting Gather/Scatter radius (persistent)
+  UPROPERTY()
+  TArray<UStaticMeshComponent *> RadiusHighlightComponents;
+
+  // Update visual highlights for beacon radii
+  void UpdateRadiusHighlights();
+
   // Helper to find the anchor hex and specific OrbId of an item/cluster at a
   // given position
   FHex FindItemAnchorAt(const FHex &Hex, FItem &OutItem, int32 &OutOrbId) const;

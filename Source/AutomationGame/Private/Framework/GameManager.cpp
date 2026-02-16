@@ -249,6 +249,8 @@ void AGameManager::Tick(float DeltaSeconds) {
                                          RipplePositiveColor);
     GridTileMID->SetVectorParameterValue(FName("RippleNegativeColor"),
                                          RippleNegativeColor);
+    GridTileMID->SetScalarParameterValue(FName("RippleRTSize"),
+                                         (float)RippleRenderTargetSize);
 
     UTextureRenderTarget2D *RT = GetRippleRenderTarget();
     if (RT) {
@@ -275,6 +277,8 @@ void AGameManager::Tick(float DeltaSeconds) {
     GridTileMID->SetScalarParameterValue(FName("MaxWaveHeight"), MaxWaveHeight);
     GridTileMID->SetScalarParameterValue(
         FName("WaveTime"), GetWorld()->GetTimeSeconds() * WaveAnimationSpeed);
+    GridTileMID->SetScalarParameterValue(FName("WaveRTSize"),
+                                         (float)WaveRenderTargetSize);
 
     UTextureRenderTarget2D *WaveRT = GetWaveRenderTarget();
     if (WaveRT) {
@@ -608,31 +612,28 @@ void AGameManager::BuildGridInstances() {
   }
 
   // Planar grid path
-  const auto ToWorld = [S, Origin, this](int32 Q, int32 R, int32 Level) {
+  const auto ToWorld = [S, Origin, this](int32 Q, int32 R) {
     FVector2D XY = HexCoord::AxialToXY(FHexAxial(Q, R), S, GridOrientation);
     FVector2D RotXY = HexCoord::Rotate2D(XY, GridYawDeg);
-    // For background grid, both sides are at Z=0 but flipped
     return Origin + FVector(RotXY.X, RotXY.Y, 0.f);
   };
 
-  for (int level = 0; level <= 1; ++level) {
-    for (int r = -Radius; r <= Radius; ++r) {
-      for (int q = -Radius; q <= Radius; ++q) {
-        int s = -q - r;
-        if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius)
+  for (int r = -Radius; r <= Radius; ++r) {
+    for (int q = -Radius; q <= Radius; ++q) {
+      int s = -q - r;
+      if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius)
+        continue;
+
+      // Skip background tile if an Output/ClusterOutput tile exists at this hex
+      if (Sim && Sim->TileMap.Contains(FHex(q, r, 0))) {
+        const FTile &PT = Sim->TileMap[FHex(q, r, 0)];
+        if (PT.Kind == ETileKind::Output)
           continue;
-
-        if (Sim && Sim->TileMap.Contains(FHex(q, r, level))) {
-          const FTile &PT = Sim->TileMap[FHex(q, r, level)];
-          if (PT.Kind == ETileKind::Output)
-            continue;
-        }
-
-        FVector P = ToWorld(q, r, level);
-        float Pitch = (level == 0) ? 0.f : 180.f;
-        FRotator RotR(Pitch, GridYawDeg + OriYawOffsetDegPlanar, 0.f);
-        ISM->AddInstance(FTransform(RotR, P, FVector(1)));
       }
+
+      FVector P = ToWorld(q, r);
+      FRotator RotR(0.f, GridYawDeg + OriYawOffsetDegPlanar, 0.f);
+      ISM->AddInstance(FTransform(RotR, P, FVector(1)));
     }
   }
 }
@@ -3399,12 +3400,22 @@ void AGameManager::InternalDrawWaveStamp(class UCanvas *Canvas,
     // Normalized for Material (0-1 in UV space)
     float NormalizedRadius = AnimatedRadius / RTWorldSize;
 
+    // One texel in RT UV space
+    float TexelSizeUV = 1.0f / (Size.X > 0 ? Size.X : 2048.0f);
+
     // Animate falloff: Ring gets thinner as it expands (like real water
     // ripples) The ring thickness shrinks proportionally with the fade
     float AnimatedFalloff = Wave.Falloff * FadeAlpha;
-    // Ensure minimum visible thickness
+    // Ensure minimum physical thickness (0.1x original)
     AnimatedFalloff = FMath::Max(AnimatedFalloff, Wave.Falloff * 0.1f);
     float NormalizedFalloff = AnimatedFalloff / RTWorldSize;
+
+    // --- FIX: Enforce minimum falloff (thickness) to maintain detail at small
+    // scales --- Ensure falloff is at least 1.5 texels wide so it doesn't
+    // disappear/alias away This solves the 'loss of detail' for smaller radius
+    // values
+    float MinFalloffUV = TexelSizeUV * 1.5f;
+    NormalizedFalloff = FMath::Max(NormalizedFalloff, MinFalloffUV);
 
     // Set material parameters
     WaveDrawMID->SetVectorParameterValue(
@@ -3423,6 +3434,13 @@ void AGameManager::InternalDrawWaveStamp(class UCanvas *Canvas,
 
     // Calculate localized quad bounds (2.0x radius margin)
     float TotalRadiusUV = NormalizedRadius + NormalizedFalloff;
+
+    // --- FIX: Enforce minimum quad size to prevent rasterization artifacts for
+    // small waves --- Ensure the draw quad is at least 16 pixels wide on the
+    // render target
+    float MinTotalRadiusUV = 8.0f / (Size.X > 0 ? Size.X : 2048.0f);
+    TotalRadiusUV = FMath::Max(TotalRadiusUV, MinTotalRadiusUV);
+
     TotalRadiusUV *= 2.0f;
 
     FVector2D UVTopLeft = RTUV - FVector2D(TotalRadiusUV, TotalRadiusUV);
@@ -3440,16 +3458,9 @@ void AGameManager::InternalDrawWaveStamp(class UCanvas *Canvas,
 // ============== Discovery Mode ==============
 
 void AGameManager::SetDiscoveryMode(bool bEnabled) {
-  if (bDiscoveryMode == bEnabled)
-    return;
-
   bDiscoveryMode = bEnabled;
   UE_LOG(LogTemp, Log, TEXT("GameManager: Discovery Mode set to %s"),
          bEnabled ? TEXT("TRUE") : TEXT("FALSE"));
-
-  if (bDiscoveryMode) {
-    GenerateDiscoveryScenario();
-  }
 }
 
 void AGameManager::GenerateDiscoveryScenario() {
@@ -3460,100 +3471,445 @@ void AGameManager::GenerateDiscoveryScenario() {
 
   USimWorldHex *Sim = OrbSimDriver->GetSim();
 
-  int32 StartDiff = DiscoveryStartingDifficulty;
-  TArray<int32> StarterTemplateIds;
+  // 1. Generate the scenario cluster at DiscoveryDifficulty
+  int32 SavedDiff = DifficultyValue;
+  DifficultyValue = 4; // Start with a small seed
+  int32 SeedId = GenerateRandomCluster(Sim);
+  DifficultyValue = SavedDiff;
 
-  for (int32 i = 0; i < 6; i++) {
-    int32 SavedDiff = DifficultyValue;
-    DifficultyValue = StartDiff;
-    int32 Tid = GenerateRandomCluster(Sim);
-    DifficultyValue = SavedDiff;
-    if (Tid >= 0) {
-      StarterTemplateIds.Add(Tid);
+  if (SeedId < 0) {
+    UE_LOG(LogTemp, Error,
+           TEXT("GameManager: Failed to generate seed cluster for discovery."));
+    return;
+  }
+
+  // Recursively grow to target difficulty
+  DiscoveryScenarioClusterId =
+      GenerateRecursiveAncestralCluster(SeedId, DiscoveryDifficulty);
+
+  const USimWorldHex::FClusterTemplate *ScenarioCluster =
+      Sim->GetClusterTemplates().Find((uint8)DiscoveryScenarioClusterId);
+  if (!ScenarioCluster || ScenarioCluster->Orbs.Num() == 0) {
+    UE_LOG(LogTemp, Error,
+           TEXT("GameManager: Failed to generate scenario cluster at diff %d."),
+           DiscoveryDifficulty);
+    return;
+  }
+
+  UE_LOG(LogTemp, Log,
+         TEXT("GameManager: Discovery scenario cluster ID=%d with %d orbs."),
+         DiscoveryScenarioClusterId, ScenarioCluster->Orbs.Num());
+
+  // 2. Place SourceTiles along center Q-axis
+  SourceTilePositions.Empty();
+  int32 HalfCount = SourceTileCount / 2;
+  for (int32 i = 0; i < SourceTileCount; ++i) {
+    int32 Q = i - HalfCount;
+    FHex SourceHex(Q, 0, 0);
+    SourceTilePositions.Add(SourceHex);
+
+    FTile NewTile;
+    NewTile.Kind = ETileKind::Source;
+    NewTile.Arg = 0;
+    Sim->PlaceTile(SourceHex, NewTile);
+  }
+
+  UE_LOG(LogTemp, Log,
+         TEXT("GameManager: Placed %d Source tiles along Q-axis."),
+         SourceTileCount);
+
+  // 3. Initialize source strand
+  GenerateSourceStrand();
+
+  // 4. Initialize target cluster sequence
+  GenerateTargetClusterSequence();
+
+  // 5. Initialize world orb counts
+  RefreshWorldOrbCounts();
+
+  // 6. Reset state
+  SourceStrandCursor = 0;
+  bSourcePaused = false;
+  SourceHelixRungs.Empty();
+  SourceHelixRotation = 0.f;
+  CurrentTargetClusterIndex = 0;
+  CompletedUniqueTargetClusters.Empty();
+
+  UE_LOG(LogTemp, Log,
+         TEXT("GameManager: Discovery scenario fully initialized. Strand "
+              "length=%d, Targets=%d."),
+         SourceStrand.Num(), TargetClusterSequence.Num());
+}
+
+void AGameManager::GenerateSourceStrand() {
+  if (!OrbSimDriver || !OrbSimDriver->GetSim())
+    return;
+  USimWorldHex *Sim = OrbSimDriver->GetSim();
+
+  const USimWorldHex::FClusterTemplate *ScenarioCluster =
+      Sim->GetClusterTemplates().Find((uint8)DiscoveryScenarioClusterId);
+  if (!ScenarioCluster || ScenarioCluster->Orbs.Num() == 0)
+    return;
+
+  // Copy all orbs from the scenario cluster
+  SourceStrand = ScenarioCluster->Orbs;
+
+  // Shuffle the strand randomly (Fisher-Yates)
+  for (int32 i = SourceStrand.Num() - 1; i > 0; --i) {
+    int32 j = FMath::RandRange(0, i);
+    SourceStrand.Swap(i, j);
+  }
+
+  SourceStrandCursor = 0;
+
+  UE_LOG(LogTemp, Log,
+         TEXT("GameManager: Generated source strand with %d orbs."),
+         SourceStrand.Num());
+}
+
+void AGameManager::StepSourceHelix() {
+  if (!bDiscoveryMode || bSourcePaused)
+    return;
+  if (!OrbSimDriver || !OrbSimDriver->GetSim())
+    return;
+  if (SourceStrand.Num() == 0 || SourceTilePositions.Num() == 0)
+    return;
+
+  USimWorldHex *Sim = OrbSimDriver->GetSim();
+
+  // Check if the next orb would exceed world limit
+  const FOrbData &NextOrb = SourceStrand[SourceStrandCursor];
+  uint8 OrbType = NextOrb.Type;
+
+  int32 CurrentCount = 0;
+  if (int32 *Found = WorldOrbCounts.Find(OrbType)) {
+    CurrentCount = *Found;
+  }
+
+  if (CurrentCount >= MaxOrbsPerTypeInWorld) {
+    bSourcePaused = true;
+    return;
+  }
+
+  // Determine which source tile to spawn at (round-robin through positions)
+  int32 TileIndex = SourceStrandCursor % SourceTilePositions.Num();
+  FHex SpawnHex = SourceTilePositions[TileIndex];
+
+  // Check if there's already an item at this hex
+  if (Sim->ItemMap.Contains(SpawnHex)) {
+    // Wait until the tile is clear
+    return;
+  }
+
+  // Spawn the orb
+  FOrb NewOrb;
+  NewOrb.Type = (EOrbType)OrbType;
+
+  FItem NewItem = FItem::MakeSingle(NewOrb);
+  NewItem.Id = Sim->NextItemId++;
+  Sim->ItemMap.Add(SpawnHex, NewItem);
+  Sim->OrbAt.Add(SpawnHex, Sim->KindFromItem(NewItem));
+
+  // Update world orb counts
+  WorldOrbCounts.FindOrAdd(OrbType)++;
+
+  // Create a helix rung for animation
+  FHelixRung Rung;
+  FOrbData RungOrb;
+  RungOrb.Type = OrbType;
+  RungOrb.dQ = 0;
+  RungOrb.dR = 0;
+  Rung.Orbs.Add(RungOrb);
+  Rung.SpawnTick = Sim->StepCounter;
+  SourceHelixRungs.Add(Rung);
+
+  // Advance cursor (wrap around for continuous fountain)
+  SourceStrandCursor = (SourceStrandCursor + 1) % SourceStrand.Num();
+
+  // If we've gone through the entire strand, reshuffle for variety
+  if (SourceStrandCursor == 0) {
+    // Reshuffle the strand
+    for (int32 i = SourceStrand.Num() - 1; i > 0; --i) {
+      int32 j = FMath::RandRange(0, i);
+      SourceStrand.Swap(i, j);
     }
   }
 
-  int32 PlaceRadius = 15;
-  for (int32 i = 0; i < StarterTemplateIds.Num(); i++) {
-    int32 Tid = StarterTemplateIds[i];
-    FHex CenterHex(0, 0);
-    FHex DirectionHex = HexUtil::Neighbor(CenterHex, (EHexDir)i);
-    FHex PlaceHex(DirectionHex.Q * PlaceRadius, DirectionHex.R * PlaceRadius);
+  // Advance helix rotation
+  SourceHelixRotation += SourceHelixDegreesPerRung;
+  if (SourceHelixRotation >= 360.f) {
+    SourceHelixRotation -= 360.f;
+  }
+}
 
-    const USimWorldHex::FClusterTemplate *Template =
-        Sim->GetClusterTemplates().Find((uint8)Tid);
-    if (Template) {
-      for (const FOrbData &Orb : Template->Orbs) {
-        FHex RelPos(Orb.dQ, Orb.dR);
-        FHex FinalHex(PlaceHex.Q + RelPos.Q, PlaceHex.R + RelPos.R);
-        FTile NewTile;
-        NewTile.Kind = ETileKind::DiscoveryClusterInput;
-        NewTile.Arg = Orb.Type;
-        Sim->PlaceTile(FinalHex, NewTile);
+int32 AGameManager::CountWorldOrbsOfType(uint8 OrbType) const {
+  if (!OrbSimDriver || !OrbSimDriver->GetSim())
+    return 0;
+
+  const USimWorldHex *Sim = OrbSimDriver->GetSim();
+  int32 Count = 0;
+
+  for (const auto &KV : Sim->ItemMap) {
+    const FItem &Item = KV.Value;
+    if (!Item.bIsCluster) {
+      if ((uint8)Item.Single.Type == OrbType) {
+        ++Count;
       }
     }
   }
 
+  return Count;
+}
+
+void AGameManager::RefreshWorldOrbCounts() {
+  WorldOrbCounts.Empty();
+
+  if (!OrbSimDriver || !OrbSimDriver->GetSim())
+    return;
+
+  const USimWorldHex *Sim = OrbSimDriver->GetSim();
+
+  for (const auto &KV : Sim->ItemMap) {
+    const FItem &Item = KV.Value;
+    if (!Item.bIsCluster) {
+      uint8 OrbType = (uint8)Item.Single.Type;
+      WorldOrbCounts.FindOrAdd(OrbType)++;
+    }
+  }
+
+  // Check if source should be unpaused
+  if (bSourcePaused && SourceStrand.Num() > 0) {
+    const FOrbData &NextOrb = SourceStrand[SourceStrandCursor];
+    int32 CurrentCount = 0;
+    if (int32 *Found = WorldOrbCounts.Find(NextOrb.Type)) {
+      CurrentCount = *Found;
+    }
+    if (CurrentCount < MaxOrbsPerTypeInWorld) {
+      bSourcePaused = false;
+    }
+  }
+}
+
+void AGameManager::GenerateTargetClusterSequence() {
+  TargetClusterSequence.Empty();
+
+  if (!OrbSimDriver || !OrbSimDriver->GetSim())
+    return;
+
+  USimWorldHex *Sim = OrbSimDriver->GetSim();
+  const USimWorldHex::FClusterTemplate *ScenarioCluster =
+      Sim->GetClusterTemplates().Find((uint8)DiscoveryScenarioClusterId);
+  if (!ScenarioCluster || ScenarioCluster->Orbs.Num() == 0)
+    return;
+
+  // Step 1: Collect orb types and their counts
+  TMap<uint8, int32> TypeCounts;
+  for (const FOrbData &Orb : ScenarioCluster->Orbs) {
+    TypeCounts.FindOrAdd(Orb.Type)++;
+  }
+
+  // Sort types by count (smallest first)
+  TArray<TPair<uint8, int32>> SortedTypes;
+  for (const auto &KV : TypeCounts) {
+    SortedTypes.Add(TPair<uint8, int32>(KV.Key, KV.Value));
+  }
+  SortedTypes.Sort(
+      [](const TPair<uint8, int32> &A, const TPair<uint8, int32> &B) {
+        return A.Value < B.Value;
+      });
+
+  // Step 1: Single-type targets (one orb of each type, smallest count first)
+  for (const auto &TypePair : SortedTypes) {
+    USimWorldHex::FClusterTemplate SingleTarget;
+    FOrbData SingleOrb;
+    SingleOrb.Type = TypePair.Key;
+    SingleOrb.dQ = 0;
+    SingleOrb.dR = 0;
+    SingleTarget.Orbs.Add(SingleOrb);
+    TargetClusterSequence.Add(SingleTarget);
+  }
+
+  // Step 2: Different-type pairs
+  for (int32 i = 0; i < SortedTypes.Num(); ++i) {
+    for (int32 j = i + 1; j < SortedTypes.Num(); ++j) {
+      USimWorldHex::FClusterTemplate PairTarget;
+
+      FOrbData OrbA;
+      OrbA.Type = SortedTypes[i].Key;
+      OrbA.dQ = 0;
+      OrbA.dR = 0;
+      PairTarget.Orbs.Add(OrbA);
+
+      FOrbData OrbB;
+      OrbB.Type = SortedTypes[j].Key;
+      OrbB.dQ = 1;
+      OrbB.dR = 0;
+      PairTarget.Orbs.Add(OrbB);
+
+      PairTarget.Bonds.Add(TPair<int32, int32>(0, 1));
+      TargetClusterSequence.Add(PairTarget);
+    }
+  }
+
+  // Step 3+: Combine previously submitted targets pairwise until we reach
+  // the final cluster size. This is a simplified version - pairs of previous
+  // targets bonded together.
+  int32 PrevStart = 0;
+  int32 PrevEnd = TargetClusterSequence.Num();
+
+  while (TargetClusterSequence.Num() < ScenarioCluster->Orbs.Num() &&
+         PrevEnd > PrevStart + 1) {
+    for (int32 i = PrevStart; i + 1 < PrevEnd; i += 2) {
+      if (TargetClusterSequence.Num() >= ScenarioCluster->Orbs.Num())
+        break;
+
+      const USimWorldHex::FClusterTemplate &A = TargetClusterSequence[i];
+      const USimWorldHex::FClusterTemplate &B = TargetClusterSequence[i + 1];
+
+      USimWorldHex::FClusterTemplate Combined;
+
+      // Add orbs from A
+      for (const FOrbData &Orb : A.Orbs) {
+        Combined.Orbs.Add(Orb);
+      }
+
+      // Add orbs from B, offset to avoid overlap
+      int32 OffsetQ = A.Orbs.Num(); // Simple offset along Q-axis
+      int32 BaseIdx = Combined.Orbs.Num();
+      for (const FOrbData &Orb : B.Orbs) {
+        FOrbData Shifted = Orb;
+        Shifted.dQ += OffsetQ;
+        Combined.Orbs.Add(Shifted);
+      }
+
+      // Copy bonds from A
+      for (const auto &Bond : A.Bonds) {
+        Combined.Bonds.Add(Bond);
+      }
+
+      // Copy bonds from B with offset
+      for (const auto &Bond : B.Bonds) {
+        Combined.Bonds.Add(
+            TPair<int32, int32>(Bond.Key + BaseIdx, Bond.Value + BaseIdx));
+      }
+
+      // Add connecting bond between last orb of A and first orb of B
+      Combined.Bonds.Add(TPair<int32, int32>(A.Orbs.Num() - 1, BaseIdx));
+
+      TargetClusterSequence.Add(Combined);
+    }
+
+    PrevStart = PrevEnd;
+    PrevEnd = TargetClusterSequence.Num();
+  }
+
+  // Final target: the complete scenario cluster itself
+  TargetClusterSequence.Add(*ScenarioCluster);
+
   UE_LOG(LogTemp, Log,
-         TEXT("GameManager: Discovery Scenario Generated with 6 clusters."));
+         TEXT("GameManager: Generated %d target clusters in sequence."),
+         TargetClusterSequence.Num());
+}
+
+void AGameManager::OnTargetClusterCompleted() {
+  if (CurrentTargetClusterIndex < TargetClusterSequence.Num()) {
+    // Track unique target for radius unlocking
+    if (CurrentTargetClusterIndex < TargetClusterSequence.Num()) {
+      const USimWorldHex::FClusterTemplate &Completed =
+          TargetClusterSequence[CurrentTargetClusterIndex];
+      FClusterCanonicalKey Key = GenerateCanonicalKey(Completed);
+      bool bAlreadyInSet = false;
+      CompletedUniqueTargetClusters.Add(Key, &bAlreadyInSet);
+
+      if (!bAlreadyInSet) {
+        // New unique cluster! Expand radius and rebuild
+        UnlockedGridRadius++;
+        if (OrbSimDriver) {
+          SetGridRadius(UnlockedGridRadius);
+          Rebuild();
+        }
+        UE_LOG(LogTemp, Log,
+               TEXT("GameManager: Unique target cluster stored! Radius "
+                    "expanded to %d."),
+               UnlockedGridRadius);
+      }
+    }
+
+    CurrentTargetClusterIndex++;
+    UE_LOG(LogTemp, Log, TEXT("GameManager: Target cluster %d/%d completed."),
+           CurrentTargetClusterIndex, TargetClusterSequence.Num());
+  }
+}
+
+void AGameManager::PreviewCurrentTargetCluster() {
+  if (!OrbSimDriver || !OrbSimDriver->GetSim())
+    return;
+
+  USimWorldHex *Sim = OrbSimDriver->GetSim();
+
+  if (CurrentTargetClusterIndex >= TargetClusterSequence.Num()) {
+    UE_LOG(LogTemp, Warning,
+           TEXT("GameManager: No current target cluster to preview."));
+    return;
+  }
+
+  const USimWorldHex::FClusterTemplate &Target =
+      TargetClusterSequence[CurrentTargetClusterIndex];
+
+  // Place DiscoveryClusterOutput tiles at a visible position
+  FHex PreviewCenter(0, -(UnlockedGridRadius + 3), 0);
+
+  for (const FOrbData &Orb : Target.Orbs) {
+    FHex PlaceHex(PreviewCenter.Q + Orb.dQ, PreviewCenter.R + Orb.dR,
+                  PreviewCenter.Level);
+    FTile NewTile;
+    NewTile.Kind = ETileKind::DiscoveryClusterOutput;
+    NewTile.Arg = Orb.Type;
+    Sim->PlaceTile(PlaceHex, NewTile);
+  }
+
+  UE_LOG(LogTemp, Log,
+         TEXT("GameManager: Previewing target cluster %d/%d with %d orbs."),
+         CurrentTargetClusterIndex + 1, TargetClusterSequence.Num(),
+         Target.Orbs.Num());
+}
+
+void AGameManager::PreviewFinalCluster() {
+  if (!OrbSimDriver || !OrbSimDriver->GetSim())
+    return;
+
+  USimWorldHex *Sim = OrbSimDriver->GetSim();
+
+  const USimWorldHex::FClusterTemplate *ScenarioCluster =
+      Sim->GetClusterTemplates().Find((uint8)DiscoveryScenarioClusterId);
+  if (!ScenarioCluster || ScenarioCluster->Orbs.Num() == 0) {
+    UE_LOG(LogTemp, Warning,
+           TEXT("GameManager: No scenario cluster to preview."));
+    return;
+  }
+
+  // Place DiscoveryClusterOutput tiles at a visible position
+  FHex PreviewCenter(UnlockedGridRadius + 5, 0, 0);
+
+  for (const FOrbData &Orb : ScenarioCluster->Orbs) {
+    FHex PlaceHex(PreviewCenter.Q + Orb.dQ, PreviewCenter.R + Orb.dR,
+                  PreviewCenter.Level);
+    FTile NewTile;
+    NewTile.Kind = ETileKind::DiscoveryClusterOutput;
+    NewTile.Arg = Orb.Type;
+    Sim->PlaceTile(PlaceHex, NewTile);
+  }
+
+  UE_LOG(LogTemp, Log,
+         TEXT("GameManager: Previewing final cluster with %d orbs."),
+         ScenarioCluster->Orbs.Num());
 }
 
 void AGameManager::OnDiscoveryClusterProcessed(
     const USimWorldHex::FClusterTemplate &ProcessedTemplate,
     const FHex &Location) {
-  if (!OrbSimDriver || !OrbSimDriver->GetSim())
-    return;
-  USimWorldHex *Sim = OrbSimDriver->GetSim();
-
-  if (Location.Q == 0 && Location.R == 0)
-    return;
-
-  float CurDist =
-      FMath::Sqrt((float)(Location.Q * Location.Q + Location.R * Location.R +
-                          Location.Q * Location.R));
-  float Scale = (CurDist + 15.0f) / FMath::Max(1.0f, CurDist);
-  FHex PlaceHex(FMath::RoundToInt(Location.Q * Scale),
-                FMath::RoundToInt(Location.R * Scale));
-
-  int32 SeedId = -1;
-  for (const auto &Elem : Sim->GetClusterTemplates()) {
-    if (Elem.Value.Orbs.Num() == ProcessedTemplate.Orbs.Num()) {
-      bool bMatch = true;
-      for (int32 k = 0; k < Elem.Value.Orbs.Num(); ++k) {
-        if (Elem.Value.Orbs[k].Type != ProcessedTemplate.Orbs[k].Type ||
-            Elem.Value.Orbs[k].dQ != ProcessedTemplate.Orbs[k].dQ ||
-            Elem.Value.Orbs[k].dR != ProcessedTemplate.Orbs[k].dR) {
-          bMatch = false;
-          break;
-        }
-      }
-      if (bMatch) {
-        SeedId = Elem.Key;
-        break;
-      }
-    }
-  }
-
-  if (SeedId == -1) {
-    SeedId = GenerateRandomCluster(Sim);
-  }
-
-  int32 CurrentDiff = ProcessedTemplate.Orbs.Num();
-  int32 TargetDiff = CurrentDiff + (int32)DiscoveryDifficultyScale;
-  int32 NewTid = GenerateRecursiveAncestralCluster(SeedId, TargetDiff);
-
-  const USimWorldHex::FClusterTemplate *NewTemplate =
-      Sim->GetClusterTemplates().Find((uint8)NewTid);
-  if (NewTemplate) {
-    for (const FOrbData &Orb : NewTemplate->Orbs) {
-      FHex RelPos(Orb.dQ, Orb.dR);
-      FHex FinalHex(PlaceHex.Q + RelPos.Q, PlaceHex.R + RelPos.R);
-      FTile NewTile;
-      NewTile.Kind = ETileKind::DiscoveryClusterInput;
-      NewTile.Arg = Orb.Type;
-      Sim->PlaceTile(FinalHex, NewTile);
-    }
-  }
+  // Legacy function - body emptied for new discovery mode
+  // Cluster processing is now handled through target cluster sequence
 }
 
 int32 AGameManager::GenerateRecursiveAncestralCluster(int32 AncestorId,

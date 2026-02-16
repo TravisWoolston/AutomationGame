@@ -83,6 +83,23 @@ struct AUTOMATIONGAME_API FFootState {
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   TArray<FItem> GatheredOrbs; // Individual unbonded orbs picked up for scatter
 
+  // Step-by-step gather: list of orb hexes to visit and pick up one at a time
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FHex> GatherTargetHexes;
+
+  // Step-by-step scatter: list of empty hexes to visit and place one orb at a
+  // time
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FHex> ScatterTargetHexes;
+
+  // True while the foot is actively gathering (stepping to orb tiles)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  bool bGatherPhaseActive = false;
+
+  // True while the foot is actively scattering (stepping to empty tiles)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  bool bScatterPhaseActive = false;
+
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   int32 ScatterDroppedCount = 0; // How many orbs have been scattered so far
 

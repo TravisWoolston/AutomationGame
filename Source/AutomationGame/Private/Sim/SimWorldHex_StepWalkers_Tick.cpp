@@ -54,6 +54,15 @@ void USimWorldHex::ProcessWalkerTick(
         W.Requests.RemoveAt(0);
         W.bProcessingRequest = false;
         W.CurrentTargetHex = W.BaseHex;
+
+        W.DFoot.bGatherPhaseActive = false;
+        W.DFoot.bScatterPhaseActive = false;
+        W.LFoot.bGatherPhaseActive = false;
+        W.LFoot.bScatterPhaseActive = false;
+        W.RFoot.bGatherPhaseActive = false;
+        W.RFoot.bScatterPhaseActive = false;
+        W.UFoot.bGatherPhaseActive = false;
+        W.UFoot.bScatterPhaseActive = false;
       }
       // Cancel stale Gather requests (beacon no longer InProgress, checked via
       // CheckReadiness)
@@ -62,6 +71,15 @@ void USimWorldHex::ProcessWalkerTick(
         W.Requests.RemoveAt(0);
         W.bProcessingRequest = false;
         W.CurrentTargetHex = W.BaseHex;
+
+        W.DFoot.bGatherPhaseActive = false;
+        W.DFoot.bScatterPhaseActive = false;
+        W.LFoot.bGatherPhaseActive = false;
+        W.LFoot.bScatterPhaseActive = false;
+        W.RFoot.bGatherPhaseActive = false;
+        W.RFoot.bScatterPhaseActive = false;
+        W.UFoot.bGatherPhaseActive = false;
+        W.UFoot.bScatterPhaseActive = false;
       }
     }
   }
@@ -167,6 +185,32 @@ void USimWorldHex::ProcessWalkerTick(
               // Clear current request
               W.Requests.RemoveAt(0);
               W.bProcessingRequest = false;
+
+              // CRITICAL: Clear all foot task flags to prevent zombie stepping
+              W.DFoot.bGatherPhaseActive = false;
+              W.DFoot.bScatterPhaseActive = false;
+              W.DFoot.bGathering = false;
+              W.DFoot.bHasDesignatedDropOff = false;
+              W.DFoot.bHasSourcePickUp = false;
+
+              W.LFoot.bGatherPhaseActive = false;
+              W.LFoot.bScatterPhaseActive = false;
+              W.LFoot.bGathering = false;
+              W.LFoot.bHasDesignatedDropOff = false;
+              W.LFoot.bHasSourcePickUp = false;
+
+              W.RFoot.bGatherPhaseActive = false;
+              W.RFoot.bScatterPhaseActive = false;
+              W.RFoot.bGathering = false;
+              W.RFoot.bHasDesignatedDropOff = false;
+              W.RFoot.bHasSourcePickUp = false;
+
+              W.UFoot.bGatherPhaseActive = false;
+              W.UFoot.bScatterPhaseActive = false;
+              W.UFoot.bGathering = false;
+              W.UFoot.bHasDesignatedDropOff = false;
+              W.UFoot.bHasSourcePickUp = false;
+
               W.CurrentTargetHex = W.BaseHex;
               W.TicksSinceLastFootTargetChange = 0;
 
@@ -242,7 +286,14 @@ void USimWorldHex::ProcessWalkerTick(
     if (W.UFoot.bHoldingItem && W.UFoot.bHasDesignatedDropOff)
       bAnyFootAwaitingDropOff = true;
 
-    if (!bAnyFootAwaitingDropOff && !BeaconCache.Contains(W.CurrentTargetHex)) {
+    bool bAnyGatherActive = false;
+    if (W.DFoot.bGatherPhaseActive || W.LFoot.bGatherPhaseActive ||
+        W.RFoot.bGatherPhaseActive || W.UFoot.bGatherPhaseActive) {
+      bAnyGatherActive = true;
+    }
+
+    if (!bAnyFootAwaitingDropOff && !bAnyGatherActive &&
+        !BeaconCache.Contains(W.CurrentTargetHex)) {
       if (W.Requests.Num() > 0) {
         UE_LOG(LogTemp, Log,
                TEXT("Walker %d: Movement request complete at (%d,%d)"),

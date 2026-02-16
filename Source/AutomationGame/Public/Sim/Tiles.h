@@ -20,7 +20,8 @@ enum class ETileKind : uint8 {
   DiscoveryClusterOutput, // NEW: Unlocks grid radius and removes itself once
                           // complete
   HelixOutput, // NEW: Outputs clusters into a spiraling DNA helix formation
-  HelixInput   // NEW: Receives processed clusters from a paired helix output
+  HelixInput,  // NEW: Receives processed clusters from a paired helix output
+  Source       // NEW: Fountain helix source tile for discovery mode
 };
 
 USTRUCT(BlueprintType)

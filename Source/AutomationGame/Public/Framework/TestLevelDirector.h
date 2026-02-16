@@ -90,6 +90,9 @@ struct FRequestBeaconSpec {
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   EBeaconRole PairedBeaconRole = EBeaconRole::None;
   UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Level = 0;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 Radius = 10;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) uint8 FilterOrbType = 0;
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) int32 MaxGatherCount = 10;
   UPROPERTY(Transient) ARequestBeacon *Spawned = nullptr;
 };
 
@@ -178,23 +181,12 @@ public:
   UPROPERTY(EditAnywhere, Category = "Discovery Mode")
   int32 StartingDifficulty = 4;
 
-  UPROPERTY(EditAnywhere, Category = "Discovery Mode")
-  int32 DifficultyScale = 1;
-
-  UPROPERTY(EditAnywhere, Category = "Discovery Mode")
-  int32 GeneratedRadius = 400;
-
-  UPROPERTY(EditAnywhere, Category = "Discovery Mode")
-  int32 MinimumUnlockRadiusPerOutput = 10;
-
-  UPROPERTY(EditAnywhere, Category = "Discovery Mode")
-  float GeneratedInputPerOutputRatio = 0.25f;
-
-  /** Controls how much spacing increases with distance from center. Higher =
-   * more spread out at edges. */
-  UPROPERTY(EditAnywhere, Category = "Discovery Mode",
-            meta = (ClampMin = "0.1", ClampMax = "5.0"))
-  float GeneratedInputOutputSpacingScale = 1.0f;
+  // --- DEPRECATED: No longer used by new discovery mode ---
+  int32 DifficultyScale_DEPRECATED = 1;
+  int32 GeneratedRadius_DEPRECATED = 400;
+  int32 MinimumUnlockRadiusPerOutput_DEPRECATED = 10;
+  float GeneratedInputPerOutputRatio_DEPRECATED = 0.25f;
+  float GeneratedInputOutputSpacingScale_DEPRECATED = 1.0f;
 
   UFUNCTION(CallInEditor, BlueprintCallable, Category = "Discovery Mode")
   void GenerateDiscoveryScenario();
@@ -248,7 +240,9 @@ public:
   bool RemoveWalkerSpec(int32 Q, int32 R, int32 Level);
   UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
   void UpsertBeaconSpec(int32 Q, int32 R, EBeaconType BeaconType,
-                        EBeaconRole BeaconRole, float Rotation, int32 Level);
+                        EBeaconRole BeaconRole, float Rotation, int32 Level,
+                        int32 Radius = 10, uint8 FilterOrbType = 0,
+                        int32 MaxGatherCount = 10);
   UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
   bool RemoveBeaconSpec(int32 Q, int32 R, int32 Level);
   UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")

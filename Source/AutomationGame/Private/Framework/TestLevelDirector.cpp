@@ -553,6 +553,9 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
       BeaconSpec.Spawned->Level = BeaconSpec.Level;
       BeaconSpec.Spawned->BeaconType = BeaconSpec.BeaconType;
       BeaconSpec.Spawned->BeaconRole = BeaconSpec.BeaconRole;
+      BeaconSpec.Spawned->FilterOrbType = BeaconSpec.FilterOrbType;
+      BeaconSpec.Spawned->Radius = BeaconSpec.Radius;
+      BeaconSpec.Spawned->MaxGatherCount = BeaconSpec.MaxGatherCount;
 
       // DropOff beacons start as Ready, Pickup beacons start as NotReady
       // (CheckReadiness will update)
@@ -562,12 +565,13 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
               : EBeaconState::NotReady;
       BeaconSpec.Spawned->SetState(InitialState);
       BeaconSpec.Spawned->SyncWorldLocation();
+      BeaconSpec.Spawned->UpdateVisuals(); // Ensure visuals update
 
-      UE_LOG(
-          LogTemp, Log,
-          TEXT("TestLevelDirector: Spawned beacon at (%d,%d) Role=%d State=%d"),
-          BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole,
-          (int32)InitialState);
+      UE_LOG(LogTemp, Log,
+             TEXT("TestLevelDirector: Spawned beacon at (%d,%d) Role=%d "
+                  "State=%d Radius=%d"),
+             BeaconSpec.Q, BeaconSpec.R, (int32)BeaconSpec.BeaconRole,
+             (int32)InitialState, BeaconSpec.Radius);
     }
   }
 
@@ -1102,7 +1106,9 @@ bool ATestLevelDirector::RemoveWalkerSpec(int32 Q, int32 R, int32 Level) {
 void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R,
                                           EBeaconType BeaconType,
                                           EBeaconRole BeaconRole,
-                                          float Rotation, int32 Level) {
+                                          float Rotation, int32 Level,
+                                          int32 Radius, uint8 FilterOrbType,
+                                          int32 MaxGatherCount) {
   if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
     return;
   FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
@@ -1125,6 +1131,10 @@ void ATestLevelDirector::UpsertBeaconSpec(int32 Q, int32 R,
         B.Level == Level) {
       B.BeaconType = BeaconType;
       B.Rotation = Rotation;
+      B.Radius = Radius;
+      B.FilterOrbType = FilterOrbType;
+      B.MaxGatherCount = MaxGatherCount;
+
       if (!B.Spawned)
         B.Spawned = FindRuntimeBeaconAt(Q, R, BeaconRole, Level);
 
@@ -1623,7 +1633,11 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       NewBeaconSpec.Level = Beacon->Level;
       NewBeaconSpec.BeaconType = Beacon->BeaconType;
       NewBeaconSpec.BeaconRole = Beacon->BeaconRole;
+      NewBeaconSpec.BeaconRole = Beacon->BeaconRole;
       NewBeaconSpec.Rotation = Beacon->GetActorRotation().Yaw;
+      NewBeaconSpec.Radius = Beacon->Radius;
+      NewBeaconSpec.FilterOrbType = Beacon->FilterOrbType;
+      NewBeaconSpec.MaxGatherCount = Beacon->MaxGatherCount;
       NewBeaconSpec.Spawned = Beacon;
 
       // Save paired beacon info
@@ -1719,12 +1733,12 @@ void ATestLevelDirector::GenerateDiscoveryScenario() {
     return;
   }
 
-  // Setup Discovery Mode on GM
+  // Setup Discovery Mode on GM — set params BEFORE enabling
+  GM->UnlockedGridRadius = StartingGridRadius;
+  GM->DiscoveryDifficulty = StartingDifficulty;
+
+  // Enable discovery mode (no longer auto-generates)
   GM->SetDiscoveryMode(true);
-  GM->UnlockedRadius = StartingGridRadius;
-  GM->MinimumUnlockRadiusPerOutput = MinimumUnlockRadiusPerOutput;
-  GM->DiscoveryStartingDifficulty = StartingDifficulty;
-  GM->DiscoveryDifficultyScale = DifficultyScale;
 
   UE_LOG(LogTemp, Log,
          TEXT("GenerateDiscoveryScenario: Starting generation with "
@@ -1756,9 +1770,10 @@ void ATestLevelDirector::GenerateDiscoveryScenario() {
 
   ActiveScenarioIndex = DiscoveryIndex;
   FScenarioSpec &Scen = Scenarios[ActiveScenarioIndex];
-  int32 ClustersGenerated = 0;
-  int32 ClustersFailed = 0;
-  int32 InputsGenerated = 0;
+
+  // Generate the discovery scenario on GameManager
+  // (generates scenario cluster, places Source tiles, strand, targets)
+  GM->GenerateDiscoveryScenario();
 
   // Prepare simulation
   USimWorldHex *Sim = Driver ? Driver->GetSim() : nullptr;
@@ -1771,305 +1786,42 @@ void ATestLevelDirector::GenerateDiscoveryScenario() {
     return;
   }
 
-  // Evolution Tree Structure
-  struct FEvolutionNode {
-    int32 TemplateId;
-    FHex Hex;
-    int32 Dist;
-    int32 ParentIdx; // -1 for root
-  };
-  TArray<FEvolutionNode> ActiveNodes;
-  TSet<FHex> OccupiedHexes;
-
-  // For debug drawing
-  TArray<TPair<FHex, FHex>> ParentChildLinks; // Parent center -> Child center
-
-  // Helper lambda
-  auto GetHexOffset = [](int32 D, int32 Stp) {
-    const int32 DQ[] = {1, 1, 0, -1, -1, 0};
-    const int32 DR[] = {0, -1, -1, 0, 1, 1};
-    int32 i = D % 6;
-    return FHexAxial(DQ[i] * Stp, DR[i] * Stp);
-  };
-
-  // 1. Generate Root Cluster (Ancestral Root)
-  {
-    GM->DifficultyValue = 4; // Absolute basic start
-    int32 RootId = GM->GenerateRandomCluster(Sim);
-    if (RootId >= 0) {
-      const USimWorldHex::FClusterTemplate *T =
-          Sim->GetClusterTemplates().Find((uint8)RootId);
-      FHex RootHex(0, 0, 0);
-      if (T && T->Orbs.Num() > 0) {
-        for (const FOrbData &Orb : T->Orbs) {
-          FHex H(RootHex.Q + Orb.dQ, RootHex.R + Orb.dR, RootHex.Level);
-          FPlacedTileSpec TileSpec;
-          TileSpec.Hex = H;
-          TileSpec.Kind = ETileKind::DiscoveryClusterOutput;
-          TileSpec.OrbType = Orb.Type;
-          TileSpec.Dir = (uint8)RootId;
-          Scen.Tiles.Add(TileSpec);
-          OccupiedHexes.Add(H);
-        }
-        ActiveNodes.Add({RootId, RootHex, 0, -1});
-        ClustersGenerated++;
-      }
-    }
+  // Save SourceTiles into scenario spec so they persist across rebuilds
+  for (const FHex &SourcePos : GM->SourceTilePositions) {
+    FPlacedTileSpec TileSpec;
+    TileSpec.Hex = SourcePos;
+    TileSpec.Kind = ETileKind::Source;
+    TileSpec.Dir = 0;
+    TileSpec.OrbType = 0;
+    Scen.Tiles.Add(TileSpec);
   }
 
-  // 2. Grow the Tree
-  const int32 MaxRadius = GeneratedRadius;
-  const int32 TargetClusters = 60 + (MaxRadius / 10);
-  const int32 MaxAttempts = 3000;
+  // Save the current target cluster as DiscoveryClusterOutput tiles
+  // Place it perpendicular to the source line (along R-axis, offset from
+  // center)
+  if (GM->CurrentTargetClusterIndex < GM->TargetClusterSequence.Num()) {
+    const USimWorldHex::FClusterTemplate &Target =
+        GM->TargetClusterSequence[GM->CurrentTargetClusterIndex];
 
-  UE_LOG(LogTemp, Log,
-         TEXT("GenerateDiscoveryScenario: Starting Evolution Tree. Target: %d, "
-              "SpacingScale: %.2f"),
-         TargetClusters, GeneratedInputOutputSpacingScale);
+    FHex TargetCenter(0, -(GM->UnlockedGridRadius - 1), 0);
 
-  for (int32 Attempt = 0;
-       Attempt < MaxAttempts && ClustersGenerated < TargetClusters; Attempt++) {
-    if (ActiveNodes.Num() == 0)
-      break;
-
-    // Pick a parent node randomly
-    int32 ParentIdx = FMath::RandRange(0, ActiveNodes.Num() - 1);
-    const FEvolutionNode &Parent = ActiveNodes[ParentIdx];
-
-    // Pick a direction to grow
-    int32 Dir = FMath::RandRange(0, 5);
-
-    // Spacing increases with distance from center, scaled by user parameter
-    float MinSpacing = 8.0f + (float(Parent.Dist) / MaxRadius) * 20.0f *
-                                  GeneratedInputOutputSpacingScale;
-    int32 Step = FMath::RoundToInt(MinSpacing * FMath::RandRange(0.8f, 1.5f));
-
-    FHexAxial Offset = GetHexOffset(Dir, Step);
-    FHex NewHex(Parent.Hex.Q + Offset.Q, Parent.Hex.R + Offset.R, 0);
-
-    // Dist check
-    int32 NewDist = (FMath::Abs(NewHex.Q) + FMath::Abs(NewHex.Q + NewHex.R) +
-                     FMath::Abs(NewHex.R)) /
-                    2;
-    if (NewDist > MaxRadius)
-      continue;
-
-    // Overlap check with existing centers
-    bool bTooClose = false;
-    for (const auto &Node : ActiveNodes) {
-      int32 d = (FMath::Abs(Node.Hex.Q - NewHex.Q) +
-                 FMath::Abs(Node.Hex.Q + Node.Hex.R - NewHex.Q - NewHex.R) +
-                 FMath::Abs(Node.Hex.R - NewHex.R)) /
-                2;
-      if (d < MinSpacing * 0.7f) {
-        bTooClose = true;
-        break;
-      }
-    }
-    if (bTooClose)
-      continue;
-
-    // Difficulty increases with distance, tied to checkpoints
-    int32 LocalDifficulty = 4;
-    if (GM->AncestralDifficultyCheckpoints.Num() > 0)
-      LocalDifficulty = GM->AncestralDifficultyCheckpoints[0];
-    if (NewDist > 50 && GM->AncestralDifficultyCheckpoints.Num() > 1)
-      LocalDifficulty = GM->AncestralDifficultyCheckpoints[1];
-    if (NewDist > 100 && GM->AncestralDifficultyCheckpoints.Num() > 2)
-      LocalDifficulty = GM->AncestralDifficultyCheckpoints[2];
-    if (NewDist > 150 && GM->AncestralDifficultyCheckpoints.Num() > 3)
-      LocalDifficulty = GM->AncestralDifficultyCheckpoints[3];
-    if (NewDist > 180 && GM->AncestralDifficultyCheckpoints.Num() > 4)
-      LocalDifficulty = GM->AncestralDifficultyCheckpoints[4];
-    if (NewDist > 250 && GM->AncestralDifficultyCheckpoints.Num() > 5)
-      LocalDifficulty = GM->AncestralDifficultyCheckpoints[5];
-
-    GM->DifficultyValue = LocalDifficulty;
-
-    // Generate Child (Related/Mutated) - Must be UNIQUE
-    // Try to generate a unique cluster; if we can't, we may need higher
-    // difficulty
-    int32 ChildId = -1;
-    int32 UniqueAttempts = 0;
-    const int32 MaxUniqueAttempts = 10;
-
-    while (ChildId < 0 && UniqueAttempts < MaxUniqueAttempts) {
-      int32 CandidateId = GM->GenerateRelatedCluster(Parent.TemplateId, Sim);
-      if (CandidateId >= 0) {
-        // Check if this template is unique (not already used)
-        bool bIsUnique = true;
-        for (const FEvolutionNode &ExistingNode : ActiveNodes) {
-          if (ExistingNode.TemplateId == CandidateId) {
-            bIsUnique = false;
-            break;
-          }
-        }
-
-        if (bIsUnique) {
-          ChildId = CandidateId;
-        } else {
-          // Try again with higher difficulty to get more variety
-          UniqueAttempts++;
-          GM->DifficultyValue = LocalDifficulty + UniqueAttempts;
-        }
-      } else {
-        UniqueAttempts++;
-      }
-    }
-
-    if (ChildId < 0) {
-      ClustersFailed++;
-      continue;
-    }
-
-    const USimWorldHex::FClusterTemplate *ChildT =
-        Sim->GetClusterTemplates().Find((uint8)ChildId);
-    if (!ChildT || ChildT->Orbs.Num() == 0)
-      continue;
-
-    // Validate Placement overlap
-    bool bOverlap = false;
-    TArray<FHex> ChildTiles;
-    for (const FOrbData &Orb : ChildT->Orbs) {
-      FHex H(NewHex.Q + Orb.dQ, NewHex.R + Orb.dR, NewHex.Level);
-      if (OccupiedHexes.Contains(H)) {
-        bOverlap = true;
-        break;
-      }
-      ChildTiles.Add(H);
-    }
-    if (bOverlap)
-      continue;
-
-    // Commit Child Output
-    for (int32 i = 0; i < ChildTiles.Num(); i++) {
-      const FHex &H = ChildTiles[i];
+    for (const FOrbData &Orb : Target.Orbs) {
+      FHex H(TargetCenter.Q + Orb.dQ, TargetCenter.R + Orb.dR,
+             TargetCenter.Level);
       FPlacedTileSpec TileSpec;
       TileSpec.Hex = H;
       TileSpec.Kind = ETileKind::DiscoveryClusterOutput;
-      TileSpec.OrbType = ChildT->Orbs[i].Type;
-      TileSpec.Dir = (uint8)ChildId;
+      TileSpec.OrbType = Orb.Type;
+      TileSpec.Dir = 0;
       Scen.Tiles.Add(TileSpec);
-      OccupiedHexes.Add(H);
-    }
-
-    // Track parent-child link for debug drawing
-    ParentChildLinks.Add(TPair<FHex, FHex>(Parent.Hex, NewHex));
-
-    ActiveNodes.Add({ChildId, NewHex, NewDist, ParentIdx});
-    ClustersGenerated++;
-
-    // ALWAYS attempt Input Placement for each output
-    // Inputs use GenerateRandomCluster (not related) - they don't need to be
-    // unique
-    bool bPlacedInput = false;
-    for (int32 Iter = 0; Iter < 20 && !bPlacedInput; Iter++) {
-      int32 IDs = FMath::RandRange(4, 10); // Closer range for inputs
-      int32 IDir = FMath::RandRange(0, 5);
-
-      FHexAxial IOff = GetHexOffset(IDir, IDs);
-      FHex IHex(NewHex.Q + IOff.Q, NewHex.R + IOff.R, 0);
-
-      // Check if center is occupied
-      if (OccupiedHexes.Contains(IHex))
-        continue;
-
-      // Calculate input difficulty based on input location
-      int32 InputDist = (FMath::Abs(IHex.Q) + FMath::Abs(IHex.Q + IHex.R) +
-                         FMath::Abs(IHex.R)) /
-                        2;
-      int32 InputDifficulty = 4;
-      if (InputDist > 50)
-        InputDifficulty = 6;
-      if (InputDist > 100)
-        InputDifficulty = 9;
-      if (InputDist > 150)
-        InputDifficulty = 12;
-      if (InputDist > 250)
-        InputDifficulty = 15;
-
-      // Use GenerateRandomCluster for inputs (not unique, just random)
-      GM->DifficultyValue = InputDifficulty;
-      int32 InputId = GM->GenerateRandomCluster(Sim);
-
-      const USimWorldHex::FClusterTemplate *InT =
-          Sim->GetClusterTemplates().Find((uint8)InputId);
-      if (!InT || InT->Orbs.Num() == 0)
-        continue;
-
-      // Overlap check for all input tiles
-      bool bInOverlap = false;
-      TArray<FHex> InTiles;
-      for (const FOrbData &Orb : InT->Orbs) {
-        FHex H(IHex.Q + Orb.dQ, IHex.R + Orb.dR, IHex.Level);
-        if (OccupiedHexes.Contains(H)) {
-          bInOverlap = true;
-          break;
-        }
-        InTiles.Add(H);
-      }
-
-      if (!bInOverlap && InTiles.Num() > 0) {
-        for (int32 i = 0; i < InTiles.Num(); i++) {
-          const FHex &H = InTiles[i];
-          FPlacedTileSpec TileSpec;
-          TileSpec.Hex = H;
-          TileSpec.Kind = ETileKind::DiscoveryClusterInput;
-          TileSpec.OrbType = InT->Orbs[i].Type;
-          TileSpec.Dir = (uint8)InputId;
-          Scen.Tiles.Add(TileSpec);
-          OccupiedHexes.Add(H);
-        }
-        InputsGenerated++;
-        bPlacedInput = true;
-      }
     }
   }
 
-  UE_LOG(LogTemp, Warning,
-         TEXT("GenerateDiscoveryScenario: Generated %d clusters (Failed: %d) "
-              "with %d Inputs and %d total tiles."),
-         ClustersGenerated, ClustersFailed, InputsGenerated, Scen.Tiles.Num());
-
-  // Draw debug lines for 10 seconds
-  if (UWorld *World = GetWorld()) {
-    // Get world transform info
-    FVector WorldAnchor = FVector::ZeroVector;
-    float TileSize = 120.0f; // Default
-    if (Driver && Driver->GetGridAnchor()) {
-      WorldAnchor = Driver->GetGridAnchor()->GetActorLocation();
-      TileSize = Driver->GetTileSize();
-    }
-
-    EHexOrientation Ori = EHexOrientation::PointyTop;
-
-    // Draw line from center to each cluster
-    for (const FEvolutionNode &Node : ActiveNodes) {
-      FVector2D NodeXY =
-          HexCoord::AxialToXY(FHexAxial(Node.Hex.Q, Node.Hex.R), TileSize, Ori);
-      FVector NodeWorld = WorldAnchor + FVector(NodeXY.X, NodeXY.Y, 50.0f);
-      FVector CenterWorld = WorldAnchor + FVector(0, 0, 50.0f);
-
-      // Center to node (yellow, thin)
-      DrawDebugLine(World, CenterWorld, NodeWorld, FColor::Yellow, false, 10.0f,
-                    0, 1.0f);
-    }
-
-    // Draw parent-child links (green, thicker)
-    for (const auto &Link : ParentChildLinks) {
-      FVector2D ParentXY =
-          HexCoord::AxialToXY(FHexAxial(Link.Key.Q, Link.Key.R), TileSize, Ori);
-      FVector2D ChildXY = HexCoord::AxialToXY(
-          FHexAxial(Link.Value.Q, Link.Value.R), TileSize, Ori);
-
-      FVector ParentWorld =
-          WorldAnchor + FVector(ParentXY.X, ParentXY.Y, 100.0f);
-      FVector ChildWorld = WorldAnchor + FVector(ChildXY.X, ChildXY.Y, 100.0f);
-
-      DrawDebugLine(World, ParentWorld, ChildWorld, FColor::Green, false, 10.0f,
-                    0, 3.0f);
-    }
-  }
+  UE_LOG(LogTemp, Log,
+         TEXT("GenerateDiscoveryScenario: Complete. %d Source tiles, "
+              "Scenario ClusterID=%d, %d target clusters."),
+         GM->SourceTilePositions.Num(), GM->DiscoveryScenarioClusterId,
+         GM->TargetClusterSequence.Num());
 
   // Update UI/Editor
 #if WITH_EDITOR

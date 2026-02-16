@@ -336,16 +336,13 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
 
   UpdateHoverHighlight(DeltaSeconds);
 
+  UpdateRadiusHighlights();
+
   // Discovery Mode Dynamic Difficulty
-  // Skip dynamic recalculation when in Kind 12 blueprint placement mode
-  // to allow manual difficulty cycling via scroll wheel
+  // In the new discovery mode, difficulty is fixed at DiscoveryDifficulty
   if (GM && GM->IsDiscoveryMode() && Placer && Placer->IsHoverValid() &&
       !(bBlueprintPlacementMode && ActiveGenerationMode == 12)) {
-    const FHex &H = Placer->GetHoverHex();
-    int32 Dist =
-        (FMath::Abs(H.Q) + FMath::Abs(H.Q + H.R) + FMath::Abs(H.R)) / 2;
-    GM->DifficultyValue = GM->DiscoveryStartingDifficulty +
-                          (Dist * GM->DiscoveryDifficultyScale) / 20;
+    GM->DifficultyValue = GM->DiscoveryDifficulty;
   }
 
   // Handle continuous placement (painting) for belts and cluster sends
@@ -965,6 +962,86 @@ void AHexTopDownPawn::UpdateHoverHighlight(float DeltaSeconds) {
     TileHighlightMesh->SetVisibility(true);
   } else {
     bHighlightSmoothingInitialized = false;
+  }
+}
+
+void AHexTopDownPawn::UpdateRadiusHighlights() {
+  if (!GetWorld())
+    return;
+
+  // Cleanup old mesh components if any
+  if (RadiusHighlightComponents.Num() > 0) {
+    for (auto *Comp : RadiusHighlightComponents) {
+      if (Comp)
+        Comp->DestroyComponent();
+    }
+    RadiusHighlightComponents.Empty();
+  }
+
+  AOrbSimDriver *Driver = CachedOrbSimDriver;
+  if (!Driver)
+    Driver = AOrbSimDriver::Find(GetWorld());
+  if (!Driver)
+    return;
+
+  const float Tile = Driver->GetTileSize();
+  const float ZHeight = 5.0f; // Height above ground
+
+  for (TActorIterator<ARequestBeacon> It(GetWorld()); It; ++It) {
+    ARequestBeacon *Beacon = *It;
+    if (!Beacon || Beacon->Radius <= 0)
+      continue;
+    if (Beacon->BeaconRole != EBeaconRole::Gather &&
+        Beacon->BeaconRole != EBeaconRole::Scatter)
+      continue;
+
+    FHex Center(Beacon->Q, Beacon->R, Beacon->Level);
+    int32 Radius = Beacon->Radius;
+
+    // Build the ring of hexes at the boundary
+    TArray<FHex> RingHexes;
+    FHex Current = Center;
+    // Start at corner (Direction 4 * Radius)
+    for (int k = 0; k < Radius; ++k) {
+      Current = HexUtil::Neighbor(Current, (EHexDir)4);
+    }
+
+    // Walk the ring
+    for (int i = 0; i < 6; ++i) {
+      for (int j = 0; j < Radius; ++j) {
+        RingHexes.Add(Current);
+        Current = HexUtil::Neighbor(Current, (EHexDir)i);
+      }
+    }
+
+    const FColor RadiusCol = (Beacon->BeaconRole == EBeaconRole::Gather)
+                                 ? FColor::Cyan
+                                 : FColor::Orange;
+    const float LineThickness = 4.0f;
+
+    for (const FHex &H : RingHexes) {
+      FVector CenterH = Driver->MapHexToWorld(H);
+      CenterH.Z += ZHeight;
+
+      for (uint8 d = 0; d < 6; ++d) {
+        FHex N = HexUtil::Neighbor(H, (EHexDir)d);
+        if (HexUtil::Dist(Center, N) > Radius) {
+          // This neighbor is outside the radius; draw the shared edge
+          FVector CenterN = Driver->MapHexToWorld(N);
+          CenterN.Z += ZHeight;
+
+          FVector Midpoint = (CenterH + CenterN) * 0.5f;
+          FVector DirToN = (CenterN - CenterH).GetSafeNormal();
+          FVector Tangent =
+              FVector::CrossProduct(FVector(0, 0, 1), DirToN).GetSafeNormal();
+          float EdgeHalfLen = Tile * 0.5f;
+
+          DrawDebugLine(GetWorld(), Midpoint - Tangent * EdgeHalfLen,
+                        Midpoint + Tangent * EdgeHalfLen, RadiusCol, false, 0.f,
+                        0, LineThickness);
+        }
+      }
+    }
   }
 }
 
@@ -2786,14 +2863,26 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
           UE_LOG(LogTemp, Log, TEXT("Destroying RequestBeacon at (%d,%d,%d)"),
                  Hex.Q, Hex.R, Hex.Level);
 
+          // Also destroy paired beacon (for GatherScatter pairs)
+          ARequestBeacon *Paired = Beacon->PairedBeacon;
+
           // Scenario capture for beacon removal
           for (TActorIterator<ATestLevelDirector> TLDIt(World); TLDIt;
                ++TLDIt) {
             ATestLevelDirector *TLD = *TLDIt;
             if (TLD) {
               TLD->RemoveBeaconSpec(Hex.Q, Hex.R, Hex.Level);
+              if (Paired) {
+                TLD->RemoveBeaconSpec(Paired->Q, Paired->R, Paired->Level);
+              }
               break;
             }
+          }
+
+          Beacon->PairedBeacon = nullptr; // Clear to prevent double-destroy
+          if (Paired) {
+            Paired->PairedBeacon = nullptr;
+            Paired->Destroy();
           }
           Beacon->Destroy();
         }

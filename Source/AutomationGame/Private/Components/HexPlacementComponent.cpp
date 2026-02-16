@@ -1716,7 +1716,7 @@ bool UHexPlacementComponent::CanPlaceAt(const FHex &Hex) const {
         int32 Dist = (FMath::Abs(Hex.Q) + FMath::Abs(Hex.Q + Hex.R) +
                       FMath::Abs(Hex.R)) /
                      2;
-        if (Dist > GM->UnlockedRadius) {
+        if (Dist > GM->UnlockedGridRadius) {
           return false;
         }
       }
@@ -1918,27 +1918,51 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
     }
 
     // Draw hexagonal outline if radius > 0
+    // Draw hexagonal outline describing the assigned tiles if radius > 0
     if (Radius > 0) {
-      static const FHex Corners[6] = {FHex(1, 0, 0),  FHex(1, -1, 0),
-                                      FHex(0, -1, 0), FHex(-1, 0, 0),
-                                      FHex(-1, 1, 0), FHex(0, 1, 0)};
+      TArray<FHex> RingHexes;
+      FHex Current = Center;
+      // Start at corner (Direction 4 * Radius)
+      for (int k = 0; k < Radius; ++k) {
+        Current = HexUtil::Neighbor(Current, (EHexDir)4);
+      }
 
-      FVector PrevCornerWorld;
-      bool bFirst = true;
+      // Walk the ring
+      for (int i = 0; i < 6; ++i) {
+        for (int j = 0; j < Radius; ++j) {
+          RingHexes.Add(Current);
+          Current = HexUtil::Neighbor(Current, (EHexDir)i);
+        }
+      }
+
       const FColor RadiusCol =
           (GatherScatterPlacementStep < 2) ? FColor::Cyan : FColor::Orange;
+      const float LineThickness = 4.0f;
+      // Use consistent Z height
+      const float ZHeight = PreviewZOffset + 5.0f;
 
-      for (int32 i = 0; i <= 6; ++i) {
-        FHex CornerHex = Center + Corners[i % 6] * Radius;
-        FVector CornerWorld =
-            HexToWorld(CornerHex) + FVector(0, 0, PreviewZOffset + 5.0f);
+      for (const FHex &H : RingHexes) {
+        FVector CenterH = HexToWorld(H);
+        CenterH.Z += ZHeight;
 
-        if (!bFirst) {
-          DrawDebugLine(GetWorld(), PrevCornerWorld, CornerWorld, RadiusCol,
-                        false, 0.f, 0, 4.0f);
+        for (uint8 d = 0; d < 6; ++d) {
+          FHex N = HexUtil::Neighbor(H, (EHexDir)d);
+          if (HexUtil::Dist(Center, N) > Radius) {
+            // This neighbor is outside the radius; draw the shared edge
+            FVector CenterN = HexToWorld(N);
+            CenterN.Z += ZHeight;
+
+            FVector Midpoint = (CenterH + CenterN) * 0.5f;
+            FVector DirToN = (CenterN - CenterH).GetSafeNormal();
+            FVector Tangent =
+                FVector::CrossProduct(FVector(0, 0, 1), DirToN).GetSafeNormal();
+            float EdgeHalfLen = Tile * 0.5f;
+
+            DrawDebugLine(GetWorld(), Midpoint - Tangent * EdgeHalfLen,
+                          Midpoint + Tangent * EdgeHalfLen, RadiusCol, false,
+                          0.f, 0, LineThickness);
+          }
         }
-        PrevCornerWorld = CornerWorld;
-        bFirst = false;
       }
     }
 
@@ -2010,8 +2034,9 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
 
       UStaticMesh *Mesh = SelectPreviewMesh();
       if (!Mesh) {
-        UE_LOG(LogTemp, Warning,
-               TEXT("HexPlacementComponent: No mesh selected for arm preview"));
+        // UE_LOG(LogTemp, Warning,
+        //        TEXT("HexPlacementComponent: No mesh selected for arm
+        //        preview"));
         PreviewComp->SetVisibility(false);
         return;
       }

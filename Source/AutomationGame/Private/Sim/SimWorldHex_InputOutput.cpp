@@ -1308,16 +1308,16 @@ void USimWorldHex::ProcessOutputs() {
                               FMath::Abs(ClusterHex.Q + ClusterHex.R) +
                               FMath::Abs(ClusterHex.R)) /
                              2;
-                if (Dist >= Driver->GM->UnlockedRadius - 2) {
-                  Driver->GM->UnlockedRadius++;
+                if (Dist >= Driver->GM->UnlockedGridRadius - 2) {
+                  Driver->GM->UnlockedGridRadius++;
                   bUnlockedAny = true;
                 }
               }
 
               if (bUnlockedAny && Driver->GM) {
                 // Force GameManager to sync its Radius with the new
-                // UnlockedRadius and rebuild
-                Driver->GM->SetGridRadius(Driver->GM->UnlockedRadius);
+                // UnlockedGridRadius and rebuild
+                Driver->GM->SetGridRadius(Driver->GM->UnlockedGridRadius);
               }
 
               // IMPORTANT: Remove discovery tiles once they have been

@@ -331,25 +331,90 @@ public:
   float ClusterIconScale = 1.0f;
 
   // ------------ Discovery Mode ------------
-  /** Whether Discovery Mode is enabled (infinite expanding clusters) */
+  /** Whether Discovery Mode is enabled */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Discovery Mode")
   bool bDiscoveryMode = false;
 
+  /** Difficulty score for the generated scenario cluster */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Discovery Mode",
-            meta = (EditCondition = "bDiscoveryMode"))
-  int32 UnlockedRadius = 40;
+            meta = (EditCondition = "bDiscoveryMode", ClampMin = "4"))
+  int32 DiscoveryDifficulty = 100;
 
+  /** Number of source tiles in the center line */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Discovery Mode",
-            meta = (EditCondition = "bDiscoveryMode"))
-  int32 MinimumUnlockRadiusPerOutput = 10;
+            meta = (EditCondition = "bDiscoveryMode", ClampMin = "1"))
+  int32 SourceTileCount = 5;
 
+  /** Maximum orbs of each type allowed in the world (excluding cluster storage)
+   */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Discovery Mode",
-            meta = (EditCondition = "bDiscoveryMode"))
-  int32 DiscoveryStartingDifficulty = 6;
+            meta = (EditCondition = "bDiscoveryMode", ClampMin = "1"))
+  int32 MaxOrbsPerTypeInWorld = 20;
 
+  /** GTM ticks before an unbonded source orb becomes Void */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Discovery Mode",
+            meta = (EditCondition = "bDiscoveryMode", ClampMin = "1"))
+  int32 VoidConversionTicks = 30;
+
+  /** Current playable radius (grows when unique target clusters are stored) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Discovery Mode",
+            meta = (EditCondition = "bDiscoveryMode", ClampMin = "1"))
+  int32 UnlockedGridRadius = 3;
+
+  /** Scenario cluster template ID */
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Discovery Mode")
+  int32 DiscoveryScenarioClusterId = -1;
+
+  /** Cached hex positions of source tiles */
+  TArray<FHex> SourceTilePositions;
+
+  /** Randomized strand sequence (orb types from scenario cluster) */
+  TArray<FOrbData> SourceStrand;
+
+  /** Index of next orb to print from the strand */
+  int32 SourceStrandCursor = 0;
+
+  /** True when next orb would exceed world limit */
+  bool bSourcePaused = false;
+
+  /** Per-type count of orbs currently in the world (excluding storage) */
+  TMap<uint8, int32> WorldOrbCounts;
+
+  // --- Source Helix Animation State ---
+  /** Animated rungs currently rising toward source tiles */
+  TArray<FHelixRung> SourceHelixRungs;
+
+  /** Rotation offset for the source helix animation */
+  float SourceHelixRotation = 0.f;
+
+  /** Degrees per rung in source helix animation */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite,
+            Category = "Discovery Mode|Animation",
             meta = (EditCondition = "bDiscoveryMode"))
-  float DiscoveryDifficultyScale = 1.0f;
+  float SourceHelixDegreesPerRung = 36.f;
+
+  /** Vertical spacing between rungs in source helix */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite,
+            Category = "Discovery Mode|Animation",
+            meta = (EditCondition = "bDiscoveryMode"))
+  float SourceHelixRungSpacing = 100.f;
+
+  /** Ticks for a rung to transit from below grid to source tile surface */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite,
+            Category = "Discovery Mode|Animation",
+            meta = (EditCondition = "bDiscoveryMode", ClampMin = "1"))
+  int32 SourceHelixTransitTicks = 20;
+
+  // --- Target Cluster Sequencing ---
+  /** Ordered list of target sub-clusters for the player */
+  TArray<USimWorldHex::FClusterTemplate> TargetClusterSequence;
+
+  /** Current target cluster index */
+  UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Discovery Mode")
+  int32 CurrentTargetClusterIndex = 0;
+
+  /** Unique target clusters that have been stored (for radius unlocking) */
+  TSet<FClusterCanonicalKey> CompletedUniqueTargetClusters;
 
   UFUNCTION(BlueprintPure, Category = "Discovery Mode")
   bool IsDiscoveryMode() const { return bDiscoveryMode; }
@@ -357,10 +422,36 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Discovery Mode")
   void SetDiscoveryMode(bool bEnabled);
 
-  /** Generate initial discovery mode scenario (6 clusters around center) */
+  /** Generate initial discovery mode scenario */
   void GenerateDiscoveryScenario();
 
-  /** Handle processing of a discovery cluster (evolve and expand) */
+  /** Create randomized strand ordering from scenario cluster */
+  void GenerateSourceStrand();
+
+  /** Advance source helix by one tick (called from sim step) */
+  void StepSourceHelix();
+
+  /** Count orbs of a specific type currently on the board */
+  int32 CountWorldOrbsOfType(uint8 OrbType) const;
+
+  /** Rebuild WorldOrbCounts from live sim state */
+  void RefreshWorldOrbCounts();
+
+  /** Decompose scenario cluster into ordered target sequence */
+  void GenerateTargetClusterSequence();
+
+  /** Handle completion of the current target cluster */
+  void OnTargetClusterCompleted();
+
+  /** Place ClusterOutputs matching current target cluster */
+  UFUNCTION(CallInEditor, Category = "Discovery Mode")
+  void PreviewCurrentTargetCluster();
+
+  /** Place ClusterOutputs matching the full final cluster (for verification) */
+  UFUNCTION(CallInEditor, Category = "Discovery Mode")
+  void PreviewFinalCluster();
+
+  /** Handle processing of a discovery cluster (legacy, kept for compat) */
   void OnDiscoveryClusterProcessed(
       const USimWorldHex::FClusterTemplate &ProcessedTemplate,
       const FHex &Location);
