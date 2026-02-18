@@ -292,9 +292,11 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick,
 
   // Draw debug alpha dial if enabled (BEFORE updating PrevAlpha so we can see
   // the difference)
+  /*
   if (bShowAlphaDial) {
     DrawDebugAlphaDial(Alpha, Step);
   }
+  */
 
   // Update animated orbs
   Sim->UpdateAnimatedOrbs(DeltaTime);
@@ -500,6 +502,11 @@ void UOrbRenderer::RebuildCurrPos() {
     const int32 ItemId = Item.Id;
     if (ItemId == 0)
       continue;
+
+    // NOTE: We do NOT skip SourceTileItemIds here.
+    // CurrPos must be populated for all items so PrevPos seeds correctly,
+    // and so items are visible the moment the helix row is consumed.
+
     const FHex H = KV.Key;
 
     // Calculate base tile center position
@@ -526,6 +533,42 @@ void UOrbRenderer::RebuildCurrPos() {
 
     if (!Item.bIsCluster) {
       CurrPos.Add(ItemId, TileWorld);
+
+      // If this is a newly spawned source item, set its PrevPos to simulate
+      // arrival from below (helix animation handoff)
+      if (Sim->SourceTileItemIds.Contains(ItemId)) {
+        // Find the Source Group this tile belongs to
+        const FSourceGroup *FoundGroup = nullptr;
+        for (const auto &GroupPair : Sim->SourceGroups) {
+          if (GroupPair.Value.SortedTiles.Contains(H)) {
+            FoundGroup = &GroupPair.Value;
+            break;
+          }
+        }
+
+        if (FoundGroup && Driver) {
+          FTransform ExitTM = Driver->GetHelixHandoffTransform(H, *FoundGroup);
+          PrevPos.Add(ItemId, ExitTM.GetLocation());
+
+          // Calculate Twisted Rotation (Orbs rotate with the group twist)
+          FRotator TargetRot =
+              bSphere ? ComputeUprightRot(TileWorld, H) : FRotator::ZeroRotator;
+          FRotator TwistedRot = TargetRot;
+          TwistedRot.Yaw += ExitTM.Rotator().Yaw;
+
+          PrevRot.Add(ItemId, TwistedRot);
+
+          // Ensure we interpolate TO the correct untwisted rotation (even if
+          // !bSphere)
+          if (!bSphere) {
+            CurrRot.Add(ItemId, TargetRot);
+          }
+        } else {
+          // Fallback if no driver or group (shouldn't happen)
+          PrevPos.Add(ItemId, TileWorld - FVector(0, 0, 7.5f));
+        }
+      }
+
       OrbTypes.Add(ItemId, ItemType);
       if (bSphere)
         CurrRot.Add(ItemId, ComputeUprightRot(TileWorld, H));

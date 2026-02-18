@@ -167,6 +167,12 @@ public:
   UFUNCTION(BlueprintCallable, Category = "Grid")
   bool WorldToHex(const FVector &World, FHex &OutHex) const;
 
+  /** Calculate the final transform of a helix orb (at age 19) for handoff.
+   *  Uses Group center and RungSpacing to determine precise position.
+   *  Returns Twist Rotation (Delta) and World Position. */
+  FTransform GetHelixHandoffTransform(const FHex &H,
+                                      const struct FSourceGroup &Group) const;
+
   /** Draw debug spheres for all orbs in the simulation.
    * Called every frame in Tick() when bDebugSpheres is enabled.
    * Shows the current simulation state (target positions) without

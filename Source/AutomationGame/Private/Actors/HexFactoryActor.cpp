@@ -1001,6 +1001,10 @@ void AHexFactoryActor::RebuildTiles() {
       // Bonds don't use base tile meshes - only their glyph meshes
       // Skip tile mesh rendering for these
       break;
+    case ETileKind::Source:
+      // Source tiles are rendered via RebuildSourceAnimation() to handle the
+      // "hole" and "printing" effect
+      break;
     default:
       // Empty tiles or unknown types go to the default TileISM
       if (TileISM)
@@ -2238,7 +2242,215 @@ void AHexFactoryActor::UpdateHelixAnimation(float DeltaSeconds) {
 
   // Update helix group animations (synced with GTM)
   Sim->UpdateHelixGroups(DeltaSeconds);
+  Sim->UpdateSourceGroups(DeltaSeconds);
 
   // ALWAYS rebuild to update visuals (rotation and elevator effect)
   RebuildHelixOutput();
+  RebuildSourceAnimation(); // NEW: Update source animations
+}
+
+void AHexFactoryActor::RebuildSourceAnimation() {
+  if (!Sim || !Driver)
+    return;
+
+  const float TileSize = Driver->GetTileSize();
+  const float GridYaw = Driver->GetGridYaw();
+  const EHexOrientation Ori = Driver->GetGridOrientation();
+  const AActor *Anchor = GetAnchor();
+  const FVector AnchorV =
+      Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+
+  // Constant descent/ascent rate matching Helix Spacing of 150 units per 20
+  // ticks (7.5 units/tick)
+  // Speed is calculated per-group below based on GenerationInterval
+  const int32 DelayTicks =
+      150; // Sync with SimWorldHex_Source.cpp (hardcoded 150)
+
+  // Twist config: Degrees per unit depth
+  // Helix: 36 degrees per 150 units -> 0.24 deg/unit
+  const float TwistPerUnit = 36.0f / 150.0f;
+
+  for (const auto &KV : Sim->SourceGroups) {
+    const FSourceGroup &Group = KV.Value;
+
+    // Calculate Group Center (World Space) for rotation pivot
+    FVector GroupCenter = FVector::ZeroVector;
+    if (Group.SortedTiles.Num() > 0) {
+      for (const FHex &H : Group.SortedTiles) {
+        GroupCenter += Driver->MapHexToWorld(H);
+      }
+      GroupCenter /= (float)Group.SortedTiles.Num();
+    } else {
+      continue;
+    }
+
+    // Render pending rows (ascending orbs)
+    // ZOffset is updated in Sim->UpdateSourceGroups(DeltaTime)
+    for (int32 k = 0; k < Group.PendingRows.Num(); ++k) {
+      const FSourceGroupItem &Row = Group.PendingRows[k];
+
+      float ZOffset = Row.ZOffset;
+
+      // Don't render if at surface (will be handled by board item)
+      // Though overlapping frame might happen, it's safer to hide if Z >= 0
+      if (ZOffset >= 0.0f)
+        continue;
+
+      // Calculate Twist Angle (0 at surface, increasing as we go down)
+      float TwistAngle =
+          ZOffset * TwistPerUnit; // Negative Z * pos factor = Negative Angle
+
+      // Render orbs in this row
+      for (int32 i = 0; i < Row.OrbTypes.Num(); ++i) {
+        if (i >= Group.SortedTiles.Num())
+          break;
+
+        uint8 TypeId = Row.OrbTypes[i];
+        if (TypeId == 0)
+          continue; // None/Hole
+
+        EOrbType OrbType = (EOrbType)TypeId;
+        FHex Hex = Group.SortedTiles[i];
+
+        // Calculate Target Grid Position (Where it wants to be at Surface)
+        FVector GridPos = Driver->MapHexToWorld(Hex);
+
+        // Apply Twist around GroupCenter
+        FVector RelPos = GridPos - GroupCenter;
+        FVector TwistedRelPos =
+            RelPos.RotateAngleAxis(TwistAngle, FVector::UpVector);
+
+        FVector FinalPos = GroupCenter + TwistedRelPos + FVector(0, 0, ZOffset);
+
+        // Rotation of the orb itself?
+        // Helix orbs rotate with the group.
+        // Base Rotation = GridYaw + TwistAngle.
+        FRotator FinalRot = FRotator(0.f, GridYaw + TwistAngle, 0.f);
+
+        // Add Instance
+        if (UInstancedStaticMeshComponent *ISM =
+                GetHelixOrbISMForType(OrbType)) {
+          ISM->AddInstance(FTransform(FinalRot, FinalPos, HelixOrbScale));
+        }
+
+        // --- Render Vertical Bonds (to Deeper Row k+1) ---
+        if (k + 1 < Group.PendingRows.Num()) {
+          const FSourceGroupItem &NextRow = Group.PendingRows[k + 1];
+          if (i < NextRow.OrbTypes.Num() && NextRow.OrbTypes[i] != 0) {
+            // Determine Position of NextRow Orb (Deeper)
+            float NextZ = NextRow.ZOffset;
+            float NextAngle = NextZ * TwistPerUnit;
+
+            FVector NextRel = GridPos - GroupCenter; // Same grid pos
+            FVector NextTwisted =
+                NextRel.RotateAngleAxis(NextAngle, FVector::UpVector);
+            FVector NextPos = GroupCenter + NextTwisted + FVector(0, 0, NextZ);
+
+            // Draw Bond FinalPos -> NextPos
+            FVector Mid = (FinalPos + NextPos) * 0.5f;
+            FVector Dir = (NextPos - FinalPos).GetSafeNormal();
+            float Dist = FVector::Dist(FinalPos, NextPos);
+
+            if (HelixBondISM) {
+              FRotator Rot = Dir.Rotation();
+              FVector Scale = HelixBondScale;
+              Scale.X = Dist / 100.0f;
+              HelixBondISM->AddInstance(FTransform(Rot, Mid, Scale));
+            }
+          }
+        }
+
+        // --- Render Connection to Board (only for shallowest Row k=0) ---
+        if (k == 0) {
+          // Check if there is an item currently on the board at this location
+          const FItem *BoardItem = Sim->ItemMap.Find(Hex);
+          if (BoardItem && (uint8)BoardItem->Single.Type != 0) {
+            FVector BoardPos = GridPos; // Default Z=0
+
+            // If this is a newly spawned item, use the shared helper to get the
+            // precise handoff path
+
+            // NOTE: The previous hardcoded logic caused jumps if OrbZOffset !=
+            // 0 or if math drifted. Using Driver->GetHelixHandoffTransform
+            // ensures perfect alignment with OrbRenderer.
+            if (Sim->SourceTileItemIds.Contains(BoardItem->Id)) {
+              FTransform StartTM = Driver->GetHelixHandoffTransform(Hex, Group);
+              FVector StartPos = StartTM.GetLocation();
+              FVector EndPos = Driver->MapHexToWorld(Hex);
+
+              BoardPos = FMath::Lerp(StartPos, EndPos, Sim->FrameAlpha);
+            }
+
+            // Draw connect FinalPos (Helix Row 1) -> BoardPos (Board Item / Row
+            // 0)
+            FVector Mid = (FinalPos + BoardPos) * 0.5f;
+            FVector Dir = (BoardPos - FinalPos).GetSafeNormal();
+            float Dist = FVector::Dist(FinalPos, BoardPos);
+
+            if (HelixBondISM) {
+              FRotator Rot = Dir.Rotation();
+              FVector Scale = HelixBondScale;
+              Scale.X = Dist / 100.0f;
+              HelixBondISM->AddInstance(FTransform(Rot, Mid, Scale));
+            }
+          }
+        }
+      }
+
+      // Render bonds between adjacent orbs in this row
+      for (int32 i = 0; i < Row.OrbTypes.Num() - 1; ++i) {
+        if (i + 1 >= Group.SortedTiles.Num())
+          break;
+
+        uint8 T1 = Row.OrbTypes[i];
+        uint8 T2 = Row.OrbTypes[i + 1];
+
+        if (T1 != 0 && T2 != 0) {
+          // Calculate Target Positions
+          FHex H1 = Group.SortedTiles[i];
+          FHex H2 = Group.SortedTiles[i + 1];
+
+          if (HexUtil::Dist(H1, H2) != 1)
+            continue;
+
+          FVector2D XY1 =
+              HexCoord::AxialToXY(FHexAxial(H1.Q, H1.R), TileSize, Ori);
+          FVector2D RotXY1 = HexCoord::Rotate2D(XY1, GridYaw);
+          FVector P1_Grid = AnchorV + FVector(RotXY1.X, RotXY1.Y, 0);
+
+          FVector2D XY2 =
+              HexCoord::AxialToXY(FHexAxial(H2.Q, H2.R), TileSize, Ori);
+          FVector2D RotXY2 = HexCoord::Rotate2D(XY2, GridYaw);
+          FVector P2_Grid = AnchorV + FVector(RotXY2.X, RotXY2.Y, 0);
+
+          // Apply Twist
+          FVector Rel1 = P1_Grid - GroupCenter;
+          FVector P1_Twisted =
+              GroupCenter +
+              Rel1.RotateAngleAxis(TwistAngle, FVector::UpVector) +
+              FVector(0, 0, ZOffset);
+
+          FVector Rel2 = P2_Grid - GroupCenter;
+          FVector P2_Twisted =
+              GroupCenter +
+              Rel2.RotateAngleAxis(TwistAngle, FVector::UpVector) +
+              FVector(0, 0, ZOffset);
+
+          FVector Mid = (P1_Twisted + P2_Twisted) * 0.5f;
+          FVector Dir = (P2_Twisted - P1_Twisted).GetSafeNormal();
+          float Dist = FVector::Dist(P1_Twisted, P2_Twisted);
+
+          if (HelixBondISM) {
+            FRotator Rot = Dir.Rotation();
+
+            // Scale X to match distance
+            FVector Scale = HelixBondScale;
+            Scale.X = Dist / 100.0f;
+
+            HelixBondISM->AddInstance(FTransform(Rot, Mid, Scale));
+          }
+        }
+      }
+    }
+  }
 }

@@ -259,6 +259,9 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
     CancelHelixInputPairing();
     return; // Skip normal tile placement flow
   }
+  case EPlaceKind::Source:
+    T = FTile{ETileKind::Source, 0};
+    break;
   case EPlaceKind::Arm: {
     AActor *GMActor = nullptr;
     for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -2020,7 +2023,8 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
       PlaceKind == EPlaceKind::RequestBeacon ||
       PlaceKind == EPlaceKind::TriggerTile ||
       PlaceKind == EPlaceKind::ClusterSend ||
-      PlaceKind == EPlaceKind::GatherScatter) {
+      PlaceKind == EPlaceKind::GatherScatter ||
+      PlaceKind == EPlaceKind::Source) {
 
     // For now, use static mesh preview for arms (ArmBasePreviewMesh)
     if (PlaceKind == EPlaceKind::Arm) {
@@ -2215,7 +2219,8 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
 
       // Set material based on placement type
       if (PlaceKind == EPlaceKind::Input ||
-          PlaceKind == EPlaceKind::ClusterInput) {
+          PlaceKind == EPlaceKind::ClusterInput ||
+          PlaceKind == EPlaceKind::Source) {
         // For input tiles and cluster input tiles, use the actual orb
         // material
         UMaterialInterface *OrbMaterial = GetActualOrbMaterial();

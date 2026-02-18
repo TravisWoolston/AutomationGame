@@ -136,6 +136,11 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds) {
   // Sync step duration to simulation for animation timing
   Sim->FixedStepSec = StepSeconds;
 
+  // Drive discovery mode source generation aligned with sim steps
+  if (GM) {
+    GM->StepSourceHelix();
+  }
+
   Sim->StepSim();
 
   // Ensure the sim's frame alpha reflects the manager's start-of-step alpha (0
@@ -670,4 +675,47 @@ bool AOrbSimDriver::WorldToHex(const FVector &World, FHex &OutHex) const {
   FHexAxial A = HexCoord::XYToAxialRound(Rot2D, TileSizeUU, GridOrientation);
   OutHex = FHex(A.Q, A.R);
   return true;
+}
+FTransform
+AOrbSimDriver::GetHelixHandoffTransform(const FHex &H,
+                                        const FSourceGroup &Group) const {
+  // 1. Calculate Group Center (World Space)
+  // Use driver's map logic to ensure consistency with Renderers
+  FVector Center = FVector::ZeroVector;
+  if (Group.SortedTiles.Num() > 0) {
+    for (const FHex &MH : Group.SortedTiles) {
+      Center += MapHexToWorld(MH);
+    }
+    Center /= (float)Group.SortedTiles.Num();
+  } else {
+    Center = MapHexToWorld(H); // Fallback
+  }
+
+  // 2. Calculate Handoff Parameters (Age 19 match)
+  // We assume standard helix params: 36 deg per 150 units.
+  // Length of the final segment (Age 18->19 handoff to board) is 1 Tick of
+  // movement. Movement = RungSpacing (Units Per Tick).
+  float Offset = Group.RungSpacing;
+  const float TwistPerUnit = 36.0f / 150.0f;
+  float TwistAngle = -Offset * TwistPerUnit;
+
+  // 3. Apply Twist
+  // Target is Surface Pos (MapHexToWorld)
+  // Rel = Target - Center.
+  // NOTE: MapHexToWorld includes OrbZOffset! Center includes OrbZOffset! So
+  // Rel.Z ~ 0.
+  FVector SurfacePos = MapHexToWorld(H);
+  FVector Rel = SurfacePos - Center;
+  FVector TwistedRel = Rel.RotateAngleAxis(TwistAngle, FVector::UpVector);
+
+  // 4. Apply Vertical Offset
+  // Z = Center.Z (Offset) + Rel.Z(0) - RungSpacing.
+  // Result Z = OrbZOffset - RungSpacing.
+  FVector FinalPos = Center + TwistedRel;
+  FinalPos.Z -= Offset;
+
+  // 5. Rotation Delta
+  FRotator TwistRot(0, TwistAngle, 0);
+
+  return FTransform(TwistRot, FinalPos);
 }

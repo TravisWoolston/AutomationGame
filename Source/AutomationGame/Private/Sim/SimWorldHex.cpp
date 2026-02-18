@@ -476,6 +476,9 @@ bool USimWorldHex::PlaceTile(const FHex &H, const FTile &T) {
     UnregisterHelixOutputTile(H);
     UnregisterHelixInputTile(H);
 
+    // Unregister source definitions
+    UnregisterSourceTile(H);
+
     // If we're placing Empty, finish here
     if (TileToPlace.Kind == ETileKind::Empty) {
       TileMap.Remove(H);
@@ -490,8 +493,19 @@ bool USimWorldHex::PlaceTile(const FHex &H, const FTile &T) {
   }
 
   // --- EXECUTE PLACEMENT ---
+  if (TileToPlace.Kind == ETileKind::Source && !CanPlaceSourceTileAt(H)) {
+    UE_LOG(
+        LogTemp, Warning,
+        TEXT("Source placement blocked: invalid geometry (must be linear)."));
+    return false;
+  }
+
   TileMap.Add(H, TileToPlace);
   ++TileRevision;
+
+  if (TileToPlace.Kind == ETileKind::Source) {
+    RegisterSourceTile(H);
+  }
 
   // Register helix output tiles for group tracking
   if (TileToPlace.Kind == ETileKind::HelixOutput) {
@@ -1097,6 +1111,8 @@ void USimWorldHex::StepSim() {
   // TryEjectHelixCluster's pre-push logic)
 
   SpawnInputsAfterBelts(); // NEW pass 2 (inputs just vacated by belt moves)
+
+  StepSourceGroups(); // Spawn source inputs if clear
 
   // Interaction pass 2: bond things that just arrived (Inputs, moved items)
   StepBonds();
@@ -1711,8 +1727,9 @@ void USimWorldHex::DrawBondDebugLines() {
                         1.f);
 
       // Draw small spheres at bond endpoints (persistent for 1 second)
-      DrawDebugSphere(World, PosA, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
-      DrawDebugSphere(World, PosB, 4.f, 8, FColor::Cyan, false, 1.0f, 0, 1.f);
+      // DrawDebugSphere(World, PosA, 4.f, 8, FColor::Cyan, false, 1.0f,
+      // 0, 1.f); DrawDebugSphere(World, PosB, 4.f, 8, FColor::Cyan,
+      // false, 1.0f, 0, 1.f);
 
       // Draw bond ID text at midpoint (persistent for 1 second)
       FVector TextPosition = BondMidpoint;

@@ -230,6 +230,7 @@ protected:
   void RebuildHelixOutput(); // NEW: Helix tile and rung rendering
   void
   UpdateHelixAnimation(float DeltaSeconds); // NEW: Helix continuous animation
+  void RebuildSourceAnimation();            // NEW: Source tile animation
 
   // Helper functions for output type management
   UInstancedStaticMeshComponent *GetOutputISMForType(EOrbType OrbType);

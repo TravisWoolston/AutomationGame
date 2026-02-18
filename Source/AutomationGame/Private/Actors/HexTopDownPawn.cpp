@@ -1106,6 +1106,7 @@ void AHexTopDownPawn::SetupPlayerInputComponent(UInputComponent *IC) {
                  &AHexTopDownPawn::SetInputMode12Pressed);
   IC->BindAction("Kind13", IE_Pressed, this, &AHexTopDownPawn::SetInputMode13);
   IC->BindAction("Kind14", IE_Pressed, this, &AHexTopDownPawn::SetInputMode14);
+  IC->BindAction("kind15", IE_Pressed, this, &AHexTopDownPawn::SetInputMode15);
   // Type cycling (works for both Input and Output based on current placement
   // mode)
   IC->BindAction("CycleNextType", IE_Pressed, this,
@@ -1325,6 +1326,12 @@ void AHexTopDownPawn::SetInputMode14() {
   if (Placer) {
     Placer->SetPlaceKind(EPlaceKind::GatherScatter);
     Placer->GatherScatterRadius = 10;
+  }
+}
+
+void AHexTopDownPawn::SetInputMode15() {
+  if (Placer) {
+    Placer->SetPlaceKind(EPlaceKind::Source);
   }
 }
 
@@ -3090,6 +3097,10 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
 
     if (Tile->Kind == ETileKind::HelixOutput) {
       Sim->UnregisterHelixOutputTile(Hex);
+    }
+
+    if (Tile->Kind == ETileKind::Source) {
+      Sim->UnregisterSourceTile(Hex);
     }
   }
 

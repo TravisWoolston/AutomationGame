@@ -14,6 +14,59 @@
 #include "UObject/Object.h"
 // .generated.h must be last
 #include "SimWorldHex.generated.h"
+// --- SOURCE GROUP STRUCTS ---
+USTRUCT(BlueprintType)
+struct FSourceGroupItem {
+  GENERATED_BODY()
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<uint8> OrbTypes; // 0=None, 1..N=Type
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 SpawnTick = 0;
+
+  // For visual positioning if needed
+  float ZOffset = 0.f;
+};
+
+USTRUCT(BlueprintType)
+struct FSourceGroup {
+  GENERATED_BODY()
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 Id = -1;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FHex> MemberTiles;
+
+  // Tiles sorted linearly along the group axis
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FHex> SortedTiles;
+
+  // Pending rows for animation (consumed from front)
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FSourceGroupItem> PendingRows;
+
+  // State for connectivity generation
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<uint8> PrevRowTypes;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 LastSpawnTick = 0;
+
+  // Configuration
+  int32 MinGroupSize = 3;
+
+  // Visuals
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float HelixRotationOffset = 0.f;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  float RungSpacing = 150.f;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 GenerationInterval = 1; // Ticks per rung (Continuous Generation)
+};
 
 class ATestLevelDirector;
 class AHexTopDownPawn;
@@ -218,6 +271,23 @@ public:
 
   /** Unregister a helix input tile */
   void UnregisterHelixInputTile(const FHex &Hex);
+
+  // --- SOURCE GROUP API ---
+  void RegisterSourceTile(const FHex &Hex);
+  void UnregisterSourceTile(const FHex &Hex);
+  void StepSourceGroups();
+  bool CanPlaceSourceTileAt(const FHex &Hex) const;
+
+  void UpdateSourceGroupTopology(FSourceGroup &Group);
+  void UpdateSourceGroups(float DeltaTime);
+
+private:
+  void GenerateNextSourceRow(FSourceGroup &Group);
+
+public:
+  UPROPERTY(Transient)
+  TMap<int32, FSourceGroup> SourceGroups;
+  int32 NextSourceGroupId = 1;
 
   /** Explicitly pair a helix output group with an input layout */
   void PairHelixInput(int32 OutputGroupIndex, const TArray<FHex> &InputTiles,
@@ -453,6 +523,10 @@ private:
   TSet<FHex> OrbsNewlyMovedToOutput;
   TSet<int32> OrbsNewlyMovedByBelts;
   TSet<int32> OrbsMovedLastTick;
+
+  // Items currently on source tiles — hidden from board renderer because
+  // the helix animation renders them at ZOffset=0
+  TSet<int32> SourceTileItemIds;
 
   TMap<FHex, bool> OutputTileGates;
   TMap<FHex, TMap<FHex, bool>> BeltTriggerSignals;

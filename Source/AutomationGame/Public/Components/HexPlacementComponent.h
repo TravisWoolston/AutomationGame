@@ -34,7 +34,8 @@ enum class EPlaceKind : uint8 {
   ClusterSend,   // place a ClusterSend tile
   HelixOutput, // place a HelixOutput tile (clusters spiral upward in DNA helix)
   HelixInput, // place a HelixInput tile paired to an existing HelixOutput group
-  GatherScatter // place a GatherScatter beacon pair (Gather + Scatter)
+  GatherScatter, // place a GatherScatter beacon pair (Gather + Scatter)
+  Source         // place a Source tile
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of

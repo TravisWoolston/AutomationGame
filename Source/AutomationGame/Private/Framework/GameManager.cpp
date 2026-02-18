@@ -209,6 +209,11 @@ void AGameManager::Tick(float DeltaSeconds) {
     }
   }
 
+  // Draw discovery mode helix
+  if (bDiscoveryMode) {
+    DrawSourceHelix();
+  }
+
   // Auto-update wave RT offset to follow player camera (top-down view)
   if (bAutoFollowPlayerCameraForWaves) {
     if (UWorld *World = GetWorld()) {
@@ -624,10 +629,10 @@ void AGameManager::BuildGridInstances() {
       if (FMath::Max3(FMath::Abs(q), FMath::Abs(r), FMath::Abs(s)) > Radius)
         continue;
 
-      // Skip background tile if an Output/ClusterOutput tile exists at this hex
+      // Skip background tile if an Output or Source tile exists at this hex
       if (Sim && Sim->TileMap.Contains(FHex(q, r, 0))) {
         const FTile &PT = Sim->TileMap[FHex(q, r, 0)];
-        if (PT.Kind == ETileKind::Output)
+        if (PT.Kind == ETileKind::Output || PT.Kind == ETileKind::Source)
           continue;
       }
 
@@ -1503,23 +1508,9 @@ int32 AGameManager::GenerateAncestralCluster(USimWorldHex *OverrideSim) {
   // Difficulty scoring helper (same as GenerateRandomCluster)
   // - Orb count: +1 per orb
   // - Different-type adjacency: +2 per different-type bond
-  auto CalcScore = [](const TArray<FOrbData> &Orbs) -> int32 {
-    int32 Score = Orbs.Num(); // Each orb = +1
-
-    for (int32 i = 0; i < Orbs.Num(); i++) {
-      for (int32 j = i + 1; j < Orbs.Num(); j++) {
-        int32 dQ = Orbs[i].dQ - Orbs[j].dQ;
-        int32 dR = Orbs[i].dR - Orbs[j].dR;
-        int32 Dist =
-            (FMath::Abs(dQ) + FMath::Abs(dQ + dR) + FMath::Abs(dR)) / 2;
-        if (Dist == 1) {
-          if (Orbs[i].Type != Orbs[j].Type) {
-            Score += 2; // Different type adjacent = +2
-          }
-        }
-      }
-    }
-    return Score;
+  // Difficulty scoring helper (uses member function)
+  auto CalcScore = [this](const TArray<FOrbData> &Orbs) -> int32 {
+    return CalculateClusterScore(Orbs);
   };
 
   // Connectivity check helper
@@ -3463,6 +3454,90 @@ void AGameManager::SetDiscoveryMode(bool bEnabled) {
          bEnabled ? TEXT("TRUE") : TEXT("FALSE"));
 }
 
+void AGameManager::DrawSourceHelix() {
+  UWorld *World = GetWorld();
+  if (!World || !OrbSimDriver || !OrbSimDriver->GetSim())
+    return;
+  USimWorldHex *Sim = OrbSimDriver->GetSim();
+
+  // Draw Discovery Mode Helix (Rungs Falling Down)
+  if (bDiscoveryMode && SourceHelixRungs.Num() > 0) {
+    // (Existing Discovery Mode Drawing Logic)
+    const float ZStart = 1200.0f;       // Start height above grid
+    const float ZEnd = 200.0f;          // End height (above Source tile)
+    const float TotalDropTime = 100.0f; // Ticks to drop
+    const float RadiusBase = 200.0f;    // Helix radius
+
+    // Draw rungs
+    for (int32 i = SourceHelixRungs.Num() - 1; i >= 0; --i) {
+      const FHelixRung &Rung = SourceHelixRungs[i];
+
+      float LogicAge = (float)(Sim->GetStepCounter() - Rung.SpawnTick);
+      if (LogicAge > TotalDropTime + 50)
+        continue;
+
+      float Progress = FMath::Clamp(LogicAge / TotalDropTime, 0.0f, 1.0f);
+      float Z =
+          FMath::Lerp(ZStart, ZEnd, Progress * Progress); // Quadratic ease-in
+
+      float Angle = LogicAge * 10.0f + (i * 30.0f);
+      float Rad = FMath::DegreesToRadians(Angle);
+      float HelixRadius = FMath::Lerp(RadiusBase, 0.0f, Progress);
+
+      FVector Center(0, 0, 0);
+      if (SourceTilePositions.Num() > 0) {
+        if (OrbSimDriver) {
+          FHex TargetHex = SourceTilePositions[0];
+          Center = OrbSimDriver->MapHexToWorld(TargetHex);
+        }
+      }
+
+      FVector Offset(FMath::Cos(Rad) * HelixRadius,
+                     FMath::Sin(Rad) * HelixRadius, Z);
+      FVector Pos = Center + Offset;
+
+      for (const FOrbData &Orb : Rung.Orbs) {
+        FColor Col = OrbSimDriver->GetDebugColorForOrbType(Orb.Type);
+        DrawDebugSphere(World, Pos, 15.0f, 8, Col, false, -1.0f, 0, 2.0f);
+      }
+    }
+  }
+
+  // Draw Runtime Source Groups (Strands Rising Up)
+  if (Sim->SourceGroups.Num() > 0) {
+    float Alpha = 0.f;
+    if (auto *TM = AGameTickManager::Get(this)) {
+      Alpha = TM->GetStepAlpha();
+    }
+
+    for (const auto &KV : Sim->SourceGroups) {
+      const FSourceGroup &Group = KV.Value;
+      for (const auto &Row : Group.PendingRows) {
+        int32 TravelTime = 150;
+        float Age = (float)(Sim->GetStepCounter() - Row.SpawnTick) + Alpha;
+        float Progress = FMath::Clamp(Age / (float)TravelTime, 0.f, 1.f);
+
+        // Rise from -800 to 0
+        float ZStart = -800.f;
+        float Z = FMath::Lerp(ZStart, 0.f, Progress);
+
+        // Skip if already arrived (logic handles spawning, visuals stop at 0)
+        if (Progress >= 1.f)
+          Z = 0.f;
+
+        for (int32 i = 0; i < Row.OrbTypes.Num(); ++i) {
+          if (Row.OrbTypes[i] != 0 && Group.SortedTiles.IsValidIndex(i)) {
+            FVector Pos = OrbSimDriver->MapHexToWorld(Group.SortedTiles[i]);
+            Pos.Z += Z;
+            FColor Col = OrbSimDriver->GetDebugColorForOrbType(Row.OrbTypes[i]);
+            DrawDebugSphere(World, Pos, 12.f, 8, Col, false, -1.f, 0, 1.5f);
+          }
+        }
+      }
+    }
+  }
+}
+
 void AGameManager::GenerateDiscoveryScenario() {
   if (!bDiscoveryMode)
     return;
@@ -3532,8 +3607,29 @@ void AGameManager::GenerateDiscoveryScenario() {
   bSourcePaused = false;
   SourceHelixRungs.Empty();
   SourceHelixRotation = 0.f;
+
+  // Pre-roll helix animation so it looks populated immediately
+  for (int32 i = 0; i < 200; ++i) {
+    int32 PreCount = SourceHelixRungs.Num();
+    StepSourceHelix();
+    if (SourceHelixRungs.Num() > PreCount) {
+      // Fake history relative to current step
+      SourceHelixRungs.Last().SpawnTick = Sim->StepCounter - i;
+
+      // Clear the item we just placed to allow next rung to generate
+      // (This simulates items being moved away from the source)
+      for (const FHex &Pos : SourceTilePositions) {
+        Sim->ItemMap.Remove(Pos);
+        Sim->OrbAt.Remove(Pos);
+      }
+    }
+  }
+
   CurrentTargetClusterIndex = 0;
   CompletedUniqueTargetClusters.Empty();
+
+  // Force visual update
+  Rebuild();
 
   UE_LOG(LogTemp, Log,
          TEXT("GameManager: Discovery scenario fully initialized. Strand "
@@ -3639,6 +3735,17 @@ void AGameManager::StepSourceHelix() {
   SourceHelixRotation += SourceHelixDegreesPerRung;
   if (SourceHelixRotation >= 360.f) {
     SourceHelixRotation -= 360.f;
+  }
+
+  // Cleanup old rungs (older than drop time + buffer)
+  while (SourceHelixRungs.Num() > 0) {
+    // Check age (using signed logic for safety against wrap in distant future,
+    // though uint is fine generally)
+    if ((Sim->StepCounter - SourceHelixRungs[0].SpawnTick) > 200) {
+      SourceHelixRungs.RemoveAt(0);
+    } else {
+      break;
+    }
   }
 }
 
@@ -3912,6 +4019,25 @@ void AGameManager::OnDiscoveryClusterProcessed(
   // Cluster processing is now handled through target cluster sequence
 }
 
+// --- Helper ---
+int32 AGameManager::CalculateClusterScore(const TArray<FOrbData> &Orbs) const {
+  int32 Score = Orbs.Num(); // Each orb = +1
+
+  for (int32 i = 0; i < Orbs.Num(); i++) {
+    for (int32 j = i + 1; j < Orbs.Num(); j++) {
+      int32 dQ = Orbs[i].dQ - Orbs[j].dQ;
+      int32 dR = Orbs[i].dR - Orbs[j].dR;
+      int32 Dist = (FMath::Abs(dQ) + FMath::Abs(dQ + dR) + FMath::Abs(dR)) / 2;
+      if (Dist == 1) {
+        if (Orbs[i].Type != Orbs[j].Type) {
+          Score += 2; // Different type adjacent = +2
+        }
+      }
+    }
+  }
+  return Score;
+}
+
 int32 AGameManager::GenerateRecursiveAncestralCluster(int32 AncestorId,
                                                       int32 TargetDifficulty) {
   if (!OrbSimDriver || !OrbSimDriver->GetSim())
@@ -3923,7 +4049,7 @@ int32 AGameManager::GenerateRecursiveAncestralCluster(int32 AncestorId,
   if (!Ancestor)
     return -1;
 
-  int32 CurrentScore = Ancestor->Orbs.Num();
+  int32 CurrentScore = CalculateClusterScore(Ancestor->Orbs);
   if (CurrentScore >= TargetDifficulty) {
     return AncestorId;
   }
@@ -3934,13 +4060,44 @@ int32 AGameManager::GenerateRecursiveAncestralCluster(int32 AncestorId,
   DifficultyValue = CurrentScore + 1;
   LastAncestralTemplateId = AncestorId;
 
-  int32 NextId = GenerateAncestralCluster(Sim);
+  // Attempt generation with retry logic (try up to 5 times if score doesn't
+  // increase)
+  int32 NextId = -1;
+  for (int32 Retry = 0; Retry < 5; ++Retry) {
+    if (Retry > 0)
+      DifficultyValue++; // Force higher difficulty target
+    NextId = GenerateAncestralCluster(Sim);
+
+    const USimWorldHex::FClusterTemplate *NextTemplate =
+        Sim->GetClusterTemplates().Find((uint8)NextId);
+
+    if (NextTemplate) {
+      int32 NextScore = CalculateClusterScore(NextTemplate->Orbs);
+      if (NextScore > CurrentScore) {
+        break; // Success!
+      }
+    }
+  }
 
   DifficultyValue = SavedDiff;
   LastAncestralTemplateId = SavedSeed;
 
   if (NextId < 0)
     return AncestorId;
+
+  // Verify progress again to prevent infinite loop
+  const USimWorldHex::FClusterTemplate *NextTemplate =
+      Sim->GetClusterTemplates().Find((uint8)NextId);
+  if (NextTemplate) {
+    int32 NextScore = CalculateClusterScore(NextTemplate->Orbs);
+    if (NextScore <= CurrentScore) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("GenerateRecursiveAncestralCluster: Failed to grow cluster "
+                  "score (Current=%d, Next=%d). Breaking recursion."),
+             CurrentScore, NextScore);
+      return NextId;
+    }
+  }
 
   return GenerateRecursiveAncestralCluster(NextId, TargetDifficulty);
 }

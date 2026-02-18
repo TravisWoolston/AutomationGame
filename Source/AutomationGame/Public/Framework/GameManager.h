@@ -460,6 +460,11 @@ public:
   int32 GenerateRecursiveAncestralCluster(int32 AncestorId,
                                           int32 TargetDifficulty);
 
+private:
+  int32 CalculateClusterScore(const TArray<FOrbData> &Orbs) const;
+  void DrawSourceHelix();
+
+public:
   // ------------ Cluster Generation (Ancestral) ------------
   /** Difficulty checkpoint values for ancestral cluster generation */
   UPROPERTY(EditAnywhere, BlueprintReadWrite,
