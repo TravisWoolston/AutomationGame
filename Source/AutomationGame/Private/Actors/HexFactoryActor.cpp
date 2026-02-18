@@ -2253,6 +2253,18 @@ void AHexFactoryActor::RebuildSourceAnimation() {
   if (!Sim || !Driver)
     return;
 
+  // Clear previous frame instances to prevent accumulation
+  if (HelixBondISM) {
+    HelixBondISM->ClearInstances();
+  }
+  // Clear all orb type ISMs
+  for (int32 i = 0; i < 16; ++i) {
+    if (UInstancedStaticMeshComponent *ISM =
+            GetHelixOrbISMForType((EOrbType)i)) {
+      ISM->ClearInstances();
+    }
+  }
+
   const float TileSize = Driver->GetTileSize();
   const float GridYaw = Driver->GetGridYaw();
   const EHexOrientation Ori = Driver->GetGridOrientation();
@@ -2413,15 +2425,8 @@ void AHexFactoryActor::RebuildSourceAnimation() {
           if (HexUtil::Dist(H1, H2) != 1)
             continue;
 
-          FVector2D XY1 =
-              HexCoord::AxialToXY(FHexAxial(H1.Q, H1.R), TileSize, Ori);
-          FVector2D RotXY1 = HexCoord::Rotate2D(XY1, GridYaw);
-          FVector P1_Grid = AnchorV + FVector(RotXY1.X, RotXY1.Y, 0);
-
-          FVector2D XY2 =
-              HexCoord::AxialToXY(FHexAxial(H2.Q, H2.R), TileSize, Ori);
-          FVector2D RotXY2 = HexCoord::Rotate2D(XY2, GridYaw);
-          FVector P2_Grid = AnchorV + FVector(RotXY2.X, RotXY2.Y, 0);
+          FVector P1_Grid = Driver->MapHexToWorld(H1);
+          FVector P2_Grid = Driver->MapHexToWorld(H2);
 
           // Apply Twist
           FVector Rel1 = P1_Grid - GroupCenter;

@@ -748,6 +748,22 @@ void USimWorldHex::GenerateNextSourceRow(FSourceGroup &Group) {
     Row.OrbTypes[i] = Chosen;
   }
 
+  // --- Post-Generation Validation: Ensure at least one orb exists ---
+  // Prevents "empty sets" which cause visual gaps and transition jumps
+  bool bHasOrb = false;
+  for (uint8 T : Row.OrbTypes) {
+    if (T != 0) {
+      bHasOrb = true;
+      break;
+    }
+  }
+
+  if (!bHasOrb && Width > 0) {
+    // Force at least one orb (random slot)
+    int32 Idx = FMath::RandRange(0, Width - 1);
+    Row.OrbTypes[Idx] = PickWeightedType();
+  }
+
   Group.PrevRowTypes = Row.OrbTypes;
   Row.ZOffset = -3000.f;
   Group.PendingRows.Add(Row);
