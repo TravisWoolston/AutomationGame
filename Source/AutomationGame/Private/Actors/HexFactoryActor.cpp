@@ -2253,18 +2253,6 @@ void AHexFactoryActor::RebuildSourceAnimation() {
   if (!Sim || !Driver)
     return;
 
-  // Clear previous frame instances to prevent accumulation
-  if (HelixBondISM) {
-    HelixBondISM->ClearInstances();
-  }
-  // Clear all orb type ISMs
-  for (int32 i = 0; i < 16; ++i) {
-    if (UInstancedStaticMeshComponent *ISM =
-            GetHelixOrbISMForType((EOrbType)i)) {
-      ISM->ClearInstances();
-    }
-  }
-
   const float TileSize = Driver->GetTileSize();
   const float GridYaw = Driver->GetGridYaw();
   const EHexOrientation Ori = Driver->GetGridOrientation();
