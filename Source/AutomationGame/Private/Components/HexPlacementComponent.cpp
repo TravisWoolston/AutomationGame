@@ -43,6 +43,11 @@ void UHexPlacementComponent::BeginPlay() {
     if (Driver)
       Sim = Driver->GetSim();
     PC = W->GetFirstPlayerController();
+    // Cache HexFactoryActor for material access
+    for (TActorIterator<AHexFactoryActor> It(W); It; ++It) {
+      CachedHexFactory = *It;
+      break;
+    }
   }
 
   CachedTLD = FindTLD(GetWorld());
@@ -857,17 +862,37 @@ void UHexPlacementComponent::DoPlaceAt(const FVector &World) {
     return;
   }
 
-  // Scenario capture (tiles only)
-  if (bPlaced && bAutoScenarioCapture) {
-    if (!CachedTLD)
-      CachedTLD = FindTLD(GetWorld());
-    if (CachedTLD) {
-      // For ClusterOutput tiles, save with orb type
-      if (T.Kind == ETileKind::ClusterOutput) {
-        CachedTLD->UpsertClusterOutputTileSpec(
-            Root, 0, T.Arg); // Template ID = 0 (not used), T.Arg = orb type
+  // Success
+  if (bPlaced) {
+    // Update Sim BeltTileOrbTypes for Belt placements
+    if (T.Kind == ETileKind::Belt) {
+      EOrbType BO = GetCurrentBeltOrbType();
+      if (BO != EOrbType::None) {
+        Sim->BeltTileOrbTypes.Add(Root, (uint8)BO);
       } else {
-        CachedTLD->UpsertTileSpec(Root, T.Kind, T.Arg);
+        Sim->BeltTileOrbTypes.Remove(Root);
+      }
+    } else {
+      // If we replaced a belt with something else, clear the orb type filter
+      Sim->BeltTileOrbTypes.Remove(Root);
+    }
+
+    // Scenario capture (tiles only)
+    if (bAutoScenarioCapture) {
+      if (!CachedTLD)
+        CachedTLD = FindTLD(GetWorld());
+      if (CachedTLD) {
+        // For ClusterOutput tiles, save with orb type
+        if (T.Kind == ETileKind::ClusterOutput) {
+          CachedTLD->UpsertClusterOutputTileSpec(
+              Root, 0, T.Arg); // Template ID = 0 (not used), T.Arg = orb type
+        } else if (T.Kind == ETileKind::Belt) {
+          CachedTLD->UpsertBeltTileSpec(Root, T.Arg,
+                                        (uint8)GetCurrentBeltOrbType());
+
+        } else {
+          CachedTLD->UpsertTileSpec(Root, T.Kind, T.Arg);
+        }
       }
     }
   }
@@ -1043,16 +1068,15 @@ void UHexPlacementComponent::SetPlaceKind(EPlaceKind NewKind) {
   // Clear GatherScatter state when switching away
   if (PlaceKind == EPlaceKind::GatherScatter &&
       NewKind != EPlaceKind::GatherScatter) {
-    if (PendingGatherBeacon && IsValid(PendingGatherBeacon)) {
-      PendingGatherBeacon->Destroy();
-      PendingGatherBeacon = nullptr;
-    }
-    if (PendingScatterBeacon && IsValid(PendingScatterBeacon)) {
-      PendingScatterBeacon->Destroy();
-      PendingScatterBeacon = nullptr;
-    }
+    PendingGatherBeacon = nullptr;
+    PendingScatterBeacon = nullptr;
     GatherScatterPlacementStep = 0;
     bGatherRadiusDragging = false;
+  }
+
+  // Reset Belt orb type when switching to Belt
+  if (NewKind == EPlaceKind::Belt) {
+    CurrentBeltOrbTypeIndex = 0;
   }
 
   PlaceKind = NewKind;
@@ -1073,6 +1097,10 @@ void UHexPlacementComponent::CycleNextType() {
              PlaceKind == EPlaceKind::ClusterSend) {
     CurrentOutputOrbTypeIndex =
         (CurrentOutputOrbTypeIndex + 1) % ValidTypes.Num();
+  } else if (PlaceKind == EPlaceKind::Belt) {
+    // Belts include 'None' (index 0) + valid types
+    CurrentBeltOrbTypeIndex =
+        (CurrentBeltOrbTypeIndex + 1) % (ValidTypes.Num() + 1);
   } else if (PlaceKind == EPlaceKind::ClusterInput) {
     // ClusterInputs cycle through orb types like regular Inputs
     CurrentInputOrbTypeIndex =
@@ -1136,6 +1164,11 @@ void UHexPlacementComponent::CyclePreviousType() {
              PlaceKind == EPlaceKind::ClusterSend) {
     CurrentOutputOrbTypeIndex =
         (CurrentOutputOrbTypeIndex - 1 + ValidTypes.Num()) % ValidTypes.Num();
+  } else if (PlaceKind == EPlaceKind::Belt) {
+    // Belts include 'None' (index 0) + valid types
+    int32 NumOptions = ValidTypes.Num() + 1;
+    CurrentBeltOrbTypeIndex =
+        (CurrentBeltOrbTypeIndex - 1 + NumOptions) % NumOptions;
   } else if (PlaceKind == EPlaceKind::ClusterInput) {
     // ClusterInputs cycle through orb types like regular Inputs
     CurrentInputOrbTypeIndex =
@@ -1269,15 +1302,30 @@ EOrbType UHexPlacementComponent::GetCurrentInputOrbType() const {
 }
 
 EOrbType UHexPlacementComponent::GetCurrentOutputOrbType() const {
-  // Get the list of valid orb types (those with assigned materials)
   TArray<EOrbType> ValidTypes = GetValidOrbTypes();
   if (ValidTypes.Num() == 0) {
     return EOrbType::BaseA; // Fallback if no valid types
   }
 
-  // Clamp the index to valid range
   int32 ClampedIndex =
       FMath::Clamp(CurrentOutputOrbTypeIndex, 0, ValidTypes.Num() - 1);
+  return ValidTypes[ClampedIndex];
+}
+
+EOrbType UHexPlacementComponent::GetCurrentBeltOrbType() const {
+  TArray<EOrbType> ValidTypes = GetValidOrbTypes();
+  // Index 0 is "None" (All types)
+  if (CurrentBeltOrbTypeIndex == 0) {
+    return EOrbType::None;
+  }
+
+  if (ValidTypes.Num() == 0) {
+    return EOrbType::None;
+  }
+
+  // Adjust index (1-based index maps to 0-based array)
+  int32 ClampedIndex =
+      FMath::Clamp(CurrentBeltOrbTypeIndex - 1, 0, ValidTypes.Num() - 1);
   return ValidTypes[ClampedIndex];
 }
 
@@ -2218,9 +2266,39 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
       PreviewComp->SetVisibility(true);
 
       // Set material based on placement type
-      if (PlaceKind == EPlaceKind::Input ||
-          PlaceKind == EPlaceKind::ClusterInput ||
-          PlaceKind == EPlaceKind::Source) {
+      if (PlaceKind == EPlaceKind::Belt) {
+        EOrbType CurrentType = GetCurrentBeltOrbType();
+        if (CurrentType != EOrbType::None) {
+          // Look up orb material
+          UMaterialInterface *OrbMaterial = nullptr;
+          if (Driver) {
+            if (UOrbMaterialManager *MaterialManager =
+                    Driver->FindComponentByClass<UOrbMaterialManager>()) {
+              OrbMaterial = MaterialManager->GetMaterialForOrbType(CurrentType);
+            }
+          }
+
+          if (OrbMaterial) {
+            UMaterialInstanceDynamic *OutputMID =
+                UMaterialInstanceDynamic::Create(OrbMaterial, this);
+            if (OutputMID) {
+              OutputMID->SetScalarParameterValue(FName("Opacity"), 0.5f);
+              PreviewComp->SetMaterial(0, OutputMID);
+            }
+          }
+        } else {
+          // Restore default material (try CachedHexFactory first)
+          UMaterialInterface *DefaultMat = BeltMaterialPreview;
+          if (!DefaultMat && CachedHexFactory) {
+            DefaultMat = CachedHexFactory->BeltMaterial;
+          }
+          if (DefaultMat) {
+            PreviewComp->SetMaterial(0, DefaultMat);
+          }
+        }
+      } else if (PlaceKind == EPlaceKind::Input ||
+                 PlaceKind == EPlaceKind::ClusterInput ||
+                 PlaceKind == EPlaceKind::Source) {
         // For input tiles and cluster input tiles, use the actual orb
         // material
         UMaterialInterface *OrbMaterial = GetActualOrbMaterial();

@@ -703,10 +703,10 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
       }
     }
 
-    // Check for physical obstacles
+    // Check for physical obstacles — collect ALL blockers per pass
     bool bCanPrePush = true;
-    int32 MaxIterations = 50;
-    for (int32 Iteration = 0; Iteration < MaxIterations; ++Iteration) {
+    bool bCascadeComplete = false;
+    for (int32 Iteration = 0; Iteration < MaxEjectWeight; ++Iteration) {
       bool bNeedRestart = false;
 
       for (const auto &KV : PrePushItems) {
@@ -726,24 +726,18 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
         // Check for external blockers
         if (const FItem *BlockingItem = ItemMap.Find(PushDest)) {
           if (!ItemsToPrePush.Contains(BlockingItem->Id)) {
-            // UE_LOG(LogTemp, Warning,
-            //        TEXT("  Helix Eject: Expanding push set to include blocker
-            //        "
-            //             "%d at (%d,%d)"),
-            //        BlockingItem->Id, PushDest.Q, PushDest.R);
             ItemsToPrePush.Append(GetFullClusterParentIds(BlockingItem->Id));
             bNeedRestart = true;
-            break;
+            // DON'T break — keep scanning to find all blockers in this pass
+            continue;
           }
         }
 
         // Physical obstacles (Arms/Walkers)
         if (CachedHeldOrbHexes.Contains(PushDest) ||
-            CachedBlockingFootHexes.Contains(PushDest)) {
+            CachedBlockingFootHexes.Contains(PushDest) ||
+            CachedArmBaseHexes.Contains(PushDest)) {
           bCanPrePush = false;
-          // UE_LOG(LogTemp, Warning,
-          //        TEXT("  Helix Eject: Push BLOCKED by arm/walker at
-          //        (%d,%d)"), PushDest.Q, PushDest.R);
           break;
         }
 
@@ -752,10 +746,6 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
           if (DestTile->Kind == ETileKind::Output &&
               DestTile->Kind != ETileKind::HelixOutput) {
             bCanPrePush = false;
-            // UE_LOG(
-            //     LogTemp, Warning,
-            //     TEXT("  Helix Eject: Push BLOCKED by Output tile at
-            //     (%d,%d)"), PushDest.Q, PushDest.R);
             break;
           }
         }
@@ -771,8 +761,13 @@ bool USimWorldHex::TryEjectHelixCluster(FHelixOutputGroup &Group,
         }
         continue;
       }
+      bCascadeComplete = true;
       break; // Path is clear!
     }
+
+    // Safety: if cascade didn't finish, block the push
+    if (!bCascadeComplete)
+      bCanPrePush = false;
 
     if (!bCanPrePush)
       return false;

@@ -49,12 +49,24 @@ void USimWorldHex::StepBelts() {
     if (!SourceTile)
       return false;
 
+    // Check if the pulling belt has a specific orb type requirement
+    uint8 RequiredOrbType = 0; // 0 = None (accepts all)
+    if (const uint8 *FoundType = BeltTileOrbTypes.Find(BeltHex)) {
+      RequiredOrbType = *FoundType;
+    }
+
     // Handle input tiles (both regular, cluster, and discovery)
     if (SourceTile->Kind == ETileKind::Input ||
         SourceTile->Kind == ETileKind::ClusterInput ||
         SourceTile->Kind == ETileKind::DiscoveryClusterInput) {
       const FItem *InputItem = ItemMap.Find(SourceHex);
       if (InputItem && InputItem->Id > 0) {
+        // Check orb type requirement
+        if (RequiredOrbType != 0 &&
+            KindFromItem(*InputItem) != RequiredOrbType) {
+          return false;
+        }
+
         // Skip if ANY part of this item/cluster has already moved this tick
         if (OrbsMovedThisTick.Contains(InputItem->Id))
           return false;
@@ -268,6 +280,12 @@ void USimWorldHex::StepBelts() {
               if (!bHadItemPulled) {
                 const FTile *ClusterTile = TileMap.Find(ClusterInputHex);
                 if (ClusterTile) {
+                  // Check orb type requirement
+                  if (RequiredOrbType != 0 &&
+                      (uint8)ClusterTile->Arg != RequiredOrbType) {
+                    continue;
+                  }
+
                   // Create a single orb item with the correct type for this
                   // tile
                   FOrb O;
@@ -311,6 +329,12 @@ void USimWorldHex::StepBelts() {
       FItem *PullItem = ItemMap.Find(SourceHex);
       if (PullItem && PullItem->Id > 0 &&
           !RecentlyDroppedByArm.Contains(PullItem->Id)) {
+        // Check orb type requirement
+        if (RequiredOrbType != 0 &&
+            KindFromItem(*PullItem) != RequiredOrbType) {
+          return false;
+        }
+
         // Skip if ANY part of this item/cluster has already moved this tick
         if (OrbsMovedThisTick.Contains(PullItem->Id))
           return false;
@@ -882,6 +906,13 @@ void USimWorldHex::StepBelts() {
           continue; // Belt is disabled, skip processing
         }
 
+        // Check if this belt is filtered by orb type
+        if (const uint8 *BeltType = BeltTileOrbTypes.Find(FromHex)) {
+          if (*BeltType != 0 && KindFromItem(Item) != *BeltType) {
+            continue; // Wrong type, belt ignores it
+          }
+        }
+
         // Get belt direction and destination
         const uint8 BeltDir = (uint8)(SourceTile->Arg & 0xFF);
         FHex ToHex = HexUtil::Neighbor(FromHex, (EHexDir)(BeltDir % 6));
@@ -895,6 +926,16 @@ void USimWorldHex::StepBelts() {
         // Special handling for output tiles - use gate system instead of item
         // presence
         const FTile *DestTile = TileMap.Find(ToHex);
+
+        // Check if destination belt is filtered by orb type
+        if (bCanMove && DestTile && DestTile->Kind == ETileKind::Belt) {
+          if (const uint8 *DestBeltType = BeltTileOrbTypes.Find(ToHex)) {
+            if (*DestBeltType != 0 && KindFromItem(Item) != *DestBeltType) {
+              bCanMove = false; // Blocked by filter
+            }
+          }
+        }
+
         if (DestTile && DestTile->Kind == ETileKind::Output) {
           // For output tiles, check the gate instead of item presence
           bool bOutputGateOpen = true; // Default to open

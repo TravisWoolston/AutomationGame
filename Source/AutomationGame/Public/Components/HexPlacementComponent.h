@@ -16,6 +16,7 @@ class AOrbSimDriver;
 class ATestLevelDirector;
 class ARequestBeacon;
 class ATriggerTile;
+class AHexFactoryActor;
 
 UENUM(BlueprintType)
 enum class EPlaceKind : uint8 {
@@ -222,6 +223,11 @@ public:
   UFUNCTION(BlueprintPure, Category = "Place|Output")
   EOrbType GetCurrentOutputOrbType() const;
 
+  /** Get the current orb type filter for belt placement (EOrbType::None means
+     all) */
+  UFUNCTION(BlueprintPure, Category = "Place|Belt")
+  EOrbType GetCurrentBeltOrbType() const;
+
   /** Get the current cluster template ID for ClusterOutput placement */
   UFUNCTION(BlueprintPure, Category = "Place|ClusterOutput")
   uint8 GetCurrentClusterTemplateId() const;
@@ -264,6 +270,11 @@ private:
             meta = (ClampMin = "0", ClampMax = "5"))
   int32 CurrentOutputOrbTypeIndex = 0;
 
+  // Belt orb type management
+  UPROPERTY(EditAnywhere, Category = "Belt",
+            meta = (ClampMin = "0", ClampMax = "5"))
+  int32 CurrentBeltOrbTypeIndex = 0;
+
   // Cluster template management
   UPROPERTY(EditAnywhere, Category = "ClusterOutput", meta = (ClampMin = "0"))
   int32 CurrentClusterTemplateIndex = 0;
@@ -300,6 +311,7 @@ public:
   UMaterialInterface *GetActualOutputOrbMaterial() const;
   UPROPERTY(EditAnywhere, Category = "Scenario")
   bool bAutoScenarioCapture = true;
+  UPROPERTY(Transient) AHexFactoryActor *CachedHexFactory = nullptr;
   UPROPERTY(Transient) ATestLevelDirector *CachedTLD = nullptr;
 
   // Blueprint mode flag to disable preview

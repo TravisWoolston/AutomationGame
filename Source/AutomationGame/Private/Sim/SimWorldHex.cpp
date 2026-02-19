@@ -87,7 +87,11 @@ USimWorldHex::~USimWorldHex() {
   PredictiveCollisionDebugData.Empty();
   ItemsMovedLastStep.Empty();
   PrevItemHex.Empty();
+  ItemsMovedLastStep.Empty();
+  PrevItemHex.Empty();
   HelixGroups.Empty();
+  DiscoveryTileOrbTypes.Empty();
+  BeltTileOrbTypes.Empty();
 }
 
 // Near top (after includes) add if not already in header:
@@ -120,7 +124,10 @@ void USimWorldHex::Initialize(int32 /*Radius*/) {
   PendingFacingByArm.Empty();
   PendingArmLenByArm.Empty();
   PendingGrabFacingByArm.Empty();
+  PendingGrabFacingByArm.Empty();
   HelixGroups.Empty();
+  DiscoveryTileOrbTypes.Empty();
+  BeltTileOrbTypes.Empty();
 }
 
 // ---------- NEW: Add missing definitions ----------
@@ -478,6 +485,10 @@ bool USimWorldHex::PlaceTile(const FHex &H, const FTile &T) {
 
     // Unregister source definitions
     UnregisterSourceTile(H);
+
+    // Clear metadata
+    BeltTileOrbTypes.Remove(H);
+    DiscoveryTileOrbTypes.Remove(H);
 
     // If we're placing Empty, finish here
     if (TileToPlace.Kind == ETileKind::Empty) {

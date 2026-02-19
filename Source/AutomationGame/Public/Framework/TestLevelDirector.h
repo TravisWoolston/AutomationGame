@@ -221,6 +221,10 @@ public:
   void UpsertClusterOutputTileSpec(const FHex &Hex, uint8 TemplateId,
                                    uint8 OrbType);
 
+  // Specialized version for Belt tiles that includes orb type filter
+  UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
+  void UpsertBeltTileSpec(const FHex &Hex, uint8 Dir, uint8 OrbType);
+
   // Scan the simulation and sync all ClusterOutput tiles with their orb types
   UFUNCTION(BlueprintCallable, Category = "Scenario|Runtime")
   void SyncClusterOutputTiles();

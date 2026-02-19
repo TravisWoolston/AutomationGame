@@ -394,6 +394,11 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
       if (P.Kind == ETileKind::DiscoveryClusterOutput ||
           P.Kind == ETileKind::DiscoveryClusterInput) {
         Sim->DiscoveryTileOrbTypes.Add(P.Hex, P.OrbType);
+      } else if (P.Kind == ETileKind::Belt) {
+        // Store per-tile OrbType for Belts
+        if (P.OrbType != 0) {
+          Sim->BeltTileOrbTypes.Add(P.Hex, P.OrbType);
+        }
       }
     }
 
@@ -801,6 +806,37 @@ void ATestLevelDirector::UpsertClusterOutputTileSpec(const FHex &Hex,
   NewSpec.Hex = Hex;
   NewSpec.Kind = ETileKind::ClusterOutput;
   NewSpec.Dir = TemplateId;
+  NewSpec.OrbType = OrbType;
+  Sc.Tiles.Add(NewSpec);
+  InvalidateHelixPairingAt(Sc, Hex);
+  MarkActiveScenarioDirty();
+#if WITH_EDITOR
+  MirrorScenarioEditsToEditor();
+#endif
+}
+
+void ATestLevelDirector::UpsertBeltTileSpec(const FHex &Hex, uint8 Dir,
+                                            uint8 OrbType) {
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex))
+    return;
+  FScenarioSpec &Sc = Scenarios[ActiveScenarioIndex];
+
+  for (FPlacedTileSpec &T : Sc.Tiles) {
+    if (T.Hex.Q == Hex.Q && T.Hex.R == Hex.R && T.Hex.Level == Hex.Level) {
+      T.Kind = ETileKind::Belt;
+      T.Dir = Dir;
+      T.OrbType = OrbType;
+      MarkActiveScenarioDirty();
+#if WITH_EDITOR
+      MirrorScenarioEditsToEditor();
+#endif
+      return;
+    }
+  }
+  FPlacedTileSpec NewSpec;
+  NewSpec.Hex = Hex;
+  NewSpec.Kind = ETileKind::Belt;
+  NewSpec.Dir = Dir;
   NewSpec.OrbType = OrbType;
   Sc.Tiles.Add(NewSpec);
   InvalidateHelixPairingAt(Sc, Hex);
@@ -1507,6 +1543,19 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
       TileSpec.Hex = Hex;
       TileSpec.Kind = Tile.Kind;
       TileSpec.Dir = Tile.Arg;
+
+      // Capture orb type for Belts and Discovery tiles
+      if (Tile.Kind == ETileKind::Belt) {
+        if (const uint8 *FoundType = Sim->BeltTileOrbTypes.Find(Hex)) {
+          TileSpec.OrbType = *FoundType;
+        }
+      } else if (Tile.Kind == ETileKind::DiscoveryClusterOutput ||
+                 Tile.Kind == ETileKind::DiscoveryClusterInput) {
+        if (const uint8 *FoundType = Sim->DiscoveryTileOrbTypes.Find(Hex)) {
+          TileSpec.OrbType = *FoundType;
+        }
+      }
+
       Scenario.Tiles.Add(TileSpec);
       // UE_LOG(LogTemp, Log, TEXT("TestLevelDirector: Captured tile at (%d,%d)
       // type %d"), Hex.Q, Hex.R, (int32)Tile.Kind);

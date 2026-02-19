@@ -293,6 +293,15 @@ void AHexFactoryActor::EnsureComponents() {
   EnsureISM(BondISM, TEXT("BondISM_Runtime"));
   EnsureISM(UnbondISM, TEXT("UnbondISM_Runtime"));
 
+  // Ensure type-specific belt ISM components
+  EnsureISM(BeltNoneISM, TEXT("BeltNoneISM_Runtime"));
+  EnsureISM(BeltBaseAISM, TEXT("BeltBaseAISM_Runtime"));
+  EnsureISM(BeltBaseBISM, TEXT("BeltBaseBISM_Runtime"));
+  EnsureISM(BeltBaseCISM, TEXT("BeltBaseCISM_Runtime"));
+  EnsureISM(BeltMetalAISM, TEXT("BeltMetalAISM_Runtime"));
+  EnsureISM(BeltCatalystXISM, TEXT("BeltCatalystXISM_Runtime"));
+  EnsureISM(BeltVoidISM, TEXT("BeltVoidISM_Runtime"));
+
   EnsureISM(HighlightTileISM, TEXT("HighlightTileISM_Runtime"));
   EnsureISM(HighlightBeltISM, TEXT("HighlightBeltISM_Runtime"));
   EnsureISM(HighlightBondISM, TEXT("HighlightBondISM_Runtime"));
@@ -566,6 +575,34 @@ void AHexFactoryActor::SetBeltHighlight(bool bEnable) {
     BeltTileISM->SetRenderCustomDepth(bEnable);
     BeltTileISM->SetCustomDepthStencilValue(Stencil);
   }
+  if (BeltNoneISM) {
+    BeltNoneISM->SetRenderCustomDepth(bEnable);
+    BeltNoneISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltBaseAISM) {
+    BeltBaseAISM->SetRenderCustomDepth(bEnable);
+    BeltBaseAISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltBaseBISM) {
+    BeltBaseBISM->SetRenderCustomDepth(bEnable);
+    BeltBaseBISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltBaseCISM) {
+    BeltBaseCISM->SetRenderCustomDepth(bEnable);
+    BeltBaseCISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltMetalAISM) {
+    BeltMetalAISM->SetRenderCustomDepth(bEnable);
+    BeltMetalAISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltCatalystXISM) {
+    BeltCatalystXISM->SetRenderCustomDepth(bEnable);
+    BeltCatalystXISM->SetCustomDepthStencilValue(Stencil);
+  }
+  if (BeltVoidISM) {
+    BeltVoidISM->SetRenderCustomDepth(bEnable);
+    BeltVoidISM->SetCustomDepthStencilValue(Stencil);
+  }
 }
 
 void AHexFactoryActor::SetBondHighlight(bool bEnable) {
@@ -606,6 +643,13 @@ void AHexFactoryActor::SetViewMode(EViewMode Mode) {
   ComponentsToHide.Add(BeltWaitingISM);
   ComponentsToHide.Add(BondISM);
   ComponentsToHide.Add(UnbondISM);
+  ComponentsToHide.Add(BeltNoneISM);
+  ComponentsToHide.Add(BeltBaseAISM);
+  ComponentsToHide.Add(BeltBaseBISM);
+  ComponentsToHide.Add(BeltBaseCISM);
+  ComponentsToHide.Add(BeltMetalAISM);
+  ComponentsToHide.Add(BeltCatalystXISM);
+  ComponentsToHide.Add(BeltVoidISM);
 
   for (auto *Comp : ComponentsToHide) {
     if (Comp) {
@@ -1145,78 +1189,36 @@ void AHexFactoryActor::RebuildBelts() {
     return EBeltState::Ready;
   };
 
-  for (const auto &KV : Sim->TileMap) {
-    const FHex &H = KV.Key;
-    const FTile &T = KV.Value;
-    if (T.Kind != ETileKind::Belt)
-      continue;
-
-    BeltCount++;
-    const FVector2D LocalXY =
-        HexCoord::AxialToXY(FHexAxial(H.Q, H.R), Tile, Ori);
-    const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
-    const int32 DisplayLevel = GetDisplayLevel(H.Level);
-    const float ZOffset = (DisplayLevel == 0) ? BeltZOffset : -BeltZOffset;
-    const FVector Loc = AnchorV + FVector(RotXY.X, RotXY.Y, ZOffset);
-    // Yaw needs 180° offset on upside-down grid to compensate for pitch flip
-    const float Yaw = ForwardYaw(H, (uint8)(T.Arg & 0xFF)) +
-                      (DisplayLevel == 1 ? 180.f : 0.f);
-    const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
-
-    if (BeltMesh) {
-      const FTransform Transform(FRotator(Pitch, Yaw, 0.f), Loc, BeltScale);
-
-      // Use new material system if materials are set, otherwise fall back to
-      // legacy
-      if (BeltReadyMaterial && BeltWaitingMaterial) {
-        const uint8 BeltDir = (uint8)(T.Arg & 0xFF);
-        EBeltState State = GetBeltState(H, BeltDir);
-
-        switch (State) {
-        case EBeltState::Empty:
-          // Belt has no orbs - use base material
-          BeltISM->AddInstance(Transform);
-          EmptyCount++;
-          break;
-        case EBeltState::Ready:
-          // Belt has orbs that can move - use ready material
-          BeltReadyISM->AddInstance(Transform);
-          ReadyCount++;
-          break;
-        case EBeltState::Waiting:
-          // Belt has orbs that are blocked - use waiting material
-          BeltWaitingISM->AddInstance(Transform);
-          WaitingCount++;
-          break;
-        }
-      } else {
-        // Fallback to legacy single-material rendering
-        BeltISM->AddInstance(Transform);
-      }
-
-      if (bAlwaysDrawBeltArrows)
-        DrawBeltArrow(Loc, Tile, Yaw);
-    } else {
-      UE_LOG(LogTemp, Warning,
-             TEXT("HexFactoryActor::RebuildBelts: BeltMesh is null"));
-    }
-  }
-
-  UE_LOG(LogTemp, Log,
-         TEXT("HexFactoryActor::RebuildBelts: Found %d belts (%d empty, %d "
-              "ready, %d waiting), BeltMesh=%s"),
-         BeltCount, EmptyCount, ReadyCount, WaitingCount,
-         BeltMesh ? TEXT("exists") : TEXT("null"));
+  // Rebuild belts (delegate to UpdateBeltMaterials)
+  UpdateBeltMaterials();
 }
 
 void AHexFactoryActor::UpdateBeltMaterials() {
   if (!Sim || !BeltMesh)
     return;
 
-  // Only update if new materials are set, otherwise do nothing (legacy system
-  // in use)
-  if (!BeltReadyMaterial || !BeltWaitingMaterial)
-    return;
+  // -- NEW: Setup Filtered Belt ISMs --
+  UOrbMaterialManager *MaterialManager = nullptr;
+  if (Driver)
+    MaterialManager = Driver->FindComponentByClass<UOrbMaterialManager>();
+
+  TArray<EOrbType> AllOrbTypes = {EOrbType::BaseA,     EOrbType::BaseB,
+                                  EOrbType::BaseC,     EOrbType::MetalA,
+                                  EOrbType::CatalystX, EOrbType::Void};
+
+  if (MaterialManager) {
+    for (EOrbType OrbType : AllOrbTypes) {
+      if (UInstancedStaticMeshComponent *ISM = GetBeltISMForType(OrbType)) {
+        ISM->SetStaticMesh(BeltMesh);
+        UMaterialInterface *Mat =
+            MaterialManager->GetMaterialForOrbType(OrbType);
+        if (Mat) {
+          ISM->SetMaterial(0, Mat);
+        }
+        ISM->ClearInstances();
+      }
+    }
+  }
 
   // Clear all belt material ISMs
   BeltISM->ClearInstances();
@@ -1234,6 +1236,7 @@ void AHexFactoryActor::UpdateBeltMaterials() {
   int32 EmptyCount = 0;
   int32 ReadyCount = 0;
   int32 WaitingCount = 0;
+  int32 FilteredCount = 0;
 
   auto ForwardYaw = [&](const FHex &Base, uint8 Dir) -> float {
     const FHex Fwd = HexUtil::Neighbor(Base, (EHexDir)(Dir % 6));
@@ -1248,70 +1251,54 @@ void AHexFactoryActor::UpdateBeltMaterials() {
   };
 
   enum class EBeltState : uint8 { Empty, Ready, Waiting };
-
   // Helper function to check belt state
   auto GetBeltState = [&](const FHex &BeltHex, uint8 BeltDir) -> EBeltState {
     // Check if there's an item on this belt
     const FItem *BeltItem = Sim->ItemMap.Find(BeltHex);
     if (!BeltItem || BeltItem->Id == 0) {
-      // No item on belt - belt is empty
       return EBeltState::Empty;
     }
-
     // There's an item on the belt - check if it can move forward
     const FHex DestHex = HexUtil::Neighbor(BeltHex, (EHexDir)(BeltDir % 6));
-
     // Check if destination is occupied
     if (Sim->ItemMap.Contains(DestHex)) {
-      // Destination is occupied - belt is waiting
       return EBeltState::Waiting;
     }
-
     // Check if destination is blocked by held items
     for (const FArmState &Arm : Sim->Arms) {
       if (!Arm.bHolding)
         continue;
-
-      // Calculate arm grip position
       FHex GripHex = Arm.BaseHex;
       for (int i = 0; i < Arm.ArmLen; ++i)
         GripHex = HexUtil::Neighbor(GripHex, Arm.Facing);
-
-      if (GripHex == DestHex) {
-        // Arm is holding an item at the destination - belt is waiting
+      if (GripHex == DestHex)
         return EBeltState::Waiting;
-      }
-
-      // Check for cluster items
       if (Arm.Held.bIsCluster) {
+        // (Simplified cluster check for brevity, assuming standard belt waiting
+        // logic handles full check) Re-using logic from original code would be
+        // better if possible, but for update size limits I use simplified or
+        // trust existing. Wait, I should preserve full logic if possible. I
+        // will copy full logic from original.
         for (const FOrbData &Sub : Arm.Held.Orbs) {
           FHex Local(Sub.dQ, Sub.dR);
-          // Apply rotation based on arm facing and grab facing
           const uint8 cur = (uint8)Arm.Facing % 6;
           const int8 grab = (int8)Arm.Held.GrabFacing;
           const uint8 facingDelta =
               (grab >= 0) ? (uint8)(((int32)cur - (int32)(grab % 6) + 6) % 6)
                           : cur;
           const uint8 ccw = (uint8)((6 - facingDelta) % 6);
-
-          // Rotate the local offset
           for (uint8 i = 0; i < (ccw % 6); ++i) {
             int32 q = Local.Q;
             int32 r = Local.R;
             Local.Q = -r;
             Local.R = q + r;
           }
-
           FHex WorldPos(GripHex.Q + Local.Q, GripHex.R + Local.R);
-          if (WorldPos == DestHex) {
-            // Part of held cluster is at destination - belt is waiting
+          if (WorldPos == DestHex)
             return EBeltState::Waiting;
-          }
         }
       }
     }
-
-    // Destination is clear - belt is ready to move
     return EBeltState::Ready;
   };
 
@@ -1333,27 +1320,69 @@ void AHexFactoryActor::UpdateBeltMaterials() {
     const float Pitch = (DisplayLevel == 0) ? 0.f : 180.f;
 
     const uint8 BeltDir = (uint8)(T.Arg & 0xFF);
-    EBeltState State = GetBeltState(H, BeltDir);
-
     const FTransform Transform(FRotator(Pitch, Yaw, 0.f), Loc, BeltScale);
 
-    switch (State) {
-    case EBeltState::Empty:
-      // Belt has no orbs - use base material
-      BeltISM->AddInstance(Transform);
-      EmptyCount++;
-      break;
-    case EBeltState::Ready:
-      // Belt has orbs that can move - use ready material
-      BeltReadyISM->AddInstance(Transform);
-      ReadyCount++;
-      break;
-    case EBeltState::Waiting:
-      // Belt has orbs that are blocked - use waiting material
-      BeltWaitingISM->AddInstance(Transform);
-      WaitingCount++;
-      break;
+    // Filter Logic
+    bool bHandledFiltered = false;
+    if (const uint8 *Filter = Sim->BeltTileOrbTypes.Find(H)) {
+      if (*Filter != 0) {
+        if (UInstancedStaticMeshComponent *ISM =
+                GetBeltISMForType((EOrbType)*Filter)) {
+          ISM->AddInstance(Transform);
+          FilteredCount++;
+          bHandledFiltered = true;
+        }
+      }
     }
+
+    if (!bHandledFiltered) {
+      EBeltState State = GetBeltState(H, BeltDir);
+      switch (State) {
+      case EBeltState::Empty:
+        BeltISM->AddInstance(Transform);
+        EmptyCount++;
+        break;
+      case EBeltState::Ready:
+        if (BeltReadyMaterial)
+          BeltReadyISM->AddInstance(Transform);
+        else
+          BeltISM->AddInstance(Transform);
+        ReadyCount++;
+        break;
+      case EBeltState::Waiting:
+        if (BeltWaitingMaterial)
+          BeltWaitingISM->AddInstance(Transform);
+        else
+          BeltISM->AddInstance(Transform);
+        WaitingCount++;
+        break;
+      }
+    }
+
+    if (bAlwaysDrawBeltArrows)
+      DrawBeltArrow(Loc, Tile, Yaw);
+  }
+}
+
+UInstancedStaticMeshComponent *
+AHexFactoryActor::GetBeltISMForType(EOrbType OrbType) {
+  switch (OrbType) {
+  case EOrbType::None:
+    return BeltNoneISM;
+  case EOrbType::BaseA:
+    return BeltBaseAISM;
+  case EOrbType::BaseB:
+    return BeltBaseBISM;
+  case EOrbType::BaseC:
+    return BeltBaseCISM;
+  case EOrbType::MetalA:
+    return BeltMetalAISM;
+  case EOrbType::CatalystX:
+    return BeltCatalystXISM;
+  case EOrbType::Void:
+    return BeltVoidISM;
+  default:
+    return nullptr;
   }
 }
 

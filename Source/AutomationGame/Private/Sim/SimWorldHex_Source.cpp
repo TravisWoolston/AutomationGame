@@ -170,6 +170,11 @@ void USimWorldHex::UpdateSourceGroupTopology(FSourceGroup &Group) {
 }
 
 void USimWorldHex::StepSourceGroups() {
+  // Clear the source-tile visual exclusion set up front so that items spawned
+  // in a previous tick are no longer treated as "arriving from helix" by the
+  // OrbRenderer. Each group will re-add its newly spawned items below.
+  SourceTileItemIds.Empty();
+
   for (auto &KV : SourceGroups) {
     FSourceGroup &G = KV.Value;
 
@@ -188,6 +193,35 @@ void USimWorldHex::StepSourceGroups() {
 
     if (StepCounter < ArrivalTick)
       continue;
+
+    // 0. Orb cap check — pause if any orb type on the grid exceeds the limit
+    if (bGridOrbLimit) {
+      FSourceGroupItem &NextRow = G.PendingRows[0];
+      // Count current board orbs by type
+      TMap<uint8, int32> TypeCounts;
+      for (const auto &OrbKV : OrbAt) {
+        if (OrbKV.Value != 0)
+          TypeCounts.FindOrAdd(OrbKV.Value)++;
+      }
+      // Add incoming row's orbs
+      for (uint8 OT : NextRow.OrbTypes) {
+        if (OT != 0)
+          TypeCounts.FindOrAdd(OT)++;
+      }
+      bool bOverCap = false;
+      for (const auto &TC : TypeCounts) {
+        if (TC.Value > GridOrbCapPerType) {
+          bOverCap = true;
+          break;
+        }
+      }
+      if (bOverCap) {
+        G.bPaused = true;
+        for (FSourceGroupItem &PR : G.PendingRows)
+          PR.SpawnTick++;
+        continue;
+      }
+    }
 
     // 1. Determine Push Direction
     FHex DirHex = G.SortedTiles[1] - G.SortedTiles[0];
@@ -210,10 +244,6 @@ void USimWorldHex::StepSourceGroups() {
     FHex StepDir = HexUtil::Neighbor(FHex(0, 0, 0), (EHexDir)PushDirIdx);
 
     // 2. Push existing items off source tiles (cascading)
-    // 2. Push existing items off source tiles (cascading)
-    //    Clear the source-tile visual exclusion set - pushed items should
-    //    now be rendered by the board renderer (they have proper PrevPos).
-    SourceTileItemIds.Empty();
     TSet<int32> ItemsToPrePush;
     TMap<int32, int32> ItemIdToSortedIndex;
 
@@ -237,9 +267,10 @@ void USimWorldHex::StepSourceGroups() {
           PrePushItems.Add(ItemKV.Key, ItemKV.Value);
       }
 
-      // Cascading push expansion
+      // Cascading push expansion — collect ALL blockers per pass
       bool bCanPush = true;
-      for (int32 Iteration = 0; Iteration < 50; ++Iteration) {
+      bool bCascadeComplete = false;
+      for (int32 Iteration = 0; Iteration < MaxEjectWeight; ++Iteration) {
         bool bNeedRestart = false;
 
         for (const auto &PushKV : PrePushItems) {
@@ -260,12 +291,14 @@ void USimWorldHex::StepSourceGroups() {
             if (!ItemsToPrePush.Contains(BlockingItem->Id)) {
               ItemsToPrePush.Append(GetFullClusterParentIds(BlockingItem->Id));
               bNeedRestart = true;
-              break;
+              // DON'T break — keep scanning to find all blockers in this pass
+              continue;
             }
           }
 
           if (CachedHeldOrbHexes.Contains(PushDest) ||
-              CachedBlockingFootHexes.Contains(PushDest)) {
+              CachedBlockingFootHexes.Contains(PushDest) ||
+              CachedArmBaseHexes.Contains(PushDest)) {
             bCanPush = false;
             break;
           }
@@ -288,17 +321,26 @@ void USimWorldHex::StepSourceGroups() {
           }
           continue;
         }
-        break;
+        bCascadeComplete = true;
+        break; // Path is clear!
       }
+
+      // Safety: if cascade didn't finish, block the push
+      if (!bCascadeComplete)
+        bCanPush = false;
 
       if (!bCanPush) {
         // Blocked - pause the helix animation by delaying all pending rows
         // This keeps ZOffset constant (at approx 0) so the top rung doesn't
         // vanish
+        G.bPaused = true;
         for (FSourceGroupItem &PR : G.PendingRows)
           PR.SpawnTick++;
         continue; // Try next tick
       }
+
+      // Push is possible — clear paused state
+      G.bPaused = false;
 
       // --- Execute push ---
       TMap<FHex, uint8> OldKinds;
@@ -313,6 +355,15 @@ void USimWorldHex::StepSourceGroups() {
       for (const auto &PushKV : PrePushItems) {
         FHex NewPos(PushKV.Key.Q + StepDir.Q, PushKV.Key.R + StepDir.R,
                     PushKV.Key.Level);
+        // Diagnostic: detect overwriting an item that shouldn't be here
+        if (const FItem *Existing = ItemMap.Find(NewPos)) {
+          if (!MovedItemIds.Contains(Existing->Id)) {
+            UE_LOG(
+                LogTemp, Error,
+                TEXT("Source push OVERWRITES item %d at (%d,%d) with item %d!"),
+                Existing->Id, NewPos.Q, NewPos.R, PushKV.Value.Id);
+          }
+        }
         ItemMap.Add(NewPos, PushKV.Value);
         OrbAt.Add(NewPos, OldKinds[PushKV.Key]);
         OrbsNewlyMovedByBelts.Add(PushKV.Value.Id);
@@ -338,6 +389,9 @@ void USimWorldHex::StepSourceGroups() {
         if (PushedItemPerSlot.IsValidIndex(IdxKV.Value))
           PushedItemPerSlot[IdxKV.Value] = IdxKV.Key;
       }
+    } else {
+      // No items to push — source tiles are clear, not blocked
+      G.bPaused = false;
     }
 
     // 3. Spawn new items on now-clear source tiles
@@ -348,13 +402,23 @@ void USimWorldHex::StepSourceGroups() {
       if (!Row.OrbTypes.IsValidIndex(i) || Row.OrbTypes[i] == 0)
         continue;
 
+      FHex SpawnHex = G.SortedTiles[i];
+
+      // Safety: don't overwrite an existing item that wasn't pushed off
+      if (ItemMap.Contains(SpawnHex)) {
+        UE_LOG(
+            LogTemp, Warning,
+            TEXT("Source spawn skipped: hex (%d,%d) still occupied by item %d"),
+            SpawnHex.Q, SpawnHex.R, ItemMap[SpawnHex].Id);
+        continue;
+      }
+
       FItem NewItem;
       NewItem.Id = NextItemId++;
       NewItem.Single.Type = (EOrbType)Row.OrbTypes[i];
       NewItem.Single.Color = EOrbColor::Blue;
       NewItem.bIsCluster = false;
 
-      FHex SpawnHex = G.SortedTiles[i];
       ItemMap.Add(SpawnHex, NewItem);
       OrbAt.Add(SpawnHex, Row.OrbTypes[i]);
       SlotToItemId[i] = NewItem.Id;
@@ -775,6 +839,10 @@ void USimWorldHex::UpdateSourceGroups(float DeltaTime) {
 
   for (auto &Pair : SourceGroups) {
     FSourceGroup &G = Pair.Value;
+
+    // If the helix is paused (blocked), freeze animation
+    if (G.bPaused)
+      continue;
 
     float UnitsPerTick = G.RungSpacing;
     float StartDepth = DelayTicks * UnitsPerTick;

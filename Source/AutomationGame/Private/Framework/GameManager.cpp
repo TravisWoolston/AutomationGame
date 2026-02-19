@@ -1128,6 +1128,13 @@ void AGameManager::SyncOrbSimDriverParameters() {
     PrevGoldbergR = GoldbergRadius;
     PrevGridMode = GridMode;
   }
+
+  // Propagate orb cap settings to sim
+  if (USimWorldHex *Sim = OrbSimDriver->GetSim()) {
+    Sim->bGridOrbLimit = bGridOrbLimit;
+    Sim->GridOrbCapPerType = GridOrbCapPerType;
+    Sim->MaxEjectWeight = MaxEjectWeight;
+  }
 }
 
 FVector AGameManager::GetWorldForHex(const FHex &H) const {
@@ -3682,7 +3689,7 @@ void AGameManager::StepSourceHelix() {
     CurrentCount = *Found;
   }
 
-  if (CurrentCount >= MaxOrbsPerTypeInWorld) {
+  if (CurrentCount >= GridOrbCapPerType) {
     bSourcePaused = true;
     return;
   }
@@ -3791,7 +3798,7 @@ void AGameManager::RefreshWorldOrbCounts() {
     if (int32 *Found = WorldOrbCounts.Find(NextOrb.Type)) {
       CurrentCount = *Found;
     }
-    if (CurrentCount < MaxOrbsPerTypeInWorld) {
+    if (CurrentCount < GridOrbCapPerType) {
       bSourcePaused = false;
     }
   }

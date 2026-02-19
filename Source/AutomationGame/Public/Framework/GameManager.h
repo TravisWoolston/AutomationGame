@@ -345,12 +345,6 @@ public:
             meta = (EditCondition = "bDiscoveryMode", ClampMin = "1"))
   int32 SourceTileCount = 5;
 
-  /** Maximum orbs of each type allowed in the world (excluding cluster storage)
-   */
-  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Discovery Mode",
-            meta = (EditCondition = "bDiscoveryMode", ClampMin = "1"))
-  int32 MaxOrbsPerTypeInWorld = 20;
-
   /** GTM ticks before an unbonded source orb becomes Void */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Discovery Mode",
             meta = (EditCondition = "bDiscoveryMode", ClampMin = "1"))
@@ -605,6 +599,25 @@ public:
   /** Get rotation for a Goldberg cell by index (surface normal as up). */
   UFUNCTION(BlueprintCallable, Category = "Grid|Goldberg")
   FRotator GetGoldbergCellRotation(int32 CellIndex) const;
+
+  // ------------ Source Helix Limits ------------
+  /** When true, source helixes pause if any orb type on the grid exceeds
+   * GridOrbCapPerType */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Source Helix")
+  bool bGridOrbLimit = false;
+
+  /** Maximum number of orbs of each type allowed on the grid before the source
+   * helix pauses */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Source Helix",
+            meta = (EditCondition = "bGridOrbLimit", ClampMin = "1"))
+  int32 GridOrbCapPerType = 20;
+
+  /** Maximum push chain depth before the source helix treats the path as
+   * blocked. If the cascade needs more iterations than this to clear the path,
+   * the push is treated as a collision. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid|Source Helix",
+            meta = (ClampMin = "1"))
+  int32 MaxEjectWeight = 50;
 
   // ------------ Helix Output Settings ------------
   /** When true, helix output extends upward. When false, extends downward. */

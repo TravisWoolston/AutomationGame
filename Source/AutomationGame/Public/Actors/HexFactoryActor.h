@@ -241,6 +241,9 @@ protected:
   // Helper functions for helix orb type management
   UInstancedStaticMeshComponent *GetHelixOrbISMForType(EOrbType OrbType);
 
+  // Helper functions for belt type management
+  UInstancedStaticMeshComponent *GetBeltISMForType(EOrbType OrbType);
+
   // Per-type helix orb ISMs (use orb mesh with per-type materials)
   UPROPERTY(Transient) UInstancedStaticMeshComponent *HelixOrbNoneISM = nullptr;
   UPROPERTY(Transient)
@@ -254,6 +257,16 @@ protected:
   UPROPERTY(Transient)
   UInstancedStaticMeshComponent *HelixOrbCatalystXISM = nullptr;
   UPROPERTY(Transient) UInstancedStaticMeshComponent *HelixOrbVoidISM = nullptr;
+
+  // Per-type belt ISMs (use belt mesh with per-type materials)
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *BeltNoneISM = nullptr;
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *BeltBaseAISM = nullptr;
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *BeltBaseBISM = nullptr;
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *BeltBaseCISM = nullptr;
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *BeltMetalAISM = nullptr;
+  UPROPERTY(Transient)
+  UInstancedStaticMeshComponent *BeltCatalystXISM = nullptr;
+  UPROPERTY(Transient) UInstancedStaticMeshComponent *BeltVoidISM = nullptr;
 
   // Update the grid collision plane position to match the grid Z level
   void UpdateGridCollisionPlane();

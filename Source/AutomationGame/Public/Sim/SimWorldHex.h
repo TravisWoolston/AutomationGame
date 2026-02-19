@@ -66,6 +66,9 @@ struct FSourceGroup {
 
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   int32 GenerationInterval = 1; // Ticks per rung (Continuous Generation)
+
+  // True when the helix is paused because the board ejection is blocked
+  bool bPaused = false;
 };
 
 class ATestLevelDirector;
@@ -289,6 +292,15 @@ public:
   TMap<int32, FSourceGroup> SourceGroups;
   int32 NextSourceGroupId = 1;
 
+  // --- Source helix orb-cap settings (set by GameManager) ---
+  /** When true, source helixes pause if any orb type on the grid exceeds
+   * GridOrbCapPerType */
+  bool bGridOrbLimit = false;
+  /** Maximum number of orbs of each type allowed on the grid */
+  int32 GridOrbCapPerType = 20;
+  /** Maximum cascade depth before the push is treated as blocked */
+  int32 MaxEjectWeight = 50;
+
   /** Explicitly pair a helix output group with an input layout */
   void PairHelixInput(int32 OutputGroupIndex, const TArray<FHex> &InputTiles,
                       const FHex &Center);
@@ -484,6 +496,9 @@ public:
 
   UPROPERTY(Transient)
   TMap<FHex, uint8> DiscoveryTileOrbTypes;
+
+  UPROPERTY(Transient)
+  TMap<FHex, uint8> BeltTileOrbTypes;
 
   UPROPERTY(VisibleAnywhere, Category = "Spatial")
   TObjectPtr<class UOrbSpatialManager> SpatialManager;
