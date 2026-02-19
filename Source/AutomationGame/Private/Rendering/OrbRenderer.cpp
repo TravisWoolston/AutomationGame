@@ -678,6 +678,11 @@ void UOrbRenderer::RebuildInstances() {
     if (AnimatedOutputIds.Contains(Id))
       continue; // Skip output orbs that are being animated (descending)
 
+    // Skip items newly placed this step - the placer (Walker/Arm) handles the
+    // arrival animation
+    if (Sim->NewlyPlacedItems.Contains(Id))
+      continue;
+
     const FVector *A = PrevPos.Find(Id);
     const FVector *B = CurrPos.Find(Id);
     const FRotator *RotA = PrevRot.Find(Id);

@@ -543,6 +543,12 @@ void ABasicWalker::Tick(float DeltaSeconds) {
     bool bPrevRHolding = bRFootHoldingItem;
     bool bPrevUHolding = bUFootHoldingItem;
 
+    // Capture previous item data before syncing (for drop visuals)
+    FItem DFootPrevData = DFootHeldItem;
+    FItem LFootPrevData = LFootHeldItem;
+    FItem RFootPrevData = RFootHeldItem;
+    FItem UFootPrevData = UFootHeldItem;
+
     bDFootHoldingItem = SimState.DFoot.bHoldingItem;
     bLFootHoldingItem = SimState.LFoot.bHoldingItem;
     bRFootHoldingItem = SimState.RFoot.bHoldingItem;
@@ -593,69 +599,139 @@ void ABasicWalker::Tick(float DeltaSeconds) {
 
     // Log state changes and handle pickup/drop visual transitions with
     // sim-tick-based delay
-    if (bDFootHoldingItem != bPrevDHolding) {
-      UE_LOG(LogTemp, Log, TEXT("Walker '%s': DFoot holding changed to %d"),
-             *GetName(), bDFootHoldingItem ? 1 : 0);
+    // Detect state changes or Item ID changes (for instant swap)
+    bool bDFootItemChanged =
+        (bDFootHoldingItem != bPrevDHolding) ||
+        (bDFootHoldingItem && (DFootHeldItem.Id != DFootHeldItemIdPrev));
+
+    if (bDFootItemChanged) {
+      UE_LOG(LogTemp, Log,
+             TEXT("Walker '%s': DFoot holding changed (Hold=%d, ItemID=%d)"),
+             *GetName(), bDFootHoldingItem ? 1 : 0, DFootHeldItem.Id);
+
+      // Only trigger visual pickup animation IF we weren't already holding
+      // (This avoids animating stack shifts from the ground to the foot)
       if (bDFootHoldingItem && !bPrevDHolding) {
-        // Transitioning to holding - set delay counter for pickup visual
         bDFootHeldVisualReady = false;
         DFootPickupVisualDelay =
             (int32)FMath::CeilToFloat(SimState.DFoot.CurrentMoveDurationTicks);
-      } else if (!bDFootHoldingItem && bPrevDHolding) {
-        // Transitioning to NOT holding - set delay counter for drop visual
-        bDFootPendingDropVisual = true;
-        bDFootHeldVisualReady = false;
-        DFootDropVisualDelay =
-            (int32)FMath::CeilToFloat(SimState.DFoot.CurrentMoveDurationTicks);
-        DFootCachedDropItem =
-            DFootHeldItem; // Cache the item for continued rendering
+        DFootLastPickupStep = Sim->GetStepCounter();
+      }
+
+      if (!bDFootHoldingItem || (bPrevDHolding && bDFootHoldingItem)) {
+        // Transitioning to NOT holding OR swapping items (drop old one)
+        if (bPrevDHolding) {
+          bDFootPendingDropVisual = true;
+          bDFootHeldVisualReady = false;
+          DFootDropVisualDelay = (int32)FMath::CeilToFloat(
+              SimState.DFoot.CurrentMoveDurationTicks);
+          DFootLastDropStep = Sim->GetStepCounter();
+          DFootLastDropHex = DFootHex; // Capture drop location
+
+          // Use the PREVIOUS item data for the drop visual
+          DFootCachedDropItem = DFootPrevData;
+        }
       }
     }
-    if (bLFootHoldingItem != bPrevLHolding) {
-      UE_LOG(LogTemp, Log, TEXT("Walker '%s': LFoot holding changed to %d"),
-             *GetName(), bLFootHoldingItem ? 1 : 0);
+    // Update Prev ID for next tick
+    DFootHeldItemIdPrev = DFootHeldItem.Id;
+
+    // Track previous held item IDs to detect swaps
+    // These are member variables, not local, so they are not declared here.
+    // int32 DFootHeldItemIdPrev = 0;
+    // int32 LFootHeldItemIdPrev = 0;
+    // int32 RFootHeldItemIdPrev = 0;
+    // int32 UFootHeldItemIdPrev = 0;
+
+    // Track the hex where the last drop occurred (to interpolate correctly even
+    // if foot moves) These are member variables, not local, so they are not
+    // declared here. FHex DFootLastDropHex; FHex LFootLastDropHex; FHex
+    // RFootLastDropHex; FHex UFootLastDropHex;
+
+    bool bLFootItemChanged =
+        (bLFootHoldingItem != bPrevLHolding) ||
+        (bLFootHoldingItem && (LFootHeldItem.Id != LFootHeldItemIdPrev));
+
+    if (bLFootItemChanged) {
+      UE_LOG(LogTemp, Log,
+             TEXT("Walker '%s': LFoot holding changed (Hold=%d, ItemID=%d)"),
+             *GetName(), bLFootHoldingItem ? 1 : 0, LFootHeldItem.Id);
       if (bLFootHoldingItem && !bPrevLHolding) {
         bLFootHeldVisualReady = false;
         LFootPickupVisualDelay =
             (int32)FMath::CeilToFloat(SimState.LFoot.CurrentMoveDurationTicks);
-      } else if (!bLFootHoldingItem && bPrevLHolding) {
-        bLFootPendingDropVisual = true;
-        bLFootHeldVisualReady = false;
-        LFootDropVisualDelay =
-            (int32)FMath::CeilToFloat(SimState.LFoot.CurrentMoveDurationTicks);
-        LFootCachedDropItem = LFootHeldItem;
+        LFootLastPickupStep = Sim->GetStepCounter();
+      }
+
+      if (!bLFootHoldingItem || (bPrevLHolding && bLFootHoldingItem)) {
+        if (bPrevLHolding) {
+          bLFootPendingDropVisual = true;
+          bLFootHeldVisualReady = false;
+          LFootDropVisualDelay = (int32)FMath::CeilToFloat(
+              SimState.LFoot.CurrentMoveDurationTicks);
+          LFootLastDropStep = Sim->GetStepCounter();
+          LFootLastDropHex = LFootHex;
+          LFootCachedDropItem = LFootPrevData;
+        }
       }
     }
-    if (bRFootHoldingItem != bPrevRHolding) {
-      UE_LOG(LogTemp, Log, TEXT("Walker '%s': RFoot holding changed to %d"),
-             *GetName(), bRFootHoldingItem ? 1 : 0);
+    LFootHeldItemIdPrev = LFootHeldItem.Id;
+    bool bRFootItemChanged =
+        (bRFootHoldingItem != bPrevRHolding) ||
+        (bRFootHoldingItem && (RFootHeldItem.Id != RFootHeldItemIdPrev));
+
+    if (bRFootItemChanged) {
+      UE_LOG(LogTemp, Log,
+             TEXT("Walker '%s': RFoot holding changed (Hold=%d, ItemID=%d)"),
+             *GetName(), bRFootHoldingItem ? 1 : 0, RFootHeldItem.Id);
       if (bRFootHoldingItem && !bPrevRHolding) {
         bRFootHeldVisualReady = false;
         RFootPickupVisualDelay =
             (int32)FMath::CeilToFloat(SimState.RFoot.CurrentMoveDurationTicks);
-      } else if (!bRFootHoldingItem && bPrevRHolding) {
-        bRFootPendingDropVisual = true;
-        bRFootHeldVisualReady = false;
-        RFootDropVisualDelay =
-            (int32)FMath::CeilToFloat(SimState.RFoot.CurrentMoveDurationTicks);
-        RFootCachedDropItem = RFootHeldItem;
+        RFootLastPickupStep = Sim->GetStepCounter();
+      }
+
+      if (!bRFootHoldingItem || (bPrevRHolding && bRFootHoldingItem)) {
+        if (bPrevRHolding) {
+          bRFootPendingDropVisual = true;
+          bRFootHeldVisualReady = false;
+          RFootDropVisualDelay = (int32)FMath::CeilToFloat(
+              SimState.RFoot.CurrentMoveDurationTicks);
+          RFootLastDropStep = Sim->GetStepCounter();
+          RFootLastDropHex = RFootHex;
+          RFootCachedDropItem = RFootPrevData;
+        }
       }
     }
-    if (bUFootHoldingItem != bPrevUHolding) {
-      UE_LOG(LogTemp, Log, TEXT("Walker '%s': UFoot holding changed to %d"),
-             *GetName(), bUFootHoldingItem ? 1 : 0);
+    RFootHeldItemIdPrev = RFootHeldItem.Id;
+    bool bUFootItemChanged =
+        (bUFootHoldingItem != bPrevUHolding) ||
+        (bUFootHoldingItem && (UFootHeldItem.Id != UFootHeldItemIdPrev));
+
+    if (bUFootItemChanged) {
+      UE_LOG(LogTemp, Log,
+             TEXT("Walker '%s': UFoot holding changed (Hold=%d, ItemID=%d)"),
+             *GetName(), bUFootHoldingItem ? 1 : 0, UFootHeldItem.Id);
       if (bUFootHoldingItem && !bPrevUHolding) {
         bUFootHeldVisualReady = false;
         UFootPickupVisualDelay =
             (int32)FMath::CeilToFloat(SimState.UFoot.CurrentMoveDurationTicks);
-      } else if (!bUFootHoldingItem && bPrevUHolding) {
-        bUFootPendingDropVisual = true;
-        bUFootHeldVisualReady = false;
-        UFootDropVisualDelay =
-            (int32)FMath::CeilToFloat(SimState.UFoot.CurrentMoveDurationTicks);
-        UFootCachedDropItem = UFootHeldItem;
+        UFootLastPickupStep = Sim->GetStepCounter();
+      }
+
+      if (!bUFootHoldingItem || (bPrevUHolding && bUFootHoldingItem)) {
+        if (bPrevUHolding) {
+          bUFootPendingDropVisual = true;
+          bUFootHeldVisualReady = false;
+          UFootDropVisualDelay = (int32)FMath::CeilToFloat(
+              SimState.UFoot.CurrentMoveDurationTicks);
+          UFootLastDropStep = Sim->GetStepCounter();
+          UFootLastDropHex = UFootHex;
+          UFootCachedDropItem = UFootPrevData;
+        }
       }
     }
+    UFootHeldItemIdPrev = UFootHeldItem.Id;
 
     // NOTE: UpdateHeldItemVisuals is now called AFTER smoothed positions are
     // calculated, to delay showing held items until feet have visually arrived
@@ -1294,31 +1370,45 @@ void ABasicWalker::Tick(float DeltaSeconds) {
     auto CheckFootVisualState =
         [&](bool bSimHolding, bool &bVisualReady, bool &bPendingDrop,
             int32 PickupDelay, int32 DropDelay, const FItem &HeldItem,
-            const FItem &CachedDropItem) -> TPair<bool, FItem> {
-      // Case 1: Pending drop visual - sim dropped but delay hasn't elapsed
+            const FItem &CachedDropItem,
+            int32 LastPickupStep) -> TPair<bool, FItem> {
+      const int32 CurStep = Sim->GetStepCounter();
+
+      // Case 1: Active interaction frames - prioritize correct type
+      // If we dropped this frame, we MUST show the dropped orb (CachedDropItem)
+      // regardless of delay, to ensure interpolation logic has the correct
+      // mesh.
+      if (CurStep == LastPickupStep) {
+        return TPair<bool, FItem>(true, HeldItem);
+      }
+
+      // Case 2: Pending drop visual - sim dropped but delay hasn't elapsed
       if (bPendingDrop) {
-        if (DropDelay <= 0) {
+        if (DropDelay <= 0 && CurStep != DFootLastDropStep) {
           // Delay elapsed - stop showing
           bPendingDrop = false;
           return TPair<bool, FItem>(false, FItem());
         }
 
-        // Still in delay period - keep showing cached item
+        // Still in delay period (or interaction frame) - keep showing cached
+        // item
         return TPair<bool, FItem>(true, CachedDropItem);
       }
 
-      // Case 2: Not holding
+      // Case 3: Not holding
       if (!bSimHolding) {
         bVisualReady = false;
         return TPair<bool, FItem>(false, FItem());
       }
 
-      // Case 3: Already visually ready - keep showing
+      // Case 4: Already visually ready - keep showing
       if (bVisualReady) {
         return TPair<bool, FItem>(true, HeldItem);
       }
 
-      // Case 4: Holding but waiting for delay to elapse
+      // Case 5: Holding but waiting for delay to elapse
+      // ANIMATION OVERRIDE: If we are in the pickup step, show immediately to
+      // allow interpolation logic to run
       if (PickupDelay <= 0) {
         // Delay elapsed - show item
         bVisualReady = true;
@@ -1329,22 +1419,112 @@ void ABasicWalker::Tick(float DeltaSeconds) {
       return TPair<bool, FItem>(false, FItem());
     };
 
+    // Lambda to animate held item position (interpolate between tile and foot)
+    auto AnimateHeldItem = [&](UStaticMeshComponent *HeldComp, int32 PickupStep,
+                               int32 DropStep, const FHex &TileHex) {
+      if (!HeldComp || !Sim || !Driver)
+        return;
+
+      const int32 CurrentStep = Sim->GetStepCounter();
+      bool bAnimating = false;
+      FVector TargetWorld = FVector::ZeroVector;
+
+      // Determine animation target
+      if (CurrentStep == PickupStep) {
+        bAnimating = true;
+        // Pickup: Tile -> Foot
+        // We want to lerp from Tile to Foot.
+        // HeldComp is attached to Foot. So Foot is (0,0,0) relative.
+        // We need to set WorldLocation to Lerp(TileWorld, FootWorld, Alpha).
+        TargetWorld = HexToWorld(TileHex);
+      } else if (CurrentStep == DropStep) {
+        bAnimating = true;
+        // Drop: Foot -> Tile
+        TargetWorld = HexToWorld(TileHex);
+      }
+
+      if (bAnimating) {
+        float Alpha = Sim->GetFrameAlpha();
+
+        // For Drop: Start=Foot, End=Tile. Progress 0->1 goes Foot->Tile.
+        // For Pickup: Start=Tile, End=Foot. Progress 0->1 goes Tile->Foot.
+
+        FVector StartPos, EndPos;
+        FVector FootPos =
+            HeldComp->GetComponentLocation(); // Current foot/socket loc
+
+        // Note: For Pickup, FootPos is the END.
+        // For Drop, FootPos is the START.
+
+        if (CurrentStep == PickupStep) {
+          StartPos = TargetWorld; // Tile
+          EndPos = FootPos;       // Foot
+        } else {
+          StartPos = FootPos;   // Foot
+          EndPos = TargetWorld; // Tile
+        }
+
+        // We can't use FootPos as a static point because the foot is moving!
+        // We want the orb to be AT the foot when Alpha=1 (Pickup) or Alpha=0
+        // (Drop).
+
+        // Better logic: Calculate offset from Foot.
+        // RelLoc = WorldToComponent(Lerp(Start, End, Alpha)).
+        // But HeldComp is the component.
+
+        // Actually, simpler:
+        // SetWorldLocation(Lerp(Start, End, Alpha));
+        // But 'FootPos' changes during the frame.
+        // The interpolation should be between "Tile" and "Current Foot Pos".
+        // Pickup: Lerp(Tile, CurrentFoot, Alpha).
+        // Drop: Lerp(CurrentFoot, Tile, Alpha).
+
+        // When Alpha=0 (Pickup), Pos = Tile.
+        // When Alpha=1 (Pickup), Pos = CurrentFoot.
+
+        FVector InterpPos = FMath::Lerp(StartPos, EndPos, Alpha);
+
+        // However, 'EndPos' (Foot) is moving.
+        // So we should interpolate between Tile and *Current Frame's Foot Pos*.
+
+        if (CurrentStep == PickupStep) {
+          InterpPos =
+              FMath::Lerp(TargetWorld,
+                          HeldComp->GetAttachParent()->GetSocketLocation(
+                              HeldComp->GetAttachSocketName()),
+                          Alpha);
+        } else {
+          InterpPos =
+              FMath::Lerp(HeldComp->GetAttachParent()->GetSocketLocation(
+                              HeldComp->GetAttachSocketName()),
+                          TargetWorld, Alpha);
+        }
+
+        HeldComp->SetWorldLocation(InterpPos);
+      } else {
+        // Ensure reset to zero relative location when not animating
+        if (!HeldComp->GetRelativeLocation().IsNearlyZero()) {
+          HeldComp->SetRelativeLocation(FVector::ZeroVector);
+        }
+      }
+    };
+
     auto DResult = CheckFootVisualState(
         bDFootHoldingItem, bDFootHeldVisualReady, bDFootPendingDropVisual,
         DFootPickupVisualDelay, DFootDropVisualDelay, DFootHeldItem,
-        DFootCachedDropItem);
+        DFootCachedDropItem, DFootLastPickupStep);
     auto LResult = CheckFootVisualState(
         bLFootHoldingItem, bLFootHeldVisualReady, bLFootPendingDropVisual,
         LFootPickupVisualDelay, LFootDropVisualDelay, LFootHeldItem,
-        LFootCachedDropItem);
+        LFootCachedDropItem, LFootLastPickupStep);
     auto RResult = CheckFootVisualState(
         bRFootHoldingItem, bRFootHeldVisualReady, bRFootPendingDropVisual,
         RFootPickupVisualDelay, RFootDropVisualDelay, RFootHeldItem,
-        RFootCachedDropItem);
+        RFootCachedDropItem, RFootLastPickupStep);
     auto UResult = CheckFootVisualState(
         bUFootHoldingItem, bUFootHeldVisualReady, bUFootPendingDropVisual,
         UFootPickupVisualDelay, UFootDropVisualDelay, UFootHeldItem,
-        UFootCachedDropItem);
+        UFootCachedDropItem, UFootLastPickupStep);
 
     // Update held item visuals based on sim-tick delay state
     UpdateHeldItemVisuals(DFootHeldOrbComp, DResult.Key, DResult.Value,
@@ -1355,6 +1535,22 @@ void ABasicWalker::Tick(float DeltaSeconds) {
                           FName(TEXT("RFoot_Socket")), CachedRFootHeldItemId);
     UpdateHeldItemVisuals(UFootHeldOrbComp, UResult.Key, UResult.Value,
                           FName(TEXT("UFoot_Socket")), CachedUFootHeldItemId);
+
+    // Apply animation interpolation
+    // Note: Use 'Saved' LastPickupStep keys updated in this tick
+    int32 CurStep = Sim->GetStepCounter();
+    AnimateHeldItem(DFootHeldOrbComp, DFootLastPickupStep, DFootLastDropStep,
+                    (CurStep == DFootLastDropStep) ? DFootLastDropHex
+                                                   : DFootHex);
+    AnimateHeldItem(LFootHeldOrbComp, LFootLastPickupStep, LFootLastDropStep,
+                    (CurStep == LFootLastDropStep) ? LFootLastDropHex
+                                                   : LFootHex);
+    AnimateHeldItem(RFootHeldOrbComp, RFootLastPickupStep, RFootLastDropStep,
+                    (CurStep == RFootLastDropStep) ? RFootLastDropHex
+                                                   : RFootHex);
+    AnimateHeldItem(UFootHeldOrbComp, UFootLastPickupStep, UFootLastDropStep,
+                    (CurStep == UFootLastDropStep) ? UFootLastDropHex
+                                                   : UFootHex);
   } else {
     // Fallback when no simulation or body comp - use immediate holding state
     UpdateHeldItemVisuals(DFootHeldOrbComp, bDFootHoldingItem, DFootHeldItem,

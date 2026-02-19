@@ -55,8 +55,9 @@ void ARequestBeacon::Tick(float DeltaTime) {
 }
 
 void ARequestBeacon::CheckReadiness() {
-  // Only check for PickUp and Gather beacons
-  if (BeaconRole != EBeaconRole::PickUp && BeaconRole != EBeaconRole::Gather)
+  // Only check for PickUp, Gather, DropOff, and Scatter beacons
+  if (BeaconRole != EBeaconRole::PickUp && BeaconRole != EBeaconRole::Gather &&
+      BeaconRole != EBeaconRole::DropOff && BeaconRole != EBeaconRole::Scatter)
     return;
 
   // Need Sim
@@ -77,8 +78,8 @@ void ARequestBeacon::CheckReadiness() {
     return;
   }
 
-  if (BeaconRole == EBeaconRole::PickUp) {
-    // Standard PickUp: check tile content at beacon location
+  if (BeaconRole == EBeaconRole::PickUp || BeaconRole == EBeaconRole::DropOff) {
+    // Standard PickUp/DropOff: check tile content at beacon location
     FHex Location(Q, R, Level);
     bool bOccupied = false;
 
@@ -89,47 +90,59 @@ void ARequestBeacon::CheckReadiness() {
       }
     }
 
-    EBeaconState DesiredState =
-        bOccupied ? EBeaconState::Ready : EBeaconState::NotReady;
+    EBeaconState DesiredState = EBeaconState::NotReady;
+    if (BeaconRole == EBeaconRole::PickUp) {
+      DesiredState = bOccupied ? EBeaconState::Ready : EBeaconState::NotReady;
+    } else {
+      // DropOff is Ready if EMPTY
+      DesiredState = bOccupied ? EBeaconState::NotReady : EBeaconState::Ready;
+    }
+
     if (BeaconState != DesiredState) {
       SetState(DesiredState);
     }
-  } else if (BeaconRole == EBeaconRole::Gather) {
-    // Gather: check for unbonded single orbs of matching type within Radius
+  } else if (BeaconRole == EBeaconRole::Gather ||
+             BeaconRole == EBeaconRole::Scatter) {
     FHex Center(Q, R, Level);
-    bool bFoundQualifyingOrb = false;
+    bool bFoundQualifyingSlot = false;
 
     for (int32 q = -Radius; q <= Radius; ++q) {
       for (int32 r = -Radius; r <= Radius; ++r) {
         FHex TestHex(Center.Q + q, Center.R + r, Center.Level);
         int32 dist = HexUtil::Dist(Center, TestHex);
-        if (dist == 0 || dist > Radius)
+        if (dist > Radius)
           continue;
 
-        if (const FItem *Item = Sim->ItemMap.Find(TestHex)) {
-          if (Item->Id == 0)
+        const FItem *Item = Sim->ItemMap.Find(TestHex);
+        bool bHasItem = (Item && Item->Id != 0);
+
+        if (BeaconRole == EBeaconRole::Gather) {
+          // Gather: check for unbonded single orbs of matching type
+          if (dist == 0 || !bHasItem)
             continue;
-          if (Item->bIsCluster)
-            continue; // Skip clusters
-          if (Item->bIsLocked)
-            continue; // Skip locked orbs
-          // Check orb type matches filter
+          if (Item->bIsCluster || Item->bIsLocked)
+            continue;
           if (FilterOrbType > 0 && (uint8)Item->Single.Type != FilterOrbType)
             continue;
-          // Check orb is unbonded
           if (Sim->IsItemBonded(Item->Id))
             continue;
 
-          bFoundQualifyingOrb = true;
+          bFoundQualifyingSlot = true;
           break;
+        } else {
+          // Scatter: check for empty slots
+          if (!bHasItem) {
+            bFoundQualifyingSlot = true;
+            break;
+          }
         }
       }
-      if (bFoundQualifyingOrb)
+      if (bFoundQualifyingSlot)
         break;
     }
 
     EBeaconState DesiredState =
-        bFoundQualifyingOrb ? EBeaconState::Ready : EBeaconState::NotReady;
+        bFoundQualifyingSlot ? EBeaconState::Ready : EBeaconState::NotReady;
     if (BeaconState != DesiredState) {
       SetState(DesiredState);
     }

@@ -1202,6 +1202,16 @@ void AHexFactoryActor::UpdateBeltMaterials() {
   if (Driver)
     MaterialManager = Driver->FindComponentByClass<UOrbMaterialManager>();
 
+  if (!MaterialManager && GetWorld()) {
+    for (TActorIterator<AActor> It(GetWorld()); It; ++It) {
+      if (UOrbMaterialManager *Found =
+              It->FindComponentByClass<UOrbMaterialManager>()) {
+        MaterialManager = Found;
+        break;
+      }
+    }
+  }
+
   TArray<EOrbType> AllOrbTypes = {EOrbType::BaseA,     EOrbType::BaseB,
                                   EOrbType::BaseC,     EOrbType::MetalA,
                                   EOrbType::CatalystX, EOrbType::Void};

@@ -64,9 +64,11 @@ void USimWorldHex::ProcessWalkerTick(
         W.UFoot.bGatherPhaseActive = false;
         W.UFoot.bScatterPhaseActive = false;
       }
-      // Cancel stale Gather requests (beacon no longer InProgress, checked via
-      // CheckReadiness)
-      else if ((*BeaconPtr)->BeaconRole == EBeaconRole::Gather &&
+      // Cancel stale Gather/Scatter/DropOff requests (beacon no longer Ready,
+      // checked via CheckReadiness)
+      else if (((*BeaconPtr)->BeaconRole == EBeaconRole::Gather ||
+                (*BeaconPtr)->BeaconRole == EBeaconRole::Scatter ||
+                (*BeaconPtr)->BeaconRole == EBeaconRole::DropOff) &&
                (*BeaconPtr)->BeaconState == EBeaconState::NotReady) {
         W.Requests.RemoveAt(0);
         W.bProcessingRequest = false;

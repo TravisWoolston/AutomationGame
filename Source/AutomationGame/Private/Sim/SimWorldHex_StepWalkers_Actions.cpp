@@ -589,8 +589,30 @@ void USimWorldHex::TryWalkerGather(
   }
 
   if (!GatherBeacon || GatherBeacon->BeaconRole != EBeaconRole::Gather ||
-      GatherBeacon->BeaconState != EBeaconState::InProgress)
+      (GatherBeacon->BeaconState != EBeaconState::InProgress &&
+       GatherBeacon->BeaconState != EBeaconState::Ready)) {
+    // CRITICAL FIX: If the beacon is no longer valid or InProgress/Ready, we
+    // MUST abort the active gather phase to prevent an infinite "stomp" loop
+    if (Foot.bGatherPhaseActive) {
+      UE_LOG(LogTemp, Warning,
+             TEXT("Walker %d: Aborting active gather phase because beacon is "
+                  "invalid/Not-Active"),
+             WalkerIndex);
+      Foot.bGatherPhaseActive = false;
+      if (Foot.GatheredOrbs.Num() == 0) {
+        Foot.bGathering = false;
+      }
+    }
     return;
+  }
+
+  // Auto-claim Ready beacons (prevent them from stalling the walker)
+  if (GatherBeacon->BeaconState == EBeaconState::Ready) {
+    GatherBeacon->SetState(EBeaconState::InProgress);
+    UE_LOG(LogTemp, Log,
+           TEXT("Walker %d: Auto-claiming Ready gather beacon at (%d,%d)"),
+           WalkerIndex, GatherBeacon->Q, GatherBeacon->R);
+  }
 
   // 2. Persistent Foot Rule: If ANY other foot is already gathering or holding,
   // this foot stays back.
@@ -639,6 +661,9 @@ void USimWorldHex::TryWalkerGather(
 
     if (TryTakeItem(ArrivalHex, TakenItem)) {
       Foot.GatheredOrbs.Add(TakenItem);
+      // For the Pickup animation tick, show the orb just picked up
+      // In all other ticks, we revert to showing the first in the stack (the
+      // next to drop)
       Foot.HeldItem = TakenItem;
       Foot.bHoldingItem = true;
       Foot.bGathering = true;
@@ -650,6 +675,13 @@ void USimWorldHex::TryWalkerGather(
              Foot.GatheredOrbs.Num());
     } else {
       Foot.bHoldingItem = bWasHolding;
+
+      // Ensure HeldItem reflects the next-to-drop orb when not actively picking
+      // up
+      if (Foot.bGathering && Foot.GatheredOrbs.Num() > 0) {
+        Foot.HeldItem = Foot.GatheredOrbs[0];
+      }
+
       if (ItemMap.Contains(ArrivalHex)) {
         UE_LOG(
             LogTemp, Verbose,
@@ -823,7 +855,9 @@ bool USimWorldHex::TryWalkerScatter(
 
     if (bIsValidTarget) {
       FItem OrbToPlace = Foot.GatheredOrbs[0];
-      OrbToPlace.Id = NextItemId++;
+      if (OrbToPlace.Id == 0) {
+        OrbToPlace.Id = NextItemId++;
+      }
       OrbToPlace.LocationUpdatedThisTick = false;
       OrbToPlace.bIsLocked = false;
       OrbToPlace.bIsReady = true;
@@ -836,8 +870,12 @@ bool USimWorldHex::TryWalkerScatter(
                WalkerIndex, PlacementHex.Q, PlacementHex.R,
                Foot.GatheredOrbs.Num());
 
+        // Always update HeldItem to reflect the current top of the queue
+        // (This triggers the visual drop/transition in the actor)
         if (Foot.GatheredOrbs.Num() > 0) {
-          Foot.HeldItem = Foot.GatheredOrbs[0]; // Update visual
+          Foot.HeldItem = Foot.GatheredOrbs[0];
+        } else {
+          Foot.HeldItem = FItem();
         }
       }
     }

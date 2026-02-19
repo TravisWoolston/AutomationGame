@@ -594,11 +594,41 @@ private:
   int32 RFootDropVisualDelay = 0;
   int32 UFootDropVisualDelay = 0;
 
+  // Track gathered counts to distinguish pickup vs drop during ID swaps
+  int32 DFootPrevGatherCount = 0;
+  int32 LFootPrevGatherCount = 0;
+  int32 RFootPrevGatherCount = 0;
+  int32 UFootPrevGatherCount = 0;
+
   // Cache held item data for rendering during drop visual transition
   FItem DFootCachedDropItem;
   FItem LFootCachedDropItem;
   FItem RFootCachedDropItem;
   FItem UFootCachedDropItem;
+
+  // Track the sim step when the last pickup/drop events occurred, for
+  // interpolation
+  int32 DFootLastPickupStep = -1;
+  int32 LFootLastPickupStep = -1;
+  int32 RFootLastPickupStep = -1;
+  int32 UFootLastPickupStep = -1;
+
+  int32 DFootLastDropStep = -1;
+  int32 LFootLastDropStep = -1;
+  int32 RFootLastDropStep = -1;
+  int32 UFootLastDropStep = -1;
+
+  // Track previous held item IDs to detect swaps
+  int32 DFootHeldItemIdPrev = 0;
+  int32 LFootHeldItemIdPrev = 0;
+  int32 RFootHeldItemIdPrev = 0;
+  int32 UFootHeldItemIdPrev = 0;
+
+  // Track the hex where the last drop occurred
+  FHex DFootLastDropHex;
+  FHex LFootLastDropHex;
+  FHex RFootLastDropHex;
+  FHex UFootLastDropHex;
 
   // Helpers
   void EnsureComps();

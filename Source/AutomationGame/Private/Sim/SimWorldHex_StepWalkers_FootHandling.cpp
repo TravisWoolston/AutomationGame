@@ -215,16 +215,28 @@ void USimWorldHex::HandleFootPlanted(
           }
         }
 
-        if (!bAnotherFootHolding && ItemMap.Contains(Foot.CurrentTile)) {
-          // Ready to pick up! Start a step toward the same tile to trigger
-          // TryWalkerPickUp
-          Foot.TargetTile = Foot.CurrentTile;
-          Foot.StepState = EFootStepState::Moving;
-          Foot.StepProgress = 0;
-          Foot.CurrentMoveDurationTicks = 0.f; // Finish immediately
-          RaisedCount++;
-          RaisedIndices.Add(FootIndex);
-          return;
+        if (!bAnotherFootHolding) {
+          if (const FItem *TargetItem = ItemMap.Find(Foot.CurrentTile)) {
+            // Only attempt pickup if the item is STABLE (not moving on belt,
+            // not locked) This prevents the "stomp" loop where we try to pickup
+            // but TryWalkerPickUp rejects it.
+            bool bIsStable = !OrbsMovedLastTick.Contains(TargetItem->Id) &&
+                             !OrbsNewlyMovedByBelts.Contains(TargetItem->Id) &&
+                             !TargetItem->bIsLocked &&
+                             !IsItemInHelix(TargetItem->Id);
+
+            if (bIsStable) {
+              // Ready to pick up! Start a step toward the same tile to trigger
+              // TryWalkerPickUp
+              Foot.TargetTile = Foot.CurrentTile;
+              Foot.StepState = EFootStepState::Moving;
+              Foot.StepProgress = 0;
+              Foot.CurrentMoveDurationTicks = 0.f; // Finish immediately
+              RaisedCount++;
+              RaisedIndices.Add(FootIndex);
+              return;
+            }
+          }
         }
       }
     }
@@ -238,7 +250,8 @@ void USimWorldHex::HandleFootPlanted(
     for (const auto &Pair : BeaconCache) {
       ARequestBeacon *B = Pair.Value;
       if (B && B->BeaconRole == EBeaconRole::Gather &&
-          B->BeaconState == EBeaconState::InProgress) {
+          (B->BeaconState == EBeaconState::InProgress ||
+           B->BeaconState == EBeaconState::Ready)) {
         FHex BHex(B->Q, B->R, B->Level);
         if (HexUtil::Dist(W.BaseHex, BHex) <= W.ReachDistance) {
           // Attempt task assignment. TryWalkerGather will only set
@@ -497,12 +510,12 @@ void USimWorldHex::HandleFootPlanted(
         if (TestHex == W.CurrentTargetHex || bIsDesignatedDropOff) {
           if (ARequestBeacon *const *B = BeaconCache.Find(TestHex))
             if ((*B)->BeaconRole == EBeaconRole::PickUp ||
-                (*B)->BeaconRole == EBeaconRole::DropOff ||
-                (*B)->BeaconRole == EBeaconRole::Scatter)
+                (*B)->BeaconRole == EBeaconRole::DropOff)
               bTestIsTarget = true;
-          // NOTE: Gather beacons intentionally excluded — the foot doesn't
-          // need to step on the beacon center; the walker body just needs
-          // to be within reach distance.
+          // NOTE: Gather and Scatter beacons intentionally excluded — the foot
+          // doesn't need to step on the beacon center; the walker body just
+          // needs to be within reach distance, allowing the foot to reach
+          // orbs/slots in the radius.
         }
 
         if (!bTestIsTarget && IsHexOccupied(TestHex, HeldOrbHexes, ArmBaseHexes,
@@ -769,16 +782,27 @@ void USimWorldHex::UpdateFootHorizontalTarget(
 
   // TASK OVERRIDES: If gathering or scattering, the ideal point is the specific
   // target orb/tile assigned to this foot.
+  // CRITICAL FIX: Only override IF the target is within our quadrant.
+  // Otherwise, fallback to following the body target (StanceHex) to allow
+  // pivoting.
   if (Foot.bGatherPhaseActive && Foot.GatherTargetHexes.Num() > 0) {
-    IdealQ = (float)Foot.GatherTargetHexes[0].Q;
-    IdealR = (float)Foot.GatherTargetHexes[0].R;
-    IdealX = 1.7320508f * IdealQ + 0.8660254f * IdealR;
-    IdealY = 1.5f * IdealR;
+    const FString TargetQuad = GetFixedQuadrantFromHex(
+        W.BaseHex, Foot.GatherTargetHexes[0], W.QuadrantRotationOffset);
+    if (TargetQuad.Equals(FootQuadrant)) {
+      IdealQ = (float)Foot.GatherTargetHexes[0].Q;
+      IdealR = (float)Foot.GatherTargetHexes[0].R;
+      IdealX = 1.7320508f * IdealQ + 0.8660254f * IdealR;
+      IdealY = 1.5f * IdealR;
+    }
   } else if (Foot.bScatterPhaseActive && Foot.ScatterTargetHexes.Num() > 0) {
-    IdealQ = (float)Foot.ScatterTargetHexes[0].Q;
-    IdealR = (float)Foot.ScatterTargetHexes[0].R;
-    IdealX = 1.7320508f * IdealQ + 0.8660254f * IdealR;
-    IdealY = 1.5f * IdealR;
+    const FString TargetQuad = GetFixedQuadrantFromHex(
+        W.BaseHex, Foot.ScatterTargetHexes[0], W.QuadrantRotationOffset);
+    if (TargetQuad.Equals(FootQuadrant)) {
+      IdealQ = (float)Foot.ScatterTargetHexes[0].Q;
+      IdealR = (float)Foot.ScatterTargetHexes[0].R;
+      IdealX = 1.7320508f * IdealQ + 0.8660254f * IdealR;
+      IdealY = 1.5f * IdealR;
+    }
   }
 
   // Commitment guard: only lock if we are actually at the intended task spot

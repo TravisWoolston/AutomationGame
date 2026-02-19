@@ -509,6 +509,10 @@ public:
   // Track items moved by belts this step
   TSet<int32> ItemsMovedLastStep;
 
+  // Items placed this tick (e.g. by walkers/arms) - exposed for renderer
+  // suppression
+  TSet<int32> NewlyPlacedItems;
+
 private:
   bool DoesItemMatchOutputType(const FItem &Item,
                                const FTile &OutputTile) const;
@@ -524,8 +528,6 @@ private:
 
   TSet<FHex> SkipInputThisFrame;
   TSet<FHex> SkipOutputThisFrame;
-  TSet<int32> NewlyPlacedItems;
-
   struct FEjectedItemInfo {
     FVector Center;
     float StartZ;

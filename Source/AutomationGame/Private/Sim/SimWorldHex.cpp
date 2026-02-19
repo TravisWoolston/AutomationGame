@@ -1096,6 +1096,8 @@ void USimWorldHex::StepSim() {
       OrbsNewlyMovedByBelts; // Preserve move state for grab checks
   OrbsNewlyMovedByBelts.Reset();
   EjectedItems.Empty();
+  NewlyPlacedItems.Empty();
+  RecentlyDroppedByArm.Empty();
 
   ProcessUnbondsForHeldClusters();
   // pass 1 (empty at start)
@@ -1135,9 +1137,6 @@ void USimWorldHex::StepSim() {
 
   ProcessOutputs();
 
-  // Clear newly placed items and recently dropped tracking at very end of tick
-  NewlyPlacedItems.Empty();
-  RecentlyDroppedByArm.Empty();
   EjectedItems.Empty();
 
   // Debug visualization - draw bond cylinders when DebugSpheres is enabled

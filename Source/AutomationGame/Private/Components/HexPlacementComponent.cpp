@@ -951,6 +951,14 @@ void UHexPlacementComponent::DoRemoveAt(const FVector &World) {
   const FHexAxial A = HexCoord::XYToAxialRound(Local, Tile, Ori);
 
   const FHex Root{A.Q, A.R, ActiveLevel};
+
+  // Clean up belt metadata if overwriting a belt
+  if (const FTile *ExistingTile = Sim->TileMap.Find(Root)) {
+    if (ExistingTile->Kind == ETileKind::Belt) {
+      Sim->BeltTileOrbTypes.Remove(Root);
+    }
+  }
+
   Sim->PlaceTile(Root, FTile{ETileKind::Empty, 0});
   if (bDebug) {
     UE_LOG(LogTemp, Log,
@@ -1101,6 +1109,16 @@ void UHexPlacementComponent::CycleNextType() {
     // Belts include 'None' (index 0) + valid types
     CurrentBeltOrbTypeIndex =
         (CurrentBeltOrbTypeIndex + 1) % (ValidTypes.Num() + 1);
+
+    if (GEngine) {
+      EOrbType CurrentType = GetCurrentBeltOrbType();
+      GEngine->AddOnScreenDebugMessage(
+          202, 2.0f, FColor::Cyan,
+          FString::Printf(TEXT("Belt Filter: %s"),
+                          CurrentType == EOrbType::None
+                              ? TEXT("None (All)")
+                              : *UEnum::GetValueAsString(CurrentType)));
+    }
   } else if (PlaceKind == EPlaceKind::ClusterInput) {
     // ClusterInputs cycle through orb types like regular Inputs
     CurrentInputOrbTypeIndex =
@@ -1169,6 +1187,16 @@ void UHexPlacementComponent::CyclePreviousType() {
     int32 NumOptions = ValidTypes.Num() + 1;
     CurrentBeltOrbTypeIndex =
         (CurrentBeltOrbTypeIndex - 1 + NumOptions) % NumOptions;
+
+    if (GEngine) {
+      EOrbType CurrentType = GetCurrentBeltOrbType();
+      GEngine->AddOnScreenDebugMessage(
+          202, 2.0f, FColor::Cyan,
+          FString::Printf(TEXT("Belt Filter: %s"),
+                          CurrentType == EOrbType::None
+                              ? TEXT("None (All)")
+                              : *UEnum::GetValueAsString(CurrentType)));
+    }
   } else if (PlaceKind == EPlaceKind::ClusterInput) {
     // ClusterInputs cycle through orb types like regular Inputs
     CurrentInputOrbTypeIndex =
@@ -2271,11 +2299,24 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
         if (CurrentType != EOrbType::None) {
           // Look up orb material
           UMaterialInterface *OrbMaterial = nullptr;
-          if (Driver) {
-            if (UOrbMaterialManager *MaterialManager =
-                    Driver->FindComponentByClass<UOrbMaterialManager>()) {
-              OrbMaterial = MaterialManager->GetMaterialForOrbType(CurrentType);
+          UOrbMaterialManager *MaterialManager = nullptr;
+
+          if (Driver)
+            MaterialManager =
+                Driver->FindComponentByClass<UOrbMaterialManager>();
+
+          if (!MaterialManager && GetWorld()) {
+            for (TActorIterator<AActor> It(GetWorld()); It; ++It) {
+              if (UOrbMaterialManager *Found =
+                      It->FindComponentByClass<UOrbMaterialManager>()) {
+                MaterialManager = Found;
+                break;
+              }
             }
+          }
+
+          if (MaterialManager) {
+            OrbMaterial = MaterialManager->GetMaterialForOrbType(CurrentType);
           }
 
           if (OrbMaterial) {

@@ -457,8 +457,7 @@ void AHexTopDownPawn::PlacePressed() {
           float MX, MY;
           PlacePC->GetMousePosition(MX, MY);
           Placer->GatherRadiusDragOriginX = MX;
-          Placer->GatherRadiusDragStartRadius = 10;
-          Placer->GatherScatterRadius = 10;
+          Placer->GatherRadiusDragStartRadius = Placer->GatherScatterRadius;
           Placer->bGatherRadiusDragging = true;
         }
       } else if (Placer->GatherScatterPlacementStep == 2) {
@@ -470,8 +469,7 @@ void AHexTopDownPawn::PlacePressed() {
           float MX, MY;
           PlacePC->GetMousePosition(MX, MY);
           Placer->GatherRadiusDragOriginX = MX;
-          Placer->GatherRadiusDragStartRadius = 10;
-          Placer->GatherScatterRadius = 10;
+          Placer->GatherRadiusDragStartRadius = Placer->GatherScatterRadius;
           Placer->bGatherRadiusDragging = true;
         }
       }
@@ -2854,9 +2852,22 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
       return;
     }
   } else if (CurrentViewMode == EViewMode::AdvancedFilter) {
-    if (!bIsAdvanced) {
+    // Check if tile is a belt (removable in Advanced Filter mode due to orb
+    // filters)
+    bool bIsBelt = false;
+    if (Sim) {
+      if (const FTile *ExistingTile = Sim->TileMap.Find(Hex)) {
+        if (ExistingTile->Kind == ETileKind::Belt) {
+          bIsBelt = true;
+        }
+      }
+    }
+
+    if (!bIsAdvanced && !bIsBelt) {
       UE_LOG(LogTemp, Warning,
-             TEXT("Only advanced tiles are removable in Advanced Filter Mode"));
+             TEXT("Only advanced tiles (and belts) are removable in Advanced "
+                  "Filter "
+                  "Mode"));
       return;
     }
 
@@ -3101,6 +3112,10 @@ void AHexTopDownPawn::DeleteTileAndOrbs(const FHex &Hex) {
 
     if (Tile->Kind == ETileKind::Source) {
       Sim->UnregisterSourceTile(Hex);
+    }
+
+    if (Tile->Kind == ETileKind::Belt) {
+      Sim->BeltTileOrbTypes.Remove(Hex);
     }
   }
 
