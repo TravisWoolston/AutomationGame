@@ -446,8 +446,15 @@ void USimWorldHex::HandleFootPlanted(
       bOnTargetPlacement = true;
   }
   if (!bOnTargetPlacement && Foot.bHoldingItem && Foot.bHasDesignatedDropOff &&
-      Foot.CurrentTile == Foot.DesignatedDropOffHex)
+      Foot.CurrentTile == Foot.DesignatedDropOffHex) {
     bOnTargetPlacement = true;
+    if (ARequestBeacon *const *BeaconPtr =
+            BeaconCache.Find(Foot.DesignatedDropOffHex)) {
+      if ((*BeaconPtr)->BeaconRole == EBeaconRole::Scatter) {
+        bOnTargetPlacement = false;
+      }
+    }
+  }
 
   // Holding Foot Priority: If we are holding an item, our 'IdealPoint' is the
   // drop-off itself
@@ -497,36 +504,66 @@ void USimWorldHex::HandleFootPlanted(
             (float)dist < W.MinimumReachDistance)
           continue;
 
-        bool bIsDesignatedDropOff =
-            (Foot.bHoldingItem && Foot.bHasDesignatedDropOff &&
-             TestHex == Foot.DesignatedDropOffHex);
-        if (!bIsDesignatedDropOff &&
-            !GetFixedQuadrantFromHex(W.BaseHex, TestHex,
-                                     W.QuadrantRotationOffset)
-                 .Equals(FootQuadrant))
+        // Quadrant Enforcement
+        bool bIsTaskTarget = false;
+        FHex SelectionHex = TestHex;
+
+        auto CheckTaskTarget = [&](const FHex &Test) -> bool {
+          // Check Gather targets
+          if (Foot.bGatherPhaseActive && Foot.GatherTargetHexes.Num() > 0) {
+            if (Test.Q == Foot.GatherTargetHexes[0].Q &&
+                Test.R == Foot.GatherTargetHexes[0].R) {
+              SelectionHex = Foot.GatherTargetHexes[0];
+              return true;
+            }
+          }
+          // Check Scatter targets
+          if (Foot.bScatterPhaseActive && Foot.ScatterTargetHexes.Num() > 0) {
+            if (Test.Q == Foot.ScatterTargetHexes[0].Q &&
+                Test.R == Foot.ScatterTargetHexes[0].R) {
+              SelectionHex = Foot.ScatterTargetHexes[0];
+              return true;
+            }
+          }
+          // Check DropOff
+          if (Foot.bHoldingItem && Foot.bHasDesignatedDropOff) {
+            if (Test.Q == Foot.DesignatedDropOffHex.Q &&
+                Test.R == Foot.DesignatedDropOffHex.R) {
+              SelectionHex = Foot.DesignatedDropOffHex;
+              return true;
+            }
+          }
+          return false;
+        };
+
+        bIsTaskTarget = CheckTaskTarget(TestHex);
+
+        // Standard quadrant check (unless it's our designated task target)
+        if (!bIsTaskTarget && !GetFixedQuadrantFromHex(W.BaseHex, TestHex,
+                                                       W.QuadrantRotationOffset)
+                                   .Equals(FootQuadrant))
           continue;
 
-        bool bTestIsTarget = false;
-        if (TestHex == W.CurrentTargetHex || bIsDesignatedDropOff) {
+        bool bTestIsBodyTarget = false;
+        if (TestHex == W.CurrentTargetHex) {
           if (ARequestBeacon *const *B = BeaconCache.Find(TestHex))
             if ((*B)->BeaconRole == EBeaconRole::PickUp ||
                 (*B)->BeaconRole == EBeaconRole::DropOff)
-              bTestIsTarget = true;
-          // NOTE: Gather and Scatter beacons intentionally excluded — the foot
-          // doesn't need to step on the beacon center; the walker body just
-          // needs to be within reach distance, allowing the foot to reach
-          // orbs/slots in the radius.
+              bTestIsBodyTarget = true;
         }
 
-        if (!bTestIsTarget && IsHexOccupied(TestHex, HeldOrbHexes, ArmBaseHexes,
-                                            HoldingFootHexes))
+        if (!bIsTaskTarget && !bTestIsBodyTarget &&
+            IsHexOccupied(SelectionHex, HeldOrbHexes, ArmBaseHexes,
+                          HoldingFootHexes))
           continue;
-        float Score = GetScore(TestHex);
-        if (bTestIsTarget)
+
+        float Score = GetScore(SelectionHex);
+        if (bIsTaskTarget || bTestIsBodyTarget)
           Score -= 100.f; // Massive priority for task hexes
+
         if (Score < BestScore - HysteresisThreshold) {
           BestScore = Score;
-          BestTile = TestHex;
+          BestTile = SelectionHex;
         }
       }
     }
@@ -817,8 +854,15 @@ void USimWorldHex::UpdateFootHorizontalTarget(
   }
 
   if (!bTargetIsTask && Foot.bHoldingItem && Foot.bHasDesignatedDropOff &&
-      Foot.TargetTile == Foot.DesignatedDropOffHex)
+      Foot.TargetTile == Foot.DesignatedDropOffHex) {
     bTargetIsTask = true;
+    if (ARequestBeacon *const *BeaconPtr =
+            BeaconCache.Find(Foot.DesignatedDropOffHex)) {
+      if ((*BeaconPtr)->BeaconRole == EBeaconRole::Scatter) {
+        bTargetIsTask = false;
+      }
+    }
+  }
 
   if (bTargetIsTask)
     return;

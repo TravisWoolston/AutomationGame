@@ -390,6 +390,14 @@ void USimWorldHex::StepArms() {
               // Add to recently dropped tracking for settling period
               RecentlyDroppedByArm.Add(S.Held.Id, ArmIndex);
 
+              // Remove from newly placed so it renders immediately (no delay)
+              NewlyPlacedItems.Remove(S.Held.Id);
+
+              // Set ready so it's not stuck (protected by RecentlyDroppedByArm)
+              if (FItem *Placed = ItemMap.Find(GripTarget)) {
+                Placed->bIsReady = true;
+              }
+
               S.bHolding = false;
               S.Held = FItem();
               S.bWaitingForBond = false;
@@ -491,6 +499,15 @@ void USimWorldHex::StepArms() {
                 HeldItemLastHex.Remove(NewItem.Id);
                 // Add to recently dropped tracking for settling period
                 RecentlyDroppedByArm.Add(NewItem.Id, ArmIndex);
+
+                // Remove from newly placed so it renders immediately (no delay)
+                NewlyPlacedItems.Remove(NewItem.Id);
+
+                // Set ready so it's not stuck (protected by
+                // RecentlyDroppedByArm)
+                if (FItem *Placed = ItemMap.Find(TargetHexes[idx])) {
+                  Placed->bIsReady = true;
+                }
               }
             }
 

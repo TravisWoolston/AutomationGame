@@ -613,8 +613,7 @@ void ABasicWalker::Tick(float DeltaSeconds) {
       // (This avoids animating stack shifts from the ground to the foot)
       if (bDFootHoldingItem && !bPrevDHolding) {
         bDFootHeldVisualReady = false;
-        DFootPickupVisualDelay =
-            (int32)FMath::CeilToFloat(SimState.DFoot.CurrentMoveDurationTicks);
+        DFootPickupVisualDelay = 0;
         DFootLastPickupStep = Sim->GetStepCounter();
       }
 
@@ -623,8 +622,7 @@ void ABasicWalker::Tick(float DeltaSeconds) {
         if (bPrevDHolding) {
           bDFootPendingDropVisual = true;
           bDFootHeldVisualReady = false;
-          DFootDropVisualDelay = (int32)FMath::CeilToFloat(
-              SimState.DFoot.CurrentMoveDurationTicks);
+          DFootDropVisualDelay = 0;
           DFootLastDropStep = Sim->GetStepCounter();
           DFootLastDropHex = DFootHex; // Capture drop location
 
@@ -658,8 +656,7 @@ void ABasicWalker::Tick(float DeltaSeconds) {
              *GetName(), bLFootHoldingItem ? 1 : 0, LFootHeldItem.Id);
       if (bLFootHoldingItem && !bPrevLHolding) {
         bLFootHeldVisualReady = false;
-        LFootPickupVisualDelay =
-            (int32)FMath::CeilToFloat(SimState.LFoot.CurrentMoveDurationTicks);
+        LFootPickupVisualDelay = 0;
         LFootLastPickupStep = Sim->GetStepCounter();
       }
 
@@ -667,8 +664,7 @@ void ABasicWalker::Tick(float DeltaSeconds) {
         if (bPrevLHolding) {
           bLFootPendingDropVisual = true;
           bLFootHeldVisualReady = false;
-          LFootDropVisualDelay = (int32)FMath::CeilToFloat(
-              SimState.LFoot.CurrentMoveDurationTicks);
+          LFootDropVisualDelay = 0;
           LFootLastDropStep = Sim->GetStepCounter();
           LFootLastDropHex = LFootHex;
           LFootCachedDropItem = LFootPrevData;
@@ -686,8 +682,7 @@ void ABasicWalker::Tick(float DeltaSeconds) {
              *GetName(), bRFootHoldingItem ? 1 : 0, RFootHeldItem.Id);
       if (bRFootHoldingItem && !bPrevRHolding) {
         bRFootHeldVisualReady = false;
-        RFootPickupVisualDelay =
-            (int32)FMath::CeilToFloat(SimState.RFoot.CurrentMoveDurationTicks);
+        RFootPickupVisualDelay = 0;
         RFootLastPickupStep = Sim->GetStepCounter();
       }
 
@@ -695,8 +690,7 @@ void ABasicWalker::Tick(float DeltaSeconds) {
         if (bPrevRHolding) {
           bRFootPendingDropVisual = true;
           bRFootHeldVisualReady = false;
-          RFootDropVisualDelay = (int32)FMath::CeilToFloat(
-              SimState.RFoot.CurrentMoveDurationTicks);
+          RFootDropVisualDelay = 0;
           RFootLastDropStep = Sim->GetStepCounter();
           RFootLastDropHex = RFootHex;
           RFootCachedDropItem = RFootPrevData;
@@ -714,8 +708,7 @@ void ABasicWalker::Tick(float DeltaSeconds) {
              *GetName(), bUFootHoldingItem ? 1 : 0, UFootHeldItem.Id);
       if (bUFootHoldingItem && !bPrevUHolding) {
         bUFootHeldVisualReady = false;
-        UFootPickupVisualDelay =
-            (int32)FMath::CeilToFloat(SimState.UFoot.CurrentMoveDurationTicks);
+        UFootPickupVisualDelay = 0;
         UFootLastPickupStep = Sim->GetStepCounter();
       }
 
@@ -723,8 +716,7 @@ void ABasicWalker::Tick(float DeltaSeconds) {
         if (bPrevUHolding) {
           bUFootPendingDropVisual = true;
           bUFootHeldVisualReady = false;
-          UFootDropVisualDelay = (int32)FMath::CeilToFloat(
-              SimState.UFoot.CurrentMoveDurationTicks);
+          UFootDropVisualDelay = 0;
           UFootLastDropStep = Sim->GetStepCounter();
           UFootLastDropHex = UFootHex;
           UFootCachedDropItem = UFootPrevData;

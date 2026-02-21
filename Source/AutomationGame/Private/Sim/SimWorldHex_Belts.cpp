@@ -325,7 +325,9 @@ void USimWorldHex::StepBelts() {
     }
 
     // Handle pulling from other belts if they can't push forward on their own
-    if (SourceTile->Kind == ETileKind::Belt) {
+    if (SourceTile->Kind == ETileKind::Belt ||
+        SourceTile->Kind == ETileKind::InputBond ||
+        SourceTile->Kind == ETileKind::OutputBond) {
       FItem *PullItem = ItemMap.Find(SourceHex);
       if (PullItem && PullItem->Id > 0 &&
           !RecentlyDroppedByArm.Contains(PullItem->Id)) {
@@ -900,7 +902,9 @@ void USimWorldHex::StepBelts() {
         continue;
 
       // Handle items on belts
-      if (SourceTile->Kind == ETileKind::Belt) {
+      if (SourceTile->Kind == ETileKind::Belt ||
+          SourceTile->Kind == ETileKind::InputBond ||
+          SourceTile->Kind == ETileKind::OutputBond) {
         // Check if this belt is disabled by a TriggerTile
         if (!IsBeltEnabled(FromHex)) {
           continue; // Belt is disabled, skip processing
@@ -928,13 +932,12 @@ void USimWorldHex::StepBelts() {
         const FTile *DestTile = TileMap.Find(ToHex);
 
         // Check if destination belt is filtered by orb type
-        if (bCanMove && DestTile && DestTile->Kind == ETileKind::Belt) {
-          if (const uint8 *DestBeltType = BeltTileOrbTypes.Find(ToHex)) {
-            if (*DestBeltType != 0 && KindFromItem(Item) != *DestBeltType) {
-              bCanMove = false; // Blocked by filter
-            }
-          }
-        }
+        // if (bCanMove && DestTile &&
+        //     (DestTile->Kind == ETileKind::Belt ||
+        //      DestTile->Kind == ETileKind::InputBond ||
+        //      DestTile->Kind == ETileKind::OutputBond)) {
+
+        // }
 
         if (DestTile && DestTile->Kind == ETileKind::Output) {
           // For output tiles, check the gate instead of item presence
@@ -1205,7 +1208,9 @@ void USimWorldHex::StepBelts() {
                          (EOrbType)InputTile->Arg != EOrbType::Void) {
                 bCanPull = true;
               }
-            } else if (InputTile->Kind == ETileKind::Belt) {
+            } else if (InputTile->Kind == ETileKind::Belt ||
+                       InputTile->Kind == ETileKind::InputBond ||
+                       InputTile->Kind == ETileKind::OutputBond) {
               // Pull from another belt if it can't push forward on its own
               // (either because it's disabled or points away from us)
               bool bInputBeltCanPush = false;
@@ -1727,7 +1732,9 @@ void USimWorldHex::StepBelts() {
       const FHex &BeltHex = KV.Key;
       const FTile &BeltTile = KV.Value;
 
-      if (BeltTile.Kind != ETileKind::Belt)
+      if (BeltTile.Kind != ETileKind::Belt &&
+          BeltTile.Kind != ETileKind::InputBond &&
+          BeltTile.Kind != ETileKind::OutputBond)
         continue;
       if (!IsBeltEnabled(BeltHex))
         continue; // Skip disabled belts

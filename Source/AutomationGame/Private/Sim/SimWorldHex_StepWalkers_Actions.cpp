@@ -853,6 +853,47 @@ bool USimWorldHex::TryWalkerScatter(
         !ArmBaseHexes.Contains(PlacementHex) &&
         HexUtil::Dist(ScatterCenter, PlacementHex) <= ScatterRadius;
 
+    // If trying to place on BEACON CENTER, check if ANY peripheral tile is
+    // valid. If so, force fallback to Phase 2 (movement) instead of placing on
+    // center.
+    if (bIsValidTarget && PlacementHex == ScatterCenter) {
+      bool bBetterOptionExists = false;
+      for (int32 q = -ScatterRadius; q <= ScatterRadius; ++q) {
+        for (int32 r = -ScatterRadius; r <= ScatterRadius; ++r) {
+          FHex TestHex(ScatterCenter.Q + q, ScatterCenter.R + r,
+                       ScatterCenter.Level);
+          if (TestHex == ScatterCenter)
+            continue; // Skip center
+          if (HexUtil::Dist(ScatterCenter, TestHex) > ScatterRadius)
+            continue;
+
+          bool bIsMyFoot =
+              (TestHex == W.DFoot.CurrentTile ||
+               TestHex == W.DFoot.TargetTile ||
+               TestHex == W.LFoot.CurrentTile ||
+               TestHex == W.LFoot.TargetTile ||
+               TestHex == W.RFoot.CurrentTile ||
+               TestHex == W.RFoot.TargetTile ||
+               TestHex == W.UFoot.CurrentTile || TestHex == W.UFoot.TargetTile);
+          bool bBlockedByFoot =
+              HoldingFootHexes.Contains(TestHex) && !bIsMyFoot;
+
+          if (!ItemMap.Contains(TestHex) && !ArmBaseHexes.Contains(TestHex) &&
+              !bBlockedByFoot) {
+            bBetterOptionExists = true;
+            break;
+          }
+        }
+        if (bBetterOptionExists)
+          break;
+      }
+
+      if (bBetterOptionExists) {
+        // Prevent placement on center to force movement to better option
+        bIsValidTarget = false;
+      }
+    }
+
     if (bIsValidTarget) {
       FItem OrbToPlace = Foot.GatheredOrbs[0];
       if (OrbToPlace.Id == 0) {
@@ -894,9 +935,27 @@ bool USimWorldHex::TryWalkerScatter(
         if (HexUtil::Dist(ScatterCenter, TestHex) > ScatterRadius)
           continue;
 
+        // Check if the tile is blocked by feet, but ALLOW this walker's own
+        // feet (If we target a tile under our own foot, the body pivot will
+        // move the foot away)
+        bool bIsMyFoot =
+            (TestHex == W.DFoot.CurrentTile || TestHex == W.DFoot.TargetTile ||
+             TestHex == W.LFoot.CurrentTile || TestHex == W.LFoot.TargetTile ||
+             TestHex == W.RFoot.CurrentTile || TestHex == W.RFoot.TargetTile ||
+             TestHex == W.UFoot.CurrentTile || TestHex == W.UFoot.TargetTile);
+
+        bool bBlockedByFoot = HoldingFootHexes.Contains(TestHex) && !bIsMyFoot;
+
         if (!ItemMap.Contains(TestHex) && !ArmBaseHexes.Contains(TestHex) &&
-            !HoldingFootHexes.Contains(TestHex)) {
+            !bBlockedByFoot) {
           int32 d = HexUtil::Dist(W.BaseHex, TestHex);
+
+          // Avoid placing on the beacon center itself unless it's the last
+          // option
+          if (TestHex == ScatterCenter) {
+            d += 10000;
+          }
+
           if (d < BestDist) {
             BestDist = d;
             BestSlot = TestHex;
