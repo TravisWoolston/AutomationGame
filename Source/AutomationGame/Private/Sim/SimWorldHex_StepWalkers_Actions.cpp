@@ -774,6 +774,19 @@ void USimWorldHex::TryWalkerGather(
         UE_LOG(LogTemp, Verbose,
                TEXT("Walker %d: Foot %d found NO qualifying orbs in radius %d"),
                WalkerIndex, FootIndex, SearchRadius);
+
+        Foot.bGatherPhaseActive = false;
+        Foot.bGathering = false;
+        Foot.GatherTargetHexes.Empty();
+        Foot.bHasSourcePickUp = false;
+
+        // Let the normal tick logic mark the beacon as NotReady if it has no
+        // more valid orbs
+        if (W.Requests.Num() > 0)
+          W.Requests.RemoveAt(0);
+        W.bProcessingRequest = false;
+        W.CurrentTargetHex = W.BaseHex;
+
         return;
       }
       // If we have orbs, Proceed to scatter.
