@@ -1,0 +1,10 @@
+        // Update dynamic move duration when target changes mid-flight
+        float MoveDist =
+            (float)HexUtil::Dist(Foot.CurrentTile, Foot.TargetTile);
+        Foot.CurrentMoveDurationTicks =
+            (W.TilesPerStep > 0.001f) ? (MoveDist / W.TilesPerStep) : 1.0f;
+      }
+    }
+  }
+}
+}

@@ -337,6 +337,16 @@ void USimWorldHex::StepBelts() {
           return false;
         }
 
+        // If an orb matches the belt type it is on, disallow default type belts
+        // from pulling it
+        if (RequiredOrbType == 0) {
+          if (const uint8 *SourceType = BeltTileOrbTypes.Find(SourceHex)) {
+            if (*SourceType != 0 && KindFromItem(*PullItem) == *SourceType) {
+              return false;
+            }
+          }
+        }
+
         // Skip if ANY part of this item/cluster has already moved this tick
         if (OrbsMovedThisTick.Contains(PullItem->Id))
           return false;
@@ -1230,6 +1240,23 @@ void USimWorldHex::StepBelts() {
               // our slot, so we can pull it!
               if (!bInputBeltCanPush) {
                 bCanPull = true;
+
+                // If an orb matches the belt type it is on, disallow default
+                // type belts from pulling it
+                uint8 PullingBeltRequiredType = 0;
+                if (const uint8 *FoundType = BeltTileOrbTypes.Find(FromHex)) {
+                  PullingBeltRequiredType = *FoundType;
+                }
+
+                if (PullingBeltRequiredType == 0) {
+                  if (const uint8 *SourceType =
+                          BeltTileOrbTypes.Find(PullInputHex)) {
+                    if (*SourceType != 0 &&
+                        KindFromItem(*PullableItem) == *SourceType) {
+                      bCanPull = false;
+                    }
+                  }
+                }
               }
             }
           }
