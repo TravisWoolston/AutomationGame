@@ -364,6 +364,19 @@ bool USimWorldHex::TryPutItem(const FHex &H, const FItem &I) {
   // immediate pulling The bIsReady flag will be set to true at the end of the
   // current simulation tick
 
+  // Initialize Stability if it's still at default uninitialized value
+  if (Copy.bIsCluster) {
+    for (FOrbData &Orb : Copy.Orbs) {
+      if (Orb.Stability == 1000 && DefaultOrbLifetimeTicks > 0) {
+        Orb.Stability = DefaultOrbLifetimeTicks;
+      }
+    }
+  } else {
+    if (Copy.Single.Stability == 1000 && DefaultOrbLifetimeTicks > 0) {
+      Copy.Single.Stability = DefaultOrbLifetimeTicks;
+    }
+  }
+
   ItemMap.Add(H, Copy);
   OrbAt.Add(H, KindFromItem(Copy));
 
@@ -1074,6 +1087,7 @@ void USimWorldHex::UpdateWalkerFootCache() {
 }
 
 void USimWorldHex::StepSim() {
+  StepOrbStability();
   PrevItemHex.Empty();
   for (const auto &KV : ItemMap)
     if (KV.Value.Id != 0)
@@ -2083,4 +2097,84 @@ EOrbType USimWorldHex::GetOrbTypeAtLocation(const FHex &H) const {
   }
 
   return EOrbType::None;
+}
+
+void USimWorldHex::StepOrbStability() {
+  if (!bOrbLifetimeEnabled || DefaultOrbLifetimeTicks <= 0)
+    return;
+
+  TArray<FHex> ToRemove;
+  TArray<TPair<FHex, FItem>> ToConvert;
+
+  for (auto &KV : ItemMap) {
+    FHex H = KV.Key;
+    FItem &Item = KV.Value;
+
+    bool bBecameVoid = false;
+
+    if (Item.bIsCluster) {
+      for (FOrbData &Orb : Item.Orbs) {
+        // Skip stability decay for Void orbs themselves
+        if (Orb.Type == (uint8)EOrbType::Void)
+          continue;
+
+        if (Orb.Stability > 0) {
+          Orb.Stability--;
+          if (Orb.Stability <= 0) {
+            Orb.Type = (uint8)EOrbType::Void;
+            Orb.Color = (uint8)EOrbColor::None;
+            bBecameVoid = true;
+          }
+        }
+      }
+    } else {
+      // Single orb
+      if (Item.Single.Type != EOrbType::Void) {
+        if (Item.Single.Stability > 0) {
+          Item.Single.Stability--;
+          if (Item.Single.Stability <= 0) {
+            Item.Single.Type = EOrbType::Void;
+            Item.Single.Color = EOrbColor::None;
+            bBecameVoid = true;
+          }
+        }
+      }
+    }
+
+    if (bBecameVoid) {
+      // Update Kind representation in OrbAt
+      OrbAt[H] = KindFromItem(Item);
+    }
+  }
+
+  // Also handle held items
+  for (FArmState &Arm : Arms) {
+    if (!Arm.bHolding)
+      continue;
+
+    if (Arm.Held.bIsCluster) {
+      for (FOrbData &Orb : Arm.Held.Orbs) {
+        if (Orb.Type == (uint8)EOrbType::Void)
+          continue;
+
+        if (Orb.Stability > 0) {
+          Orb.Stability--;
+          if (Orb.Stability <= 0) {
+            Orb.Type = (uint8)EOrbType::Void;
+            Orb.Color = (uint8)EOrbColor::None;
+          }
+        }
+      }
+    } else {
+      if (Arm.Held.Single.Type != EOrbType::Void) {
+        if (Arm.Held.Single.Stability > 0) {
+          Arm.Held.Single.Stability--;
+          if (Arm.Held.Single.Stability <= 0) {
+            Arm.Held.Single.Type = EOrbType::Void;
+            Arm.Held.Single.Color = EOrbColor::None;
+          }
+        }
+      }
+    }
+  }
 }

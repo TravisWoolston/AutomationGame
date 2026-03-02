@@ -655,4 +655,6 @@ private:
 
   // Performance: cache OrbRenderer lookup
   UOrbRenderer *GetCachedOrbRenderer();
+
+  int32 LastSimTickCount = -1;
 };

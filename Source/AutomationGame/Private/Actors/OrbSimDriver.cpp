@@ -139,6 +139,10 @@ void AOrbSimDriver::HandleFixedTickSeconds(float StepSeconds) {
   // Drive discovery mode source generation aligned with sim steps
   if (GM) {
     GM->StepSourceHelix();
+
+    // Sync orb lifetime settings
+    Sim->bOrbLifetimeEnabled = GM->bOrbLifetimeEnabled;
+    Sim->DefaultOrbLifetimeTicks = GM->DefaultOrbLifetimeTicks;
   }
 
   Sim->StepSim();

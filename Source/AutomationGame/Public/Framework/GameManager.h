@@ -291,6 +291,17 @@ public:
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Startup")
   FString InitialMapToLoad;
 
+  // ------------ Orb Lifetime ------------
+  /** Whether orb lifetime decay is enabled */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Lifetime")
+  bool bOrbLifetimeEnabled = true;
+
+  /** Default lifetime for newly created orbs in GTM ticks.
+   * If <= 0, orbs are infinite. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Orb Lifetime",
+            meta = (ClampMin = "0"))
+  int32 DefaultOrbLifetimeTicks = 300;
+
   // ------------ Cluster Generation ------------
   /** Difficulty value for generating random target cluster structures.
    * TotalOrbs + NumOfUniqueOrbTypes = DifficultyValue */

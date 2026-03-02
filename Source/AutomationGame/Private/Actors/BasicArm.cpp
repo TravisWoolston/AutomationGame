@@ -320,6 +320,27 @@ void ABasicArm::Tick(float DeltaSeconds) {
   UpdateAnimationBlueprintExtend(DeltaSeconds);
 
   // Timeline widgets update on simulation steps for performance
+
+  // Update stability visuals for held orbs
+  if (bHolding && Sim && Sim->DefaultOrbLifetimeTicks > 0) {
+    float DefaultLife = (float)Sim->DefaultOrbLifetimeTicks;
+    if (HeldOrb.bIsCluster) {
+      for (int32 i = 0; i < HeldOrb.Orbs.Num() && i < HeldClusterComps.Num();
+           ++i) {
+        if (HeldClusterComps[i]) {
+          float AlphaLife = FMath::Clamp(
+              (float)HeldOrb.Orbs[i].Stability / DefaultLife, 0.0f, 1.0f);
+          HeldClusterComps[i]->SetCustomPrimitiveDataFloat(0, AlphaLife);
+        }
+      }
+    } else {
+      if (HeldOrbComp) {
+        float AlphaLife = FMath::Clamp(
+            (float)HeldOrb.Single.Stability / DefaultLife, 0.0f, 1.0f);
+        HeldOrbComp->SetCustomPrimitiveDataFloat(0, AlphaLife);
+      }
+    }
+  }
 }
 
 void ABasicArm::UpdateAnimationBlueprintExtend(float DeltaSeconds) {

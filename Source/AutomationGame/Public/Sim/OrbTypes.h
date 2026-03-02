@@ -43,6 +43,10 @@ struct FOrb {
   UPROPERTY(EditAnywhere, BlueprintReadWrite,
             meta = (ClampMin = 0, ClampMax = 5))
   uint8 Rot60 = 0;
+
+  /** Remaining stability in GTM steps. If <= 0, becomes Void. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 Stability = 1000;
 };
 
 USTRUCT(BlueprintType)
@@ -72,6 +76,10 @@ struct FOrbData {
   // helix)
   UPROPERTY(Transient)
   FHex PreviousBoardHex = FHex(0, 0, 0);
+
+  /** Remaining stability in GTM steps. If <= 0, becomes Void. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 Stability = 1000;
 };
 
 /** Item on a tile: either a single orb or a bonded cluster. */

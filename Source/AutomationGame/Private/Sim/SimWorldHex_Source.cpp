@@ -418,6 +418,9 @@ void USimWorldHex::StepSourceGroups() {
       NewItem.Single.Type = (EOrbType)Row.OrbTypes[i];
       NewItem.Single.Color = EOrbColor::Blue;
       NewItem.bIsCluster = false;
+      if (DefaultOrbLifetimeTicks > 0) {
+        NewItem.Single.Stability = DefaultOrbLifetimeTicks;
+      }
 
       ItemMap.Add(SpawnHex, NewItem);
       OrbAt.Add(SpawnHex, Row.OrbTypes[i]);

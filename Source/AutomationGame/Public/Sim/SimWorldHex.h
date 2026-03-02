@@ -301,6 +301,12 @@ public:
   /** Maximum cascade depth before the push is treated as blocked */
   int32 MaxEjectWeight = 50;
 
+  // --- Orb Lifetime settings (set by GameManager) ---
+  bool bOrbLifetimeEnabled = true;
+  int32 DefaultOrbLifetimeTicks = 300;
+
+  void StepOrbStability();
+
   /** Explicitly pair a helix output group with an input layout */
   void PairHelixInput(int32 OutputGroupIndex, const TArray<FHex> &InputTiles,
                       const FHex &Center);

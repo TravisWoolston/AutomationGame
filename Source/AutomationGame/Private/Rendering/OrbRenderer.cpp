@@ -187,6 +187,7 @@ void UOrbRenderer::EnsureISM() {
     }
 
     ISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    ISM->NumCustomDataFloats = 1; // 0: Stability (0.0=Void/Dead, 1.0=Full Life)
 
     // Store in map
     OrbTypeISMs.Add(OrbType, ISM);
@@ -818,6 +819,48 @@ void UOrbRenderer::RebuildInstances() {
         }
       }
     }
+    // Calculate stability alpha (0.0 to 1.0)
+    float StabilityAlpha = 1.0f;
+    if (Sim->DefaultOrbLifetimeTicks > 0) {
+      // Find the orb's stability
+      int32 Stability = 1000;
+      int32 ParentId = (Id >> 8);
+      if (ParentId == 0)
+        ParentId = Id;
+
+      // Use the pre-built ID-to-Hex map for faster lookup (id 0 skipped in map)
+      const FHex *FoundHex = Sim->PrevItemHex.Find(ParentId);
+      if (FoundHex) {
+        if (const FItem *Item = Sim->ItemMap.Find(*FoundHex)) {
+          if (Item->bIsCluster) {
+            int32 SubIdx = Id & 0xFF;
+            if (Item->Orbs.IsValidIndex(SubIdx)) {
+              Stability = Item->Orbs[SubIdx].Stability;
+            }
+          } else {
+            Stability = Item->Single.Stability;
+          }
+        }
+      } else {
+        // Fallback to full map search only if the ID is very new or was
+        // recently moved
+        for (const auto &KV : Sim->ItemMap) {
+          if (KV.Value.Id == ParentId) {
+            if (KV.Value.bIsCluster) {
+              int32 SubIdx = Id & 0xFF;
+              if (KV.Value.Orbs.IsValidIndex(SubIdx)) {
+                Stability = KV.Value.Orbs[SubIdx].Stability;
+              }
+            } else {
+              Stability = KV.Value.Single.Stability;
+            }
+            break;
+          }
+        }
+      }
+      StabilityAlpha = FMath::Clamp(
+          (float)Stability / (float)Sim->DefaultOrbLifetimeTicks, 0.0f, 1.0f);
+    }
 
     // Prepare batch update or add new instance
     if (UInstancedStaticMeshComponent **ISMPtr = OrbTypeISMs.Find(OrbType)) {
@@ -834,9 +877,11 @@ void UOrbRenderer::RebuildInstances() {
           // vectors for TAA/motion blur
           ISM->UpdateInstanceTransform(*ExistingIndex, Transform, false, true,
                                        false);
+          ISM->SetCustomDataValue(*ExistingIndex, 0, StabilityAlpha, true);
         } else {
           // Add new instance immediately and track its index
           int32 NewIndex = ISM->AddInstance(Transform);
+          ISM->SetCustomDataValue(NewIndex, 0, StabilityAlpha, true);
           InstanceMap.Add(Id, NewIndex);
         }
       }

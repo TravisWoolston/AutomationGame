@@ -706,8 +706,7 @@ void USimWorldHex::TryWalkerGather(
 
       // Horizontal Distance to Beacon center
       if (HexUtil::Dist(Center, TestHex) <= SearchRadius) {
-        if (Item.Id != 0 && !Item.bIsCluster && !Item.bIsLocked &&
-            !IsItemBonded(Item.Id)) {
+        if (Item.Id != 0 && !Item.bIsCluster && !Item.bIsLocked) {
           if (FilterType == 0 || (uint8)Item.Single.Type == FilterType) {
 
             // RULE: If we haven't started gathering, only pick orbs that are
