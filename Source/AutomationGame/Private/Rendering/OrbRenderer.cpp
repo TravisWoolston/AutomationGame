@@ -670,6 +670,20 @@ void UOrbRenderer::RebuildInstances() {
   RenderAnimatedOrbs();
 
   // Render board items (curr only + transition interpolation)
+
+  // Build a fast mapping from Render ID (which CurrPos uses) to the parent
+  // FItem This solves ID overlap issues and avoids stale Hex lookups
+  TMap<int32, const FItem *> RenderIdToItem;
+  for (const auto &KV : Sim->ItemMap) {
+    if (KV.Value.bIsCluster) {
+      for (int32 i = 0; i < KV.Value.Orbs.Num(); ++i) {
+        RenderIdToItem.Add(MakeSubOrbId(KV.Value.Id, i), &KV.Value);
+      }
+    } else {
+      RenderIdToItem.Add(KV.Value.Id, &KV.Value);
+    }
+  }
+
   TSet<int32> AllIds;
   CurrPos.GetKeys(AllIds);
 
@@ -679,9 +693,14 @@ void UOrbRenderer::RebuildInstances() {
     if (AnimatedOutputIds.Contains(Id))
       continue; // Skip output orbs that are being animated (descending)
 
-    // Skip items newly placed this step - the placer (Walker/Arm) handles the
-    // arrival animation
-    if (Sim->NewlyPlacedItems.Contains(Id))
+    const FItem *FoundItem = RenderIdToItem.FindRef(Id);
+
+    if (!FoundItem)
+      continue;
+
+    int32 ParentId = FoundItem->Id;
+
+    if (Sim->NewlyPlacedItems.Contains(ParentId))
       continue;
 
     const FVector *A = PrevPos.Find(Id);
@@ -722,9 +741,7 @@ void UOrbRenderer::RebuildInstances() {
     // frame)
     if (!bHeldByArm) {
       // Find what tile this orb is on
-      int32 ParentId = (Id >> 8); // Extract parent from sub-orb ID
-      if (ParentId == 0)
-        ParentId = Id;
+      // ParentId is already calculated at line 684
 
       for (const auto &KV : Sim->ItemMap) {
         if (KV.Value.Id == ParentId) {
@@ -801,65 +818,42 @@ void UOrbRenderer::RebuildInstances() {
     FRotator R = FMath::Lerp(RA, RB, Alpha);
 
     // Get the orb type for this item using optimized lookup
-    EOrbType OrbType = EOrbType::None; // Default to None, not BaseA
+    EOrbType OrbType = EOrbType::None;
     if (const EOrbType *FoundType = OrbTypes.Find(Id)) {
       OrbType = *FoundType;
-    } else {
-      // Fallback to searching if not in cache (should rarely happen)
-      for (const auto &KV : Sim->ItemMap) {
-        if (KV.Value.Id == Id) {
-          if (KV.Value.bIsCluster && KV.Value.Orbs.Num() > 0) {
-            OrbType = (EOrbType)KV.Value.Orbs[0].Type;
-          } else if (!KV.Value.bIsCluster) {
-            OrbType = KV.Value.Single.Type;
-          }
-          // Cache it for next time
-          OrbTypes.Add(Id, OrbType);
-          break;
+    } else if (FoundItem) {
+      // Use the item we already found during the bItemReady check
+      if (FoundItem->bIsCluster) {
+        int32 SubIdx = Id & 0xFF;
+        if (FoundItem->Orbs.IsValidIndex(SubIdx)) {
+          OrbType = (EOrbType)FoundItem->Orbs[SubIdx].Type;
         }
+      } else {
+        OrbType = FoundItem->Single.Type;
       }
+      // Cache it for next time
+      OrbTypes.Add(Id, OrbType);
     }
     // Calculate stability alpha (0.0 to 1.0)
     float StabilityAlpha = 1.0f;
     if (Sim->DefaultOrbLifetimeTicks > 0) {
       // Find the orb's stability
       int32 Stability = 1000;
-      int32 ParentId = (Id >> 8);
-      if (ParentId == 0)
-        ParentId = Id;
 
-      // Use the pre-built ID-to-Hex map for faster lookup (id 0 skipped in map)
-      const FHex *FoundHex = Sim->PrevItemHex.Find(ParentId);
-      if (FoundHex) {
-        if (const FItem *Item = Sim->ItemMap.Find(*FoundHex)) {
-          if (Item->bIsCluster) {
-            int32 SubIdx = Id & 0xFF;
-            if (Item->Orbs.IsValidIndex(SubIdx)) {
-              Stability = Item->Orbs[SubIdx].Stability;
-            }
-          } else {
-            Stability = Item->Single.Stability;
+      if (FoundItem) {
+        if (FoundItem->bIsCluster) {
+          int32 SubIdx = Id & 0xFF;
+          if (FoundItem->Orbs.IsValidIndex(SubIdx)) {
+            Stability = FoundItem->Orbs[SubIdx].Stability;
           }
-        }
-      } else {
-        // Fallback to full map search only if the ID is very new or was
-        // recently moved
-        for (const auto &KV : Sim->ItemMap) {
-          if (KV.Value.Id == ParentId) {
-            if (KV.Value.bIsCluster) {
-              int32 SubIdx = Id & 0xFF;
-              if (KV.Value.Orbs.IsValidIndex(SubIdx)) {
-                Stability = KV.Value.Orbs[SubIdx].Stability;
-              }
-            } else {
-              Stability = KV.Value.Single.Stability;
-            }
-            break;
-          }
+        } else {
+          Stability = FoundItem->Single.Stability;
         }
       }
-      StabilityAlpha = FMath::Clamp(
+
+      float LifeAlpha = FMath::Clamp(
           (float)Stability / (float)Sim->DefaultOrbLifetimeTicks, 0.0f, 1.0f);
+      StabilityAlpha = 1.0f - LifeAlpha;
     }
 
     // Prepare batch update or add new instance

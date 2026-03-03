@@ -324,20 +324,30 @@ void ABasicArm::Tick(float DeltaSeconds) {
   // Update stability visuals for held orbs
   if (bHolding && Sim && Sim->DefaultOrbLifetimeTicks > 0) {
     float DefaultLife = (float)Sim->DefaultOrbLifetimeTicks;
-    if (HeldOrb.bIsCluster) {
-      for (int32 i = 0; i < HeldOrb.Orbs.Num() && i < HeldClusterComps.Num();
-           ++i) {
-        if (HeldClusterComps[i]) {
-          float AlphaLife = FMath::Clamp(
-              (float)HeldOrb.Orbs[i].Stability / DefaultLife, 0.0f, 1.0f);
-          HeldClusterComps[i]->SetCustomPrimitiveDataFloat(0, AlphaLife);
+    if (HeldOrbComp) {
+      TArray<USceneComponent *> ChildComps;
+      HeldOrbComp->GetChildrenComponents(false, ChildComps);
+
+      if (HeldOrb.bIsCluster) {
+        for (int32 i = 0; i < HeldOrb.Orbs.Num(); ++i) {
+          if (ChildComps.IsValidIndex(i)) {
+            if (UPrimitiveComponent *Prim =
+                    Cast<UPrimitiveComponent>(ChildComps[i])) {
+              float LifeAlpha = FMath::Clamp(
+                  (float)HeldOrb.Orbs[i].Stability / DefaultLife, 0.0f, 1.0f);
+              Prim->SetCustomPrimitiveDataFloat(0, 1.0f - LifeAlpha);
+            }
+          }
         }
-      }
-    } else {
-      if (HeldOrbComp) {
-        float AlphaLife = FMath::Clamp(
-            (float)HeldOrb.Single.Stability / DefaultLife, 0.0f, 1.0f);
-        HeldOrbComp->SetCustomPrimitiveDataFloat(0, AlphaLife);
+      } else {
+        if (ChildComps.IsValidIndex(0)) {
+          if (UPrimitiveComponent *Prim =
+                  Cast<UPrimitiveComponent>(ChildComps[0])) {
+            float LifeAlpha = FMath::Clamp(
+                (float)HeldOrb.Single.Stability / DefaultLife, 0.0f, 1.0f);
+            Prim->SetCustomPrimitiveDataFloat(0, 1.0f - LifeAlpha);
+          }
+        }
       }
     }
   }
@@ -1583,6 +1593,7 @@ void ABasicArm::AttachHeldOrb() {
     if (C)
       C->DestroyComponent();
   }
+  HeldClusterComps.Empty();
 
   const float Tile = (Driver ? Driver->GetTileSize() : 100.f);
   const float OffsetBaseScale =

@@ -661,10 +661,8 @@ void USimWorldHex::TryWalkerGather(
 
     if (TryTakeItem(ArrivalHex, TakenItem)) {
       Foot.GatheredOrbs.Add(TakenItem);
-      // For the Pickup animation tick, show the orb just picked up
-      // In all other ticks, we revert to showing the first in the stack (the
-      // next to drop)
-      Foot.HeldItem = TakenItem;
+      // Ensure HeldItem ALWAYS reflects the next-to-drop orb.
+      Foot.HeldItem = Foot.GatheredOrbs[0];
       Foot.bHoldingItem = true;
       Foot.bGathering = true;
       Foot.bHasSourcePickUp = true;
@@ -706,7 +704,8 @@ void USimWorldHex::TryWalkerGather(
 
       // Horizontal Distance to Beacon center
       if (HexUtil::Dist(Center, TestHex) <= SearchRadius) {
-        if (Item.Id != 0 && !Item.bIsCluster && !Item.bIsLocked) {
+        if (Item.Id != 0 && !Item.bIsCluster && !Item.bIsLocked &&
+            !IsItemBonded(Item.Id)) {
           if (FilterType == 0 || (uint8)Item.Single.Type == FilterType) {
 
             // RULE: If we haven't started gathering, only pick orbs that are
@@ -773,19 +772,6 @@ void USimWorldHex::TryWalkerGather(
         UE_LOG(LogTemp, Verbose,
                TEXT("Walker %d: Foot %d found NO qualifying orbs in radius %d"),
                WalkerIndex, FootIndex, SearchRadius);
-
-        Foot.bGatherPhaseActive = false;
-        Foot.bGathering = false;
-        Foot.GatherTargetHexes.Empty();
-        Foot.bHasSourcePickUp = false;
-
-        // Let the normal tick logic mark the beacon as NotReady if it has no
-        // more valid orbs
-        if (W.Requests.Num() > 0)
-          W.Requests.RemoveAt(0);
-        W.bProcessingRequest = false;
-        W.CurrentTargetHex = W.BaseHex;
-
         return;
       }
       // If we have orbs, Proceed to scatter.
@@ -859,7 +845,9 @@ bool USimWorldHex::TryWalkerScatter(
 
   // ─── Phase 1: Try to place at current location ───
   if (Foot.GatheredOrbs.Num() > 0) {
-    FHex PlacementHex = Foot.CurrentTile;
+    FHex PlacementHex = (Foot.StepState == EFootStepState::Moving)
+                            ? Foot.TargetTile
+                            : Foot.CurrentTile;
     bool bIsValidTarget =
         !ItemMap.Contains(PlacementHex) &&
         !ArmBaseHexes.Contains(PlacementHex) &&
@@ -913,9 +901,13 @@ bool USimWorldHex::TryWalkerScatter(
       }
       OrbToPlace.LocationUpdatedThisTick = false;
       OrbToPlace.bIsLocked = false;
-      OrbToPlace.bIsReady = true;
+      OrbToPlace.bIsReady = false; // Hide on grid board renderer so walker
+                                   // holds visual priority during drop anim
 
       if (TryPutItem(PlacementHex, OrbToPlace)) {
+        NewlyPlacedItems.Add(
+            OrbToPlace
+                .Id); // Added so OrbRenderer skips drawing for a few ticks
         Foot.GatheredOrbs.RemoveAt(0);
         Foot.ScatterDroppedCount++;
         UE_LOG(LogTemp, Log,
