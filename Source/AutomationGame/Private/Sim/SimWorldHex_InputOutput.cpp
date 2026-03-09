@@ -59,6 +59,12 @@ void USimWorldHex::SpawnInputs() {
       // input
       FOrb O;
       O.Type = (EOrbType)T.Arg;
+      // Per-type lifetime (Phase 4)
+      if (const int32 *TypeLife = OrbLifetimeByType.Find(T.Arg)) {
+        O.Stability = *TypeLife;
+      } else if (DefaultOrbLifetimeTicks > 0) {
+        O.Stability = DefaultOrbLifetimeTicks;
+      }
       FItem NewItem = FItem::MakeSingle(O);
       NewItem.Id = NextItemId++;
 
@@ -447,6 +453,12 @@ void USimWorldHex::SpawnInputsAfterBelts() {
       // this input
       FOrb O;
       O.Type = (EOrbType)T.Arg;
+      // Per-type lifetime (Phase 4)
+      if (const int32 *TypeLife = OrbLifetimeByType.Find(T.Arg)) {
+        O.Stability = *TypeLife;
+      } else if (DefaultOrbLifetimeTicks > 0) {
+        O.Stability = DefaultOrbLifetimeTicks;
+      }
       FItem NewItem = FItem::MakeSingle(O);
       NewItem.Id = NextItemId++;
 
@@ -974,6 +986,12 @@ void USimWorldHex::ProcessOutputs() {
           AnimatedOrbs.Add(AnimatedOrb);
           ++OutputCount;
 
+          // Return mass to source groups (Phase 5)
+          int32 MassReturned = 1;
+          if (bRequiresBond && PartnerItem)
+            MassReturned = 2; // Both orbs returned
+          ReturnMassToSources(MassReturned);
+
           // Trigger wave effect for single output
           if (AOrbSimDriver *Driver = Cast<AOrbSimDriver>(GetOuter())) {
             if (Driver->GM) {
@@ -1387,6 +1405,9 @@ void USimWorldHex::ProcessOutputs() {
 
           ++OutputCount;
         }
+
+        // Return mass to source groups (Phase 5)
+        ReturnMassToSources(NewAnimations.Num());
       }
       // If not all tiles are ready, leave all orbs on their tiles
     }

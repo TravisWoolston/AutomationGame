@@ -4,7 +4,7 @@
 #include "Rendering/OrbRenderer.h"
 #include "Sim/SimWorldHex.h"
 
-void USimWorldHex::StepArms() {
+void USimWorldHex::ApplyPendingArmMotions() {
   // Apply pending sim values produced by last tick's Rotate/Extend/Retract
   if (PendingFacingByArm.Num() || PendingArmLenByArm.Num() ||
       PendingGrabFacingByArm.Num()) {
@@ -18,6 +18,9 @@ void USimWorldHex::StepArms() {
     PendingArmLenByArm.Empty();
     PendingGrabFacingByArm.Empty();
   }
+}
+
+void USimWorldHex::StepArms() {
 
   // Check for predictive collision - if executing all arms simultaneously would
   // cause held cluster overlap Use the collision debug data to determine which
@@ -150,13 +153,10 @@ void USimWorldHex::StepArms() {
 
       // If we just did a RotateHeld, and this is a SECOND operation, and it's
       // something that would hide the rotation (like Drop), then delay it for
-      // one tick to let it animate.
-      if (bDidRotateHeldThisTick && Op.Cmd != ECmd::RotateHeldL &&
-          Op.Cmd != ECmd::RotateHeldR && Op.Cmd != ECmd::Repeat) {
-        if (S.WaitCounter == 0)
-          S.WaitCounter = 1;
+      // one tick to let it animate. Also delay subsequent RotateHeld commands.
+      if (bDidRotateHeldThisTick && Op.Cmd != ECmd::Repeat) {
         bContinueProcessing = false;
-        continue;
+        break;
       }
 
       // 166-380 was the deferred grab block - moved into main Grab case below
@@ -330,6 +330,7 @@ void USimWorldHex::StepArms() {
             }
             Orb.Type = (uint8)It->Single.Type;
             Orb.Color = (uint8)It->Single.Color;
+            Orb.Stability = It->Single.Stability; // Preserve lifetime
             Orb.ItemId = It->Id;
             Orb.dQ = (int8)DeltaLoc.Q;
             Orb.dR = (int8)DeltaLoc.R;
@@ -446,6 +447,10 @@ void USimWorldHex::StepArms() {
               FHex WorldHex(GripTarget.Q + RotLocal.Q,
                             GripTarget.R + RotLocal.R, GripTarget.Level);
               if (ItemMap.Contains(WorldHex)) {
+                if (bDebugLogs || true) {
+                  UE_LOG(LogTemp, Warning, TEXT("Drop of cluster failed! Arm %d: Orb at delta (%d,%d) blocked by item at WorldHex (%d,%d)"), 
+                         ArmIndex, Sub.dQ, Sub.dR, WorldHex.Q, WorldHex.R);
+                }
                 bBlocked = true;
                 break;
               }
@@ -484,6 +489,7 @@ void USimWorldHex::StepArms() {
               FOrb O;
               O.Type = (EOrbType)Sub.Type;
               O.Color = (EOrbColor)Sub.Color;
+              O.Stability = Sub.Stability; // Preserve lifetime
 
               FItem NewItem = FItem::MakeSingle(O);
               if (Sub.ItemId > 0) {
@@ -1349,11 +1355,11 @@ void USimWorldHex::StepArms() {
           CollisionInfo.BlockedHex = BlockedAt;
           CollisionInfo.Reason = TEXT("RotateHeld blocked");
           CollisionDebugData.Add(CollisionInfo);
-          if (S.WaitCounter == 0)
-            S.WaitCounter = 1;
 
-          // Do NOT advance PC; retry this same rotate held instruction.
-          continue;
+          // Arm cannot rotate this tick; block it without a mandatory wait counter
+          // so it checks again continuously next tick.
+          bContinueProcessing = false;
+          break;
         }
 
         // Commit
@@ -1426,6 +1432,12 @@ void USimWorldHex::StepArms() {
         break;
       case ECmd::WaitForBond:
         if (S.bWaitingForBond)
+          bShouldAdvancePC = false;
+        break;
+      case ECmd::Drop:
+      case ECmd::RotateHeldL:
+      case ECmd::RotateHeldR:
+        if (!bContinueProcessing)
           bShouldAdvancePC = false;
         break;
       default:

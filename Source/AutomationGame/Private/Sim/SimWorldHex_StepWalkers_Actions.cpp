@@ -101,6 +101,7 @@ void USimWorldHex::TryWalkerPickUp(
         FOrbData Orb;
         Orb.Type = (uint8)It->Single.Type;
         Orb.Color = (uint8)It->Single.Color;
+        Orb.Stability = It->Single.Stability; // Preserve lifetime
         Orb.ItemId = It->Id;
         Orb.dQ = (int32)Delta.Q;
         Orb.dR = (int32)Delta.R;

@@ -1,4 +1,4 @@
-﻿#include "Actors/BasicArm.h"
+#include "Actors/BasicArm.h"
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
 #include "Rendering/OrbRenderer.h"
@@ -97,6 +97,7 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId,
       BoardOrb.ItemId = BoardOrbId;
       BoardOrb.Type = (uint8)BoardItem->Single.Type;
       BoardOrb.Color = (uint8)BoardItem->Single.Color;
+      BoardOrb.Stability = BoardItem->Single.Stability; // Preserve lifetime
       BoardOrb.dQ = (int8)Local.Q;
       BoardOrb.dR = (int8)Local.R;
       BoardOrb.Offset = FVector2D::ZeroVector;
@@ -143,6 +144,7 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId,
       OriginalOrb.ItemId = Arm.Held.Id;
       OriginalOrb.Type = (uint8)Arm.Held.Single.Type;
       OriginalOrb.Color = (uint8)Arm.Held.Single.Color;
+      OriginalOrb.Stability = Arm.Held.Single.Stability; // Preserve lifetime
       OriginalOrb.dQ = 0;
       OriginalOrb.dR = 0;
       OriginalOrb.Offset = FVector2D::ZeroVector;
@@ -156,6 +158,7 @@ void USimWorldHex::AddBoardOrbToHeldItem(int32 HeldOrbId, int32 BoardOrbId,
       BoardOrb.ItemId = BoardOrbId;
       BoardOrb.Type = (uint8)BoardItem->Single.Type;
       BoardOrb.Color = (uint8)BoardItem->Single.Color;
+      BoardOrb.Stability = BoardItem->Single.Stability; // Preserve lifetime
       BoardOrb.dQ = (int8)BoardOrbOffset.Q;
       BoardOrb.dR = (int8)BoardOrbOffset.R;
       BoardOrb.Offset = FVector2D::ZeroVector;
@@ -262,6 +265,7 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters() {
     }
 
     // Use SIM-committed state (not visual) to align with bond creation/breaking
+    // This identically matches the unbond phase so exactly where bonds break, orbs fall.
     const FHex GripHex = GetArmGripHex_Sim(ArmIndex);
     const uint8 ccw = GetHeldCCW_Steps_Sim(ArmIndex);
 
@@ -312,11 +316,17 @@ void USimWorldHex::CheckAndRemoveDisconnectedOrbsFromHeldClusters() {
         DisconnectedOrb.Id = Sub.ItemId;
         DisconnectedOrb.Single.Type = (EOrbType)Sub.Type;
         DisconnectedOrb.Single.Color = (EOrbColor)Sub.Color;
+        DisconnectedOrb.Single.Stability = Sub.Stability; // Preserve lifetime
 
         ItemMap.Add(WorldPos, DisconnectedOrb);
-        NewlyPlacedItems.Add(Sub.ItemId);
+        NewlyPlacedItems.Remove(Sub.ItemId);
         RecentlyDroppedByArm.Add(Sub.ItemId, ArmIndex);
         HeldItemLastHex.Remove(Sub.ItemId);
+        
+        // Set ready so it's not stuck (protected by RecentlyDroppedByArm)
+        if (FItem *Placed = ItemMap.Find(WorldPos)) {
+          Placed->bIsReady = true;
+        }
 
         if (bDebugLogs && bDevDebugBonds && GEngine) {
           GEngine->AddOnScreenDebugMessage(
@@ -409,6 +419,8 @@ void USimWorldHex::ProcessHeldToHeldMerge(int32 ReceiverArmIndex,
     FOrbData SingleOrb;
     SingleOrb.Type = (uint8)ReceiverArm.Held.Single.Type;
     SingleOrb.Color = (uint8)ReceiverArm.Held.Single.Color;
+    SingleOrb.Stability =
+        ReceiverArm.Held.Single.Stability; // Preserve lifetime
     SingleOrb.ItemId = ReceiverArm.Held.Id;
     SingleOrb.dQ = 0;
     SingleOrb.dR = 0;
@@ -430,6 +442,7 @@ void USimWorldHex::ProcessHeldToHeldMerge(int32 ReceiverArmIndex,
     FOrbData SingleOrb;
     SingleOrb.Type = (uint8)DonorArm.Held.Single.Type;
     SingleOrb.Color = (uint8)DonorArm.Held.Single.Color;
+    SingleOrb.Stability = DonorArm.Held.Single.Stability; // Preserve lifetime
     SingleOrb.ItemId = DonorArm.Held.Id;
     SingleOrb.dQ = 0;
     SingleOrb.dR = 0;

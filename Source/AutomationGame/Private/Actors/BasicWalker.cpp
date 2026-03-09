@@ -622,7 +622,9 @@ void ABasicWalker::Tick(float DeltaSeconds) {
         if (bPrevDHolding) {
           bDFootPendingDropVisual = true;
           bDFootHeldVisualReady = false;
-          DFootDropVisualDelay = 0;
+          DFootDropVisualDelay =
+              SimState.StepRaiseTicks +
+              FMath::CeilToInt(SimState.DFoot.CurrentMoveDurationTicks);
           DFootLastDropStep = Sim->GetStepCounter();
           DFootLastDropHex = DFootHex; // Capture drop location
 
@@ -664,7 +666,9 @@ void ABasicWalker::Tick(float DeltaSeconds) {
         if (bPrevLHolding) {
           bLFootPendingDropVisual = true;
           bLFootHeldVisualReady = false;
-          LFootDropVisualDelay = 0;
+          LFootDropVisualDelay =
+              SimState.StepRaiseTicks +
+              FMath::CeilToInt(SimState.LFoot.CurrentMoveDurationTicks);
           LFootLastDropStep = Sim->GetStepCounter();
           LFootLastDropHex = LFootHex;
           LFootCachedDropItem = LFootPrevData;
@@ -690,7 +694,9 @@ void ABasicWalker::Tick(float DeltaSeconds) {
         if (bPrevRHolding) {
           bRFootPendingDropVisual = true;
           bRFootHeldVisualReady = false;
-          RFootDropVisualDelay = 0;
+          RFootDropVisualDelay =
+              SimState.StepRaiseTicks +
+              FMath::CeilToInt(SimState.RFoot.CurrentMoveDurationTicks);
           RFootLastDropStep = Sim->GetStepCounter();
           RFootLastDropHex = RFootHex;
           RFootCachedDropItem = RFootPrevData;
@@ -716,7 +722,9 @@ void ABasicWalker::Tick(float DeltaSeconds) {
         if (bPrevUHolding) {
           bUFootPendingDropVisual = true;
           bUFootHeldVisualReady = false;
-          UFootDropVisualDelay = 0;
+          UFootDropVisualDelay =
+              SimState.StepRaiseTicks +
+              FMath::CeilToInt(SimState.UFoot.CurrentMoveDurationTicks);
           UFootLastDropStep = Sim->GetStepCounter();
           UFootLastDropHex = UFootHex;
           UFootCachedDropItem = UFootPrevData;
@@ -737,10 +745,11 @@ void ABasicWalker::Tick(float DeltaSeconds) {
             bool bIsHolding) -> TPair<float, EFootVisualState> {
       float MoveDuration =
           (float)FMath::CeilToInt(FootState.CurrentMoveDurationTicks);
+      // Horizontal progress only covers Raising + Moving.
+      // Lowering is purely vertical (handled by HeightOffset).
+      // This prevents the progress from "jumping back" when bHoldingItem
+      // changes at the drop boundary (Moving → Lowering).
       float TotalTicks = (float)(SimState.StepRaiseTicks) + MoveDuration;
-      if (!bIsHolding) {
-        TotalTicks += (float)(SimState.StepLowerTicks);
-      }
 
       if (TotalTicks <= 0.f || FootState.StepState == EFootStepState::Planted) {
         return TPair<float, EFootVisualState>(
@@ -765,14 +774,16 @@ void ABasicWalker::Tick(float DeltaSeconds) {
             bIsHolding ? EFootVisualState::Holding : EFootVisualState::Moving;
         break;
       case EFootStepState::Lowering:
-        CurrentTick = (float)SimState.StepRaiseTicks + MoveDuration +
-                      (float)FootState.StepProgress;
+        // Foot has already arrived horizontally. Clamp CurrentTick to
+        // TotalTicks so horizontal progress stays at 1.0.
+        CurrentTick = TotalTicks;
         VisState =
             bIsHolding ? EFootVisualState::Holding : EFootVisualState::Lowering;
         break;
       }
 
-      return TPair<float, EFootVisualState>(CurrentTick / TotalTicks, VisState);
+      return TPair<float, EFootVisualState>(
+          FMath::Min(CurrentTick / TotalTicks, 1.0f), VisState);
     };
 
     // Helper to convert EFootVisualState to EFootAnimState for AnimInstance
@@ -1417,7 +1428,8 @@ void ABasicWalker::Tick(float DeltaSeconds) {
     // Lambda to animate held item position (interpolate between tile and foot)
     auto AnimateHeldItem = [&](UStaticMeshComponent *HeldComp, int32 PickupStep,
                                int32 DropStep, const FHex &TileHex,
-                               float FootProgress) {
+                               float FootProgress, int32 DropDelay,
+                               bool bIsPendingDrop) {
       if (!HeldComp || !Sim || !Driver)
         return;
 
@@ -1429,22 +1441,28 @@ void ABasicWalker::Tick(float DeltaSeconds) {
               : HeldComp->GetComponentLocation();
       FVector TileWorld = HexToWorld(TileHex);
 
-      if (CurrentStep == PickupStep) {
+      if (bIsPendingDrop) {
+        if (DropDelay > 2) {
+          // Still waiting for foot to arrive. Keep orb at socket.
+          if (!HeldComp->GetRelativeLocation().IsNearlyZero()) {
+            HeldComp->SetRelativeLocation(FVector::ZeroVector);
+          }
+        } else if (DropDelay == 2) {
+          // Foot has arrived. Animate descent from socket to tile.
+          float Alpha = Sim->GetFrameAlpha();
+          FVector InterpPos = FMath::Lerp(SocketWorld, TileWorld, Alpha);
+          HeldComp->SetWorldLocation(InterpPos);
+        } else {
+          // Descent done. Keep at tile position until visual clears.
+          HeldComp->SetWorldLocation(TileWorld);
+        }
+      } else if (CurrentStep == PickupStep) {
         // Pickup: interpolate from tile ground position up to foot socket
-        // FootProgress goes from 0 (start of step) to 1 (foot arrives).
-        // The sim picks up at end-of-Moving, so the foot is near its
-        // destination. Use FrameAlpha within this sim-tick for sub-tick
-        // smoothing.
         float Alpha = Sim->GetFrameAlpha();
         FVector InterpPos = FMath::Lerp(TileWorld, SocketWorld, Alpha);
         HeldComp->SetWorldLocation(InterpPos);
-      } else if (CurrentStep == DropStep) {
-        // Drop: interpolate from foot socket down to tile ground position
-        float Alpha = Sim->GetFrameAlpha();
-        FVector InterpPos = FMath::Lerp(SocketWorld, TileWorld, Alpha);
-        HeldComp->SetWorldLocation(InterpPos);
       } else {
-        // Not animating - ensure snapped to socket
+        // Default: not animating - ensure snapped to socket
         if (!HeldComp->GetRelativeLocation().IsNearlyZero()) {
           HeldComp->SetRelativeLocation(FVector::ZeroVector);
         }
@@ -1482,21 +1500,21 @@ void ABasicWalker::Tick(float DeltaSeconds) {
     // Note: Use 'Saved' LastPickupStep keys updated in this tick
     int32 CurStep = Sim->GetStepCounter();
     AnimateHeldItem(DFootHeldOrbComp, DFootLastPickupStep, DFootLastDropStep,
-                    (CurStep == DFootLastDropStep) ? DFootLastDropHex
-                                                   : DFootHex,
-                    DFootProgress);
+                    bDFootPendingDropVisual ? DFootLastDropHex : DFootHex,
+                    DFootProgress, DFootDropVisualDelay,
+                    bDFootPendingDropVisual);
     AnimateHeldItem(LFootHeldOrbComp, LFootLastPickupStep, LFootLastDropStep,
-                    (CurStep == LFootLastDropStep) ? LFootLastDropHex
-                                                   : LFootHex,
-                    LFootProgress);
+                    bLFootPendingDropVisual ? LFootLastDropHex : LFootHex,
+                    LFootProgress, LFootDropVisualDelay,
+                    bLFootPendingDropVisual);
     AnimateHeldItem(RFootHeldOrbComp, RFootLastPickupStep, RFootLastDropStep,
-                    (CurStep == RFootLastDropStep) ? RFootLastDropHex
-                                                   : RFootHex,
-                    RFootProgress);
+                    bRFootPendingDropVisual ? RFootLastDropHex : RFootHex,
+                    RFootProgress, RFootDropVisualDelay,
+                    bRFootPendingDropVisual);
     AnimateHeldItem(UFootHeldOrbComp, UFootLastPickupStep, UFootLastDropStep,
-                    (CurStep == UFootLastDropStep) ? UFootLastDropHex
-                                                   : UFootHex,
-                    UFootProgress);
+                    bUFootPendingDropVisual ? UFootLastDropHex : UFootHex,
+                    UFootProgress, UFootDropVisualDelay,
+                    bUFootPendingDropVisual);
   } else {
     // Fallback when no simulation or body comp - use immediate holding state
     UpdateHeldItemVisuals(DFootHeldOrbComp, bDFootHoldingItem, DFootHeldItem,
@@ -1533,7 +1551,9 @@ void ABasicWalker::Tick(float DeltaSeconds) {
            *GetName(), *TargetRot.ToString());
   }
 
-  // Update stability visuals for held orbs
+  // Update stability visuals for held orbs via Dynamic Material Instances
+  // NOTE: ISMs use PerInstanceCustomData which doesn't work on standalone
+  // mesh components. We use DMIs with a scalar parameter instead.
   if (Sim && Sim->DefaultOrbLifetimeTicks > 0) {
     float DefaultLife = (float)Sim->DefaultOrbLifetimeTicks;
 
@@ -1547,21 +1567,39 @@ void ABasicWalker::Tick(float DeltaSeconds) {
 
       if (!HeldItem.bIsCluster) {
         if (ChildComps.IsValidIndex(0)) {
-          if (UPrimitiveComponent *Prim =
-                  Cast<UPrimitiveComponent>(ChildComps[0])) {
+          if (UStaticMeshComponent *SMC =
+                  Cast<UStaticMeshComponent>(ChildComps[0])) {
             float LifeAlpha = FMath::Clamp(
                 (float)HeldItem.Single.Stability / DefaultLife, 0.0f, 1.0f);
-            Prim->SetCustomPrimitiveDataFloat(0, 1.0f - LifeAlpha);
+            float DecayValue = 1.0f - LifeAlpha;
+            UMaterialInstanceDynamic *DMI =
+                Cast<UMaterialInstanceDynamic>(SMC->GetMaterial(0));
+            if (!DMI) {
+              DMI = SMC->CreateDynamicMaterialInstance(0);
+            }
+            if (DMI) {
+              DMI->SetScalarParameterValue(FName(TEXT("StabilityAlpha")),
+                                           DecayValue);
+            }
           }
         }
       } else {
         for (int32 i = 0; i < HeldItem.Orbs.Num(); ++i) {
           if (ChildComps.IsValidIndex(i)) {
-            if (UPrimitiveComponent *Prim =
-                    Cast<UPrimitiveComponent>(ChildComps[i])) {
+            if (UStaticMeshComponent *SMC =
+                    Cast<UStaticMeshComponent>(ChildComps[i])) {
               float LifeAlpha = FMath::Clamp(
                   (float)HeldItem.Orbs[i].Stability / DefaultLife, 0.0f, 1.0f);
-              Prim->SetCustomPrimitiveDataFloat(0, 1.0f - LifeAlpha);
+              float DecayValue = 1.0f - LifeAlpha;
+              UMaterialInstanceDynamic *DMI =
+                  Cast<UMaterialInstanceDynamic>(SMC->GetMaterial(0));
+              if (!DMI) {
+                DMI = SMC->CreateDynamicMaterialInstance(0);
+              }
+              if (DMI) {
+                DMI->SetScalarParameterValue(FName(TEXT("StabilityAlpha")),
+                                             DecayValue);
+              }
             }
           }
         }

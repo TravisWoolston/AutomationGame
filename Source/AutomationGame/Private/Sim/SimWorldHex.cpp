@@ -1113,6 +1113,7 @@ void USimWorldHex::StepSim() {
   NewlyPlacedItems.Empty();
   RecentlyDroppedByArm.Empty();
 
+  ApplyPendingArmMotions();
   ProcessUnbondsForHeldClusters();
   // pass 1 (empty at start)
   StepArms();
@@ -1148,6 +1149,9 @@ void USimWorldHex::StepSim() {
   StepArmsSecondPass();
   // Second pass for bonds - allows bond formation after rotations complete
   StepBondsSecondPass();
+
+  // Check for automatic transmutations (7-Void ring → CatalystX)
+  StepTransmutations();
 
   ProcessOutputs();
 
@@ -2099,82 +2103,492 @@ EOrbType USimWorldHex::GetOrbTypeAtLocation(const FHex &H) const {
   return EOrbType::None;
 }
 
+// Helper: get the orb type of a board item by its ID
+static EOrbType GetOrbTypeById(const TMap<FHex, FItem> &ItemMap, int32 ItemId) {
+  for (const auto &KV : ItemMap) {
+    const FItem &Item = KV.Value;
+    if (Item.Id == ItemId) {
+      if (!Item.bIsCluster)
+        return Item.Single.Type;
+      if (Item.Orbs.Num() > 0)
+        return (EOrbType)Item.Orbs[0].Type;
+    }
+    // Check sub-orbs in clusters
+    if (Item.bIsCluster) {
+      for (const FOrbData &Sub : Item.Orbs) {
+        if (Sub.ItemId == ItemId)
+          return (EOrbType)Sub.Type;
+      }
+    }
+  }
+  return EOrbType::None;
+}
+
+// Helper: collect the types of all bonded neighbors for a given item ID
+static void
+GetBondedNeighborTypes(int32 ItemId, const TArray<USimWorldHex::FBond> &Bonds,
+                       const TMap<int32, TArray<int32>> &ItemToBonds,
+                       const TMap<FHex, FItem> &ItemMap,
+                       TArray<EOrbType> &OutTypes) {
+  const TArray<int32> *BondList = ItemToBonds.Find(ItemId);
+  if (!BondList)
+    return;
+  for (int32 BondIdx : *BondList) {
+    if (!Bonds.IsValidIndex(BondIdx))
+      continue;
+    const USimWorldHex::FBond &B = Bonds[BondIdx];
+    if (!B.bActive)
+      continue;
+    int32 OtherId = (B.ItemA == ItemId) ? B.ItemB : B.ItemA;
+    EOrbType OtherType = GetOrbTypeById(ItemMap, OtherId);
+    if (OtherType != EOrbType::None)
+      OutTypes.Add(OtherType);
+  }
+}
+
+// Compute net stability delta for an orb given its bonded neighbor types
+// Returns: positive = bonus ticks, negative = penalty ticks
+// Sets bCatalystImmune to true if any neighbor is CatalystX
+static int32
+ComputeBondSynergyDelta(EOrbType MyType, const TArray<EOrbType> &NeighborTypes,
+                        bool &bCatalystImmune, int32 SameTypeBondBonus,
+                        int32 MetalBondBonus, int32 VoidBondPenalty,
+                        bool bCatalystGrantsInfiniteLife) {
+  int32 Delta = 0;
+  bCatalystImmune = false;
+
+  for (EOrbType NeighborType : NeighborTypes) {
+    // CatalystX grants infinite lifetime
+    if (NeighborType == EOrbType::CatalystX && bCatalystGrantsInfiniteLife) {
+      bCatalystImmune = true;
+      return 0; // No need to compute more — this orb is immune
+    }
+
+    // Void neighbor corrodes typed orbs
+    if (NeighborType == EOrbType::Void && MyType != EOrbType::Void) {
+      Delta -= VoidBondPenalty;
+      continue;
+    }
+
+    // MetalA neighbor stabilizes
+    if (NeighborType == EOrbType::MetalA && MyType != EOrbType::MetalA) {
+      Delta += MetalBondBonus;
+      continue;
+    }
+
+    // Same-type bond bonus
+    if (NeighborType == MyType && MyType != EOrbType::Void &&
+        MyType != EOrbType::None) {
+      Delta += SameTypeBondBonus;
+      continue;
+    }
+  }
+
+  return Delta;
+}
+
 void USimWorldHex::StepOrbStability() {
   if (!bOrbLifetimeEnabled || DefaultOrbLifetimeTicks <= 0)
     return;
 
-  TArray<FHex> ToRemove;
-  TArray<TPair<FHex, FItem>> ToConvert;
+  // Lambda: get lifetime for a given orb type
+  auto GetLifetimeForType = [&](uint8 OrbType) -> int32 {
+    if (const int32 *Override = OrbLifetimeByType.Find(OrbType))
+      return *Override;
+    return DefaultOrbLifetimeTicks;
+  };
 
+  // Lambda: apply decay to a single orb, considering bond synergies
+  // Returns true if the orb became Void this tick
+  auto DecayOrb = [&](EOrbType &Type, EOrbColor &Color, int32 &Stability,
+                      int32 ItemId) -> bool {
+    if (Type == EOrbType::Void || Type == EOrbType::None)
+      return false; // Void and None don't decay
+
+    // CatalystX never decays
+    if (Type == EOrbType::CatalystX)
+      return false;
+
+    // Bond synergy check
+    if (bBondSynergiesEnabled && ItemId > 0) {
+      TArray<EOrbType> NeighborTypes;
+      GetBondedNeighborTypes(ItemId, Bonds, ItemToBonds, ItemMap,
+                             NeighborTypes);
+
+      bool bImmune = false;
+      int32 SynergyDelta = ComputeBondSynergyDelta(
+          Type, NeighborTypes, bImmune, SameTypeBondBonus, MetalBondBonus,
+          VoidBondPenalty, bCatalystGrantsInfiniteLife);
+
+      if (bImmune)
+        return false; // CatalystX neighbor → skip decay entirely
+
+      // Apply synergy: net decay = 1 - bonus (minimum 0 = no decay, can go
+      // negative for extra drain) A positive SynergyDelta reduces decay, a
+      // negative one increases it
+      int32 NetDecay = 1 - SynergyDelta; // base decay is 1 per tick
+      if (NetDecay < 0)
+        NetDecay = 0; // Can't gain stability from synergy alone (floor at 0
+                      // decay)
+      // Actually, let's allow negative decay (net gain) to let strong synergies
+      // extend lifetime But cap at the type's max lifetime
+      int32 MaxLife = GetLifetimeForType((uint8)Type);
+
+      Stability -= (1 - SynergyDelta); // Apply net decay
+      if (Stability > MaxLife)
+        Stability = MaxLife; // Cap at max
+    } else {
+      // No synergy — simple decay
+      Stability--;
+    }
+
+    if (Stability <= 0) {
+      Type = EOrbType::Void;
+      Color = EOrbColor::None;
+      // Reset stability to Void's lifetime
+      Stability = GetLifetimeForType((uint8)EOrbType::Void);
+      return true;
+    }
+    return false;
+  };
+
+  // --- Board items ---
   for (auto &KV : ItemMap) {
     FHex H = KV.Key;
     FItem &Item = KV.Value;
-
     bool bBecameVoid = false;
 
     if (Item.bIsCluster) {
       for (FOrbData &Orb : Item.Orbs) {
-        // Skip stability decay for Void orbs themselves
-        if (Orb.Type == (uint8)EOrbType::Void)
-          continue;
-
-        if (Orb.Stability > 0) {
-          Orb.Stability--;
-          if (Orb.Stability <= 0) {
-            Orb.Type = (uint8)EOrbType::Void;
-            Orb.Color = (uint8)EOrbColor::None;
-            bBecameVoid = true;
-          }
+        EOrbType OrbType = (EOrbType)Orb.Type;
+        EOrbColor OrbColor = (EOrbColor)Orb.Color;
+        if (DecayOrb(OrbType, OrbColor, Orb.Stability, Orb.ItemId)) {
+          bBecameVoid = true;
         }
+        Orb.Type = (uint8)OrbType;
+        Orb.Color = (uint8)OrbColor;
       }
     } else {
-      // Single orb
-      if (Item.Single.Type != EOrbType::Void) {
-        if (Item.Single.Stability > 0) {
-          Item.Single.Stability--;
-          if (Item.Single.Stability <= 0) {
-            Item.Single.Type = EOrbType::Void;
-            Item.Single.Color = EOrbColor::None;
-            bBecameVoid = true;
-          }
-        }
+      if (DecayOrb(Item.Single.Type, Item.Single.Color, Item.Single.Stability,
+                   Item.Id)) {
+        bBecameVoid = true;
       }
     }
 
     if (bBecameVoid) {
-      // Update Kind representation in OrbAt
       OrbAt[H] = KindFromItem(Item);
     }
   }
 
-  // Also handle held items
+  // --- Held items (arms) ---
   for (FArmState &Arm : Arms) {
     if (!Arm.bHolding)
       continue;
 
     if (Arm.Held.bIsCluster) {
       for (FOrbData &Orb : Arm.Held.Orbs) {
-        if (Orb.Type == (uint8)EOrbType::Void)
-          continue;
-
-        if (Orb.Stability > 0) {
-          Orb.Stability--;
-          if (Orb.Stability <= 0) {
-            Orb.Type = (uint8)EOrbType::Void;
-            Orb.Color = (uint8)EOrbColor::None;
-          }
-        }
+        EOrbType OrbType = (EOrbType)Orb.Type;
+        EOrbColor OrbColor = (EOrbColor)Orb.Color;
+        DecayOrb(OrbType, OrbColor, Orb.Stability, Orb.ItemId);
+        Orb.Type = (uint8)OrbType;
+        Orb.Color = (uint8)OrbColor;
       }
     } else {
-      if (Arm.Held.Single.Type != EOrbType::Void) {
-        if (Arm.Held.Single.Stability > 0) {
-          Arm.Held.Single.Stability--;
-          if (Arm.Held.Single.Stability <= 0) {
-            Arm.Held.Single.Type = EOrbType::Void;
-            Arm.Held.Single.Color = EOrbColor::None;
-          }
+      DecayOrb(Arm.Held.Single.Type, Arm.Held.Single.Color,
+               Arm.Held.Single.Stability, Arm.Held.Id);
+    }
+  }
+
+  // --- Held items (walker feet) ---
+  for (FWalkerState &W : Walkers) {
+    auto DecayFootHeld = [&](FFootState &Foot) {
+      if (!Foot.bHoldingItem)
+        return;
+      if (Foot.HeldItem.bIsCluster) {
+        for (FOrbData &Orb : Foot.HeldItem.Orbs) {
+          EOrbType OrbType = (EOrbType)Orb.Type;
+          EOrbColor OrbColor = (EOrbColor)Orb.Color;
+          DecayOrb(OrbType, OrbColor, Orb.Stability, Orb.ItemId);
+          Orb.Type = (uint8)OrbType;
+          Orb.Color = (uint8)OrbColor;
+        }
+      } else {
+        DecayOrb(Foot.HeldItem.Single.Type, Foot.HeldItem.Single.Color,
+                 Foot.HeldItem.Single.Stability, Foot.HeldItem.Id);
+      }
+    };
+    DecayFootHeld(W.DFoot);
+    DecayFootHeld(W.LFoot);
+    DecayFootHeld(W.RFoot);
+    DecayFootHeld(W.UFoot);
+  }
+}
+
+// ============================================================
+// PHASE 2: Automatic CatalystX Transmutation
+// Detects 7-Void filled hex ring and converts center to CatalystX.
+// Checks both board items AND held clusters (arms + walker feet).
+// ============================================================
+void USimWorldHex::StepTransmutations() {
+  // Build a lookup: ItemId -> (Hex, OrbType) for ALL orbs in the simulation
+  TMap<int32, FHex> ItemToHex;
+  TMap<int32, EOrbType> ItemToType;
+
+  // --- Index board items ---
+  for (const auto &KV : ItemMap) {
+    const FItem &Item = KV.Value;
+    if (!Item.bIsCluster) {
+      ItemToHex.Add(Item.Id, KV.Key);
+      ItemToType.Add(Item.Id, Item.Single.Type);
+    }
+    if (Item.bIsCluster) {
+      for (const FOrbData &Sub : Item.Orbs) {
+        if (Sub.ItemId > 0) {
+          FHex SubHex(KV.Key.Q + Sub.dQ, KV.Key.R + Sub.dR, KV.Key.Level);
+          ItemToHex.Add(Sub.ItemId, SubHex);
+          ItemToType.Add(Sub.ItemId, (EOrbType)Sub.Type);
         }
       }
     }
+  }
+
+  // --- Index held items (arms) ---
+  for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex) {
+    const FArmState &Arm = Arms[ArmIndex];
+    if (!Arm.bHolding)
+      continue;
+
+    const FHex GripHex = GetArmGripHex_Sim(ArmIndex);
+    const uint8 CCW = GetHeldCCW_Steps_Sim(ArmIndex);
+
+    if (Arm.Held.bIsCluster) {
+      for (const FOrbData &Sub : Arm.Held.Orbs) {
+        if (Sub.ItemId > 0) {
+          FHex LocalHex(Sub.dQ, Sub.dR);
+          FHex RotHex = Rot60CCW(LocalHex, CCW);
+          FHex WorldHex(GripHex.Q + RotHex.Q, GripHex.R + RotHex.R,
+                        GripHex.Level);
+          ItemToHex.Add(Sub.ItemId, WorldHex);
+          ItemToType.Add(Sub.ItemId, (EOrbType)Sub.Type);
+        }
+      }
+    } else {
+      ItemToHex.Add(Arm.Held.Id, GripHex);
+      ItemToType.Add(Arm.Held.Id, Arm.Held.Single.Type);
+    }
+  }
+
+  // --- Index held items (walker feet) ---
+  auto IndexFootHeld = [&](const FFootState &Foot) {
+    if (!Foot.bHoldingItem)
+      return;
+    if (Foot.HeldItem.bIsCluster) {
+      for (const FOrbData &Sub : Foot.HeldItem.Orbs) {
+        if (Sub.ItemId > 0) {
+          FHex WorldHex(Foot.CurrentTile.Q + Sub.dQ,
+                        Foot.CurrentTile.R + Sub.dR, Foot.CurrentTile.Level);
+          ItemToHex.Add(Sub.ItemId, WorldHex);
+          ItemToType.Add(Sub.ItemId, (EOrbType)Sub.Type);
+        }
+      }
+    } else {
+      ItemToHex.Add(Foot.HeldItem.Id, Foot.CurrentTile);
+      ItemToType.Add(Foot.HeldItem.Id, Foot.HeldItem.Single.Type);
+    }
+  };
+  for (const FWalkerState &W : Walkers) {
+    IndexFootHeld(W.DFoot);
+    IndexFootHeld(W.LFoot);
+    IndexFootHeld(W.RFoot);
+    IndexFootHeld(W.UFoot);
+  }
+
+  // --- Now scan ALL indexed Void orbs as potential ring centers ---
+  TSet<int32> TransmutedCenters;
+
+  for (const auto &TypeKV : ItemToType) {
+    if (TypeKV.Value != EOrbType::Void)
+      continue;
+
+    const int32 CenterId = TypeKV.Key;
+    const FHex *CenterHexPtr = ItemToHex.Find(CenterId);
+    if (!CenterHexPtr)
+      continue;
+    const FHex CenterHex = *CenterHexPtr;
+
+    // Check that center has bonds to at least 6 neighbors
+    const TArray<int32> *CenterBonds = ItemToBonds.Find(CenterId);
+    if (!CenterBonds || CenterBonds->Num() < 6)
+      continue;
+
+    // Collect bonded Void neighbors that are at hex distance 1
+    TArray<int32> RingIds;
+    TArray<FHex> RingHexes;
+
+    for (int32 BondIdx : *CenterBonds) {
+      if (!Bonds.IsValidIndex(BondIdx))
+        continue;
+      const FBond &B = Bonds[BondIdx];
+      if (!B.bActive)
+        continue;
+
+      int32 NeighborId = (B.ItemA == CenterId) ? B.ItemB : B.ItemA;
+      const FHex *NeighborHex = ItemToHex.Find(NeighborId);
+      const EOrbType *NeighborType = ItemToType.Find(NeighborId);
+
+      if (!NeighborHex || !NeighborType)
+        continue;
+      if (*NeighborType != EOrbType::Void)
+        continue;
+      if (HexUtil::Dist(CenterHex, *NeighborHex) != 1)
+        continue;
+
+      RingIds.Add(NeighborId);
+      RingHexes.Add(*NeighborHex);
+    }
+
+    if (RingIds.Num() != 6)
+      continue;
+
+    // All checks passed: 1 Void center bonded to 6 Void neighbors at distance 1
+    TransmutedCenters.Add(CenterId);
+  }
+
+  // --- Apply transmutations ---
+  for (int32 CenterId : TransmutedCenters) {
+    bool bApplied = false;
+
+    // Check board items (single orbs)
+    for (auto &KV : ItemMap) {
+      FItem &Item = KV.Value;
+      if (!Item.bIsCluster && Item.Id == CenterId) {
+        Item.Single.Type = EOrbType::CatalystX;
+        Item.Single.Color = EOrbColor::Magenta;
+        Item.Single.Stability = 999999;
+        OrbAt[KV.Key] = (uint8)EOrbType::CatalystX;
+        // UE_LOG(LogTemp, Log,
+        //        TEXT("TRANSMUTATION: Void orb %d at (%d,%d) became CatalystX!"),
+        //        CenterId, KV.Key.Q, KV.Key.R);
+        bApplied = true;
+        break;
+      }
+      // Board cluster sub-orbs
+      if (Item.bIsCluster) {
+        for (FOrbData &Sub : Item.Orbs) {
+          if (Sub.ItemId == CenterId) {
+            Sub.Type = (uint8)EOrbType::CatalystX;
+            Sub.Color = (uint8)EOrbColor::Magenta;
+            Sub.Stability = 999999;
+            // UE_LOG(LogTemp, Log,
+            //        TEXT("TRANSMUTATION: Void sub-orb %d became CatalystX!"),
+            //        CenterId);
+            bApplied = true;
+            break;
+          }
+        }
+        if (bApplied)
+          break;
+      }
+    }
+    if (bApplied)
+      continue;
+
+    // Check held items (arms)
+    for (FArmState &Arm : Arms) {
+      if (!Arm.bHolding)
+        continue;
+      if (Arm.Held.bIsCluster) {
+        for (FOrbData &Sub : Arm.Held.Orbs) {
+          if (Sub.ItemId == CenterId) {
+            Sub.Type = (uint8)EOrbType::CatalystX;
+            Sub.Color = (uint8)EOrbColor::Magenta;
+            Sub.Stability = 999999;
+            // UE_LOG(LogTemp, Log,
+            //        TEXT("TRANSMUTATION: Held sub-orb %d became CatalystX!"),
+            //        CenterId);
+            bApplied = true;
+            break;
+          }
+        }
+      } else if (Arm.Held.Id == CenterId) {
+        Arm.Held.Single.Type = EOrbType::CatalystX;
+        Arm.Held.Single.Color = EOrbColor::Magenta;
+        Arm.Held.Single.Stability = 999999;
+        // UE_LOG(LogTemp, Log,
+        //        TEXT("TRANSMUTATION: Held orb %d became CatalystX!"), CenterId);
+        bApplied = true;
+      }
+      if (bApplied)
+        break;
+    }
+    if (bApplied)
+      continue;
+
+    // Check held items (walker feet)
+    auto TryTransmuteFootHeld = [&](FFootState &Foot) -> bool {
+      if (!Foot.bHoldingItem)
+        return false;
+      if (Foot.HeldItem.bIsCluster) {
+        for (FOrbData &Sub : Foot.HeldItem.Orbs) {
+          if (Sub.ItemId == CenterId) {
+            Sub.Type = (uint8)EOrbType::CatalystX;
+            Sub.Color = (uint8)EOrbColor::Magenta;
+            Sub.Stability = 999999;
+            // UE_LOG(
+            //     LogTemp, Log,
+            //     TEXT("TRANSMUTATION: Walker-held sub-orb %d became CatalystX!"),
+            //     CenterId);
+            return true;
+          }
+        }
+      } else if (Foot.HeldItem.Id == CenterId) {
+        Foot.HeldItem.Single.Type = EOrbType::CatalystX;
+        Foot.HeldItem.Single.Color = EOrbColor::Magenta;
+        Foot.HeldItem.Single.Stability = 999999;
+        // UE_LOG(LogTemp, Log,
+        //        TEXT("TRANSMUTATION: Walker-held orb %d became CatalystX!"),
+        //        CenterId);
+        return true;
+      }
+      return false;
+    };
+    for (FWalkerState &W : Walkers) {
+      if (TryTransmuteFootHeld(W.DFoot) || TryTransmuteFootHeld(W.LFoot) ||
+          TryTransmuteFootHeld(W.RFoot) || TryTransmuteFootHeld(W.UFoot))
+        break;
+    }
+  }
+}
+
+// ============================================================
+// PHASE 5: Mass Budget — Return mass to source groups
+// ============================================================
+void USimWorldHex::ReturnMassToSources(int32 OrbCount) {
+  if (OrbCount <= 0)
+    return;
+
+  // Distribute returned mass evenly across all source groups that have budgets
+  int32 GroupsWithBudget = 0;
+  for (const auto &KV : SourceGroups) {
+    if (KV.Value.MassBudget > 0)
+      GroupsWithBudget++;
+  }
+
+  if (GroupsWithBudget == 0)
+    return; // No budgeted source groups
+
+  int32 MassPerGroup = FMath::Max(1, OrbCount / GroupsWithBudget);
+  int32 Remainder = OrbCount - (MassPerGroup * GroupsWithBudget);
+
+  for (auto &KV : SourceGroups) {
+    FSourceGroup &G = KV.Value;
+    if (G.MassBudget <= 0)
+      continue; // Infinite budget, skip
+
+    int32 ToReturn = MassPerGroup + (Remainder > 0 ? 1 : 0);
+    if (Remainder > 0)
+      Remainder--;
+
+    G.MassRemaining = FMath::Min(G.MassRemaining + ToReturn, G.MassBudget);
   }
 }

@@ -490,21 +490,22 @@ void USimWorldHex::ProcessUnbondsForHeldClusters() {
     if (!A.bHolding)
       continue;
 
-    // Calculate GripHex using CURRENT state (A.Facing, A.ArmLen) instead of
-    // sim state (SimFacingByArm, SimArmLenByArm). This ensures we check against
-    // the actual current position during continuous rotations.
+    // Calculate GripHex using SIM state (SimFacingByArm, SimArmLenByArm)
+    // so that unbonding only occurs exactly on the fixed simulation ticks where the
+    // cluster has fully "arrived" and completed its previous motion, rather than prematurely.
     const uint8 curFacing = (uint8)SimFacingByArm[ArmIndex] % 6;
+    int32 curLen = SimArmLenByArm[ArmIndex];
+
     FHex GripHex = A.BaseHex;
-    for (int32 i = 0; i < A.ArmLen; ++i) {
+    for (int32 i = 0; i < curLen; ++i) {
       GripHex = HexUtil::Neighbor(GripHex, (EHexDir)(curFacing % 6));
     }
 
-    // Calculate CCW steps using current A.Facing directly (not sim state)
+    // Calculate CCW steps using explicit sim state
     int8 grab = (A.Held.bIsCluster) ? A.Held.GrabFacing : int8(-1);
-    // Check sim grab facing for freshly grabbed items
-    if (const int8 *P = SimGrabFacingByArm.Find(ArmIndex)) {
-      if (*P >= 0)
-        grab = *P;
+    if (const int8 *S = SimGrabFacingByArm.Find(ArmIndex)) {
+      if (*S >= 0)
+        grab = *S;
     }
     const uint8 facingDelta =
         (grab >= 0) ? (uint8)(((int32)curFacing - (int32)(grab % 6) + 6) % 6)

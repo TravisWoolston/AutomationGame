@@ -54,6 +54,19 @@ struct FSourceGroup {
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   int32 LastSpawnTick = 0;
 
+  // --- Mass Budget ---
+  /** Total mass budget for this source group per cycle (-1 = infinite) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 MassBudget = -1;
+
+  /** Currently available mass (decremented on spawn, incremented on output) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int32 MassRemaining = -1;
+
+  /** Total mass ever spawned (for stats) */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  int64 TotalMassSpawned = 0;
+
   // Configuration
   int32 MinGroupSize = 3;
 
@@ -226,6 +239,7 @@ public:
   float FixedStepSec = 0.20f; // 5 Hz
 
   void StepBonds();
+  void ApplyPendingArmMotions();
   void ProcessUnbondsForHeldClusters();
 
   // Mark arm base cache as needing rebuild (call when arms are added/removed)
@@ -305,7 +319,38 @@ public:
   bool bOrbLifetimeEnabled = true;
   int32 DefaultOrbLifetimeTicks = 300;
 
+  /** Per-type lifetime overrides. If a type is not in this map,
+   * DefaultOrbLifetimeTicks is used. */
+  UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sim")
+  TMap<uint8, int32> OrbLifetimeByType;
+
+  // --- Bond Synergy settings ---
+  /** If true, bond synergies affect stability decay rates */
+  bool bBondSynergiesEnabled = true;
+
+  /** Stability bonus per tick for same-type bonds (added per bonded same-type
+   * neighbor) */
+  int32 SameTypeBondBonus = 1;
+
+  /** Stability bonus per tick when bonded to MetalA */
+  int32 MetalBondBonus = 2;
+
+  /** Extra stability drain per tick when bonded to Void (penalty, subtracted)
+   */
+  int32 VoidBondPenalty = 2;
+
+  /** If true, orbs bonded to CatalystX skip decay entirely */
+  bool bCatalystGrantsInfiniteLife = true;
+
+  // --- Mass Budget settings ---
+  /** Default mass budget for new source groups (-1 = infinite) */
+  int32 DefaultMassBudget = -1;
+
   void StepOrbStability();
+  void StepTransmutations();
+
+  /** Return mass to source groups when orbs are consumed by outputs */
+  void ReturnMassToSources(int32 OrbCount);
 
   /** Explicitly pair a helix output group with an input layout */
   void PairHelixInput(int32 OutputGroupIndex, const TArray<FHex> &InputTiles,

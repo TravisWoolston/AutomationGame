@@ -1,4 +1,4 @@
-﻿#include "Actors/BasicArm.h"
+#include "Actors/BasicArm.h"
 #include "AGLogChannels.h"
 #include "Actors/HexFactoryActor.h"
 #include "Actors/OrbSimDriver.h"
@@ -321,7 +321,9 @@ void ABasicArm::Tick(float DeltaSeconds) {
 
   // Timeline widgets update on simulation steps for performance
 
-  // Update stability visuals for held orbs
+  // Update stability visuals for held orbs via Dynamic Material Instances
+  // NOTE: ISMs use PerInstanceCustomData which doesn't work on standalone
+  // mesh components. We use DMIs with a scalar parameter instead.
   if (bHolding && Sim && Sim->DefaultOrbLifetimeTicks > 0) {
     float DefaultLife = (float)Sim->DefaultOrbLifetimeTicks;
     if (HeldOrbComp) {
@@ -331,21 +333,39 @@ void ABasicArm::Tick(float DeltaSeconds) {
       if (HeldOrb.bIsCluster) {
         for (int32 i = 0; i < HeldOrb.Orbs.Num(); ++i) {
           if (ChildComps.IsValidIndex(i)) {
-            if (UPrimitiveComponent *Prim =
-                    Cast<UPrimitiveComponent>(ChildComps[i])) {
+            if (UStaticMeshComponent *SMC =
+                    Cast<UStaticMeshComponent>(ChildComps[i])) {
               float LifeAlpha = FMath::Clamp(
                   (float)HeldOrb.Orbs[i].Stability / DefaultLife, 0.0f, 1.0f);
-              Prim->SetCustomPrimitiveDataFloat(0, 1.0f - LifeAlpha);
+              float DecayValue = 1.0f - LifeAlpha;
+              UMaterialInstanceDynamic *DMI =
+                  Cast<UMaterialInstanceDynamic>(SMC->GetMaterial(0));
+              if (!DMI) {
+                DMI = SMC->CreateDynamicMaterialInstance(0);
+              }
+              if (DMI) {
+                DMI->SetScalarParameterValue(FName(TEXT("StabilityAlpha")),
+                                             DecayValue);
+              }
             }
           }
         }
       } else {
         if (ChildComps.IsValidIndex(0)) {
-          if (UPrimitiveComponent *Prim =
-                  Cast<UPrimitiveComponent>(ChildComps[0])) {
+          if (UStaticMeshComponent *SMC =
+                  Cast<UStaticMeshComponent>(ChildComps[0])) {
             float LifeAlpha = FMath::Clamp(
                 (float)HeldOrb.Single.Stability / DefaultLife, 0.0f, 1.0f);
-            Prim->SetCustomPrimitiveDataFloat(0, 1.0f - LifeAlpha);
+            float DecayValue = 1.0f - LifeAlpha;
+            UMaterialInstanceDynamic *DMI =
+                Cast<UMaterialInstanceDynamic>(SMC->GetMaterial(0));
+            if (!DMI) {
+              DMI = SMC->CreateDynamicMaterialInstance(0);
+            }
+            if (DMI) {
+              DMI->SetScalarParameterValue(FName(TEXT("StabilityAlpha")),
+                                           DecayValue);
+            }
           }
         }
       }

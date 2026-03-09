@@ -221,6 +221,7 @@ void USimWorldHex::StepArmsSecondPass() {
 
             Orb.Type = (uint8)It->Single.Type;
             Orb.Color = (uint8)It->Single.Color;
+            Orb.Stability = It->Single.Stability; // Preserve lifetime
             Orb.ItemId = It->Id;
             Orb.dQ = (int8)D.Q;
             Orb.dR = (int8)D.R;
@@ -380,6 +381,7 @@ void USimWorldHex::StepArmsSecondPass() {
           FOrb O;
           O.Type = (EOrbType)Sub.Type;
           O.Color = (EOrbColor)Sub.Color;
+          O.Stability = Sub.Stability; // Preserve lifetime
 
           FItem NewItem = FItem::MakeSingle(O);
           if (Sub.ItemId > 0) {
@@ -556,6 +558,7 @@ void USimWorldHex::StepArmsSecondPass() {
             FOrbData Orb;
             Orb.Type = (uint8)It->Single.Type;
             Orb.Color = (uint8)It->Single.Color;
+            Orb.Stability = It->Single.Stability; // Preserve lifetime
             Orb.ItemId = It->Id;
             Orb.dQ = (int8)D.Q;
             Orb.dR = (int8)D.R;
@@ -583,23 +586,8 @@ void USimWorldHex::StepArmsSecondPass() {
       }
     }
 
-    case ECmd::RotateHeldL:
-      if (S.bHolding && S.Held.bIsCluster) {
-        S.bRotationCompleted = false;
-        S.Held.GrabFacing = (S.Held.GrabFacing + 5) % 6;
-        PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
-      }
-      S.PC = (S.PC + 1) % S.Tape.Num();
-      return true;
-
-    case ECmd::RotateHeldR:
-      if (S.bHolding && S.Held.bIsCluster) {
-        S.bRotationCompleted = false;
-        S.Held.GrabFacing = (S.Held.GrabFacing + 1) % 6;
-        PendingGrabFacingByArm.Add(ArmIndex, S.Held.GrabFacing);
-      }
-      S.PC = (S.PC + 1) % S.Tape.Num();
-      return true;
+      // Omitted: RotateHeldL and RotateHeldR are no longer allowed as fast ops.
+      // They must explicitly execute during the main StepArms phase to ensure unbonding runs consistently.
 
     case ECmd::Extend: {
       const int32 Delta = (Op.Arg == 0 ? 1 : Op.Arg);

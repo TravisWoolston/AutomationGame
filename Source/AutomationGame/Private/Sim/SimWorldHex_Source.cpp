@@ -80,6 +80,8 @@ void USimWorldHex::RegisterSourceTile(const FHex &Hex) {
     FSourceGroup NewG;
     NewG.Id = NextSourceGroupId++;
     NewG.MemberTiles.Add(Hex);
+    NewG.MassBudget = DefaultMassBudget;
+    NewG.MassRemaining = DefaultMassBudget;
     UpdateSourceGroupTopology(NewG);
     SourceGroups.Add(NewG.Id, NewG);
   } else if (AdjIndices.Num() == 1) {
@@ -216,6 +218,14 @@ void USimWorldHex::StepSourceGroups() {
         }
       }
       if (bOverCap) {
+        if (!G.bPaused) {
+          FString CountsStr;
+          for (const auto &TC : TypeCounts) {
+            if (!CountsStr.IsEmpty()) CountsStr += TEXT(", ");
+            CountsStr += FString::Printf(TEXT("Type %d: %d"), TC.Key, TC.Value);
+          }
+          UE_LOG(LogTemp, Warning, TEXT("Source helix [%d] paused: Orb Type Cap reached. Counts: %s"), G.Id, *CountsStr);
+        }
         G.bPaused = true;
         for (FSourceGroupItem &PR : G.PendingRows)
           PR.SpawnTick++;
@@ -270,6 +280,7 @@ void USimWorldHex::StepSourceGroups() {
       // Cascading push expansion — collect ALL blockers per pass
       bool bCanPush = true;
       bool bCascadeComplete = false;
+      FString PauseReason = TEXT("Max Eject Weight Exceeded");
       for (int32 Iteration = 0; Iteration < MaxEjectWeight; ++Iteration) {
         bool bNeedRestart = false;
 
@@ -300,12 +311,14 @@ void USimWorldHex::StepSourceGroups() {
               CachedBlockingFootHexes.Contains(PushDest) ||
               CachedArmBaseHexes.Contains(PushDest)) {
             bCanPush = false;
+            PauseReason = TEXT("Blocked by Entity Obstacle");
             break;
           }
 
           if (const FTile *DestTile = TileMap.Find(PushDest)) {
             if (DestTile->Kind == ETileKind::Output) {
               bCanPush = false;
+              PauseReason = TEXT("Blocked by Output Tile");
               break;
             }
           }
@@ -333,6 +346,9 @@ void USimWorldHex::StepSourceGroups() {
         // Blocked - pause the helix animation by delaying all pending rows
         // This keeps ZOffset constant (at approx 0) so the top rung doesn't
         // vanish
+        if (!G.bPaused) {
+          UE_LOG(LogTemp, Warning, TEXT("Source helix [%d] paused: %s"), G.Id, *PauseReason);
+        }
         G.bPaused = true;
         for (FSourceGroupItem &PR : G.PendingRows)
           PR.SpawnTick++;
@@ -398,6 +414,25 @@ void USimWorldHex::StepSourceGroups() {
     TArray<int32> SlotToItemId;
     SlotToItemId.SetNumZeroed(G.SortedTiles.Num());
 
+    // Mass budget check: count how many orbs this row will spawn
+    int32 OrbsInRow = 0;
+    if (G.MassBudget > 0) {
+      for (int32 i = 0; i < G.SortedTiles.Num(); ++i) {
+        if (Row.OrbTypes.IsValidIndex(i) && Row.OrbTypes[i] != 0)
+          OrbsInRow++;
+      }
+      if (OrbsInRow > G.MassRemaining) {
+        // Not enough mass budget — pause
+        if (!G.bPaused) {
+          UE_LOG(LogTemp, Warning, TEXT("Source helix [%d] paused: Mass Budget depleted"), G.Id);
+        }
+        G.bPaused = true;
+        for (FSourceGroupItem &PR : G.PendingRows)
+          PR.SpawnTick++;
+        continue;
+      }
+    }
+
     for (int32 i = 0; i < G.SortedTiles.Num(); ++i) {
       if (!Row.OrbTypes.IsValidIndex(i) || Row.OrbTypes[i] == 0)
         continue;
@@ -418,13 +453,30 @@ void USimWorldHex::StepSourceGroups() {
       NewItem.Single.Type = (EOrbType)Row.OrbTypes[i];
       NewItem.Single.Color = EOrbColor::Blue;
       NewItem.bIsCluster = false;
-      if (DefaultOrbLifetimeTicks > 0) {
+
+      // Per-type lifetime (Phase 4)
+      if (const int32 *TypeLife = OrbLifetimeByType.Find(Row.OrbTypes[i])) {
+        NewItem.Single.Stability = *TypeLife;
+      } else if (DefaultOrbLifetimeTicks > 0) {
         NewItem.Single.Stability = DefaultOrbLifetimeTicks;
       }
 
       ItemMap.Add(SpawnHex, NewItem);
       OrbAt.Add(SpawnHex, Row.OrbTypes[i]);
       SlotToItemId[i] = NewItem.Id;
+    }
+
+    // Decrement mass budget (Phase 5)
+    if (G.MassBudget > 0) {
+      int32 ActualSpawned = 0;
+      for (int32 i = 0; i < G.SortedTiles.Num(); ++i) {
+        if (SlotToItemId[i] != 0)
+          ActualSpawned++;
+      }
+      G.MassRemaining -= ActualSpawned;
+      G.TotalMassSpawned += ActualSpawned;
+      if (G.MassRemaining < 0)
+        G.MassRemaining = 0;
     }
 
     // 4. Create bonds at spawn time with hex adjacency validation.
