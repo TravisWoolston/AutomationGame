@@ -2276,7 +2276,7 @@ void USimWorldHex::StepOrbStability() {
     }
 
     if (bBecameVoid) {
-      OrbAt[H] = KindFromItem(Item);
+      OrbAt.Add(H, KindFromItem(Item));
     }
   }
 
@@ -2465,7 +2465,7 @@ void USimWorldHex::StepTransmutations() {
         Item.Single.Type = EOrbType::CatalystX;
         Item.Single.Color = EOrbColor::Magenta;
         Item.Single.Stability = 999999;
-        OrbAt[KV.Key] = (uint8)EOrbType::CatalystX;
+        OrbAt.Add(KV.Key, (uint8)EOrbType::CatalystX);
         // UE_LOG(LogTemp, Log,
         //        TEXT("TRANSMUTATION: Void orb %d at (%d,%d) became CatalystX!"),
         //        CenterId, KV.Key.Q, KV.Key.R);

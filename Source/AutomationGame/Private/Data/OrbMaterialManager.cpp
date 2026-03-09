@@ -34,8 +34,8 @@ UMaterialInterface* UOrbMaterialManager::GetMaterialForOrbType(EOrbType OrbType)
 	}
 	
 	// Only log when using default material (this is more important to track)
-	UE_LOG(LogTemp, Log, TEXT("MaterialManager: Using default material for type %d: %s"), 
-		(int32)OrbType, DefaultOrbMaterial ? *DefaultOrbMaterial->GetName() : TEXT("NULL"));
+	// UE_LOG(LogTemp, Log, TEXT("MaterialManager: Using default material for type %d: %s"), 
+	// 	(int32)OrbType, DefaultOrbMaterial ? *DefaultOrbMaterial->GetName() : TEXT("NULL"));
 	return DefaultOrbMaterial;
 }
 
