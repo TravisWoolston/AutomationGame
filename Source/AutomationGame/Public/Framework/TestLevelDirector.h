@@ -127,6 +127,42 @@ struct FHelixPairSpec {
 };
 
 USTRUCT(BlueprintType)
+struct FTutorialStep {
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(MultiLine=true))
+    FString Message;
+
+    // Time to display this message before proceeding. If > 0, it advances automatically after this time. If 0, it waits for the placement conditions below.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin=0.0f))
+    float TextTimer = 0.0f;
+
+    // Is there a tile requirement to proceed?
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bRequiresTilePlacement = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bRequiresTilePlacement"))
+    ETileKind RequiredTileKind = ETileKind::Empty;
+
+    // Is there a direction requirement (e.g. for Belts, Bonds, Unbonds)?
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bRequiresTilePlacement"))
+    bool bRequiresDirection = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bRequiresTilePlacement && bRequiresDirection"))
+    uint8 RequiredDirection = 0;
+
+    // Is there an arm placement requirement?
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bRequiresArmPlacement = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bRequiresArmPlacement || bRequiresTilePlacement"))
+    FHex TargetHex; // Shared with tile placement
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bRequiresArmPlacement"))
+    uint8 RequiredArmFacing = 0;
+};
+
+USTRUCT(BlueprintType)
 struct FScenarioSpec {
   GENERATED_BODY()
 
@@ -138,10 +174,16 @@ struct FScenarioSpec {
   UPROPERTY(EditAnywhere, BlueprintReadWrite) TArray<FWalkerSpawnSpec> Walkers;
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   TArray<FRequestBeaconSpec> Beacons;
+
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   TArray<FTriggerTileSpec> TriggerTiles;
+  
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   TArray<FHelixPairSpec> HelixPairs;
+  
+  UPROPERTY(EditAnywhere, BlueprintReadWrite)
+  TArray<FTutorialStep> TutorialSteps;
+  
   UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bAutoPlay = true;
 };
 
@@ -282,7 +324,11 @@ private:
   void AutoFindOrSpawn();
   void ApplyScenario(const FScenarioSpec &S);
   void RefreshSpawnedArmsFromScenario(int32 ScenarioIndex);
+
+public:
   void MarkActiveScenarioDirty();
+
+private:
   void ResetSimForActiveScenario(
       bool bSyncFromWorld = true);   // NEW: clears sim before applying scenario
   void DelayedScenarioApplication(); // NEW: applies scenarios after GameManager

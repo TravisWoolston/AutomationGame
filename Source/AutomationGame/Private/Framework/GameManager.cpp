@@ -3503,10 +3503,10 @@ void AGameManager::DrawSourceHelix() {
                      FMath::Sin(Rad) * HelixRadius, Z);
       FVector Pos = Center + Offset;
 
-      for (const FOrbData &Orb : Rung.Orbs) {
-        FColor Col = OrbSimDriver->GetDebugColorForOrbType(Orb.Type);
-        DrawDebugSphere(World, Pos, 15.0f, 8, Col, false, -1.0f, 0, 2.0f);
-      }
+      // for (const FOrbData &Orb : Rung.Orbs) {
+      //   FColor Col = OrbSimDriver->GetDebugColorForOrbType(Orb.Type);
+      //   DrawDebugSphere(World, Pos, 15.0f, 8, Col, false, -1.0f, 0, 2.0f);
+      // }
     }
   }
 
@@ -3532,14 +3532,14 @@ void AGameManager::DrawSourceHelix() {
         if (Progress >= 1.f)
           Z = 0.f;
 
-        for (int32 i = 0; i < Row.OrbTypes.Num(); ++i) {
-          if (Row.OrbTypes[i] != 0 && Group.SortedTiles.IsValidIndex(i)) {
-            FVector Pos = OrbSimDriver->MapHexToWorld(Group.SortedTiles[i]);
-            Pos.Z += Z;
-            FColor Col = OrbSimDriver->GetDebugColorForOrbType(Row.OrbTypes[i]);
-            DrawDebugSphere(World, Pos, 12.f, 8, Col, false, -1.f, 0, 1.5f);
-          }
-        }
+        // for (int32 i = 0; i < Row.OrbTypes.Num(); ++i) {
+        //   if (Row.OrbTypes[i] != 0 && Group.SortedTiles.IsValidIndex(i)) {
+        //     FVector Pos = OrbSimDriver->MapHexToWorld(Group.SortedTiles[i]);
+        //     Pos.Z += Z;
+        //     FColor Col = OrbSimDriver->GetDebugColorForOrbType(Row.OrbTypes[i]);
+        //     DrawDebugSphere(World, Pos, 12.f, 8, Col, false, -1.f, 0, 1.5f);
+        //   }
+        // }
       }
     }
   }

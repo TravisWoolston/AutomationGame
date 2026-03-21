@@ -1457,8 +1457,20 @@ void ATestLevelDirector::MirrorScenarioEditsToEditor() {
 
   for (TActorIterator<ATestLevelDirector> It(EditorWorld); It; ++It) {
     ATestLevelDirector *EditorDir = *It;
-    // Copy arrays (deep copy structs)
-    EditorDir->Scenarios = Scenarios;
+    // Copy arrays (deep copy structs), but selectively ignore tutorials to preserve clean editor states
+    TArray<FScenarioSpec> MergedScenarios;
+    for (int32 i = 0; i < Scenarios.Num(); ++i) {
+        if (Scenarios[i].TutorialSteps.Num() > 0 && EditorDir->Scenarios.IsValidIndex(i)) {
+             // Discard PIE changes for tutorial scenarios since the user is just playing/testing them.
+             // This prevents their solved glyphs from permanently saving.
+             MergedScenarios.Add(EditorDir->Scenarios[i]);
+        } else {
+             // Mirror standard scenario edits natively
+             MergedScenarios.Add(Scenarios[i]);
+        }
+    }
+    EditorDir->Scenarios = MergedScenarios;
+    
     EditorDir->ActiveScenarioIndex = ActiveScenarioIndex;
     EditorDir->MarkActiveScenarioDirty();
     break;
