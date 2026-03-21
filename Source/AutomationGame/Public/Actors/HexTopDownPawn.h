@@ -135,6 +135,40 @@ public:
   UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "View")
   int32 FollowedItemId = 0;
 
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode1();
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode2();
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode3();
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode4();
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode5();
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode6();
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode7();
+  void SetInputMode8();
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode9();
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode10(); // TriggerTile
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode11(); // ClusterSend
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void
+  SetInputMode12(bool bForceRegenerate = false); // Ancestral/Discovery Mode
+  void SetInputMode12Pressed() {
+    SetInputMode12(false);
+  } // Wrapper for input binding
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode13(); // HelixOutput placement
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode14(); // GatherScatter placement
+  UFUNCTION(BlueprintCallable, Category = "Input")
+  void SetInputMode15(); // Source placement
+
   void UpdateHoverHighlight(float DeltaSeconds);
 
 private:
@@ -231,39 +265,6 @@ private:
                                const FVector &WorldEnd, int32 Level,
                                TArray<FHex> &OutHexes);
 
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode1();
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode2();
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode3();
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode4();
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode5();
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode6();
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode7();
-  void SetInputMode8();
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode9();
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode10(); // TriggerTile
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode11(); // ClusterSend
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void
-  SetInputMode12(bool bForceRegenerate = false); // Ancestral/Discovery Mode
-  void SetInputMode12Pressed() {
-    SetInputMode12(false);
-  } // Wrapper for input binding
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode13(); // HelixOutput placement
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode14(); // GatherScatter placement
-  UFUNCTION(BlueprintCallable, Category = "Input")
-  void SetInputMode15(); // Source placement
   UFUNCTION(BlueprintCallable, Category = "Input")
   void SwitchGrid();
   void RotCW() {
