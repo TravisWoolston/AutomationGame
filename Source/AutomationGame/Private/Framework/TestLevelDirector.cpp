@@ -358,6 +358,14 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
   const bool bGoldbergMode = GM && GM->IsGoldbergMode();
   UGoldbergGrid *GoldbergGrid = bGoldbergMode ? GM->GetGoldbergGrid() : nullptr;
 
+  if (GM) {
+    if (S.DefaultOrbLifetime >= 0) {
+      GM->DefaultOrbLifetimeTicks = S.DefaultOrbLifetime;
+    } else {
+      const_cast<FScenarioSpec&>(S).DefaultOrbLifetime = GM->DefaultOrbLifetimeTicks;
+    }
+  }
+
   if (USimWorldHex *Sim = Driver->GetSim()) {
     // Build a map of hex -> orb type for ClusterOutput tiles from the saved
     // specs
@@ -1463,7 +1471,10 @@ void ATestLevelDirector::MirrorScenarioEditsToEditor() {
         if (Scenarios[i].TutorialSteps.Num() > 0 && EditorDir->Scenarios.IsValidIndex(i)) {
              // Discard PIE changes for tutorial scenarios since the user is just playing/testing them.
              // This prevents their solved glyphs from permanently saving.
-             MergedScenarios.Add(EditorDir->Scenarios[i]);
+             // HOWEVER, we must explicitly sync TutorialSteps so authoring tools (like capturing context tiles) still mirror to the editor.
+             FScenarioSpec MergedSpec = EditorDir->Scenarios[i];
+             MergedSpec.TutorialSteps = Scenarios[i].TutorialSteps;
+             MergedScenarios.Add(MergedSpec);
         } else {
              // Mirror standard scenario edits natively
              MergedScenarios.Add(Scenarios[i]);
@@ -1544,6 +1555,15 @@ void ATestLevelDirector::SyncPreviewEditsIntoScenarioFiltered(
     UWorld *W = GetWorld();
     if (!W)
       return;
+
+    AGameManager *GM = nullptr;
+    for (TActorIterator<AGameManager> It(W); It; ++It) {
+      GM = *It;
+      break;
+    }
+    if (GM) {
+      Scenario.DefaultOrbLifetime = GM->DefaultOrbLifetimeTicks;
+    }
 
     // Clear and rebuild tile specs from current simulation
     Scenario.Tiles.Empty();
@@ -1891,4 +1911,70 @@ void ATestLevelDirector::GenerateDiscoveryScenario() {
 #endif
 
   BuildActiveScenario();
+}
+
+void ATestLevelDirector::CaptureSelectedHexAsFocusTile() {
+#if WITH_EDITOR
+  if (!Scenarios.IsValidIndex(EditTutorialScenarioIndex)) {
+    UE_LOG(LogTemp, Warning, TEXT("CaptureSelectedHex: Invalid scenario index %d"), EditTutorialScenarioIndex);
+    return;
+  }
+  
+  FScenarioSpec& Scen = Scenarios[EditTutorialScenarioIndex];
+  if (!Scen.TutorialSteps.IsValidIndex(EditTutorialStepIndex)) {
+    UE_LOG(LogTemp, Warning, TEXT("CaptureSelectedHex: Invalid step index %d"), EditTutorialStepIndex);
+    return;
+  }
+
+  bWaitingForContextTileClick = true;
+  UE_LOG(LogTemp, Warning, TEXT("Waiting for context tile click. Please click a tile in the viewport."));
+#endif
+}
+
+void ATestLevelDirector::CaptureGlyphsBase() {
+#if WITH_EDITOR
+  if (!Scenarios.IsValidIndex(EditTutorialScenarioIndex)) {
+    UE_LOG(LogTemp, Warning, TEXT("CaptureGlyphsBase: Invalid scenario index %d"), EditTutorialScenarioIndex);
+    return;
+  }
+  CommitPreviewEdits();
+  CaptureBaseScenario = Scenarios[ActiveScenarioIndex];
+  UE_LOG(LogTemp, Log, TEXT("Captured Base Scenario for Diff..."));
+#endif
+}
+
+void ATestLevelDirector::CaptureGlyphsDiffIntoStep() {
+#if WITH_EDITOR
+  if (!Scenarios.IsValidIndex(EditTutorialScenarioIndex) || !Scenarios[EditTutorialScenarioIndex].TutorialSteps.IsValidIndex(EditTutorialStepIndex)) {
+    UE_LOG(LogTemp, Warning, TEXT("CaptureGlyphsDiffIntoStep: Invalid scenario or step index."));
+    return;
+  }
+  
+  CommitPreviewEdits();
+  FScenarioSpec NewSpec = Scenarios[ActiveScenarioIndex];
+  FTutorialStep& TargetStep = Scenarios[EditTutorialScenarioIndex].TutorialSteps[EditTutorialStepIndex];
+
+  TMap<FHex, FPlacedTileSpec> OldTiles;
+  for (const FPlacedTileSpec& OldT : CaptureBaseScenario.Tiles) { OldTiles.Add(OldT.Hex, OldT); }
+  
+  for (const FPlacedTileSpec& NewT : NewSpec.Tiles) {
+      if (!OldTiles.Contains(NewT.Hex) || OldTiles[NewT.Hex].Kind != NewT.Kind || OldTiles[NewT.Hex].Dir != NewT.Dir) {
+          TargetStep.RequiredTiles.Add(NewT);
+      }
+  }
+  
+  TMap<FHex, FArmSpawnSpec> OldArms;
+  for (const FArmSpawnSpec& OldA : CaptureBaseScenario.Arms) { OldArms.Add(FHex(OldA.Q, OldA.R, OldA.Level), OldA); }
+  
+  for (const FArmSpawnSpec& NewA : NewSpec.Arms) {
+      FHex ArmHex(NewA.Q, NewA.R, NewA.Level);
+      if (!OldArms.Contains(ArmHex) || OldArms[ArmHex].Facing != NewA.Facing) {
+          TargetStep.RequiredArms.Add(NewA);
+      }
+  }
+  
+  MarkActiveScenarioDirty();
+  MirrorScenarioEditsToEditor();
+  UE_LOG(LogTemp, Log, TEXT("Pushed Glyph Diffs into Tutorial Step %d"), EditTutorialStepIndex);
+#endif
 }

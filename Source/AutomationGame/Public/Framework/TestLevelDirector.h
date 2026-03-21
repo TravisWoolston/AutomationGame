@@ -137,6 +137,17 @@ struct FTutorialStep {
     UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin=0.0f))
     float TextTimer = 0.0f;
 
+    // Should GameTickManager be paused when this step begins?
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bShouldPauseGTM = false;
+
+    // Is there a tile we want to focus the camera on?
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bHasFocusTile = false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bHasFocusTile"))
+    FHex FocusTile;
+
     // Is there a tile requirement to proceed?
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     bool bRequiresTilePlacement = false;
@@ -160,6 +171,13 @@ struct FTutorialStep {
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(EditCondition="bRequiresArmPlacement"))
     uint8 RequiredArmFacing = 0;
+
+    // Optional arrays for multi-tile/arm requirements
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TArray<FPlacedTileSpec> RequiredTiles;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TArray<FArmSpawnSpec> RequiredArms;
 };
 
 USTRUCT(BlueprintType)
@@ -185,6 +203,8 @@ struct FScenarioSpec {
   TArray<FTutorialStep> TutorialSteps;
   
   UPROPERTY(EditAnywhere, BlueprintReadWrite) bool bAutoPlay = true;
+
+  UPROPERTY(EditAnywhere, BlueprintReadWrite) float DefaultOrbLifetime = -1.0f;
 };
 
 UCLASS()
@@ -215,6 +235,28 @@ public:
   TArray<FScenarioSpec> Scenarios;
   UPROPERTY(EditAnywhere, Category = "Scenarios", meta = (ClampMin = 0))
   int32 ActiveScenarioIndex = 0;
+
+  // --- Tutorial Editor Settings ---
+  UPROPERTY(EditAnywhere, Category = "Tutorial Editor")
+  int32 EditTutorialScenarioIndex = 0;
+
+  UPROPERTY(EditAnywhere, Category = "Tutorial Editor")
+  int32 EditTutorialStepIndex = 0;
+
+  UFUNCTION(CallInEditor, Category = "Tutorial Editor")
+  void CaptureSelectedHexAsFocusTile();
+
+  UFUNCTION(CallInEditor, Category = "Tutorial Editor")
+  void CaptureGlyphsBase();
+
+  UFUNCTION(CallInEditor, Category = "Tutorial Editor")
+  void CaptureGlyphsDiffIntoStep();
+
+  UPROPERTY(Transient)
+  FScenarioSpec CaptureBaseScenario;
+
+  UPROPERTY(Transient)
+  bool bWaitingForContextTileClick = false;
 
   // --- Discovery Mode Settings ---
   UPROPERTY(EditAnywhere, Category = "Discovery Mode")
@@ -341,7 +383,9 @@ private:
 #if WITH_EDITOR
   void HandlePreBeginPIE(bool bIsSimulating);
   void HandleEndPIE(bool bIsSimulating);
+public:
   void MirrorScenarioEditsToEditor(); // live mirroring during PIE
+private:
   void SyncAllRuntimeArmEdits(); // harvest live arm program/facing into specs
 #endif
 };

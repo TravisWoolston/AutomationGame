@@ -391,6 +391,32 @@ void AHexTopDownPawn::Tick(float DeltaSeconds) {
 void AHexTopDownPawn::PlacePressed() {
   bPlaceHeld = true;
 
+#if WITH_EDITOR
+  if (Placer && Placer->IsHoverValid()) {
+      ATestLevelDirector* TLD = nullptr;
+      if (UWorld* W = GetWorld()) {
+          for (TActorIterator<ATestLevelDirector> It(W); It; ++It) {
+              TLD = *It;
+              break;
+          }
+      }
+      if (TLD && TLD->bWaitingForContextTileClick) {
+          FHex ClickedHex = Placer->GetHoverHex();
+          TLD->bWaitingForContextTileClick = false;
+          if (TLD->Scenarios.IsValidIndex(TLD->EditTutorialScenarioIndex) && 
+              TLD->Scenarios[TLD->EditTutorialScenarioIndex].TutorialSteps.IsValidIndex(TLD->EditTutorialStepIndex)) {
+              
+              TLD->Scenarios[TLD->EditTutorialScenarioIndex].TutorialSteps[TLD->EditTutorialStepIndex].FocusTile = ClickedHex;
+              TLD->Scenarios[TLD->EditTutorialScenarioIndex].TutorialSteps[TLD->EditTutorialStepIndex].bHasFocusTile = true;
+              TLD->MarkActiveScenarioDirty();
+              TLD->MirrorScenarioEditsToEditor();
+              UE_LOG(LogTemp, Log, TEXT("Context tile selected at %d, %d"), ClickedHex.Q, ClickedHex.R);
+          }
+          return;
+      }
+  }
+#endif
+
   if (CurrentViewMode == EViewMode::OrbView) {
     if (Placer && Placer->IsHoverValid()) {
       FItem Item;
@@ -2363,9 +2389,10 @@ void AHexTopDownPawn::CreateBlueprint() {
     BlueprintRotation = 0;
     BlueprintPlacementOffset = FHex(0, 0);
 
-    // Disable HexPlacementComponent preview when in blueprint mode
+    // Disable HexPlacementComponent preview and clear current placement when in blueprint mode
     if (Placer) {
       Placer->SetBlueprintMode(true);
+      Placer->SetPlaceKind(EPlaceKind::None);
     }
 
     // Reset smoothing
@@ -2384,6 +2411,11 @@ void AHexTopDownPawn::ClearSelection() {
     if (Comp) {
       Comp->SetVisibility(false);
     }
+  }
+
+  if (Placer) {
+    Placer->SetPlaceKind(EPlaceKind::None);
+    Placer->CancelPlacement();
   }
 }
 
@@ -4096,9 +4128,10 @@ void AHexTopDownPawn::SetBlueprintForPlacement(
   BlueprintRotation = 0;
   BlueprintPlacementOffset = FHex(0, 0);
 
-  // Disable HexPlacementComponent preview when in blueprint mode
+  // Disable HexPlacementComponent preview and clear current placement when in blueprint mode
   if (Placer) {
     Placer->SetBlueprintMode(true);
+    Placer->SetPlaceKind(EPlaceKind::None);
   }
 
   // Reset smoothing

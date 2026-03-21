@@ -36,7 +36,8 @@ enum class EPlaceKind : uint8 {
   HelixOutput, // place a HelixOutput tile (clusters spiral upward in DNA helix)
   HelixInput, // place a HelixInput tile paired to an existing HelixOutput group
   GatherScatter, // place a GatherScatter beacon pair (Gather + Scatter)
-  Source         // place a Source tile
+  Source,        // place a Source tile
+  None           // Click without placing things
 };
 
 /** Click-to-place; uses OrbSimDriver's GridAnchor by default (single source of
@@ -50,7 +51,8 @@ public:
   void SetClusterTemplateToId(uint8 TemplateId);
   /** Thing to place */
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Place")
-  EPlaceKind PlaceKind = EPlaceKind::Input;
+  EPlaceKind PlaceKind = EPlaceKind::None;
+  
   UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Place")
   uint8 BeltDir = 0;
 

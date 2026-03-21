@@ -2,8 +2,10 @@
 #include "Framework/GameTickManager.h"
 #include "Actors/OrbSimDriver.h"
 #include "Sim/SimWorldHex.h"
+#include "Actors/HexTopDownPawn.h"
 #include "Engine/World.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "EngineUtils.h"
 
@@ -16,10 +18,10 @@
 ATutorialDirector::ATutorialDirector() {
     PrimaryActorTick.bCanEverTick = true;
 
-    HighlightMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HighlightMeshComponent"));
-    RootComponent = HighlightMeshComponent;
-    HighlightMeshComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    HighlightMeshComponent->SetVisibility(false);
+    HighlightISMC = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("HighlightISMC"));
+    RootComponent = HighlightISMC;
+    HighlightISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    HighlightISMC->SetVisibility(false);
 }
 
 void ATutorialDirector::BeginPlay() {
@@ -31,7 +33,27 @@ void ATutorialDirector::BeginPlay() {
     ATestLevelDirector* TLD = GetOrSpawnTargetDirector();
     if (TLD && TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) {
         if (TLD->Scenarios[TLD->ActiveScenarioIndex].TutorialSteps.Num() > 0) {
-            CurrentStepTimeRemaining = TLD->Scenarios[TLD->ActiveScenarioIndex].TutorialSteps[0].TextTimer;
+            FTutorialStep& FirstStep = TLD->Scenarios[TLD->ActiveScenarioIndex].TutorialSteps[0];
+            CurrentStepTimeRemaining = FirstStep.TextTimer;
+            
+            if (FirstStep.bShouldPauseGTM && TickManager) {
+                TickManager->Pause();
+            }
+            
+            if (FirstStep.bHasFocusTile && Driver) {
+                FVector TargetLoc = Driver->MapHexToWorld(FirstStep.FocusTile);
+                if (APlayerController* PC = GetWorld()->GetFirstPlayerController()) {
+                    if (APawn* Pawn = PC->GetPawn()) {
+                        FVector CurrentLoc = Pawn->GetActorLocation();
+                        TargetLoc.Z = CurrentLoc.Z;
+                        if (AHexTopDownPawn* HexPawn = Cast<AHexTopDownPawn>(Pawn)) {
+                            HexPawn->CameraTargetLocation = TargetLoc;
+                        } else {
+                            Pawn->SetActorLocation(TargetLoc);
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -114,12 +136,33 @@ void ATutorialDirector::AdvanceStep() {
         
         UE_LOG(LogTemp, Log, TEXT("Tutorial Advance to Step %d: %s"), CurrentStepIndex, *Step.Message);
         
+        if (Step.bShouldPauseGTM && TickManager) {
+            TickManager->Pause();
+        }
+        
+        if (Step.bHasFocusTile && Driver) {
+            FVector TargetLoc = Driver->MapHexToWorld(Step.FocusTile);
+            if (APlayerController* PC = GetWorld()->GetFirstPlayerController()) {
+                if (APawn* Pawn = PC->GetPawn()) {
+                    FVector CurrentLoc = Pawn->GetActorLocation();
+                    TargetLoc.Z = CurrentLoc.Z;
+                    if (AHexTopDownPawn* HexPawn = Cast<AHexTopDownPawn>(Pawn)) {
+                        HexPawn->CameraTargetLocation = TargetLoc;
+                    } else {
+                        Pawn->SetActorLocation(TargetLoc);
+                    }
+                }
+            }
+        }
+        
         UpdateHighlight();
     } else {
         UE_LOG(LogTemp, Log, TEXT("Tutorial Completed!"));
         CurrentStepIndex = Scenario.TutorialSteps.Num(); // done
         CurrentStepTimeRemaining = 0.0f;
-        HighlightMeshComponent->SetVisibility(false);
+        if (HighlightISMC) {
+            HighlightISMC->SetVisibility(false);
+        }
     }
 }
 
@@ -164,162 +207,88 @@ void ATutorialDirector::CheckCurrentStepRequirements() {
         }
     }
 
-    if (bTileConditionMet && bArmConditionMet && (CurrentStep.bRequiresTilePlacement || CurrentStep.bRequiresArmPlacement)) {
+    bool bArrayTilesMet = true;
+    for (const FPlacedTileSpec& ReqTile : CurrentStep.RequiredTiles) {
+        if (const FTile* Tile = Sim->GetTiles().Find(ReqTile.Hex)) {
+            if (Tile->Kind != ReqTile.Kind || Tile->Arg != ReqTile.Dir) {
+                bArrayTilesMet = false; break;
+            }
+        } else { bArrayTilesMet = false; break; }
+    }
+
+    bool bArrayArmsMet = true;
+    for (const FArmSpawnSpec& ReqArm : CurrentStep.RequiredArms) {
+        bool bFound = false;
+        for (const FArmState& Arm : Sim->GetArms()) {
+            if (Arm.BaseHex.Q == ReqArm.Q && Arm.BaseHex.R == ReqArm.R && Arm.BaseHex.Level == ReqArm.Level) {
+                if (static_cast<uint8>(Arm.Facing) == ReqArm.Facing) {
+                    bFound = true; break;
+                }
+            }
+        }
+        if (!bFound) { bArrayArmsMet = false; break; }
+    }
+
+    bool bNeedsAction = CurrentStep.bRequiresTilePlacement || CurrentStep.bRequiresArmPlacement || CurrentStep.bShouldPauseGTM || (CurrentStep.RequiredTiles.Num() > 0) || (CurrentStep.RequiredArms.Num() > 0);
+    bool bGtmConditionMet = !CurrentStep.bShouldPauseGTM || (TickManager && TickManager->IsPlaying());
+
+    if (bTileConditionMet && bArmConditionMet && bArrayTilesMet && bArrayArmsMet && bGtmConditionMet && bNeedsAction) {
         AdvanceStep();
     }
 }
 
-void ATutorialDirector::CaptureGlyphs() {
-    ATestLevelDirector* TLD = GetOrSpawnTargetDirector();
-    if (bIsCapturingGlyphs || !TLD || !TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) return;
-    
-    // Force save the current state so we know our baseline
-    TLD->CommitPreviewEdits();
-    
-    CaptureBaseScenario = TLD->Scenarios[TLD->ActiveScenarioIndex];
-    bIsCapturingGlyphs = true;
 
-    UE_LOG(LogTemp, Log, TEXT("Started capturing glyphs..."));
-}
-
-void ATutorialDirector::EndCapture() {
-    ATestLevelDirector* TLD = GetOrSpawnTargetDirector();
-    if (!bIsCapturingGlyphs || !TLD || !TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) return;
-    
-    // Save current world into active scenario temporarily
-    TLD->CommitPreviewEdits();
-    
-    FScenarioSpec NewSpec = TLD->Scenarios[TLD->ActiveScenarioIndex];
-    
-    // Diff tiles
-    TMap<FHex, FPlacedTileSpec> OldTiles;
-    for (const FPlacedTileSpec& OldT : CaptureBaseScenario.Tiles) {
-        OldTiles.Add(OldT.Hex, OldT);
-    }
-    
-    for (const FPlacedTileSpec& NewT : NewSpec.Tiles) {
-        bool bIsNewOrChanged = false;
-        if (!OldTiles.Contains(NewT.Hex)) {
-            bIsNewOrChanged = true;
-        } else if (OldTiles[NewT.Hex].Kind != NewT.Kind || OldTiles[NewT.Hex].Dir != NewT.Dir) {
-            bIsNewOrChanged = true;
-        }
-        
-        if (bIsNewOrChanged) {
-            FTutorialStep NewStep;
-            NewStep.Message = FString::Printf(TEXT("Place the missing tile at %d, %d"), NewT.Hex.Q, NewT.Hex.R);
-            NewStep.bRequiresTilePlacement = true;
-            NewStep.TargetHex = NewT.Hex;
-            NewStep.RequiredTileKind = NewT.Kind;
-            
-            if (NewT.Kind == ETileKind::Belt || NewT.Kind == ETileKind::Bond || NewT.Kind == ETileKind::Unbond) {
-                NewStep.bRequiresDirection = true;
-                NewStep.RequiredDirection = NewT.Dir;
-            }
-            
-            CaptureBaseScenario.TutorialSteps.Add(NewStep);
-        }
-    }
-    
-    // Diff arms
-    TMap<FHex, FArmSpawnSpec> OldArms;
-    for (const FArmSpawnSpec& OldA : CaptureBaseScenario.Arms) {
-        OldArms.Add(FHex(OldA.Q, OldA.R, OldA.Level), OldA);
-    }
-    
-    for (const FArmSpawnSpec& NewA : NewSpec.Arms) {
-        FHex ArmHex = FHex(NewA.Q, NewA.R, NewA.Level);
-        bool bIsNewOrChanged = false;
-        
-        if (!OldArms.Contains(ArmHex)) {
-            bIsNewOrChanged = true;
-        } else if (OldArms[ArmHex].Facing != NewA.Facing) {
-            bIsNewOrChanged = true;
-        }
-        
-        if (bIsNewOrChanged) {
-            FTutorialStep NewStep;
-            NewStep.Message = FString::Printf(TEXT("Place an arm at %d, %d facing direction %d"), NewA.Q, NewA.R, NewA.Facing);
-            NewStep.bRequiresArmPlacement = true;
-            NewStep.TargetHex = ArmHex;
-            NewStep.RequiredArmFacing = NewA.Facing;
-            CaptureBaseScenario.TutorialSteps.Add(NewStep);
-        }
-    }
-    
-    // Revert the level back to the state BEFORE capture, but importantly keep the new TutorialSteps we just generated
-    TLD->Scenarios[TLD->ActiveScenarioIndex] = CaptureBaseScenario;
-    TLD->BuildActiveScenario();
-    
-    bIsCapturingGlyphs = false;
-    UE_LOG(LogTemp, Log, TEXT("Finished capturing glyphs. Captured steps added and simulated tiles removed."));
-
-#if WITH_EDITOR
-    // Ensure TLD executes its saving logic to explicitly mirror if necessary,
-    // though BuildActiveScenario combined with package dirty handles most of it.
-    if (UPackage *Pkg = TLD->GetOutermost()) {
-        Pkg->SetDirtyFlag(true);
-    }
-#endif
-}
-
-void ATutorialDirector::ForceSaveTutorialBaseScenario() {
-    ATestLevelDirector* TLD = GetOrSpawnTargetDirector();
-    if (!TLD || !TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) return;
-    
-    TLD->CommitPreviewEdits();
-    
-#if WITH_EDITOR
-    if (GetWorld() && GetWorld()->IsPlayInEditor()) {
-        UEditorEngine *EE = Cast<UEditorEngine>(GEngine);
-        if (EE) {
-            UWorld *EditorWorld = EE->GetEditorWorldContext().World();
-            if (EditorWorld) {
-                for (TActorIterator<ATestLevelDirector> It(EditorWorld); It; ++It) {
-                    if (It->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) {
-                        It->Scenarios[TLD->ActiveScenarioIndex] = TLD->Scenarios[TLD->ActiveScenarioIndex];
-                        It->MarkActiveScenarioDirty();
-                        UE_LOG(LogTemp, Log, TEXT("Force-saved tutorial scenario back to Editor World."));
-                    }
-                    break;
-                }
-            }
-        }
-    } else {
-        UE_LOG(LogTemp, Log, TEXT("Saved tutorial base scenario (already in editor)."));
-    }
-    
-    if (UPackage *Pkg = TLD->GetOutermost()) {
-        Pkg->SetDirtyFlag(true);
-    }
-#endif
-}
 
 void ATutorialDirector::UpdateHighlight() {
     ATestLevelDirector* TLD = GetOrSpawnTargetDirector();
     if (!TLD || !TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) {
-        HighlightMeshComponent->SetVisibility(false);
+        HighlightISMC->SetVisibility(false);
         return;
     }
 
     FScenarioSpec& Scenario = TLD->Scenarios[TLD->ActiveScenarioIndex];
     if (CurrentStepIndex >= Scenario.TutorialSteps.Num()) {
-        HighlightMeshComponent->SetVisibility(false);
+        HighlightISMC->SetVisibility(false);
         return;
     }
 
     FTutorialStep& CurrentStep = Scenario.TutorialSteps[CurrentStepIndex];
-    if (Driver && (CurrentStep.bRequiresTilePlacement || CurrentStep.bRequiresArmPlacement)) {
-        FVector StepLocation = Driver->MapHexToWorld(CurrentStep.TargetHex);
-        HighlightMeshComponent->SetWorldLocation(StepLocation);
-        HighlightMeshComponent->SetVisibility(true);
-        if (HighlightStaticMesh) {
-            HighlightMeshComponent->SetStaticMesh(HighlightStaticMesh);
+    HighlightISMC->ClearInstances();
+    
+    if (HighlightStaticMesh) {
+        HighlightISMC->SetStaticMesh(HighlightStaticMesh);
+    }
+    if (HighlightMaterial) {
+        HighlightISMC->SetMaterial(0, HighlightMaterial);
+    }
+
+    if (Driver) {
+        bool bAnyHighlights = false;
+        
+        // Helper lambda to add an instance for a hex + direction
+        auto AddHighlight = [&](FHex Hex, int32 Dir) {
+            FVector Pos = Driver->MapHexToWorld(Hex);
+            FRotator Rot(0.0f, Dir * 60.0f, 0.0f);
+            HighlightISMC->AddInstance(FTransform(Rot, Pos, FVector(1.0f)));
+            bAnyHighlights = true;
+        };
+
+        if (CurrentStep.bRequiresTilePlacement || CurrentStep.bRequiresArmPlacement) {
+            int32 Dir = CurrentStep.bRequiresDirection ? CurrentStep.RequiredDirection : 0;
+            if (CurrentStep.bRequiresArmPlacement) Dir = CurrentStep.RequiredArmFacing;
+            AddHighlight(CurrentStep.TargetHex, Dir);
         }
-        if (HighlightMaterial) {
-            HighlightMeshComponent->SetMaterial(0, HighlightMaterial);
+
+        for (const FPlacedTileSpec& ReqTile : CurrentStep.RequiredTiles) {
+            AddHighlight(ReqTile.Hex, ReqTile.Dir);
         }
+
+        for (const FArmSpawnSpec& ReqArm : CurrentStep.RequiredArms) {
+            AddHighlight(FHex(ReqArm.Q, ReqArm.R, ReqArm.Level), ReqArm.Facing);
+        }
+
+        HighlightISMC->SetVisibility(bAnyHighlights);
     } else {
-        HighlightMeshComponent->SetVisibility(false);
+        HighlightISMC->SetVisibility(false);
     }
 }

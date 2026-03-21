@@ -10,6 +10,7 @@
 class AGameTickManager;
 class AOrbSimDriver;
 class UStaticMeshComponent;
+class UInstancedStaticMeshComponent;
 class UMaterialInterface;
 
 UCLASS()
@@ -44,25 +45,13 @@ public:
     void CheckCurrentStepRequirements();
 
     // --- Capture Glyphs Flow ---
-    UPROPERTY(VisibleAnywhere, Transient, Category = "Tutorial Capture")
-    bool bIsCapturingGlyphs = false;
+    // (Moved to TestLevelDirector)
 
-    UPROPERTY(Transient)
-    FScenarioSpec CaptureBaseScenario;
 
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Tutorial Capture", meta = (EditCondition = "!bIsCapturingGlyphs", EditConditionHides))
-    void CaptureGlyphs();
-
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Tutorial Capture", meta = (EditCondition = "bIsCapturingGlyphs", EditConditionHides))
-    void EndCapture();
-
-    // Forces the current base scenario to save to the Editor world, even if you are in Play-In-Editor testing.
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Tutorial Capture")
-    void ForceSaveTutorialBaseScenario();
 
     // Editor-only visualization of the target hex
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Visuals")
-    UStaticMeshComponent* HighlightMeshComponent;
+    class UInstancedStaticMeshComponent* HighlightISMC;
 
     // Use a specific highlight mesh
     UPROPERTY(EditAnywhere, Category = "Visuals")

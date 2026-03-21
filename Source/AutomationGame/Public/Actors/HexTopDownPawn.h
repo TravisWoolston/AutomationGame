@@ -212,6 +212,9 @@ private:
     if (bBlueprintPlacementMode) {
       // Cancel blueprint placement and return to kind placement
       CancelBlueprintPlacement();
+    } else if (Placer && Placer->PlaceKind != EPlaceKind::None) {
+      // Cancel individual tile placement
+      ClearSelection();
     } else {
       // Enhanced remove - delete tile AND spawned orbs at cursor
       RemoveTileAndOrbsAtCursor();
@@ -372,8 +375,10 @@ private:
   UPROPERTY(EditAnywhere, Category = "Camera")
   float HighlightSmoothingSpeed = 25.0f;
   // Position/Zoom smoothing
+public:
   FVector CameraTargetLocation;
   float CameraTargetZoom;
+private:
   bool bSmoothedTargetInitialized = false;
   UPROPERTY(EditAnywhere, Category = "Camera")
   float SmoothingSpeed = 10.0f;
