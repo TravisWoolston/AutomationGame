@@ -71,7 +71,13 @@ void ATutorialDirector::Tick(float DeltaTime) {
     if (Driver && Driver->GetSim() && TLD && TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) {
         if (CurrentStepIndex < TLD->Scenarios[TLD->ActiveScenarioIndex].TutorialSteps.Num()) {
             
-            if (CurrentStepTimeRemaining > 0.0f) {
+            if (bRequirementsMet) {
+                StepCompletionDelayRemaining -= DeltaTime;
+                if (StepCompletionDelayRemaining <= 0.0f) {
+                    bRequirementsMet = false;
+                    AdvanceStep();
+                }
+            } else if (CurrentStepTimeRemaining > 0.0f) {
                 CurrentStepTimeRemaining -= DeltaTime;
                 if (CurrentStepTimeRemaining <= 0.0f) {
                     AdvanceStep();
@@ -135,6 +141,7 @@ void ATutorialDirector::AdvanceStep() {
     FScenarioSpec& Scenario = TLD->Scenarios[TLD->ActiveScenarioIndex];
     if (CurrentStepIndex < Scenario.TutorialSteps.Num() - 1) {
         CurrentStepIndex++;
+        bRequirementsMet = false;
         
         FTutorialStep& Step = Scenario.TutorialSteps[CurrentStepIndex];
         CurrentStepTimeRemaining = Step.TextTimer;
@@ -238,7 +245,10 @@ void ATutorialDirector::CheckCurrentStepRequirements() {
     bool bGtmConditionMet = !CurrentStep.bShouldPauseGTM || (TickManager && TickManager->IsPlaying());
 
     if (bTileConditionMet && bArmConditionMet && bArrayTilesMet && bArrayArmsMet && bGtmConditionMet && bNeedsAction) {
-        AdvanceStep();
+        if (!bRequirementsMet) {
+            bRequirementsMet = true;
+            StepCompletionDelayRemaining = 1.0f; // 1 second delay
+        }
     }
 }
 
@@ -329,14 +339,16 @@ void ATutorialDirector::UpdateHighlight() {
 
     AHexFactoryActor* Factory = AHexFactoryActor::FindInWorld(GetWorld());
     
-    auto AddISMCInstance = [&](UInstancedStaticMeshComponent* ISMC, FHex Hex, int32 Dir, FVector MeshScale = FVector(1.0f)) {
+    auto AddISMCInstance = [&](UInstancedStaticMeshComponent* ISMC, FHex Hex, int32 Dir, FVector MeshScale = FVector(1.0f), bool bAtMidpoint = false) {
         if (!ISMC) return;
         FVector PosA = Driver->MapHexToWorld(Hex);
         FHex Neighbor = HexUtil::Neighbor(Hex, (EHexDir)(Dir % 6));
         FVector PosB = Driver->MapHexToWorld(Neighbor);
         FVector DirVec = (PosB - PosA).GetSafeNormal();
         float Yaw = DirVec.IsNearlyZero() ? 0.f : FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
-        ISMC->AddInstance(FTransform(FRotator(0.0f, Yaw, 0.0f), PosA, MeshScale));
+        
+        FVector FinalPos = bAtMidpoint ? (PosA + PosB) * 0.5f : PosA;
+        ISMC->AddInstance(FTransform(FRotator(0.0f, Yaw, 0.0f), FinalPos, MeshScale));
         ISMC->SetVisibility(true);
     };
 
@@ -377,7 +389,8 @@ void ATutorialDirector::UpdateHighlight() {
         // Always show the outline/preview using the actual mesh kind
         UInstancedStaticMeshComponent* PreviewISMC = GetPreviewISMC(MeshToUse, bIsCorrect);
         if (PreviewISMC) {
-            AddISMCInstance(PreviewISMC, ReqTile.Hex, ReqTile.Dir, Scale);
+            bool bMidpoint = (ReqTile.Kind == ETileKind::Bond || ReqTile.Kind == ETileKind::Unbond);
+            AddISMCInstance(PreviewISMC, ReqTile.Hex, ReqTile.Dir, Scale, bMidpoint);
         }
     }
 
@@ -405,7 +418,8 @@ void ATutorialDirector::UpdateHighlight() {
         }
 
         UInstancedStaticMeshComponent* RingISMC = GetRingHighlightISMC(bIsCorrect);
-        AddISMCInstance(RingISMC, CurrentStep.TargetHex, Dir);
+        bool bGoalMidpoint = (CurrentStep.bRequiresTilePlacement && (CurrentStep.RequiredTileKind == ETileKind::Bond || CurrentStep.RequiredTileKind == ETileKind::Unbond));
+        AddISMCInstance(RingISMC, CurrentStep.TargetHex, Dir, FVector(1.0f), bGoalMidpoint);
     }
 }
 

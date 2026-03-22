@@ -658,7 +658,7 @@ void USimWorldHex::GenerateNextSourceRow(FSourceGroup &Group) {
     int32 Weight;
   };
   const FTypeWeight TypeWeights[] = {{1, 80}, {2, 10}, {3, 5},
-                                     {4, 3},  {5, 2},  {6, 1}};
+                                     {4, 3},  {5, 3},  {6, 0}};
   const int32 TotalWeight = 100;
 
   auto PickWeightedType = [&]() -> uint8 {

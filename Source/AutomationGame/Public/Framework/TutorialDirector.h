@@ -41,6 +41,12 @@ public:
     UPROPERTY(BlueprintReadOnly, Transient, Category = "Tutorial")
     float CurrentStepTimeRemaining = 0.0f;
 
+    UPROPERTY(BlueprintReadOnly, Transient, Category = "Tutorial")
+    float StepCompletionDelayRemaining = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Transient, Category = "Tutorial")
+    bool bRequirementsMet = false;
+
     UFUNCTION(BlueprintCallable, Category = "Tutorial")
     void AdvanceStep();
 

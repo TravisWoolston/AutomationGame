@@ -236,7 +236,7 @@ public:
 private:
   /** The arm program being displayed */
   TArray<FArmInstr> ArmProgram;
-
+  
   /** Current command index being executed */
   int32 CurrentCommandIndex = -1;
 
@@ -252,6 +252,16 @@ private:
   float LastCommandProgress = -1.0f;
   int32 LastProgramSize = -1;
   TWeakObjectPtr<class ABasicArm> LastAssociatedArm = nullptr;
+
+  /** Cached GameManager for performance */
+  UPROPERTY()
+  class AGameManager *CachedGameManager = nullptr;
+
+  /** Helper to get rotation for facing the player camera */
+  FRotator GetCameraFacingRotation() const;
+
+  /** Helper to find/get the GameManager */
+  class AGameManager *GetGameManager();
 
   /** Initialize the widget */
   void InitializeWidget();

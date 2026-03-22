@@ -8,6 +8,8 @@
 #include "Framework/GameManager.h"
 #include "Sim/ArmTypes.h"
 #include "UI/ArmTimelineUMGWidget.h"
+#include "Camera/PlayerCameraManager.h"
+#include "EngineUtils.h"
 #include "UMG.h"
 
 UArmTimelineWidget::UArmTimelineWidget() {
@@ -108,6 +110,14 @@ void UArmTimelineWidget::TickComponent(
       UpdateWidgetContent();
     }
   }
+
+  // Update rotation every frame to face camera if orbiting
+  if (bTimelineVisible) {
+    AGameManager *GM = GetGameManager();
+    if (GM && GM->bRotateWidgetsForTopDown) {
+      SetWorldRotation(GetCameraFacingRotation());
+    }
+  }
 }
 
 void UArmTimelineWidget::OnSimulationStep(float StepSeconds) {
@@ -175,8 +185,13 @@ void UArmTimelineWidget::SetTimelineOffset(const FVector &Offset) {
 
   // For top-down view, rotate the widget to face up (towards camera)
   // This ensures the widget is readable from above
-  // Add 180° Y rotation to flip text right-side up
-  SetRelativeRotation(FRotator(90.0f, 180.0f, 0.0f));
+  AGameManager *GM = GetGameManager();
+  if (GM && GM->bRotateWidgetsForTopDown) {
+    SetWorldRotation(GetCameraFacingRotation());
+  } else {
+    // Legacy fixed rotation
+    SetRelativeRotation(FRotator(90.0f, 180.0f, 0.0f));
+  }
 }
 
 void UArmTimelineWidget::InitializeWidget() {
@@ -379,23 +394,13 @@ void UArmTimelineWidget::UpdateWidgetPosition(const FVector &ArmLocation,
 
   // Check if we should rotate for top-down view
   FRotator WidgetRotation = FRotator::ZeroRotator; // Default rotation
-  if (UWorld *World = GetWorld()) {
-    for (TActorIterator<AGameManager> It(World); It; ++It) {
-      AGameManager *GameManager = *It;
-      if (GameManager && GameManager->bRotateWidgetsForTopDown) {
-        // For top-down view, keep the widget facing up regardless of arm
-        // rotation
-        WidgetRotation = FRotator(90.0f, 180.0f, 0.0f);
-        break;
-      } else {
-        // For side view, follow the arm's rotation
-        WidgetRotation = ArmRotation;
-        break;
-      }
-    }
+  AGameManager *GM = GetGameManager();
+  if (GM && GM->bRotateWidgetsForTopDown) {
+    // For top-down view, keep the widget facing the camera
+    WidgetRotation = GetCameraFacingRotation();
   } else {
-    // Default to top-down rotation
-    WidgetRotation = FRotator(90.0f, 180.0f, 0.0f);
+    // For side view, follow the arm's rotation
+    WidgetRotation = ArmRotation;
   }
 
   // Set rotation immediately (no lerp needed)
@@ -440,23 +445,13 @@ void UArmTimelineWidget::UpdateWidgetPositionFromHex(
 
   // Check if we should rotate for top-down view
   FRotator WidgetRotation = FRotator::ZeroRotator; // Default rotation
-  if (UWorld *World = GetWorld()) {
-    for (TActorIterator<AGameManager> It(World); It; ++It) {
-      AGameManager *GameManager = *It;
-      if (GameManager && GameManager->bRotateWidgetsForTopDown) {
-        // For top-down view, keep the widget facing up regardless of arm
-        // rotation
-        WidgetRotation = FRotator(90.0f, 180.0f, 0.0f);
-        break;
-      } else {
-        // For side view, follow the arm's rotation
-        WidgetRotation = ArmRotation;
-        break;
-      }
-    }
+  AGameManager *GM = GetGameManager();
+  if (GM && GM->bRotateWidgetsForTopDown) {
+    // For top-down view, face the camera
+    WidgetRotation = GetCameraFacingRotation();
   } else {
-    // Default to top-down rotation
-    WidgetRotation = FRotator(90.0f, 180.0f, 0.0f);
+    // For side view, follow the arm's rotation
+    WidgetRotation = ArmRotation;
   }
 
   // Set the world transform
@@ -711,4 +706,32 @@ float UArmTimelineWidget::CalculateDistanceBasedScale(
   float Scale = FMath::Lerp(MinScale, MaxScale, NormalizedArmLength);
 
   return Scale;
+}
+
+FRotator UArmTimelineWidget::GetCameraFacingRotation() const {
+  if (UWorld *World = GetWorld()) {
+    APlayerController *PC = World->GetFirstPlayerController();
+    if (PC && PC->PlayerCameraManager) {
+      FRotator CameraRotation = PC->PlayerCameraManager->GetCameraRotation();
+      // To display facing the camera correctly for a world-space widget:
+      // 1. Invert the Pitch to face the viewer as the camera tilts
+      // 2. Add 180 to Yaw to flip the widget to face towards the camera axis
+      return FRotator(-CameraRotation.Pitch, CameraRotation.Yaw + 180.0f, 0.0f);
+    }
+  }
+  // Fallback to flat top-down if no camera info
+  return FRotator(90.0f, 180.0f, 0.0f);
+}
+
+AGameManager *UArmTimelineWidget::GetGameManager() {
+  if (CachedGameManager)
+    return CachedGameManager;
+
+  if (UWorld *World = GetWorld()) {
+    for (TActorIterator<AGameManager> It(World); It; ++It) {
+      CachedGameManager = *It;
+      return CachedGameManager;
+    }
+  }
+  return nullptr;
 }
