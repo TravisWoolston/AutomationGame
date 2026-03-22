@@ -21,6 +21,9 @@ ATutorialDirector::ATutorialDirector() {
     HighlightISMC = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("HighlightISMC"));
     RootComponent = HighlightISMC;
     HighlightISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    HighlightISMC->SetRenderCustomDepth(true);
+    HighlightISMC->SetCustomDepthStencilValue(1);
+    HighlightISMC->SetRenderInMainPass(false); // Only render the outline
     HighlightISMC->SetVisibility(false);
 }
 
@@ -239,21 +242,76 @@ void ATutorialDirector::CheckCurrentStepRequirements() {
 
 
 
+#include "Actors/HexFactoryActor.h"
+
+// ... existing includes ...
+
+UInstancedStaticMeshComponent* ATutorialDirector::GetPreviewISMC(UStaticMesh* Mesh, bool bIsGreen) {
+    if (!Mesh) return nullptr;
+    
+    int32 StencilValue = bIsGreen ? 3 : 2;
+    FString CompName = FString::Printf(TEXT("PreviewISMC_%s_%s"), *Mesh->GetName(), bIsGreen ? TEXT("Green") : TEXT("Red"));
+    
+    // Find existing
+    for (UInstancedStaticMeshComponent* Comp : PreviewISMCs) {
+        if (Comp && Comp->GetStaticMesh() == Mesh && Comp->CustomDepthStencilValue == StencilValue) {
+            return Comp;
+        }
+    }
+    
+    UInstancedStaticMeshComponent* NewISMC = NewObject<UInstancedStaticMeshComponent>(this, FName(*CompName));
+    NewISMC->SetupAttachment(RootComponent);
+    NewISMC->SetStaticMesh(Mesh);
+    
+    // Attempt to use a translucent version of the material or default highlight material
+    if (HighlightMaterial) {
+        NewISMC->SetMaterial(0, HighlightMaterial);
+    }
+    
+    NewISMC->SetRenderCustomDepth(true);
+    NewISMC->SetCustomDepthStencilValue(StencilValue);
+    NewISMC->SetRenderInMainPass(false); // Only render the outline
+    NewISMC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    NewISMC->RegisterComponent();
+    
+    PreviewISMCs.Add(NewISMC);
+    return NewISMC;
+}
+
+UInstancedStaticMeshComponent* ATutorialDirector::GetRingHighlightISMC(bool bIsGreen) {
+    if (!HighlightStaticMesh) return nullptr;
+    
+    int32 StencilValue = bIsGreen ? 3 : 2;
+    
+    // Check if the base HighlightISMC matches (first time use)
+    if (HighlightISMC->GetStaticMesh() == HighlightStaticMesh && HighlightISMC->CustomDepthStencilValue == StencilValue) {
+        return HighlightISMC;
+    }
+
+    // Search additional ring comps or create
+    return GetPreviewISMC(HighlightStaticMesh, bIsGreen);
+}
+
 void ATutorialDirector::UpdateHighlight() {
     ATestLevelDirector* TLD = GetOrSpawnTargetDirector();
     if (!TLD || !TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) {
         HighlightISMC->SetVisibility(false);
+        HighlightISMC->ClearInstances();
+        for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
         return;
     }
 
     FScenarioSpec& Scenario = TLD->Scenarios[TLD->ActiveScenarioIndex];
     if (CurrentStepIndex >= Scenario.TutorialSteps.Num()) {
         HighlightISMC->SetVisibility(false);
+        HighlightISMC->ClearInstances();
+        for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
         return;
     }
 
     FTutorialStep& CurrentStep = Scenario.TutorialSteps[CurrentStepIndex];
     HighlightISMC->ClearInstances();
+    for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
     
     if (HighlightStaticMesh) {
         HighlightISMC->SetStaticMesh(HighlightStaticMesh);
@@ -262,33 +320,120 @@ void ATutorialDirector::UpdateHighlight() {
         HighlightISMC->SetMaterial(0, HighlightMaterial);
     }
 
-    if (Driver) {
+    USimWorldHex* Sim = Driver ? Driver->GetSim() : nullptr;
+
+    if (Driver && Sim) {
         bool bAnyHighlights = false;
         
-        // Helper lambda to add an instance for a hex + direction
-        auto AddHighlight = [&](FHex Hex, int32 Dir) {
+        AHexFactoryActor* Factory = AHexFactoryActor::FindInWorld(GetWorld());
+        
+        auto AddISMCInstance = [&](UInstancedStaticMeshComponent* ISMC, FHex Hex, int32 Dir, FVector MeshScale = FVector(1.0f)) {
+            if (!ISMC) return;
             FVector Pos = Driver->MapHexToWorld(Hex);
             FRotator Rot(0.0f, Dir * 60.0f, 0.0f);
-            HighlightISMC->AddInstance(FTransform(Rot, Pos, FVector(1.0f)));
+            ISMC->AddInstance(FTransform(Rot, Pos, MeshScale));
+            ISMC->SetVisibility(true);
             bAnyHighlights = true;
         };
 
+        // Primary Target Hex Highlight
         if (CurrentStep.bRequiresTilePlacement || CurrentStep.bRequiresArmPlacement) {
+            bool bIsCorrect = false;
+            // Check if the current placement matches the requirements
+            if (CurrentStep.bRequiresTilePlacement) {
+                if (const FTile* Tile = Sim->GetTiles().Find(CurrentStep.TargetHex)) {
+                    if (Tile->Kind == CurrentStep.RequiredTileKind) {
+                        if (!CurrentStep.bRequiresDirection || Tile->Arg == CurrentStep.RequiredDirection) {
+                            bIsCorrect = true;
+                        }
+                    }
+                }
+            } else if (CurrentStep.bRequiresArmPlacement) {
+                for (const FArmState& Arm : Sim->GetArms()) {
+                    if (Arm.BaseHex == CurrentStep.TargetHex && static_cast<uint8>(Arm.Facing) == CurrentStep.RequiredArmFacing) {
+                        bIsCorrect = true;
+                        break;
+                    }
+                }
+            }
+
             int32 Dir = CurrentStep.bRequiresDirection ? CurrentStep.RequiredDirection : 0;
             if (CurrentStep.bRequiresArmPlacement) Dir = CurrentStep.RequiredArmFacing;
-            AddHighlight(CurrentStep.TargetHex, Dir);
+            
+            UInstancedStaticMeshComponent* RingISMC = GetRingHighlightISMC(bIsCorrect);
+            AddISMCInstance(RingISMC, CurrentStep.TargetHex, Dir);
         }
 
         for (const FPlacedTileSpec& ReqTile : CurrentStep.RequiredTiles) {
-            AddHighlight(ReqTile.Hex, ReqTile.Dir);
+            bool bIsGreen = false;
+            if (const FTile* Tile = Sim->GetTiles().Find(ReqTile.Hex)) {
+                if (Tile->Kind == ReqTile.Kind && Tile->Arg == ReqTile.Dir) {
+                    bIsGreen = true;
+                }
+            }
+            
+            UStaticMesh* MeshToUse = nullptr;
+            FVector MeshScale = FVector(1.0f);
+            if (Factory) {
+                if (ReqTile.Kind == ETileKind::Belt) {
+                    MeshToUse = Factory->BeltMesh;
+                    MeshScale = Factory->BeltScale;
+                } else if (ReqTile.Kind == ETileKind::Bond) {
+                    MeshToUse = Factory->BondMesh;
+                    MeshScale = Factory->BondScale;
+                } else if (ReqTile.Kind == ETileKind::Unbond) {
+                    MeshToUse = Factory->UnbondMesh;
+                    MeshScale = Factory->UnbondScale;
+                } else {
+                    MeshToUse = Factory->TileMesh;
+                }
+            }
+            
+            if (!MeshToUse) MeshToUse = HighlightStaticMesh;
+
+            UInstancedStaticMeshComponent* TargetISMC = GetPreviewISMC(MeshToUse, bIsGreen);
+            if (TargetISMC) {
+                AddISMCInstance(TargetISMC, ReqTile.Hex, ReqTile.Dir, MeshScale);
+            }
         }
 
         for (const FArmSpawnSpec& ReqArm : CurrentStep.RequiredArms) {
-            AddHighlight(FHex(ReqArm.Q, ReqArm.R, ReqArm.Level), ReqArm.Facing);
+            bool bIsGreen = false;
+            // Iterate over the arms list from simulation
+            for (const FArmState& Arm : Sim->GetArms()) {
+                if (Arm.BaseHex.Q == ReqArm.Q && Arm.BaseHex.R == ReqArm.R && Arm.BaseHex.Level == ReqArm.Level && static_cast<uint8>(Arm.Facing) == ReqArm.Facing) {
+                    bIsGreen = true;
+                    break;
+                }
+            }
+            
+            UInstancedStaticMeshComponent* RingISMC = GetRingHighlightISMC(bIsGreen);
+            AddISMCInstance(RingISMC, FHex(ReqArm.Q, ReqArm.R, ReqArm.Level), ReqArm.Facing);
         }
 
         HighlightISMC->SetVisibility(bAnyHighlights);
+        if (!bAnyHighlights) {
+            HighlightISMC->ClearInstances();
+            for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
+        }
     } else {
         HighlightISMC->SetVisibility(false);
+        HighlightISMC->ClearInstances();
+        for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
     }
+}
+
+bool ATutorialDirector::IsTutorialActive(UObject* WorldContextObject) {
+    if (!WorldContextObject) return false;
+    UWorld* World = WorldContextObject->GetWorld();
+    if (!World) return false;
+
+    for (TActorIterator<ATutorialDirector> It(World); It; ++It) {
+        if (ATestLevelDirector* TLD = (*It)->GetOrSpawnTargetDirector()) {
+            if (TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }

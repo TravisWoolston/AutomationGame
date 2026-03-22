@@ -1830,8 +1830,9 @@ int32 AHexFactoryActor::GetDisplayLevel(int32 Level) const {
   return Level;
 }
 AHexFactoryActor *AHexFactoryActor::FindInWorld(UWorld *World) {
-  if (!World)
-    return nullptr;
+    if (!World) {
+        return nullptr;
+    }
   for (TActorIterator<AHexFactoryActor> It(World); It; ++It) {
     return *It;
   }

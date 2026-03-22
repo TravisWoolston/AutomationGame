@@ -208,18 +208,8 @@ private:
   void PlaceReleased();
   void OrbitRotatePressed();
   void OrbitRotateReleased();
-  void RemovePressed() {
-    if (bBlueprintPlacementMode) {
-      // Cancel blueprint placement and return to kind placement
-      CancelBlueprintPlacement();
-    } else if (Placer && Placer->PlaceKind != EPlaceKind::None) {
-      // Cancel individual tile placement
-      ClearSelection();
-    } else {
-      // Enhanced remove - delete tile AND spawned orbs at cursor
-      RemoveTileAndOrbsAtCursor();
-    }
-  }
+  void RemovePressed();
+  bool MatchesCursorTileType() const;
 
   // Selection functions
   void StartSelection();

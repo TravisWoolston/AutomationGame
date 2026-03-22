@@ -17,6 +17,7 @@
 #include "Framework/GameManager.h"
 #include "Framework/GameTickManager.h"
 #include "Framework/TestLevelDirector.h"
+#include "Framework/TutorialDirector.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -3165,6 +3166,86 @@ void AHexTopDownPawn::DeleteSelectedTilesAndOrbs() {
   for (const FHex &Hex : SelectedTiles) {
     DeleteTileAndOrbs(Hex);
   }
+}
+
+void AHexTopDownPawn::RemovePressed() {
+  if (bBlueprintPlacementMode) {
+    // Cancel blueprint placement and return to kind placement
+    CancelBlueprintPlacement();
+  } else if (Placer && Placer->PlaceKind != EPlaceKind::None) {
+    if (MatchesCursorTileType()) {
+      // If we match the tile under cursor, remove it but KEEP the tool selected
+      RemoveTileAndOrbsAtCursor();
+    } else {
+      // Otherwise cancel the placement selection
+      ClearSelection();
+    }
+  } else {
+    // Enhanced remove - delete tile AND spawned orbs at cursor
+    RemoveTileAndOrbsAtCursor();
+  }
+}
+
+bool AHexTopDownPawn::MatchesCursorTileType() const {
+  if (!Placer || !Placer->IsHoverValid())
+    return false;
+
+  FHex CursorHex = Placer->GetHoverHex();
+
+  // Handle Actors (Arms, Walkers, Beacons, TriggerTiles)
+  if (Placer->PlaceKind == EPlaceKind::Arm) {
+    if (AHexTopDownPawn *MutableThis = const_cast<AHexTopDownPawn *>(this)) {
+      if (MutableThis->FindArmAtHex(CursorHex))
+        return true;
+    }
+  } else if (Placer->PlaceKind == EPlaceKind::Walker) {
+    // Check for walker at hex - would need a FindWalkerAtHex but let's stick to Tiles first
+  } else if (Placer->PlaceKind == EPlaceKind::RequestBeacon) {
+    // Check for beacon at hex
+  } else if (Placer->PlaceKind == EPlaceKind::TriggerTile) {
+    // Check for TriggerTile actor at hex
+  }
+
+  // Handle Tiles (Belts, Inputs, Outputs, etc.)
+  AOrbSimDriver *Driver = CachedOrbSimDriver;
+  if (!Driver) {
+    Driver = AOrbSimDriver::Find(GetWorld());
+  }
+  if (Driver && Driver->GetSim()) {
+    const TMap<FHex, FTile> &TileMap = Driver->GetSim()->GetTiles();
+    if (const FTile *ExistingTile = TileMap.Find(CursorHex)) {
+      ETileKind ExistingKind = ExistingTile->Kind;
+
+      switch (Placer->PlaceKind) {
+      case EPlaceKind::Input:
+        return ExistingKind == ETileKind::Input;
+      case EPlaceKind::Output:
+        return ExistingKind == ETileKind::Output;
+      case EPlaceKind::Belt:
+        return ExistingKind == ETileKind::Belt;
+      case EPlaceKind::Bond:
+        return ExistingKind == ETileKind::Bond;
+      case EPlaceKind::Unbond:
+        return ExistingKind == ETileKind::Unbond;
+      case EPlaceKind::ClusterOutput:
+        return ExistingKind == ETileKind::ClusterOutput;
+      case EPlaceKind::ClusterInput:
+        return ExistingKind == ETileKind::ClusterInput;
+      case EPlaceKind::ClusterSend:
+        return ExistingKind == ETileKind::ClusterSend;
+      case EPlaceKind::HelixOutput:
+        return ExistingKind == ETileKind::HelixOutput;
+      case EPlaceKind::HelixInput:
+        return ExistingKind == ETileKind::HelixInput;
+      case EPlaceKind::Source:
+        return ExistingKind == ETileKind::Source;
+      default:
+        break;
+      }
+    }
+  }
+
+  return false;
 }
 
 void AHexTopDownPawn::RemoveTileAndOrbsAtCursor() {

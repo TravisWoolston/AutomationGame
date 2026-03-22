@@ -1954,6 +1954,9 @@ void ATestLevelDirector::CaptureGlyphsDiffIntoStep() {
   FScenarioSpec NewSpec = Scenarios[ActiveScenarioIndex];
   FTutorialStep& TargetStep = Scenarios[EditTutorialScenarioIndex].TutorialSteps[EditTutorialStepIndex];
 
+  TargetStep.RequiredTiles.Empty();
+  TargetStep.RequiredArms.Empty();
+
   TMap<FHex, FPlacedTileSpec> OldTiles;
   for (const FPlacedTileSpec& OldT : CaptureBaseScenario.Tiles) { OldTiles.Add(OldT.Hex, OldT); }
   

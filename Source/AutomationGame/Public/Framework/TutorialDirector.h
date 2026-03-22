@@ -24,6 +24,9 @@ public:
     UPROPERTY(EditAnywhere, Category = "Refs")
     AGameTickManager *TickManager = nullptr;
     
+    UFUNCTION(BlueprintCallable, Category = "Tutorial")
+    static bool IsTutorialActive(UObject* WorldContextObject);
+    
     UPROPERTY(EditAnywhere, Category = "Refs")
     AOrbSimDriver *Driver = nullptr;
 
@@ -61,8 +64,13 @@ public:
     UPROPERTY(EditAnywhere, Category = "Visuals")
     UMaterialInterface* HighlightMaterial;
 
+    UPROPERTY(Transient)
+    TArray<class UInstancedStaticMeshComponent*> PreviewISMCs;
+
 private:
     void AutoFindOrSpawn();
     void UpdateHighlight();
+    class UInstancedStaticMeshComponent* GetPreviewISMC(class UStaticMesh* Mesh, bool bIsGreen);
+    class UInstancedStaticMeshComponent* GetRingHighlightISMC(bool bIsGreen);
     ATestLevelDirector* GetOrSpawnTargetDirector();
 };
