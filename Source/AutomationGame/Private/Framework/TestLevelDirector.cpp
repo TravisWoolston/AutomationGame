@@ -1976,6 +1976,9 @@ void ATestLevelDirector::CaptureGlyphsDiffIntoStep() {
       }
   }
   
+  // Automatically update the base scenario so the next step capture is relative to this one
+  CaptureBaseScenario = NewSpec;
+  
   MarkActiveScenarioDirty();
   MirrorScenarioEditsToEditor();
   UE_LOG(LogTemp, Log, TEXT("Pushed Glyph Diffs into Tutorial Step %d"), EditTutorialStepIndex);

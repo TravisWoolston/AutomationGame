@@ -2,6 +2,7 @@
 #include "Framework/GameTickManager.h"
 #include "Actors/OrbSimDriver.h"
 #include "Sim/SimWorldHex.h"
+#include "Sim/HexTypes.h"
 #include "Actors/HexTopDownPawn.h"
 #include "Engine/World.h"
 #include "Components/StaticMeshComponent.h"
@@ -79,6 +80,7 @@ void ATutorialDirector::Tick(float DeltaTime) {
                 FTutorialStep& CurrentStep = TLD->Scenarios[TLD->ActiveScenarioIndex].TutorialSteps[CurrentStepIndex];
                 if (CurrentStep.TextTimer <= 0.0f) {
                     CheckCurrentStepRequirements();
+                    UpdateHighlight();
                 }
             }
         }
@@ -294,132 +296,116 @@ UInstancedStaticMeshComponent* ATutorialDirector::GetRingHighlightISMC(bool bIsG
 
 void ATutorialDirector::UpdateHighlight() {
     ATestLevelDirector* TLD = GetOrSpawnTargetDirector();
-    if (!TLD || !TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) {
-        HighlightISMC->SetVisibility(false);
-        HighlightISMC->ClearInstances();
-        for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
-        return;
-    }
+    if (!TLD) return;
 
+    // 1. Force the simulation to sync
+    if (!Driver) {
+        for (TActorIterator<AOrbSimDriver> It(GetWorld()); It; ++It) {
+            Driver = *It;
+            break;
+        }
+    }
+    USimWorldHex* Sim = Driver ? Driver->GetSim() : nullptr;
+
+    if (!TLD->Scenarios.IsValidIndex(TLD->ActiveScenarioIndex)) return;
     FScenarioSpec& Scenario = TLD->Scenarios[TLD->ActiveScenarioIndex];
     if (CurrentStepIndex >= Scenario.TutorialSteps.Num()) {
-        HighlightISMC->SetVisibility(false);
         HighlightISMC->ClearInstances();
         for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
         return;
     }
 
     FTutorialStep& CurrentStep = Scenario.TutorialSteps[CurrentStepIndex];
+    
+    // Clear EVERYTHING before drawing this frame
     HighlightISMC->ClearInstances();
     for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
+
+    if (!Driver || !Sim) {
+        // This is a major error case - we need to see this in your log!
+        UE_LOG(LogTemp, Error, TEXT("TUTORIAL DIRECTOR: Simulation Driver or Sim is missing!"));
+        return;
+    }
+
+    AHexFactoryActor* Factory = AHexFactoryActor::FindInWorld(GetWorld());
     
-    if (HighlightStaticMesh) {
-        HighlightISMC->SetStaticMesh(HighlightStaticMesh);
-    }
-    if (HighlightMaterial) {
-        HighlightISMC->SetMaterial(0, HighlightMaterial);
-    }
+    auto AddISMCInstance = [&](UInstancedStaticMeshComponent* ISMC, FHex Hex, int32 Dir, FVector MeshScale = FVector(1.0f)) {
+        if (!ISMC) return;
+        FVector PosA = Driver->MapHexToWorld(Hex);
+        FHex Neighbor = HexUtil::Neighbor(Hex, (EHexDir)(Dir % 6));
+        FVector PosB = Driver->MapHexToWorld(Neighbor);
+        FVector DirVec = (PosB - PosA).GetSafeNormal();
+        float Yaw = DirVec.IsNearlyZero() ? 0.f : FMath::RadiansToDegrees(FMath::Atan2(DirVec.Y, DirVec.X));
+        ISMC->AddInstance(FTransform(FRotator(0.0f, Yaw, 0.0f), PosA, MeshScale));
+        ISMC->SetVisibility(true);
+    };
 
-    USimWorldHex* Sim = Driver ? Driver->GetSim() : nullptr;
-
-    if (Driver && Sim) {
-        bool bAnyHighlights = false;
+    // 2. REQUIRED TILES CHECK
+    for (const FPlacedTileSpec& ReqTile : CurrentStep.RequiredTiles) {
+        const FTile* ActualTile = Sim->GetTiles().Find(ReqTile.Hex);
         
-        AHexFactoryActor* Factory = AHexFactoryActor::FindInWorld(GetWorld());
-        
-        auto AddISMCInstance = [&](UInstancedStaticMeshComponent* ISMC, FHex Hex, int32 Dir, FVector MeshScale = FVector(1.0f)) {
-            if (!ISMC) return;
-            FVector Pos = Driver->MapHexToWorld(Hex);
-            FRotator Rot(0.0f, Dir * 60.0f, 0.0f);
-            ISMC->AddInstance(FTransform(Rot, Pos, MeshScale));
-            ISMC->SetVisibility(true);
-            bAnyHighlights = true;
-        };
-
-        // Primary Target Hex Highlight
-        if (CurrentStep.bRequiresTilePlacement || CurrentStep.bRequiresArmPlacement) {
-            bool bIsCorrect = false;
-            // Check if the current placement matches the requirements
-            if (CurrentStep.bRequiresTilePlacement) {
-                if (const FTile* Tile = Sim->GetTiles().Find(CurrentStep.TargetHex)) {
-                    if (Tile->Kind == CurrentStep.RequiredTileKind) {
-                        if (!CurrentStep.bRequiresDirection || Tile->Arg == CurrentStep.RequiredDirection) {
-                            bIsCorrect = true;
-                        }
-                    }
-                }
-            } else if (CurrentStep.bRequiresArmPlacement) {
-                for (const FArmState& Arm : Sim->GetArms()) {
-                    if (Arm.BaseHex == CurrentStep.TargetHex && static_cast<uint8>(Arm.Facing) == CurrentStep.RequiredArmFacing) {
-                        bIsCorrect = true;
-                        break;
-                    }
-                }
-            }
-
-            int32 Dir = CurrentStep.bRequiresDirection ? CurrentStep.RequiredDirection : 0;
-            if (CurrentStep.bRequiresArmPlacement) Dir = CurrentStep.RequiredArmFacing;
-            
-            UInstancedStaticMeshComponent* RingISMC = GetRingHighlightISMC(bIsCorrect);
-            AddISMCInstance(RingISMC, CurrentStep.TargetHex, Dir);
-        }
-
-        for (const FPlacedTileSpec& ReqTile : CurrentStep.RequiredTiles) {
-            bool bIsGreen = false;
-            if (const FTile* Tile = Sim->GetTiles().Find(ReqTile.Hex)) {
-                if (Tile->Kind == ReqTile.Kind && Tile->Arg == ReqTile.Dir) {
-                    bIsGreen = true;
-                }
-            }
-            
-            UStaticMesh* MeshToUse = nullptr;
-            FVector MeshScale = FVector(1.0f);
-            if (Factory) {
-                if (ReqTile.Kind == ETileKind::Belt) {
-                    MeshToUse = Factory->BeltMesh;
-                    MeshScale = Factory->BeltScale;
-                } else if (ReqTile.Kind == ETileKind::Bond) {
-                    MeshToUse = Factory->BondMesh;
-                    MeshScale = Factory->BondScale;
-                } else if (ReqTile.Kind == ETileKind::Unbond) {
-                    MeshToUse = Factory->UnbondMesh;
-                    MeshScale = Factory->UnbondScale;
+        bool bIsCorrect = false;
+        if (ActualTile) {
+            if (ActualTile->Kind == ReqTile.Kind) {
+                // If it's a belt/bond, we require direction match. 
+                // Empty tiles or simple tiles might not.
+                if (ReqTile.Kind == ETileKind::Empty || ActualTile->Arg == ReqTile.Dir) {
+                    bIsCorrect = true;
                 } else {
-                    MeshToUse = Factory->TileMesh;
+                    // LOG THE MISMATCH
+                    UE_LOG(LogTemp, Warning, TEXT("TUTORIAL MISMATCH at (%d,%d): Placed Dir %d, Required Dir %d"), 
+                           ReqTile.Hex.Q, ReqTile.Hex.R, (int32)ActualTile->Arg, (int32)ReqTile.Dir);
                 }
+            } else {
+                 UE_LOG(LogTemp, Warning, TEXT("TUTORIAL KIND MISMATCH at (%d,%d): Placed Kind %d, Required Kind %d"), 
+                        ReqTile.Hex.Q, ReqTile.Hex.R, (int32)ActualTile->Kind, (int32)ReqTile.Kind);
             }
-            
-            if (!MeshToUse) MeshToUse = HighlightStaticMesh;
-
-            UInstancedStaticMeshComponent* TargetISMC = GetPreviewISMC(MeshToUse, bIsGreen);
-            if (TargetISMC) {
-                AddISMCInstance(TargetISMC, ReqTile.Hex, ReqTile.Dir, MeshScale);
-            }
+        } else {
+            // LOG MISSING TILE
+            UE_LOG(LogTemp, Log, TEXT("TUTORIAL: Missing tile required at (%d,%d) Level %d"), ReqTile.Hex.Q, ReqTile.Hex.R, ReqTile.Hex.Level);
         }
 
-        for (const FArmSpawnSpec& ReqArm : CurrentStep.RequiredArms) {
-            bool bIsGreen = false;
-            // Iterate over the arms list from simulation
+        UStaticMesh* MeshToUse = HighlightStaticMesh;
+        FVector Scale = FVector(1.0f);
+        if (Factory) {
+            if (ReqTile.Kind == ETileKind::Belt) { MeshToUse = Factory->BeltMesh; Scale = Factory->BeltScale; }
+            else if (ReqTile.Kind == ETileKind::Bond) { MeshToUse = Factory->BondMesh; Scale = Factory->BondScale; }
+            else if (ReqTile.Kind == ETileKind::Unbond) { MeshToUse = Factory->UnbondMesh; Scale = Factory->UnbondScale; }
+            else { MeshToUse = Factory->TileMesh; }
+        }
+
+        // Always show the outline/preview using the actual mesh kind
+        UInstancedStaticMeshComponent* PreviewISMC = GetPreviewISMC(MeshToUse, bIsCorrect);
+        if (PreviewISMC) {
+            AddISMCInstance(PreviewISMC, ReqTile.Hex, ReqTile.Dir, Scale);
+        }
+    }
+
+    // 3. TARGET HEX (Main instruction)
+    if (CurrentStep.bRequiresTilePlacement || CurrentStep.bRequiresArmPlacement) {
+        bool bIsCorrect = false;
+        int32 Dir = CurrentStep.bRequiresDirection ? CurrentStep.RequiredDirection : 0;
+        
+        if (CurrentStep.bRequiresTilePlacement) {
+            if (const FTile* Tile = Sim->GetTiles().Find(CurrentStep.TargetHex)) {
+                if (Tile->Kind == CurrentStep.RequiredTileKind) {
+                    if (!CurrentStep.bRequiresDirection || Tile->Arg == CurrentStep.RequiredDirection) {
+                        bIsCorrect = true;
+                    }
+                }
+            }
+        } else if (CurrentStep.bRequiresArmPlacement) {
+            Dir = CurrentStep.RequiredArmFacing;
             for (const FArmState& Arm : Sim->GetArms()) {
-                if (Arm.BaseHex.Q == ReqArm.Q && Arm.BaseHex.R == ReqArm.R && Arm.BaseHex.Level == ReqArm.Level && static_cast<uint8>(Arm.Facing) == ReqArm.Facing) {
-                    bIsGreen = true;
+                if (Arm.BaseHex == CurrentStep.TargetHex && static_cast<uint8>(Arm.Facing) == CurrentStep.RequiredArmFacing) {
+                    bIsCorrect = true;
                     break;
                 }
             }
-            
-            UInstancedStaticMeshComponent* RingISMC = GetRingHighlightISMC(bIsGreen);
-            AddISMCInstance(RingISMC, FHex(ReqArm.Q, ReqArm.R, ReqArm.Level), ReqArm.Facing);
         }
 
-        HighlightISMC->SetVisibility(bAnyHighlights);
-        if (!bAnyHighlights) {
-            HighlightISMC->ClearInstances();
-            for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
-        }
-    } else {
-        HighlightISMC->SetVisibility(false);
-        HighlightISMC->ClearInstances();
-        for (auto* Comp : PreviewISMCs) if (Comp) Comp->ClearInstances();
+        UInstancedStaticMeshComponent* RingISMC = GetRingHighlightISMC(bIsCorrect);
+        AddISMCInstance(RingISMC, CurrentStep.TargetHex, Dir);
     }
 }
 
