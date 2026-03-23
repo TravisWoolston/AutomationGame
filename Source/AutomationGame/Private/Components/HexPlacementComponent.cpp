@@ -2419,11 +2419,49 @@ void UHexPlacementComponent::UpdatePreviewVisual(float DeltaTime) {
                                  0.6f); // Cyan for owner selection
           PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
         }
+      } else if (PlaceKind == EPlaceKind::Bond || PlaceKind == EPlaceKind::Unbond) {
+        if (BondPreviewMaterial) {
+          UMaterialInstanceDynamic *BondMID =
+              UMaterialInstanceDynamic::Create(BondPreviewMaterial, this);
+          if (BondMID) {
+            const FLinearColor Col = bPlaceOK
+                                         ? FLinearColor(0.f, 0.9f, 0.2f, 0.5f)
+                                         : FLinearColor(0.9f, 0.1f, 0.f, 0.6f);
+            BondMID->SetVectorParameterValue(FName("Tint"), Col);
+            BondMID->SetScalarParameterValue(FName("PadW"), BondPadWidthFactor);
+            BondMID->SetScalarParameterValue(FName("PadH"),
+                                             BondPadHeightFactor);
+
+            if (Driver) {
+              const FHex NeighborHex =
+                  HexUtil::Neighbor(HoverHex, (EHexDir)EffectiveDir);
+              const FVector CenterA_NoOffset = HexToWorld(HoverHex);
+              const FVector CenterB_NoOffset = HexToWorld(NeighborHex);
+
+              BondMID->SetScalarParameterValue(FName("TileRadius"),
+                                               Driver->GetTileSize());
+              BondMID->SetScalarParameterValue(
+                  FName("Span"), (CenterA_NoOffset - CenterB_NoOffset).Size());
+              BondMID->SetScalarParameterValue(
+                  FName("FlatTop"), (Driver->GetGridOrientation() ==
+                                     EHexOrientation::FlatTop)
+                                        ? 1.0f
+                                        : 0.0f);
+            }
+            PreviewComp->SetMaterial(0, BondMID);
+          }
+        } else if (PreviewMID) {
+          const FLinearColor Col = bPlaceOK ? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
+                                            : FLinearColor(0.9f, 0.f, 0.f, 0.6f);
+          PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
+          PreviewComp->SetMaterial(0, PreviewMID);
+        }
       } else if (PreviewMID) {
         // For other types, use the tinted material
         const FLinearColor Col = bPlaceOK ? FLinearColor(0.f, 0.9f, 0.f, 0.5f)
                                           : FLinearColor(0.9f, 0.f, 0.f, 0.6f);
         PreviewMID->SetVectorParameterValue(FName("Tint"), Col);
+        PreviewComp->SetMaterial(0, PreviewMID);
       }
 
       // Hide skeletal mesh component
