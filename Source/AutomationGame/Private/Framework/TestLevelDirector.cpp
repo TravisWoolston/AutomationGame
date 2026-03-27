@@ -367,17 +367,6 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
   }
 
   if (USimWorldHex *Sim = Driver->GetSim()) {
-    // Build a map of hex -> orb type for ClusterOutput tiles from the saved
-    // specs
-    TMap<FHex, uint8> ClusterOutputOrbTypes;
-    for (const FPlacedTileSpec &P : S.Tiles) {
-      if (P.Kind == ETileKind::ClusterOutput ||
-          P.Kind == ETileKind::DiscoveryClusterOutput ||
-          P.Kind == ETileKind::DiscoveryClusterInput) {
-        ClusterOutputOrbTypes.Add(P.Hex, P.OrbType);
-      }
-    }
-
     for (const FPlacedTileSpec &P : S.Tiles) {
       // In Goldberg mode, validate that the hex has a corresponding cell
       if (bGoldbergMode && GoldbergGrid) {
@@ -394,7 +383,14 @@ void ATestLevelDirector::ApplyScenario(const FScenarioSpec &S) {
 
       FTile T;
       T.Kind = P.Kind;
-      T.Arg = P.Dir;
+
+      // For ClusterOutput tiles, FTile.Arg stores the orb type (not a direction).
+      // P.OrbType holds the orb type, P.Dir holds the template ID (unused).
+      if (P.Kind == ETileKind::ClusterOutput) {
+        T.Arg = P.OrbType;
+      } else {
+        T.Arg = P.Dir;
+      }
       Sim->PlaceTile(P.Hex, T);
 
       // Store per-tile OrbType for Discovery tiles (since FTile only has Arg
@@ -1465,13 +1461,15 @@ void ATestLevelDirector::MirrorScenarioEditsToEditor() {
 
   for (TActorIterator<ATestLevelDirector> It(EditorWorld); It; ++It) {
     ATestLevelDirector *EditorDir = *It;
-    // Copy arrays (deep copy structs), but selectively ignore tutorials to preserve clean editor states
+    // Copy arrays (deep copy structs)
+    // For tutorial scenarios, sync Tiles, Arms, and TutorialSteps from PIE
+    // so that authoring tools (CaptureGlyphsBase, CaptureGlyphsDiffIntoStep) persist.
     TArray<FScenarioSpec> MergedScenarios;
     for (int32 i = 0; i < Scenarios.Num(); ++i) {
         if (Scenarios[i].TutorialSteps.Num() > 0 && EditorDir->Scenarios.IsValidIndex(i)) {
-             // Discard PIE changes for tutorial scenarios since the user is just playing/testing them.
-             // This prevents their solved glyphs from permanently saving.
-             // HOWEVER, we must explicitly sync TutorialSteps so authoring tools (like capturing context tiles) still mirror to the editor.
+             // For tutorial scenarios, keep the editor version's Tiles/Arms intact
+             // (prevents end-of-PIE SyncAllRuntimeArmEdits from wiping authored tiles).
+             // Only sync TutorialSteps so authoring tools still mirror to the editor.
              FScenarioSpec MergedSpec = EditorDir->Scenarios[i];
              MergedSpec.TutorialSteps = Scenarios[i].TutorialSteps;
              MergedScenarios.Add(MergedSpec);
@@ -1958,22 +1956,116 @@ void ATestLevelDirector::CaptureSelectedHexAsFocusTile() {
 void ATestLevelDirector::CaptureGlyphsBase() {
 #if WITH_EDITOR
   AutoFindOrSpawn();
-  
-  // 1. Permanently save the CURRENT board state back to the TLD Scenario Asset
-  // This ensures your 'Initial Tiles' are not lost when you stop PIE!
-  CommitPreviewEdits(); 
-  MarkActiveScenarioDirty();
-  MirrorScenarioEditsToEditor();
 
-  // 2. Refresh our transient 'CaptureBaseScenario' context used for next Diff
-  // We use the scenario we are currently editing tutorials for
-  if (Scenarios.IsValidIndex(EditTutorialScenarioIndex)) {
-      CaptureBaseScenario = Scenarios[EditTutorialScenarioIndex];
-  } else {
-      CaptureBaseScenario = Scenarios[ActiveScenarioIndex];
+  if (!Scenarios.IsValidIndex(ActiveScenarioIndex)) {
+    UE_LOG(LogTemp, Warning, TEXT("CaptureGlyphsBase: No valid ActiveScenarioIndex %d"), ActiveScenarioIndex);
+    return;
   }
 
-  UE_LOG(LogTemp, Log, TEXT("Captured and SAVED persistent Scenario Baseline for Tutorial authoring."));
+  if (!Driver || !Driver->GetSim()) {
+    UE_LOG(LogTemp, Warning, TEXT("CaptureGlyphsBase: No simulation available"));
+    return;
+  }
+
+  FScenarioSpec& Scenario = Scenarios[ActiveScenarioIndex];
+  USimWorldHex* Sim = Driver->GetSim();
+
+  // Build set of hexes already in base tiles (preserve these)
+  TSet<FHex> ExistingBaseHexes;
+  for (const FPlacedTileSpec& T : Scenario.Tiles) {
+    ExistingBaseHexes.Add(T.Hex);
+  }
+
+  // Build set of hexes that are tutorial requirements (exclude these)
+  TSet<FHex> TutorialHexes;
+  for (const FTutorialStep& Step : Scenario.TutorialSteps) {
+    for (const FPlacedTileSpec& RT : Step.RequiredTiles) {
+      TutorialHexes.Add(RT.Hex);
+    }
+    if (Step.bRequiresTilePlacement) {
+      TutorialHexes.Add(Step.TargetHex);
+    }
+  }
+
+  // Additively merge: only add sim tiles that are NEW
+  int32 AddedCount = 0;
+  for (const auto& KV : Sim->TileMap) {
+    const FHex& Hex = KV.Key;
+    const FTile& Tile = KV.Value;
+
+    if (ExistingBaseHexes.Contains(Hex)) continue;  // already a base tile
+    if (TutorialHexes.Contains(Hex)) continue;      // tutorial requirement
+
+    FPlacedTileSpec NewTile;
+    NewTile.Hex = Hex;
+    NewTile.Kind = Tile.Kind;
+    NewTile.Dir = Tile.Arg;
+
+    if (Tile.Kind == ETileKind::ClusterOutput) {
+      // For ClusterOutput, Tile.Arg stores the orb type, not a direction
+      NewTile.Dir = 0;          // Template ID (unused)
+      NewTile.OrbType = Tile.Arg;
+    } else if (Tile.Kind == ETileKind::Belt) {
+      if (const uint8* FoundType = Sim->BeltTileOrbTypes.Find(Hex)) {
+        NewTile.OrbType = *FoundType;
+      }
+    } else if (Tile.Kind == ETileKind::DiscoveryClusterOutput ||
+               Tile.Kind == ETileKind::DiscoveryClusterInput) {
+      if (const uint8* FoundType = Sim->DiscoveryTileOrbTypes.Find(Hex)) {
+        NewTile.OrbType = *FoundType;
+      }
+    }
+
+    Scenario.Tiles.Add(NewTile);
+    AddedCount++;
+  }
+
+  MarkActiveScenarioDirty();
+
+  // Directly write the new tiles into the EDITOR world's TLD.
+  // MirrorScenarioEditsToEditor intentionally skips Tiles/Arms for tutorial scenarios
+  // (to protect against end-of-PIE SyncAllRuntimeArmEdits wiping them).
+  // So we write directly to ensure persistence.
+  UEditorEngine* EE = Cast<UEditorEngine>(GEngine);
+  if (EE) {
+    UWorld* EditorWorld = EE->GetEditorWorldContext().World();
+    if (EditorWorld && EditorWorld != GetWorld()) {
+      for (TActorIterator<ATestLevelDirector> It(EditorWorld); It; ++It) {
+        ATestLevelDirector* EditorDir = *It;
+        if (EditorDir->Scenarios.IsValidIndex(ActiveScenarioIndex)) {
+          // Add the same new tiles to the editor scenario
+          FScenarioSpec& EditorScenario = EditorDir->Scenarios[ActiveScenarioIndex];
+
+          TSet<FHex> EditorExistingHexes;
+          for (const FPlacedTileSpec& T : EditorScenario.Tiles) {
+            EditorExistingHexes.Add(T.Hex);
+          }
+
+          // Copy newly added tiles that aren't already in the editor
+          for (const FPlacedTileSpec& T : Scenario.Tiles) {
+            if (!EditorExistingHexes.Contains(T.Hex)) {
+              EditorScenario.Tiles.Add(T);
+            }
+          }
+
+          EditorDir->MarkActiveScenarioDirty();
+          if (UPackage* Pkg = EditorDir->GetOutermost()) {
+            Pkg->SetDirtyFlag(true);
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  // Still mirror TutorialSteps normally
+  MirrorScenarioEditsToEditor();
+
+  // Refresh transient CaptureBaseScenario for the next Diff capture
+  CaptureBaseScenario = Scenario;
+
+  UE_LOG(LogTemp, Log, TEXT("CaptureGlyphsBase: Added %d new tiles to Scenario[%d] (%d total base tiles)."),
+         AddedCount, ActiveScenarioIndex, Scenario.Tiles.Num());
 #endif
 }
 void ATestLevelDirector::CaptureGlyphsDiffIntoStep() {

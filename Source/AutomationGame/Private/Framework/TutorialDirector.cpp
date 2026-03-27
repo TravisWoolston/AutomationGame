@@ -32,6 +32,11 @@ void ATutorialDirector::BeginPlay() {
     Super::BeginPlay();
     AutoFindOrSpawn();
 
+    // Bind to GTM tick events
+    if (TickManager) {
+        TickManager->OnFixedTick.AddDynamic(this, &ATutorialDirector::OnGTMTick);
+    }
+
     CurrentStepIndex = 0;
     
     ATestLevelDirector* TLD = GetOrSpawnTargetDirector();
@@ -39,6 +44,7 @@ void ATutorialDirector::BeginPlay() {
         if (TLD->Scenarios[TLD->ActiveScenarioIndex].TutorialSteps.Num() > 0) {
             FTutorialStep& FirstStep = TLD->Scenarios[TLD->ActiveScenarioIndex].TutorialSteps[0];
             CurrentStepTimeRemaining = FirstStep.TextTimer;
+            CurrentStepGTMStepsRemaining = FirstStep.GTMStepTimer;
             
             if (FirstStep.bShouldPauseGTM && TickManager) {
                 TickManager->Pause();
@@ -77,19 +83,52 @@ void ATutorialDirector::Tick(float DeltaTime) {
                     bRequirementsMet = false;
                     AdvanceStep();
                 }
-            } else if (CurrentStepTimeRemaining > 0.0f) {
-                CurrentStepTimeRemaining -= DeltaTime;
-                if (CurrentStepTimeRemaining <= 0.0f) {
-                    AdvanceStep();
-                }
             } else {
                 FTutorialStep& CurrentStep = TLD->Scenarios[TLD->ActiveScenarioIndex].TutorialSteps[CurrentStepIndex];
-                if (CurrentStep.TextTimer <= 0.0f) {
+
+                // Count down real-time timer
+                if (CurrentStepTimeRemaining > 0.0f) {
+                    CurrentStepTimeRemaining -= DeltaTime;
+                }
+
+                // Determine if each timer minimum has been met
+                bool bHasTextTimer = CurrentStep.TextTimer > 0.0f;
+                bool bHasGTMTimer  = CurrentStep.GTMStepTimer > 0;
+                bool bTextTimerDone = !bHasTextTimer || CurrentStepTimeRemaining <= 0.0f;
+                bool bGTMTimerDone  = !bHasGTMTimer  || CurrentStepGTMStepsRemaining <= 0;
+                bool bTimersDone    = bTextTimerDone && bGTMTimerDone;
+                bool bHasAnyTimer   = bHasTextTimer || bHasGTMTimer;
+
+                bool bHasRequirements = CurrentStep.bRequiresTilePlacement || CurrentStep.bRequiresArmPlacement ||
+                                        CurrentStep.bShouldPauseGTM || CurrentStep.RequiredTiles.Num() > 0 ||
+                                        CurrentStep.RequiredArms.Num() > 0;
+
+                if (bHasAnyTimer && !bTimersDone) {
+                    // Still waiting on timer minimums
+                    // If there are also requirements, keep checking them so highlights update
+                    if (bHasRequirements) {
+                        CheckCurrentStepRequirements();
+                        UpdateHighlight();
+                        // But block advancement even if requirements are met - timer not done
+                        bRequirementsMet = false;
+                    }
+                } else if (bHasRequirements) {
+                    // Timers satisfied (or none set), check requirements
                     CheckCurrentStepRequirements();
                     UpdateHighlight();
+                } else if (bHasAnyTimer && bTimersDone) {
+                    // Timers satisfied, no requirements - advance
+                    AdvanceStep();
                 }
+                // else: no timers, no requirements - wait for external advance
             }
         }
+    }
+}
+
+void ATutorialDirector::OnGTMTick(float StepSeconds) {
+    if (CurrentStepGTMStepsRemaining > 0) {
+        CurrentStepGTMStepsRemaining--;
     }
 }
 
@@ -145,6 +184,7 @@ void ATutorialDirector::AdvanceStep() {
         
         FTutorialStep& Step = Scenario.TutorialSteps[CurrentStepIndex];
         CurrentStepTimeRemaining = Step.TextTimer;
+        CurrentStepGTMStepsRemaining = Step.GTMStepTimer;
         
         UE_LOG(LogTemp, Log, TEXT("Tutorial Advance to Step %d: %s"), CurrentStepIndex, *Step.Message);
         

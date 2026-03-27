@@ -133,9 +133,15 @@ struct FTutorialStep {
     UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(MultiLine=true))
     FString Message;
 
-    // Time to display this message before proceeding. If > 0, it advances automatically after this time. If 0, it waits for the placement conditions below.
+    // Real-time seconds this step should display before it may advance.
+    // Acts as a minimum when GTMStepTimer is also set.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin=0.0f))
     float TextTimer = 0.0f;
+
+    // Number of GTM simulation ticks this step should remain active before it may advance.
+    // Acts as a minimum when TextTimer is also set.  Both must be satisfied.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin=0))
+    int32 GTMStepTimer = 0;
 
     // Should GameTickManager be paused when this step begins?
     UPROPERTY(EditAnywhere, BlueprintReadWrite)

@@ -42,6 +42,9 @@ public:
     float CurrentStepTimeRemaining = 0.0f;
 
     UPROPERTY(BlueprintReadOnly, Transient, Category = "Tutorial")
+    int32 CurrentStepGTMStepsRemaining = 0;
+
+    UPROPERTY(BlueprintReadOnly, Transient, Category = "Tutorial")
     float StepCompletionDelayRemaining = 0.0f;
 
     UPROPERTY(BlueprintReadOnly, Transient, Category = "Tutorial")
@@ -79,4 +82,7 @@ private:
     class UInstancedStaticMeshComponent* GetPreviewISMC(class UStaticMesh* Mesh, bool bIsGreen);
     class UInstancedStaticMeshComponent* GetRingHighlightISMC(bool bIsGreen);
     ATestLevelDirector* GetOrSpawnTargetDirector();
+
+    UFUNCTION()
+    void OnGTMTick(float StepSeconds);
 };
