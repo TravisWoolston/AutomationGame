@@ -412,10 +412,11 @@ void ATutorialDirector::UpdateHighlight() {
                  UE_LOG(LogTemp, Warning, TEXT("TUTORIAL KIND MISMATCH at (%d,%d): Placed Kind %d, Required Kind %d"), 
                         ReqTile.Hex.Q, ReqTile.Hex.R, (int32)ActualTile->Kind, (int32)ReqTile.Kind);
             }
-        } else {
-            // LOG MISSING TILE
-            UE_LOG(LogTemp, Log, TEXT("TUTORIAL: Missing tile required at (%d,%d) Level %d"), ReqTile.Hex.Q, ReqTile.Hex.R, ReqTile.Hex.Level);
-        }
+        } 
+        // else {
+        //     // LOG MISSING TILE
+        //     UE_LOG(LogTemp, Log, TEXT("TUTORIAL: Missing tile required at (%d,%d) Level %d"), ReqTile.Hex.Q, ReqTile.Hex.R, ReqTile.Hex.Level);
+        // }
 
         UStaticMesh* MeshToUse = HighlightStaticMesh;
         FVector Scale = FVector(1.0f);

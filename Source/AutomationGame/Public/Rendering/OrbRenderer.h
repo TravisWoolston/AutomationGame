@@ -97,6 +97,10 @@ private:
   // Key: OrbType, Value: Map of AnimatedOrbIndex -> InstanceIndex
   TMap<EOrbType, TMap<int32, int32>> AnimatedOrbToInstanceIndex;
 
+  // Track transmutation merge orb instances
+  // Key: OrbType, Value: Map of unique merge orb key -> InstanceIndex  
+  TMap<EOrbType, TMap<int32, int32>> TransmutationOrbToInstanceIndex;
+
   // Flag to trigger full ISM rebuild (set when simulation step changes)
   bool bNeedFullRebuild = true;
 
@@ -112,6 +116,9 @@ protected:
 
   // Render animated orbs for input/output effects
   void RenderAnimatedOrbs();
+
+  // Render transmutation merge orbs (ring orbs converging toward center)
+  void RenderTransmutationOrbs();
 
   // Track what we are currently bound to (to avoid duplicates and to unbind
   // safely)

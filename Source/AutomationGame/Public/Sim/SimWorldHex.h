@@ -139,6 +139,19 @@ public:
     int32 PartnerItemId = 0;
   };
 
+  /** Visual animation for a transmutation event (7 Void → CatalystX).
+   *  Ring orbs visually merge toward CenterHex over the animation duration. */
+  struct FTransmutationAnimation {
+    FHex CenterHex;                     // The hex where the CatalystX was created
+    TArray<FHex> ConsumedHexes;         // The 6 ring hexes (start positions for merge)
+    TArray<int32> ConsumedItemIds;      // IDs of the consumed ring items
+    TArray<FItem> ConsumedItems;        // Item data for rendering the merging orbs
+    int32 CenterItemId = 0;             // ID of the center item (now CatalystX)
+    int32 StartStep = 0;                // Sim step when transmutation occurred
+    int32 CompletionStep = 0;           // Sim step when animation finishes
+    bool bActive = true;
+  };
+
   /** Bond formation that is visually animating before becoming a simulation
    * bond. */
   struct FPendingBondFormation {
@@ -505,6 +518,13 @@ public:
   void UpdateAnimatedOrbs(float DeltaTime);
   void ProcessPendingBondFormations(float DeltaTime);
 
+  /** Transmutation animation accessors */
+  const TArray<FTransmutationAnimation> &GetTransmutationAnimations() const {
+    return TransmutationAnimations;
+  }
+  const TSet<int32> &GetTransmutedItemIds() const { return TransmutedItemIds; }
+  void UpdateTransmutationAnimations(float DeltaTime);
+
   void OnArmRotationComplete(int32 ArmIndex);
   void OnArmRotationFullyComplete(int32 ArmIndex);
   void CancelPendingBondFormationsForArm(int32 ArmIndex);
@@ -595,6 +615,15 @@ private:
   // Items currently on source tiles — hidden from board renderer because
   // the helix animation renders them at ZOffset=0
   TSet<int32> SourceTileItemIds;
+
+  // Items consumed by transmutation this tick — arms holding these must reset
+  TSet<int32> TransmutedItemIds;
+
+  // Active transmutation animations (for visual effects)
+  TArray<FTransmutationAnimation> TransmutationAnimations;
+
+  // Ticks for the transmutation consume animation
+  int32 TRANSMUTATION_CONSUME_TICKS = 1;
 
   TMap<FHex, bool> OutputTileGates;
   TMap<FHex, TMap<FHex, bool>> BeltTriggerSignals;

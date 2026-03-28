@@ -1,4 +1,4 @@
-﻿#include "Rendering/OrbRenderer.h"
+#include "Rendering/OrbRenderer.h"
 #include "Actors/BasicArm.h"
 #include "Actors/OrbSimDriver.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -302,11 +302,15 @@ void UOrbRenderer::TickComponent(float DeltaTime, enum ELevelTick,
   // Update animated orbs
   Sim->UpdateAnimatedOrbs(DeltaTime);
 
+  // Update transmutation merge animations
+  Sim->UpdateTransmutationAnimations(DeltaTime);
+
   // Process pending bond formations
   Sim->ProcessPendingBondFormations(DeltaTime);
 
   RebuildInstances();
   RebuildBondedOrbs();
+  RenderTransmutationOrbs();
 
   // Update PrevAlpha at the END so it's correct for the next frame
   PrevAlpha = Alpha;
@@ -628,7 +632,8 @@ void UOrbRenderer::RebuildInstances() {
       }
     }
     OrbIdToInstanceIndex.Empty();
-    AnimatedOrbToInstanceIndex.Empty(); // Also clear animated orb tracking
+    AnimatedOrbToInstanceIndex.Empty();
+    TransmutationOrbToInstanceIndex.Empty();
     bNeedFullRebuild = false;
   }
 
@@ -1200,4 +1205,178 @@ void UOrbRenderer::RenderAnimatedOrbs() {
 
   // Animated bonds are now rendered in RebuildBondedOrbs() to avoid clearing
   // issues
+}
+
+// ============================================================
+// Render merging ring orbs for active transmutations
+// Each consumed Void orb lerps from its ring hex toward the center CatalystX hex.
+// The animation follows the cluster's current position (e.g. arm movement).
+// ============================================================
+void UOrbRenderer::RenderTransmutationOrbs() {
+  if (!Sim || !bShowOrbs)
+    return;
+
+  const TArray<USimWorldHex::FTransmutationAnimation> &Anims =
+      Sim->GetTransmutationAnimations();
+  if (Anims.Num() == 0)
+    return;
+
+  const AActor *Anchor = GetAnchor();
+  const FVector AnchorV =
+      Anchor ? Anchor->GetActorLocation() : FVector::ZeroVector;
+  const float Tile = Driver ? Driver->GetTileSize() : Sim->TileSizeUU;
+  const float GridYaw = Driver ? Driver->GetGridYaw() : 0.f;
+  const EHexOrientation Ori =
+      Driver ? Driver->GetGridOrientation() : EHexOrientation::PointyTop;
+
+  // Get alpha for sub-step interpolation
+  float Alpha = 0.0f;
+  if (AGameTickManager *TickManager = AGameTickManager::Get(this)) {
+    Alpha = TickManager->GetStepAlpha();
+  } else if (Sim) {
+    Alpha = Sim->GetFrameAlpha();
+  }
+
+  const int32 CurrentStep = Sim->GetStepCounter();
+
+  // Helper: hex to world position
+  auto HexToWorld = [&](const FHex &H) -> FVector {
+    if (Driver)
+      return Driver->MapHexToWorld(H);
+    const FHexAxial A(H.Q, H.R);
+    const FVector2D LocalXY = HexCoord::AxialToXY(A, Tile, Ori);
+    const FVector2D RotXY = HexCoord::Rotate2D(LocalXY, GridYaw);
+    const float Z = (H.Level == 0) ? (Sim ? Sim->OrbZOffset : 50.f)
+                                   : -(Sim ? Sim->OrbZOffset : 50.f);
+    return AnchorV + FVector(RotXY.X, RotXY.Y, Z);
+  };
+
+  for (int32 AnimIdx = 0; AnimIdx < Anims.Num(); ++AnimIdx) {
+    const USimWorldHex::FTransmutationAnimation &Anim = Anims[AnimIdx];
+    if (!Anim.bActive)
+      continue;
+
+    // ---- Find the LIVE world position of the center item (CatalystX) ----
+    // This makes the animation follow arm movement, belt movement, etc.
+    const FVector OriginalCenterWorld = HexToWorld(Anim.CenterHex);
+    FVector LiveCenterWorld = OriginalCenterWorld;
+    bool bCenterFound = false;
+
+    // First check arms (most complex transform, handled gracefully by
+    // BasicArm::GetOrbLocation)
+    if (UWorld *World = GetWorld()) {
+      for (TActorIterator<ABasicArm> It(World); It; ++It) {
+        if (ABasicArm *Arm = *It) {
+          if (Arm->IsHoldingOrb(Anim.CenterItemId)) {
+            LiveCenterWorld = Arm->GetOrbLocation(Anim.CenterItemId);
+            bCenterFound = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // Check board items (single orbs or clusters) as fallback
+    if (!bCenterFound) {
+      for (const auto &KV : Sim->ItemMap) {
+        // Did it move this step? (belt movement)
+        FHex PrevAnchor = KV.Key;
+        if (const FHex *FoundPrev = Sim->PrevItemHex.Find(KV.Value.Id)) {
+          PrevAnchor = *FoundPrev;
+        }
+
+        if (!KV.Value.bIsCluster && KV.Value.Id == Anim.CenterItemId) {
+          const FVector StartV = HexToWorld(PrevAnchor);
+          const FVector EndV = HexToWorld(KV.Key);
+          LiveCenterWorld = FMath::Lerp(StartV, EndV, Alpha);
+          bCenterFound = true;
+          break;
+        }
+
+        // Board cluster sub-orb
+        if (KV.Value.bIsCluster) {
+          for (const FOrbData &Sub : KV.Value.Orbs) {
+            if (Sub.ItemId == Anim.CenterItemId) {
+              FHex PrevSub(PrevAnchor.Q + Sub.dQ, PrevAnchor.R + Sub.dR, PrevAnchor.Level);
+              FHex CurrSub(KV.Key.Q + Sub.dQ, KV.Key.R + Sub.dR, KV.Key.Level);
+              const FVector StartV = HexToWorld(PrevSub);
+              const FVector EndV = HexToWorld(CurrSub);
+              LiveCenterWorld = FMath::Lerp(StartV, EndV, Alpha);
+              bCenterFound = true;
+              break;
+            }
+          }
+          if (bCenterFound)
+            break;
+        }
+      }
+    }
+
+    // Compute the delta between live and original center position
+    const FVector CenterDelta = LiveCenterWorld - OriginalCenterWorld;
+
+    // Calculate animation progress (0.0 → 1.0)
+    const int32 AnimDuration = Anim.CompletionStep - Anim.StartStep;
+    float StepProgress = 0.f;
+
+    if (CurrentStep < Anim.StartStep) {
+      StepProgress = 0.f;
+    } else if (CurrentStep >= Anim.CompletionStep) {
+      StepProgress = 1.f;
+    } else {
+      const int32 StepsElapsed = CurrentStep - Anim.StartStep;
+      StepProgress =
+          (StepsElapsed + Alpha) / FMath::Max(1.0f, (float)AnimDuration);
+    }
+
+    const float Progress = FMath::Clamp(StepProgress, 0.f, 1.f);
+
+    // Use an ease-in curve so they accelerate toward center
+    const float EasedProgress = Progress * Progress;
+
+    // Scale shrinks from full to near-zero as orbs merge in
+    const float Scale = FMath::Lerp(OrbScale, OrbScale * 0.1f, EasedProgress);
+
+    // Draw each consumed ring orb merging toward live center
+    const int32 NumConsumed =
+        FMath::Min(Anim.ConsumedHexes.Num(), Anim.ConsumedItems.Num());
+
+    for (int32 ci = 0; ci < NumConsumed; ++ci) {
+      const FHex &RingHex = Anim.ConsumedHexes[ci];
+      const FItem &ConsumedItem = Anim.ConsumedItems[ci];
+
+      // Apply the center delta to the ring start position so it follows
+      const FVector StartWorld = HexToWorld(RingHex) + CenterDelta;
+      const FVector MergePos =
+          FMath::Lerp(StartWorld, LiveCenterWorld, EasedProgress);
+
+      // Determine orb type for ISM selection
+      EOrbType OrbType = ConsumedItem.bIsCluster
+                             ? (ConsumedItem.Orbs.Num() > 0
+                                    ? (EOrbType)ConsumedItem.Orbs[0].Type
+                                    : EOrbType::Void)
+                             : ConsumedItem.Single.Type;
+
+      if (UInstancedStaticMeshComponent **ISMPtr = OrbTypeISMs.Find(OrbType)) {
+        if (UInstancedStaticMeshComponent *ISM = *ISMPtr) {
+          FTransform Transform(FRotator::ZeroRotator, MergePos,
+                               FVector(Scale));
+
+          // Unique key for this specific merge orb
+          const int32 Key = AnimIdx * 10 + ci;
+          TMap<int32, int32> &InstanceMap =
+              TransmutationOrbToInstanceIndex.FindOrAdd(OrbType);
+          int32 *ExistingIdx = InstanceMap.Find(Key);
+
+          if (ExistingIdx && ISM->IsValidInstance(*ExistingIdx)) {
+            ISM->UpdateInstanceTransform(*ExistingIdx, Transform, false, true,
+                                         false);
+          } else {
+            int32 NewIdx = ISM->AddInstance(Transform);
+            InstanceMap.Add(Key, NewIdx);
+          }
+        }
+      }
+    }
+  }
 }

@@ -2330,6 +2330,9 @@ void USimWorldHex::StepOrbStability() {
 // Checks both board items AND held clusters (arms + walker feet).
 // ============================================================
 void USimWorldHex::StepTransmutations() {
+  // Clear previous tick's consumed IDs
+  TransmutedItemIds.Empty();
+
   // Build a lookup: ItemId -> (Hex, OrbType) for ALL orbs in the simulation
   TMap<int32, FHex> ItemToHex;
   TMap<int32, EOrbType> ItemToType;
@@ -2404,13 +2407,24 @@ void USimWorldHex::StepTransmutations() {
   }
 
   // --- Now scan ALL indexed Void orbs as potential ring centers ---
-  TSet<int32> TransmutedCenters;
+  // Each transmutation: center Void + 6 bonded Void ring -> center becomes CatalystX, ring consumed
+  struct FTransmutationCandidate {
+    int32 CenterId;
+    FHex CenterHex;
+    TArray<int32> RingIds;
+    TArray<FHex> RingHexes;
+  };
+  TArray<FTransmutationCandidate> Candidates;
+  TSet<int32> AlreadyClaimed; // Prevent overlapping transmutations
 
   for (const auto &TypeKV : ItemToType) {
     if (TypeKV.Value != EOrbType::Void)
       continue;
 
     const int32 CenterId = TypeKV.Key;
+    if (AlreadyClaimed.Contains(CenterId))
+      continue;
+
     const FHex *CenterHexPtr = ItemToHex.Find(CenterId);
     if (!CenterHexPtr)
       continue;
@@ -2433,6 +2447,9 @@ void USimWorldHex::StepTransmutations() {
         continue;
 
       int32 NeighborId = (B.ItemA == CenterId) ? B.ItemB : B.ItemA;
+      if (AlreadyClaimed.Contains(NeighborId))
+        continue;
+
       const FHex *NeighborHex = ItemToHex.Find(NeighborId);
       const EOrbType *NeighborType = ItemToType.Find(NeighborId);
 
@@ -2451,111 +2468,378 @@ void USimWorldHex::StepTransmutations() {
       continue;
 
     // All checks passed: 1 Void center bonded to 6 Void neighbors at distance 1
-    TransmutedCenters.Add(CenterId);
+    FTransmutationCandidate Candidate;
+    Candidate.CenterId = CenterId;
+    Candidate.CenterHex = CenterHex;
+    Candidate.RingIds = RingIds;
+    Candidate.RingHexes = RingHexes;
+    Candidates.Add(Candidate);
+
+    // Claim all 7 orbs to prevent overlapping transmutations
+    AlreadyClaimed.Add(CenterId);
+    for (int32 RId : RingIds)
+      AlreadyClaimed.Add(RId);
   }
 
   // --- Apply transmutations ---
-  for (int32 CenterId : TransmutedCenters) {
-    bool bApplied = false;
+  for (const FTransmutationCandidate &Cand : Candidates) {
+    // ========================================
+    // 1. Transmute center Void -> CatalystX
+    // ========================================
+    bool bCenterApplied = false;
 
-    // Check board items (single orbs)
+    // Board items (single orbs)
     for (auto &KV : ItemMap) {
       FItem &Item = KV.Value;
-      if (!Item.bIsCluster && Item.Id == CenterId) {
+      if (!Item.bIsCluster && Item.Id == Cand.CenterId) {
         Item.Single.Type = EOrbType::CatalystX;
         Item.Single.Color = EOrbColor::Magenta;
         Item.Single.Stability = 999999;
         OrbAt.Add(KV.Key, (uint8)EOrbType::CatalystX);
-        // UE_LOG(LogTemp, Log,
-        //        TEXT("TRANSMUTATION: Void orb %d at (%d,%d) became CatalystX!"),
-        //        CenterId, KV.Key.Q, KV.Key.R);
-        bApplied = true;
+        bCenterApplied = true;
         break;
       }
-      // Board cluster sub-orbs
       if (Item.bIsCluster) {
         for (FOrbData &Sub : Item.Orbs) {
-          if (Sub.ItemId == CenterId) {
+          if (Sub.ItemId == Cand.CenterId) {
             Sub.Type = (uint8)EOrbType::CatalystX;
             Sub.Color = (uint8)EOrbColor::Magenta;
             Sub.Stability = 999999;
-            // UE_LOG(LogTemp, Log,
-            //        TEXT("TRANSMUTATION: Void sub-orb %d became CatalystX!"),
-            //        CenterId);
-            bApplied = true;
+            bCenterApplied = true;
             break;
           }
         }
-        if (bApplied)
+        if (bCenterApplied)
           break;
       }
     }
-    if (bApplied)
-      continue;
 
-    // Check held items (arms)
-    for (FArmState &Arm : Arms) {
-      if (!Arm.bHolding)
-        continue;
-      if (Arm.Held.bIsCluster) {
-        for (FOrbData &Sub : Arm.Held.Orbs) {
-          if (Sub.ItemId == CenterId) {
-            Sub.Type = (uint8)EOrbType::CatalystX;
-            Sub.Color = (uint8)EOrbColor::Magenta;
-            Sub.Stability = 999999;
-            // UE_LOG(LogTemp, Log,
-            //        TEXT("TRANSMUTATION: Held sub-orb %d became CatalystX!"),
-            //        CenterId);
-            bApplied = true;
+    // Held items (arms)
+    if (!bCenterApplied) {
+      for (FArmState &Arm : Arms) {
+        if (!Arm.bHolding)
+          continue;
+        if (Arm.Held.bIsCluster) {
+          for (FOrbData &Sub : Arm.Held.Orbs) {
+            if (Sub.ItemId == Cand.CenterId) {
+              Sub.Type = (uint8)EOrbType::CatalystX;
+              Sub.Color = (uint8)EOrbColor::Magenta;
+              Sub.Stability = 999999;
+              bCenterApplied = true;
+              break;
+            }
+          }
+        } else if (Arm.Held.Id == Cand.CenterId) {
+          Arm.Held.Single.Type = EOrbType::CatalystX;
+          Arm.Held.Single.Color = EOrbColor::Magenta;
+          Arm.Held.Single.Stability = 999999;
+          bCenterApplied = true;
+        }
+        if (bCenterApplied)
+          break;
+      }
+    }
+
+    // Held items (walker feet)
+    if (!bCenterApplied) {
+      auto TryTransmuteFootHeld = [&](FFootState &Foot) -> bool {
+        if (!Foot.bHoldingItem)
+          return false;
+        if (Foot.HeldItem.bIsCluster) {
+          for (FOrbData &Sub : Foot.HeldItem.Orbs) {
+            if (Sub.ItemId == Cand.CenterId) {
+              Sub.Type = (uint8)EOrbType::CatalystX;
+              Sub.Color = (uint8)EOrbColor::Magenta;
+              Sub.Stability = 999999;
+              return true;
+            }
+          }
+        } else if (Foot.HeldItem.Id == Cand.CenterId) {
+          Foot.HeldItem.Single.Type = EOrbType::CatalystX;
+          Foot.HeldItem.Single.Color = EOrbColor::Magenta;
+          Foot.HeldItem.Single.Stability = 999999;
+          return true;
+        }
+        return false;
+      };
+      for (FWalkerState &W : Walkers) {
+        if (TryTransmuteFootHeld(W.DFoot) || TryTransmuteFootHeld(W.LFoot) ||
+            TryTransmuteFootHeld(W.RFoot) || TryTransmuteFootHeld(W.UFoot))
+          break;
+      }
+    }
+
+    // ========================================
+    // 2. Consume the 6 ring Void orbs
+    // ========================================
+    FTransmutationAnimation TransAnim;
+    TransAnim.CenterHex = Cand.CenterHex;
+    TransAnim.CenterItemId = Cand.CenterId;
+    TransAnim.StartStep = StepCounter;
+    TransAnim.CompletionStep = StepCounter + TRANSMUTATION_CONSUME_TICKS;
+    TransAnim.bActive = true;
+
+    for (int32 ri = 0; ri < Cand.RingIds.Num(); ++ri) {
+      int32 RingItemId = Cand.RingIds[ri];
+      FHex RingHex = Cand.RingHexes[ri];
+
+      TransAnim.ConsumedItemIds.Add(RingItemId);
+      TransAnim.ConsumedHexes.Add(RingHex);
+      TransmutedItemIds.Add(RingItemId);
+
+      // Break ALL bonds for this ring item
+      if (const TArray<int32> *BondList = ItemToBonds.Find(RingItemId)) {
+        TArray<int32> BondsCopy = *BondList;
+        for (int32 BondIdx : BondsCopy) {
+          RemoveBondIndex(BondIdx);
+        }
+      }
+      ItemToBonds.Remove(RingItemId);
+
+      // Build item data for the merge animation (stored in TransAnim, not AnimatedOrbs)
+      FItem ConsumedItem;
+      bool bRemovedFromBoard = false;
+
+      // Try board single orb
+      for (auto It = ItemMap.CreateIterator(); It; ++It) {
+        FItem &Item = It.Value();
+        if (!Item.bIsCluster && Item.Id == RingItemId) {
+          ConsumedItem = Item;
+          OrbAt.Remove(It.Key());
+          It.RemoveCurrent();
+          bRemovedFromBoard = true;
+          break;
+        }
+      }
+
+      // Try board cluster sub-orb (remove from cluster)
+      if (!bRemovedFromBoard) {
+        for (auto &KV : ItemMap) {
+          FItem &Item = KV.Value;
+          if (Item.bIsCluster) {
+            for (int32 si = Item.Orbs.Num() - 1; si >= 0; --si) {
+              if (Item.Orbs[si].ItemId == RingItemId) {
+                ConsumedItem.Id = RingItemId;
+                ConsumedItem.bIsCluster = false;
+                ConsumedItem.Single.Type = (EOrbType)Item.Orbs[si].Type;
+                ConsumedItem.Single.Color = (EOrbColor)Item.Orbs[si].Color;
+                ConsumedItem.Single.Stability = Item.Orbs[si].Stability;
+                Item.Orbs.RemoveAt(si);
+                bRemovedFromBoard = true;
+                break;
+              }
+            }
+            if (bRemovedFromBoard)
+              break;
+          }
+        }
+      }
+
+      // Try held by arm
+      if (!bRemovedFromBoard) {
+        for (int32 ai = 0; ai < Arms.Num(); ++ai) {
+          FArmState &Arm = Arms[ai];
+          if (!Arm.bHolding)
+            continue;
+
+          if (!Arm.Held.bIsCluster && Arm.Held.Id == RingItemId) {
+            ConsumedItem.Id = RingItemId;
+            ConsumedItem.bIsCluster = false;
+            ConsumedItem.Single = Arm.Held.Single;
+            // The arm will be reset by the post-transmutation arm check
+            Arm.bHolding = false;
+            Arm.Held = FItem();
+            bRemovedFromBoard = true;
+            break;
+          }
+
+          if (Arm.Held.bIsCluster) {
+            for (int32 si = Arm.Held.Orbs.Num() - 1; si >= 0; --si) {
+              if (Arm.Held.Orbs[si].ItemId == RingItemId) {
+                ConsumedItem.Id = RingItemId;
+                ConsumedItem.bIsCluster = false;
+                ConsumedItem.Single.Type = (EOrbType)Arm.Held.Orbs[si].Type;
+                ConsumedItem.Single.Color = (EOrbColor)Arm.Held.Orbs[si].Color;
+                ConsumedItem.Single.Stability = Arm.Held.Orbs[si].Stability;
+                Arm.Held.Orbs.RemoveAt(si);
+                if (Arm.Held.Orbs.Num() == 0) {
+                  Arm.bHolding = false;
+                  Arm.Held = FItem();
+                }
+                bRemovedFromBoard = true;
+                break;
+              }
+            }
+            if (bRemovedFromBoard)
+              break;
+          }
+        }
+      }
+
+      // Try held by walker foot
+      if (!bRemovedFromBoard) {
+        auto TryRemoveFromFoot = [&](FFootState &Foot) -> bool {
+          if (!Foot.bHoldingItem)
+            return false;
+          if (!Foot.HeldItem.bIsCluster && Foot.HeldItem.Id == RingItemId) {
+            ConsumedItem.Id = RingItemId;
+            ConsumedItem.bIsCluster = false;
+            ConsumedItem.Single = Foot.HeldItem.Single;
+            Foot.bHoldingItem = false;
+            Foot.HeldItem = FItem();
+            return true;
+          }
+          if (Foot.HeldItem.bIsCluster) {
+            for (int32 si = Foot.HeldItem.Orbs.Num() - 1; si >= 0; --si) {
+              if (Foot.HeldItem.Orbs[si].ItemId == RingItemId) {
+                ConsumedItem.Id = RingItemId;
+                ConsumedItem.bIsCluster = false;
+                ConsumedItem.Single.Type = (EOrbType)Foot.HeldItem.Orbs[si].Type;
+                ConsumedItem.Single.Color =
+                    (EOrbColor)Foot.HeldItem.Orbs[si].Color;
+                ConsumedItem.Single.Stability = Foot.HeldItem.Orbs[si].Stability;
+                Foot.HeldItem.Orbs.RemoveAt(si);
+                if (Foot.HeldItem.Orbs.Num() == 0) {
+                  Foot.bHoldingItem = false;
+                  Foot.HeldItem = FItem();
+                }
+                return true;
+              }
+            }
+          }
+          return false;
+        };
+        for (FWalkerState &W : Walkers) {
+          if (TryRemoveFromFoot(W.DFoot) || TryRemoveFromFoot(W.LFoot) ||
+              TryRemoveFromFoot(W.RFoot) || TryRemoveFromFoot(W.UFoot)) {
+            bRemovedFromBoard = true;
             break;
           }
         }
-      } else if (Arm.Held.Id == CenterId) {
-        Arm.Held.Single.Type = EOrbType::CatalystX;
-        Arm.Held.Single.Color = EOrbColor::Magenta;
-        Arm.Held.Single.Stability = 999999;
-        // UE_LOG(LogTemp, Log,
-        //        TEXT("TRANSMUTATION: Held orb %d became CatalystX!"), CenterId);
-        bApplied = true;
       }
-      if (bApplied)
-        break;
-    }
-    if (bApplied)
-      continue;
 
-    // Check held items (walker feet)
-    auto TryTransmuteFootHeld = [&](FFootState &Foot) -> bool {
-      if (!Foot.bHoldingItem)
-        return false;
-      if (Foot.HeldItem.bIsCluster) {
-        for (FOrbData &Sub : Foot.HeldItem.Orbs) {
-          if (Sub.ItemId == CenterId) {
-            Sub.Type = (uint8)EOrbType::CatalystX;
-            Sub.Color = (uint8)EOrbColor::Magenta;
-            Sub.Stability = 999999;
-            // UE_LOG(
-            //     LogTemp, Log,
-            //     TEXT("TRANSMUTATION: Walker-held sub-orb %d became CatalystX!"),
-            //     CenterId);
-            return true;
+      if (bRemovedFromBoard) {
+        TransAnim.ConsumedItems.Add(ConsumedItem);
+      }
+    }
+
+    // Also break bonds between center and the consumed ring (they no longer exist)
+    if (const TArray<int32> *CenterBondList = ItemToBonds.Find(Cand.CenterId)) {
+      TArray<int32> BondsCopy = *CenterBondList;
+      for (int32 BondIdx : BondsCopy) {
+        if (!Bonds.IsValidIndex(BondIdx))
+          continue;
+        const FBond &B = Bonds[BondIdx];
+        int32 OtherId = (B.ItemA == Cand.CenterId) ? B.ItemB : B.ItemA;
+        // Only break bonds to the consumed ring items
+        if (Cand.RingIds.Contains(OtherId)) {
+          RemoveBondIndex(BondIdx);
+        }
+      }
+    }
+
+    // Return mass for the 6 consumed orbs
+    ReturnMassToSources(6);
+
+    TransmutationAnimations.Add(TransAnim);
+
+    UE_LOG(LogTemp, Log,
+           TEXT("TRANSMUTATION: 7 Void → CatalystX at (%d,%d). 6 ring orbs consumed."),
+           Cand.CenterHex.Q, Cand.CenterHex.R);
+  }
+
+  // ========================================
+  // 3. Reset arms that lost their held item to transmutation
+  // ========================================
+  if (TransmutedItemIds.Num() > 0) {
+    for (int32 ArmIndex = 0; ArmIndex < Arms.Num(); ++ArmIndex) {
+      FArmState &S = Arms[ArmIndex];
+      if (!S.bHolding)
+        continue;
+
+      bool bLostHeldItem = false;
+
+      if (!S.Held.bIsCluster) {
+        // Single orb — check if it was consumed
+        if (TransmutedItemIds.Contains(S.Held.Id)) {
+          bLostHeldItem = true;
+        }
+      } else {
+        // Cluster — check if ALL sub-orbs were consumed (empty cluster)
+        if (S.Held.Orbs.Num() == 0) {
+          bLostHeldItem = true;
+        }
+      }
+
+      if (bLostHeldItem) {
+        // Force drop: clear the held item
+        S.bHolding = false;
+        S.Held = FItem();
+        S.DirectlyHeldOrbId = 0;
+        S.bPausedForBonding = false;
+        S.bWaitingForBond = false;
+        S.WaitForBondInitialCount = 0;
+
+        // Reset PC to 0 and generate reset commands to return home
+        S.PC = 0;
+        S.WaitCounter = 0;
+
+        // Insert Reset command at current PC to navigate back to home orientation
+        TArray<FOp> ResetOps;
+
+        // Calculate rotation back to home
+        const uint8 CurrentRotation = static_cast<uint8>(S.Facing);
+        const uint8 TargetRotation = static_cast<uint8>(S.HomeFacing);
+        if (CurrentRotation != TargetRotation) {
+          const int32 StepsClockwise =
+              (CurrentRotation - TargetRotation + 6) % 6;
+          const int32 StepsCounterClockwise =
+              (TargetRotation - CurrentRotation + 6) % 6;
+          if (StepsClockwise <= StepsCounterClockwise) {
+            for (int32 i = 0; i < StepsClockwise; ++i)
+              ResetOps.Add({ECmd::RotateR, 1});
+          } else {
+            for (int32 i = 0; i < StepsCounterClockwise; ++i)
+              ResetOps.Add({ECmd::RotateL, 1});
           }
         }
-      } else if (Foot.HeldItem.Id == CenterId) {
-        Foot.HeldItem.Single.Type = EOrbType::CatalystX;
-        Foot.HeldItem.Single.Color = EOrbColor::Magenta;
-        Foot.HeldItem.Single.Stability = 999999;
-        // UE_LOG(LogTemp, Log,
-        //        TEXT("TRANSMUTATION: Walker-held orb %d became CatalystX!"),
-        //        CenterId);
-        return true;
+
+        // Adjust arm length back to home
+        const int32 ReachDiff = S.HomeArmLen - S.ArmLen;
+        if (ReachDiff > 0) {
+          for (int32 i = 0; i < ReachDiff; ++i)
+            ResetOps.Add({ECmd::Extend, 1});
+        } else if (ReachDiff < 0) {
+          for (int32 i = 0; i < -ReachDiff; ++i)
+            ResetOps.Add({ECmd::Retract, 1});
+        }
+
+        if (ResetOps.Num() > 0) {
+          S.Tape.Insert(ResetOps, S.PC);
+        }
+
+        UE_LOG(LogTemp, Warning,
+               TEXT("Arm [%d] lost held item to transmutation — resetting to home."),
+               ArmIndex);
       }
-      return false;
-    };
-    for (FWalkerState &W : Walkers) {
-      if (TryTransmuteFootHeld(W.DFoot) || TryTransmuteFootHeld(W.LFoot) ||
-          TryTransmuteFootHeld(W.RFoot) || TryTransmuteFootHeld(W.UFoot))
-        break;
+    }
+  }
+}
+
+// ============================================================
+// Transmutation Animation Update (called from rendering tick)
+// ============================================================
+void USimWorldHex::UpdateTransmutationAnimations(float DeltaTime) {
+  const int32 CurrentStep = GetStepCounter();
+
+  for (int32 i = TransmutationAnimations.Num() - 1; i >= 0; --i) {
+    FTransmutationAnimation &Anim = TransmutationAnimations[i];
+    if (!Anim.bActive)
+      continue;
+
+    if (CurrentStep >= Anim.CompletionStep) {
+      Anim.bActive = false;
+      TransmutationAnimations.RemoveAt(i);
     }
   }
 }
