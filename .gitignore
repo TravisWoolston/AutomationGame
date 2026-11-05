@@ -52,3 +52,5 @@ Session.vim
 
 # Visual Studio
 .vs
+# Build logs
+*build_log.txt
